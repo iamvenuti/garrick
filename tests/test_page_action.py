@@ -2469,6 +2469,23 @@ class TestChase(ActionCase):
         self.chase()
         self.assertEqual([], self.held())
 
+    def test_tick_it_still_waiting_and_give_it_a_week_commit_once_each_through_the_wall_check(self):
+        """The Follow-ups row's other buttons are the Todo tab's own verbs: one commit each, by the zone's hook."""
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho run >> \"$(git rev-parse --git-dir)/hook-ran\"\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "settle")
+        base = len(git(self.work, "log", "--format=%s").splitlines())
+        ran = len((self.work / ".git" / "hook-ran").read_text().splitlines())
+        out = pa.act(self.root, {"verb": "todo-date", "zone": "Work", "file": "Todo.md", "key": self.key("Dana"), "date": "2026-10-12"}, today=TODAY)
+        self.assertTrue(out)
+        self.assertEqual(base + 1, len(git(self.work, "log", "--format=%s").splitlines()))
+        self.assertIn("\u23f3 2026-10-12", (self.work / "Todo.md").read_text())
+        pa.act(self.root, {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Dana")}, today=TODAY)
+        self.assertEqual(base + 2, len(git(self.work, "log", "--format=%s").splitlines()))
+        self.assertIn("- [x] ", (self.work / "Todo.md").read_text())
+        self.assertEqual(ran + 2, len((self.work / ".git" / "hook-ran").read_text().splitlines()))
+
 
 class VerbsTest(unittest.TestCase):
     """The page may only ask for the verbs docs/extras/status-page.md lists:

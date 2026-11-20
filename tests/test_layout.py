@@ -254,5 +254,18 @@ class HubBesideThreads(unittest.TestCase):
         self.assertEqual("Acme Review", pa.work_name(zone, ("Acme Review", "Threads", only, only + ".md")))
 
 
+    def test_an_empty_heading_is_no_piece_of_work(self):
+        write(self.work / "Cedar" / "Cedar.md", "---\ntitle: Cedar\ntype: project\nzone: Work\nstatus: active\nlayout: thread-first\n"
+                                              "created: 2026-03-01\nupdated: 2026-03-01\n---\n\n# Cedar\n")
+        self.assertEqual([], [r for r in nu.threads(self.root) if r["project"] == "Cedar"])
+        self.assertEqual([], [r for r in br.notes(self.work) if r["project"] == "Cedar"])
+        T = status.threads(self.root)
+        self.assertEqual([], [r for r in T["Work"]["rows"] + T["Work"]["parked"] if r["project"] == "Cedar"])
+        self.assertTrue(T["Work"]["projects"]["Cedar"]["heading"])
+        self.hub.parent.parent.joinpath("Cedar", "Cedar.md").write_text(
+            "---\ntitle: Cedar\ntype: project\nzone: Work\nstatus: active\ncreated: 2026-03-01\nupdated: 2026-03-01\n---\n\n# Cedar\n")
+        self.assertEqual(1, len([r for r in nu.threads(self.root) if r["project"] == "Cedar"]))       # one piece of work still is
+
+
 if __name__ == "__main__":
     unittest.main()

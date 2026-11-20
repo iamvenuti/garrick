@@ -414,6 +414,8 @@ def notes(zone: Path) -> List[dict]:
         found = [(name, note) for name, note in found if note.is_file()]
         pfm = gl.parse_frontmatter(hub) if hub.is_file() else {}
         if hub.is_file() and not found:
+            if str(pfm.get("layout") or "").strip().lower() == "thread-first":
+                continue                                       # a heading with no thread is no piece of work
             out.append({"project": project.name, "thread": None, "note": hub, "folder": project, "status": hub_state})
         elif hub.is_file() and hub_state not in (DONE,) and gl.hub_keeps_resume(hub.read_text(encoding="utf-8", errors="replace"), pfm):
             # The hub's own resume point, beside the threads': its folder is the project's without them.

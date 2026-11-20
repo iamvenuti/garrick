@@ -718,12 +718,13 @@ def threads(ws: Path) -> Dict[str, dict]:
                 asleep.append(project.name)
             found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
             own = False
-            if not any(n.is_file() for _, n in found) and hub.is_file() and \
+            heading = as_text(pfm.get("layout")).strip().lower() == "thread-first"     # no piece of work of its own
+            if not any(n.is_file() for _, n in found) and hub.is_file() and not heading and \
                     as_text(pfm.get("type")).strip().lower() == "project":
                 found, own = [(project.name, hub)], True
             if hub.is_file() or any(n.is_file() for _, n in found):
                 projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own,
+                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
                                           "hub": hub if hub.is_file() else None, "party": tags(pfm.get("party"))}
             for name, note in found:
                 fm = pfm if note == hub else frontmatter(note, ws)

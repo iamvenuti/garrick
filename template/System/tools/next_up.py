@@ -148,7 +148,8 @@ def threads(root: Path) -> List[dict]:
             if hub.is_file() and hub_state == PARKED:
                 out.append(row(root, zone, project, None, hub, pfm, PARKED, whole=True))
                 continue
-            if hub.is_file() and (not found or (hub_state not in (PARKED, DONE) and gl.hub_keeps_resume(
+            heading = str(pfm.get("layout") or "").strip().lower() == "thread-first"     # no piece of work of its own
+            if hub.is_file() and ((not found and not heading) or (found and hub_state not in (PARKED, DONE) and gl.hub_keeps_resume(
                     hub.read_text(encoding="utf-8", errors="replace"), pfm))):
                 out.append(row(root, zone, project, None, hub, pfm, hub_state))     # the hub's own resume point
             for name, note in found:

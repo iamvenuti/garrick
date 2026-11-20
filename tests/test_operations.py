@@ -332,6 +332,8 @@ SHAPES = {
     "go: 'release-update'": {"release-update": ()},                   # the held files' Commit these and update / Update the rest
     # COMMIT_JS (#595): the Overview's Commit them, with the zone and the files the row lists, and its Undo with `undo` and `repo`
     "line: 'commit-files'": {"commit-files": ()},
+    # FOLLOWUP_JS (#603): the Follow-ups row's buttons: Tick it, Still waiting and Give it a week (the Todo tab's verbs), and Chase
+    "go: b.dataset.fu": {"todo-done": (), "todo-date": (), "chase": ()},
     # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
     "read: 'note-read'": {"note-read": ()},
     "openIn: 'note-open'": {"note-open": ()},
@@ -354,6 +356,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "MEMORY_JS": {"ask: 'memory-preview'"},
            "RELEASE_JS": {"btn.onclick: 'release-check'", "go: 'release-update'"},
            "COMMIT_JS": {"line: 'commit-files'"},
+           "FOLLOWUP_JS": {"go: b.dataset.fu"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
 
 

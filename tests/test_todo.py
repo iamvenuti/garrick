@@ -606,6 +606,64 @@ class FollowUpTest(unittest.TestCase):
         todo.record_answers(self.zone, [{"key": k, "result": "delivered", "source": got["pending"][0]["evidence"][0]["path"]}], self.TODAY)
         self.assertIn("Follow-ups: 1 reply found, 1 to chase.", todo.digest(self.zone, self.TODAY))
 
+    def people(self, *rows):
+        ctx = self.root / "System" / "context.md"
+        text = ctx.read_text()
+        ctx.write_text(text.replace("| Theo Marsh | `birch` | Managing partner |", "| Theo Marsh | `birch` | Managing partner |\n" + "\n".join(rows)))
+
+    def test_a_page_filed_the_day_the_line_was_first_seen_is_no_evidence_but_mail_that_day_is(self):
+        self.page("261010-same-day.md", day="2026-10-10")
+        self.assertEqual(1, self.run_followup()["no_sign"])
+        (self.zone / ".todo-followups.json").unlink()
+        write(self.zone / "Inbox" / "same-day.eml", "From: Dana Whitlock <dana@acmecorp.example>\nDate: Sat, 10 Oct 2026 09:00:00 +0000\nSubject: Sheet\n\nx\n")
+        got = self.run_followup()
+        self.assertEqual(["Zones/Work/Inbox/same-day.eml"], [e["path"] for e in got["pending"][0]["evidence"]])
+
+    def test_a_line_naming_nobody_known_is_not_looked_at_and_writes_no_record(self):
+        line = "- [ ] Badge legal to confirm #waiting ⏳ 2026-10-16"
+        write(self.zone / "Todo.md", "# Work: open actions\n\n## Waiting on\n\n%s\n" % line)
+        write(self.zone / ".todo-seen.json", json.dumps({todo.key(line): "2026-10-10"}))
+        got = self.run_followup()
+        self.assertEqual((1, 1, 0), (got["due"], got["unlooked"], got["no_sign"]))
+        f = self.zone / ".todo-followups.json"
+        self.assertNotIn(todo.key(line), json.loads(f.read_text()) if f.is_file() else {})
+
+    def test_a_first_name_two_people_share_names_nobody_unless_a_full_name_is_there(self):
+        self.people("| Alex Cedar | `acme` | Buyer |", "| Alex Maple | `birch` | Partner |")
+        forms = todo.person_forms(todo.tools_lib(self.root).load_context(self.root))
+        self.assertEqual("", todo.person_of("- [ ] "+"Alex: the licence file", forms))
+        self.assertEqual("Alex Maple", todo.person_of("- [ ] "+"Alex Maple: the licence file", forms))
+        self.assertEqual("Dana Whitlock", todo.person_of("- [ ] "+"Dana's volumes", forms))
+        line = "- [ ] Alex: the licence file #waiting ⏳ 2026-10-16"
+        write(self.zone / "Todo.md", "# Work: open actions\n\n## Waiting on\n\n%s\n" % line)
+        write(self.zone / ".todo-seen.json", json.dumps({todo.key(line): "2026-10-10"}))
+        self.page("261012-alex.md", body="Alex Cedar sent it. Alex Maple too.")
+        got = self.run_followup()
+        self.assertEqual((1, 0), (got["unlooked"], len(got["pending"])))
+
+    def test_the_sweep_follows_up_the_lines_the_page_does_and_no_others(self):
+        untagged = "- [ ] Dana: untagged line ⏳ 2026-10-16"
+        write(self.zone / "Todo.md", "# Work: open actions\n\n## Waiting on\n\n%s\n%s\n" % (self.LINE, untagged))
+        write(self.zone / ".todo-seen.json", json.dumps({todo.key(self.LINE): "2026-10-10", todo.key(untagged): "2026-10-10"}))
+        got = self.run_followup()
+        self.assertEqual(1, got["due"])
+        self.assertEqual([todo.key(self.LINE)], list(json.loads((self.zone / ".todo-followups.json").read_text())))
+        self.assertEqual(1, todo.followup_counts(self.zone, self.TODAY)["due"])
+
+    def mail(self, name, sender):
+        write(self.zone / "Inbox" / name, "From: %s\nDate: Wed, 14 Oct 2026 09:00:00 +0000\nSubject: x\n\nx\n" % sender)
+
+    def test_a_chase_address_needs_the_full_name_and_one_address(self):
+        self.mail("a.eml", "Dana <attacker@evil.example>")
+        self.assertEqual("", todo.sender_address(self.root, self.zone, "Dana Whitlock"))
+        self.mail("b.eml", '"dana whitlock" <dana@acmecorp.example>')
+        self.assertEqual("dana@acmecorp.example", todo.sender_address(self.root, self.zone, "Dana Whitlock"))
+        self.mail("c.eml", "Dana Whitlock <other@elsewhere.example>")
+        self.assertEqual("", todo.sender_address(self.root, self.zone, "Dana Whitlock"))
+        self.mail("d.eml", "Dana Whitlock <DANA@acmecorp.example>")       # the same address, another case, is still one
+        (self.zone / "Inbox" / "c.eml").unlink()
+        self.assertEqual("dana@acmecorp.example", todo.sender_address(self.root, self.zone, "Dana Whitlock").lower())
+
 
 class FollowUpJobTest(unittest.TestCase):
     """#603: the Follow up step of extras/jobs/todo_sweep.py, with the assistant faked."""

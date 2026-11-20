@@ -45,9 +45,14 @@ zone's repository, as the skills would:
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
-    new-project a project and its first thread, as "new project" by voice:
-                {"zone", "name", "party", "thread"}; committed in the zone
-    new-thread  a thread in a project: {"zone", "project", "name"}
+    new-project a project, as "new project" by voice: {"zone", "name", "party",
+                "thread", "heading"}; one piece of work unless "heading" says a
+                heading over separate pieces, and no thread unless one is
+                named; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name", "papers"};
+                "papers" is "own" for a thread that keeps its own Sources and
+                Deliverables, and the project's otherwise (a heading's threads
+                always keep their own)
     check-name  whether a new name would do, making nothing, for the form as
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
@@ -2094,16 +2099,25 @@ def scaffold(ws: Path, *args) -> str:
     return r.stdout.strip()
 
 
-def first_thread() -> str:
-    """The name of a project's first thread when none is given: ask.py's FIRST_THREAD, the box's own, read from
-    its file beside this one so that the page and the box never name it twice. Refused where ask.py is not there."""
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', (HERE / "ask.py").read_text(encoding="utf-8"), re.M)
-    except OSError:
-        found = None
-    if not found:
-        raise Refused("no first thread given, and ask.py, which names the default one, is not beside this file")
-    return found.group(1)
+def wants_heading(req: dict) -> bool:
+    """Is the new project a heading over separate pieces of work, rather than one piece of work (the default)?
+    True, or the word yes or true from a command line; anything else but nothing is refused."""
+    value = req.get("heading")
+    if value is None or value is False or (isinstance(value, str) and value.strip().lower() in ("no", "false")):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("yes", "true")):
+        return True
+    raise Refused("not a heading choice: %r" % (value,))
+
+
+def papers_of(req: dict) -> Optional[str]:
+    """A new thread's papers, own or project; none when the request does not say."""
+    value = req.get("papers")
+    if value is None:
+        return None
+    if value in ("own", "project"):
+        return value
+    raise Refused("papers is own or project, not %r" % (value,))
 
 
 def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
@@ -2153,14 +2167,16 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     flag = ["--check"] if check else []
     if verb in ("new-project", "new-project-party"):
         name = field(req, "name")
-        # A first thread left empty is the one the ask box gives (ask.py's FIRST_THREAD, read from there), and a
-        # party left out is none: scaffold.py's --party is optional, an index.
-        thread = field(req, "thread", required=False) or first_thread()
+        # A first thread left out is none: a project need not start with one. A party left out is none too:
+        # scaffold.py's --party is optional, an index.
+        thread = field(req, "thread", required=False)
         party = field(req, "party", required=False)
+        heading = wants_heading(req)
         made = [p for p in (zone / name,) if not p.exists()]
         spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
                   *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
-        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []), "--thread", thread, *spoken]
+        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []),
+                *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         if verb == "new-project-party":
             if party:
                 raise Refused("pick a party from the list, or add a new one, not both")
@@ -2180,13 +2196,15 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
             if check:
                 return said_party
             party = new_party(ws, zone, pname, what)
-            args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
+            args = ["project", "--zone", z, "--name", name, "--party", party,
+                    *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         elif not check:
             asks_how(ws, args)
         try:
             said = scaffold(ws, *args, *flag)
             if not check:
-                commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
+                commit_new(zone, [name], "New project %s%s%s" % (name, " (%s)" % party if party else "",
+                                                                  ", first thread %s" % thread if thread else ""),
                            made, {}, wall=wall_refusal(ws))
                 return first_line(said)
         except Refused as e:
@@ -2204,8 +2222,10 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
+        papers = papers_of(req)
         args = ["thread", "--zone", z, "--project", project, "--name", name,
-                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
+                *(["--papers", papers] if papers else [])]
         if not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
@@ -5733,8 +5753,12 @@ def start_record(ops, req: dict, via: str):
 # (`--line`), and resolved here to the key the page would send.
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
-    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
-    "new-thread": ("zone", "project", "name", "spoken"),
+    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken",
+                    "heading",
+                    ),
+    "new-thread": ("zone", "project", "name", "spoken",
+                   "papers",
+                   ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
     "undo": ("zone", "commit"),

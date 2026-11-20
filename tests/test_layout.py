@@ -167,6 +167,78 @@ HUB_BLOCK = ("\n## State of play\n\n### Resume here\n\n**Where it stands, 1 Marc
 OUTCOME = "\n## State of play\n\n### Outcome\n\nDelivered and accepted.\n"
 
 
+class TestThePage(LayoutCase):
+    """The page's verbs and dialogs (page_action.py, status.py)."""
+
+    def setUp(self):
+        super().setUp()
+        import os
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+
+    def act(self, **req):
+        return pa.act(self.root, req)
+
+    def log(self):
+        import subprocess
+        return subprocess.run(["git", "log", "-1", "--format=%s"], cwd=str(self.work), capture_output=True, text=True,
+                              env=self.env).stdout.strip()
+
+    def test_a_new_project_sends_no_thread_by_default_and_is_one_piece_of_work(self):
+        self.act(verb="new-project", zone="Work", name="Acme")
+        self.assertFalse((self.work / "Acme" / "Threads").exists())
+        self.assertIn("### Resume here", self.hub_text("Acme"))
+        self.assertEqual("New project Acme", self.log())
+
+    def test_a_heading_is_asked_for_by_the_heading_field(self):
+        self.act(verb="new-project", zone="Work", name="Birch", heading=True)
+        self.assertIn("layout: thread-first", self.hub_text("Birch"))
+        self.assertFalse((self.work / "Birch" / "Sources").exists())
+        with self.assertRaises(pa.Refused):
+            self.act(verb="new-project", zone="Work", name="Cedar", heading="maybe")
+        self.assertFalse((self.work / "Cedar").exists())
+
+    def test_a_thread_in_a_piece_of_work_takes_its_papers_from_the_request(self):
+        self.act(verb="new-project", zone="Work", name="Acme")
+        self.act(verb="new-thread", zone="Work", project="Acme", name="Pricing")
+        self.assertFalse((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables").exists())
+        self.act(verb="new-thread", zone="Work", project="Acme", name="Side Deal", papers="own")
+        self.assertTrue((self.work / "Acme" / "Threads" / "Side Deal" / "Deliverables").is_dir())
+        with self.assertRaises(pa.Refused):
+            self.act(verb="new-thread", zone="Work", project="Acme", name="Freight", papers="shared")
+
+    def test_a_heading_thread_always_has_its_own(self):
+        self.act(verb="new-project", zone="Work", name="Birch", heading=True)
+        self.act(verb="new-thread", zone="Work", project="Birch", name="Pricing")
+        self.assertTrue((self.work / "Birch" / "Threads" / "Pricing" / "Sources").is_dir())
+
+    def test_undo_takes_back_a_project_made_without_a_thread(self):
+        self.act(verb="new-project", zone="Work", name="Acme")
+        import subprocess
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(self.work), capture_output=True, text=True,
+                              env=self.env).stdout.strip()
+        self.act(verb="undo", zone="Work", commit=head)
+        self.assertFalse((self.work / "Acme").exists())
+
+    def test_the_dialogs_ask_the_two_questions(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn("Is this project one piece of work, or a heading over separate pieces?", text)
+        self.assertIn("Does this thread keep its own papers, or use the project’s?", text)
+        self.assertIn("if(hd)o.heading=true", text)
+        self.assertIn("if(own)q.papers='own'", text)
+        self.assertNotIn("Empty gives", text)
+
+    def test_the_papers_question_is_only_for_a_piece_of_work(self):
+        import json
+        self.act(verb="new-project", zone="Work", name="Acme")
+        self.act(verb="new-project", zone="Work", name="Birch", heading=True)
+        T = status.threads(self.root)
+        data = status.manage_data(T, {"parties": {}}, True)["zones"]["Work"]
+        self.assertIn("Acme", data["projects"])
+        self.assertIn("Birch", data["projects"])
+        self.assertEqual(["Birch"], data["headings"])
+        self.assertNotIn("first", status.manage_data(T, {"parties": {}}, True))
+
+
 class HubBesideThreads(unittest.TestCase):
     """The hub's `### Resume here` stays a resume point while the project has threads, and `### Outcome`
     in its place ends it. A heading never has one."""

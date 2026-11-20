@@ -1741,7 +1741,7 @@ def cmd_undo(root, args, today):
     subject = git_value(["log", "-1", "--format=%s"], zone_dir).strip()
     body = git_value(["log", "-1", "--format=%B"], zone_dir)
     is_move = MOVE_ACTION in body.splitlines()                 # a move is known by its trailer, never by its subject
-    if not (is_move or re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+, first thread .+$", subject)):
+    if not (is_move or re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+$", subject)):
         raise Refusal(f"{args.commit} is not a rename, a move, a deletion or a new project or thread: {subject}")
     if git_value(["status", "--porcelain", "--untracked-files=no"], zone_dir).strip():
         raise Refusal(f"{zone_dir.name} has changes not committed. Commit or undo them first.")

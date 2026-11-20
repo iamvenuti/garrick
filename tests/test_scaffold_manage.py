@@ -978,11 +978,12 @@ class TestNewProjectDialog(ManageCase):
     def context(self):
         return (self.root / "System" / "context.md").read_text(encoding="utf-8")
 
-    def test_an_empty_first_thread_gets_the_name_the_ask_box_uses(self):
+    def test_an_empty_first_thread_makes_no_thread(self):
         said = self.act(verb="new-project", zone="Work", name="Birch", party="birch")
-        self.assertIn("with its first thread, Getting started", said)
-        self.assertTrue((self.work / "Birch" / "Threads" / "Getting started" / "Getting started.md").is_file())
-        self.assertIn("first thread Getting started", self.git("log", "-1", "--format=%s").stdout)
+        self.assertNotIn("first thread", said)
+        self.assertFalse((self.work / "Birch" / "Threads").exists())
+        self.assertIn("### Resume here", (self.work / "Birch" / "Birch.md").read_text(encoding="utf-8"))
+        self.assertEqual("New project Birch (birch)", self.git("log", "-1", "--format=%s").stdout.strip())
 
     def test_no_party_gives_a_hub_with_no_party_line(self):
         self.act(verb="new-project", zone="Work", name="Birch", thread="Launch Plan")
@@ -1092,7 +1093,8 @@ class TestNewProjectDialog(ManageCase):
     def test_the_dialog_offers_none_and_new_party_and_its_first_thread_is_optional(self):
         text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
         self.assertIn("[['','None']].concat(p,[[NEW,'New party…']])", text)
-        self.assertIn("Empty gives ", text)
+        self.assertNotIn("Empty gives ", text)
+        self.assertIn("Is this project one piece of work, or a heading over separate pieces?", text)
         self.assertIn("'new project '+q.name+(np?' for new party '+q.new_party", text)
         self.assertNotIn("A project needs a name, its party and its first thread", text)
 

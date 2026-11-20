@@ -7656,6 +7656,10 @@ def need_row(n: dict) -> str:
     late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
     go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
                                                   ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
+    if len(n.get("links") or []) > 1:
+        # One link for each place the row names, each its own (W4): never a link to a place the row does not name.
+        go = "".join('<a class="act" href="%s">Open the %s inbox</a>' % (E(href), E(name)) for name, href in n["links"])
+        go = go.replace('class="act"', 'class="alt"')
     if n.get("act") or n.get("lines"):
         # The main button does the work, or the late lines themselves do; the link to where the item lives is secondary (#595).
         go = '<span class="wacts">%s%s</span>' % (n.get("act", ""), go.replace('class="act"', 'class="alt"', 1))
@@ -8142,9 +8146,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         # its button, a link to the first of those inboxes beside it. The count is the whole-workspace figure the lead shows.
         said_inbox = "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s")
         full = [(name, f) for name, f, n in IB if n]
-        attn.append(("warning", said_inbox, link(full[0][1])))
+        # A row that names several zones links each one's own inbox, read from the row's own list of zones, so no link points at a
+        # zone the row does not name (W4). With one zone the link is that inbox, as it was; with several, the attention list's own
+        # link is the card, since no single inbox is the row.
+        attn.append(("warning", said_inbox, link(full[0][1]) if len(full) == 1 else "#waiting-now"))
         detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
-                              "act": request_button("Process the Inbox", "process the inbox", ws)}
+                              "act": request_button("Process the Inbox", "process the inbox", ws),
+                              "links": [(name, link(f)) for name, f in full] if len(full) > 1 else []}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
         attn.append(("warning", said_warn, "#checks"))

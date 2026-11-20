@@ -5,14 +5,35 @@ Part 1, making a project. Run from the tests folder: `python3 -m unittest test_l
 
 from __future__ import annotations
 
+import datetime as dt
+import importlib.util
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 
+from fixtures import build_workspace, write  # noqa: E402
 from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+TOOLS = REPO / "template" / "System" / "tools"
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+status = load("garrick_status_layout", REPO / "extras" / "status" / "status.py")
+pa = load("garrick_page_action_layout", REPO / "extras" / "status" / "page_action.py")
+nu = load("garrick_next_up_layout", TOOLS / "next_up.py")
+br = load("garrick_briefing_layout", TOOLS / "briefing.py")
 
 
 class LayoutCase(Installed):
@@ -87,6 +108,98 @@ class TestMakingAProject(LayoutCase):
     def test_a_first_thread_name_alone_is_refused_when_it_is_not_given(self):
         r = self.scaffold("project", "--zone", "Work", "--name", "Dana", "--thread-spoken", "pricing")
         self.assertEqual(1, r.returncode)
+
+
+HUB_BLOCK = ("\n## State of play\n\n### Resume here\n\n**Where it stands, 1 March 2026.** The main line goes on here.\n\n"
+             "| | |\n|---|---|\n| Next action | send the draft |\n| Waiting on | nobody |\n")
+OUTCOME = "\n## State of play\n\n### Outcome\n\nDelivered and accepted.\n"
+
+
+class HubBesideThreads(unittest.TestCase):
+    """The hub's `### Resume here` stays a resume point while the project has threads, and `### Outcome`
+    in its place ends it. A heading never has one."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        write(self.root / "System" / "rules.md", "# Rules\n")
+        for tool in ("next_up.py", "garrick_lib.py", "briefing.py"):
+            write(self.root / "System" / "tools" / tool, (TOOLS / tool).read_text(encoding="utf-8"))
+        self.work = self.root / "Zones" / "Work"
+        self.hub = self.work / "Acme Review" / "Acme Review.md"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def keep(self, block):
+        self.hub.write_text(self.hub.read_text(encoding="utf-8") + block, encoding="utf-8")
+
+    def next_up_rows(self):
+        return [(r["project"], r["thread"]) for r in nu.threads(self.root) if r["project"] == "Acme Review"]
+
+    def briefing_rows(self):
+        return [(r["project"], r["thread"]) for r in br.notes(self.work) if r["project"] == "Acme Review"]
+
+    def test_the_hub_is_a_row_beside_its_threads_while_it_keeps_a_resume_point(self):
+        before = self.next_up_rows()
+        self.assertTrue(before and all(t for _, t in before), before)
+        self.keep(HUB_BLOCK)
+        for rows in (self.next_up_rows(), self.briefing_rows()):
+            self.assertIn(("Acme Review", None), rows)
+            self.assertTrue([r for r in rows if r[1]], "its threads are still there")
+
+    def test_an_outcome_in_its_place_ends_it(self):
+        self.keep(OUTCOME)
+        self.assertNotIn(("Acme Review", None), self.next_up_rows())
+        self.assertNotIn(("Acme Review", None), self.briefing_rows())
+
+    def test_a_heading_never_has_one(self):
+        self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("status: active", "status: active\nlayout: thread-first"),
+                            encoding="utf-8")
+        self.keep(HUB_BLOCK)
+        self.assertNotIn(("Acme Review", None), self.next_up_rows())
+        self.assertNotIn(("Acme Review", None), self.briefing_rows())
+
+    def test_a_parked_project_offers_its_hub_as_one_parked_row_and_no_more(self):
+        self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("status: active", "status: parked"), encoding="utf-8")
+        self.keep(HUB_BLOCK)
+        self.assertEqual([("Acme Review", None)], [r for r in self.next_up_rows() if r[1] is None])
+        self.assertEqual(1, len(self.next_up_rows()))
+
+    def test_the_briefing_reads_the_hub_without_the_threads_commits(self):
+        self.keep(HUB_BLOCK)
+        row = next(r for r in br.notes(self.work) if r["thread"] is None and r["project"] == "Acme Review")
+        self.assertEqual("Threads", row["skip"])
+
+    def test_your_work_shows_both(self):
+        self.keep(HUB_BLOCK)
+        T = status.threads(self.root)
+        self.assertEqual(["Acme Review"], [h["project"] for h in T["Work"]["hubs"]])
+        self.assertNotIn("Acme Review", [r["thread"] for r in T["Work"]["rows"]])    # the Threads card is as it was
+        status.thread_actions(T, [], None, self.root)
+        names = [w["name"] for w in status.works(self.root, T, dt.date(2026, 3, 2)) if w["project"] == "Acme Review"]
+        self.assertIn("Acme Review", names)
+        self.assertTrue([n for n in names if n.startswith("Acme Review, ")], names)
+
+    def test_your_work_shows_only_the_threads_after_an_outcome(self):
+        self.keep(OUTCOME)
+        T = status.threads(self.root)
+        self.assertEqual([], T["Work"]["hubs"])
+        status.thread_actions(T, [], None, self.root)
+        names = [w["thread"] for w in status.works(self.root, T, dt.date(2026, 3, 2)) if w["project"] == "Acme Review"]
+        self.assertNotIn("Acme Review", names)          # no row for the hub: the one thread's row is the work
+
+    def test_one_thread_beside_a_hub_is_named_with_its_project(self):
+        self.keep(HUB_BLOCK)
+        zone = self.work
+        for t in list((zone / "Acme Review" / "Threads").iterdir())[1:]:
+            import shutil
+            shutil.rmtree(t)
+        only = next(p.name for p in (zone / "Acme Review" / "Threads").iterdir())
+        self.assertEqual("Acme Review, %s" % only, pa.work_name(zone, ("Acme Review", "Threads", only, only + ".md")))
+        self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("### Resume here", "### Outcome"), encoding="utf-8")
+        self.assertEqual("Acme Review", pa.work_name(zone, ("Acme Review", "Threads", only, only + ".md")))
 
 
 if __name__ == "__main__":

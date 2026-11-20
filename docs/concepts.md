@@ -36,7 +36,7 @@ The `spoken:` line in a hub or thread note's frontmatter: how a name that does n
 
 ### Hub note
 
-The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
+The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. A project that is one piece of work also keeps its resume point here, in a `### Resume here` block, for as long as the main line goes on, and its threads sit beside it. *Your work*, the briefings and "what's next" read the hub's block next to each thread's. The owner closes it as an `### Outcome` when the main line ends. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
 
 ## Picking a thread back up
 

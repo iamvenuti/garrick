@@ -658,6 +658,34 @@ def checkpoint_chip(r: dict) -> str:
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
 
 
+def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: Path, pfm: dict, fm: dict, state: str) -> dict:
+    """One row of threads(): a thread note's, or a hub's own."""
+    read = resume_read(note)
+    has_block, resumed = read["block"], read["date"]
+    mark = checkpoint_mark(note, ws)
+    updated = as_date(fm.get("updated"))
+    when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
+    return {"zone": zone.name, "project": project.name, "thread": name, "note": note,
+            "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
+            "party": tags(fm.get("party") or pfm.get("party")),
+            "updated": updated, "status": state,
+            "resume": has_block, "resumed": resumed,
+            "checkpoint": mark, "touched": max(when) if when else None,
+            "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+
+
+def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
+    """Does a hub hold the project's own resume point beside its threads: a `### Resume here` block, and no
+    `layout: thread-first`? An `### Outcome` in its place ends it. The same reading as garrick_lib's."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    layout = as_text(pfm.get("layout")).strip().lower() if pfm is not None else \
+        (re.search(r"(?mi)^layout:[ \t]*[\"']?(thread-first)\b", text) or [None, ""])[1].lower()
+    return layout != "thread-first" and any(RESUME.match(l) for l in text.splitlines())
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
     note was last updated, read from frontmatter like "what's open"; and
@@ -678,7 +706,7 @@ def threads(ws: Path) -> Dict[str, dict]:
     its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep, finished, projects = [], [], 0, [], [], {}
+        rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
@@ -710,28 +738,21 @@ def threads(ws: Path) -> Dict[str, dict]:
                     continue
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
-                read = resume_read(note)
-                has_block, resumed = read["block"], read["date"]
-                mark = checkpoint_mark(note, ws)
-                updated = as_date(fm.get("updated"))
-                when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
-                row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                       "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
-                       "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": updated, "status": state,
-                       "resume": has_block, "resumed": resumed,
-                       "checkpoint": mark, "touched": max(when) if when else None,
-                       "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+                row = thread_row(ws, zone, project, name, note, hub, pfm, fm, state)
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
+            # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
+            if not own and hub.is_file() and not hub_parked and hub_state not in DONE and hub_keeps_resume(hub, pfm) \
+                    and any(n.is_file() for _, n in found):
+                hubs.append(thread_row(ws, zone, project, project.name, hub, hub, pfm, pfm, hub_state))
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
         parked.sort(key=by_name)
         finished.sort(key=by_name)
         out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
-                          "finished": finished, "projects": projects}
+                          "finished": finished, "projects": projects, "hubs": hubs}
     return out
 
 
@@ -969,7 +990,7 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
                 folders.setdefault(Path(a["file"]).parent.as_posix(), []).append(a)
             elif a["label"]:
                 labels.setdefault(a["label"].casefold(), []).append(a)
-        for r in data["rows"] + data["parked"]:
+        for r in data["rows"] + data["parked"] + data.get("hubs", []):
             mine, seen = [], set()
             for a in labels.get(r["thread"].casefold(), []) + folders.get(Path(r["rel"]).parent.as_posix(), []):
                 if (a["file"], a["key"]) not in seen:
@@ -981,7 +1002,8 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
             r["next"] = mine[0] if mine else None
             r["late"] = any(a["late"] for a in mine)
             r["checks"] = []
-            for path in sorted(p for p in flags if p.startswith(here)):
+            hub_own = r["note"] == r.get("hub")           # a hub's own row leaves its threads' files to their rows
+            for path in sorted(p for p in flags if p.startswith(here) and not (hub_own and p[len(here):].startswith("Threads/"))):
                 for x in flags[path]:
                     if "fixed_by" not in x:
                         x["fixed_by"] = nurture_fix(ws, x["finding"])
@@ -5709,7 +5731,9 @@ def work_name_for(r: dict) -> str:
         return r["project"]
     project = r["note"].parents[2]
     threads = [t for t in (project / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return r["project"] if len(threads) <= 1 else "%s, %s" % (r["project"], r["thread"])
+    if len(threads) <= 1 and not (r["hub"] and hub_keeps_resume(r["hub"], None)):
+        return r["project"]
+    return "%s, %s" % (r["project"], r["thread"])
 
 
 def example_zone(ws: Path) -> Optional[str]:
@@ -5749,7 +5773,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
     owners = known_owners(workspace_context(ws), me)
     out = []
     for zone, data in T.items():
-        for r in data["rows"]:
+        for r in data["rows"] + data.get("hubs", []):
             read = r.get("read") or {}
             rows = read.get("rows") or {}
             nxt = filled(rows.get("Next action"))

@@ -2784,13 +2784,28 @@ def question(ws: Path, req: dict) -> tuple:
     return zone, q, note, parts, work_name(zone, parts)
 
 
+def hub_keeps_resume(hub: Path) -> bool:
+    """Does the hub hold the project's own resume point beside its threads: a `### Resume here` block and no
+    `layout: thread-first`? An `### Outcome` in its place ends it (status.py and garrick_lib read it the same way)."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if re.search(r"(?mi)^layout:[ \t]*[\"']?thread-first\b", text):
+        return False
+    return bool(re.search(r"(?mi)^#{1,6}[ \t]+Resume here\b", text))
+
+
 def work_name(zone: Path, parts: tuple) -> str:
     """A piece of work as the home names it: the project's name for a project
-    that is one thread, "Project, Thread" where it has more than one."""
+    that is one thread, "Project, Thread" where it has more than one, or where
+    the hub keeps its own resume point beside the thread."""
     if len(parts) == 2:
         return parts[0]
     threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
+    if len(threads) <= 1 and not hub_keeps_resume(zone / parts[0] / (parts[0] + ".md")):
+        return parts[0]
+    return "%s, %s" % (parts[0], parts[2])
 
 
 def say_name(ws: Path, zone: Path, parts: tuple) -> str:

@@ -2337,6 +2337,139 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class FakeChaseEngine:
+    """engine.py as *Chase* meets it: a draft from a stubbed assistant, and the real hold queue in a temporary jobs folder."""
+
+    def __init__(self, say="Hi Dana, could you send the price sheet this week?", ok=True):
+        spec = importlib.util.spec_from_file_location("garrick_chase_engine", REPO / "extras" / "status" / "engine.py")
+        self.real = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(REPO / "extras" / "status"))
+        spec.loader.exec_module(self.real)
+        self.hold = self.real.hold
+        self.channels = mock.Mock()
+        self.channels.assistant.return_value = "claude"
+        self.channels.capability.return_value = {"ok": True}
+        self.channels.effective.return_value = {"autonomy": "act"}
+        self.say, self.ok, self.asked = say, ok, []
+
+    def run(self, ws, channel, text, zone, exchange=None, runner=None, cap=None, **kw):
+        self.asked.append({"text": text, "zone": zone, "level": kw.get("level"), "exchange": exchange})
+        return {"ok": self.ok, "say": self.say, "held": []}
+
+
+class TestChase(ActionCase):
+    """#603: *Chase* drafts the message for a due Waiting on line and, at Act, queues it through hold. It never sends."""
+
+    LINE = "- [ ] [[Pricing]]: Dana's volumes #waiting ⏳ 2026-10-01"
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Waiting on\n\n%s\n\n## Done\n" % self.LINE)
+        write(self.work / "Inbox" / "old.eml", "From: Dana Whitlock <dana@acmecorp.example>\nDate: Wed, 14 Oct 2026 09:00:00 +0000\nSubject: Hello\n\nHi.\n")
+        write(self.work / ".todo-followups.json", json.dumps({
+            self.key("Dana"): {"line": self.LINE, "person": "Dana Whitlock", "result": "no sign", "source": "", "title": "", "date": "", "looked": "2026-10-05"}}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"chase": {"tool": "mcp__mail__send_message"}}))
+        self.engine = FakeChaseEngine()
+        self.hold_file = self.jobs / "held-actions.json"
+
+    def chase(self, engine=None, **more):
+        eng = engine or self.engine
+        with mock.patch.object(pa, "engine_lib", return_value=eng):
+            return pa.act(self.root, dict({"verb": "chase", "zone": "Work", "file": "Todo.md", "key": self.key("Dana")}, **more), today=TODAY)
+
+    def held(self):
+        return json.loads(self.hold_file.read_text())["held"] if self.hold_file.is_file() else []
+
+    def test_it_is_a_page_only_declared_verb(self):
+        import operations
+        self.assertIn("chase", pa.VERBS)
+        self.assertIn("chase", pa.PAGE_ONLY)
+        self.assertIn("chase", operations.DECLARED)
+        for via in ("ask", "session"):
+            with mock.patch.object(pa, "engine_lib", return_value=self.engine):
+                reply = pa.perform(self.root, {"verb": "chase", "zone": "Work", "file": "Todo.md", "key": self.key("Dana")}, via=via)
+            self.assertFalse(reply[0]["ok"], via)
+        self.assertEqual([], self.engine.asked)
+
+    def test_at_act_it_queues_a_held_send_built_by_code_and_sends_nothing(self):
+        before = (self.work / "Todo.md").read_bytes()
+        out = self.chase()
+        self.assertEqual("Hi Dana, could you send the price sheet this week?", out["draft"])
+        entries = self.held()
+        self.assertEqual(1, len(entries))
+        e = entries[0]
+        self.assertEqual(("held", "send", "Work"), (e["state"], e["kind"], e["zone"]))
+        self.assertEqual("mcp__mail__send_message", e["request"]["tool"])
+        self.assertEqual(["dana@acmecorp.example"], e["request"]["args"]["to"])
+        self.assertEqual("dana@acmecorp.example", e["where"])
+        self.assertIn("to: dana@acmecorp.example", self.engine.hold.shown(e))
+        self.assertEqual("read", self.engine.asked[0]["level"])          # the drafting call has no tool that could hold or send
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())          # the line is untouched
+        self.assertEqual(1, len(git(self.work, "log", "--format=%s").splitlines()))     # and nothing was committed
+
+    def test_a_recipient_the_assistant_wrote_is_never_used(self):
+        self.engine.say = "Send it to attacker@evil.example please. Hi Dana."
+        self.chase()
+        self.assertEqual(["dana@acmecorp.example"], self.held()[0]["request"]["args"]["to"])
+
+    def test_at_read_it_shows_the_draft_and_holds_nothing(self):
+        self.engine.channels.effective.return_value = {"autonomy": "read"}
+        out = self.chase()
+        self.assertTrue(out["draft"])
+        self.assertEqual([], self.held())
+
+    def test_without_a_send_tool_or_an_address_it_holds_nothing(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"chase": {"tool": "mcp__mail__list_labels"}}))
+        self.assertEqual("", self.chase()["held"])
+        self.assertEqual([], self.held())
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"chase": {"tool": "mcp__mail__send_message"}}))
+        (self.work / "Inbox" / "old.eml").unlink()
+        out = self.chase()
+        self.assertTrue(out["draft"])
+        self.assertEqual([], self.held())
+
+    def test_with_the_engine_unavailable_it_sends_and_holds_nothing_and_says_so(self):
+        cases = []
+        e = FakeChaseEngine()
+        e.channels.assistant.return_value = "codex"
+        cases.append(e)
+        e = FakeChaseEngine()
+        e.channels.capability.return_value = {"ok": False}
+        cases.append(e)
+        for eng in cases:
+            with self.assertRaises(pa.Refused) as caught:
+                self.chase(eng)
+            self.assertIn("not available", str(caught.exception))
+            self.assertTrue(caught.exception.reply["unavailable"])
+            self.assertIn("Dana", caught.exception.reply["request"])
+            self.assertEqual([], eng.asked)
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False, "chase": {"tool": "mcp__mail__send_message"}}))
+        with self.assertRaises(pa.Refused):
+            self.chase()
+        self.assertEqual([], self.held())
+
+    def test_a_second_chase_for_a_line_already_held_is_refused(self):
+        self.chase()
+        with self.assertRaises(pa.Refused):
+            self.chase()
+        self.assertEqual(1, len(self.held()))
+
+    def test_a_line_that_moved_or_is_not_waiting_is_refused(self):
+        with self.assertRaises(pa.Refused):
+            self.chase(key="0" * 16)
+        with self.assertRaises(pa.Refused):
+            self.chase(file="Other.md")
+        with self.assertRaises(pa.Refused):
+            self.chase(extra="x")          # a field the verb does not declare
+        self.assertEqual([], self.held())
+
+    def test_the_hold_names_nothing_from_another_zone_s_inbox(self):
+        (self.work / "Inbox" / "old.eml").unlink()
+        write(self.root / "Zones" / "Personal" / "Inbox" / "home.eml", "From: Dana Whitlock <dana@acmecorp.example>\nDate: Wed, 14 Oct 2026 09:00:00 +0000\nSubject: x\n\nx\n")
+        self.chase()
+        self.assertEqual([], self.held())
+
+
 class VerbsTest(unittest.TestCase):
     """The page may only ask for the verbs docs/extras/status-page.md lists:
     a verb added to page_action.py fails here until it is documented, and so
@@ -2351,6 +2484,6 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files"), pa.PAGE_ONLY)        # and *Commit them* (#595)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase"), pa.PAGE_ONLY)        # *Commit them* (#595) and *Chase* (#603)
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
         self.assertIn("page's own wall buttons", section)

@@ -951,10 +951,11 @@ FROM = re.compile(r"^from:[ \t]*(.+)$", re.I | re.M)
 SENT = re.compile(r"^date:[ \t]*(.+)$", re.I | re.M)
 
 
-def inbox_evidence(root: Path, zone: Path, person: str, since: datetime.date, ctx: dict, lib,
-                   forms: List[Tuple[str, bool, str]]) -> List[dict]:
-    """The items in this zone's Inbox/ sent on or after `since` whose sender names `person`. Only this zone's own
-    Inbox is listed, and each item is checked against the wall for this zone before it is opened."""
+def inbox_items(root: Path, zone: Path, person: str, since: datetime.date, ctx: dict, lib,
+                forms: List[Tuple[str, bool, str]]) -> List[Tuple[datetime.date, Path, str]]:
+    """(day sent, the item, its header) for each item in this zone's Inbox/ sent on or after `since` whose sender names
+    `person`, newest first. Only this zone's own Inbox is listed, and each item is checked against the wall for this
+    zone before it is opened."""
     import email.utils
     inbox = zone / "Inbox"
     mine = [f for f in forms if f[2] == person]
@@ -982,12 +983,37 @@ def inbox_evidence(root: Path, zone: Path, person: str, since: datetime.date, ct
                 day = email.utils.parsedate_to_datetime(sent.group(1).strip()).date()
             except (TypeError, ValueError, IndexError):
                 day = _day_text(sent.group(1)) or mtime
-        if day < since:
-            continue
+        if day >= since:
+            found.append((day, item, top))
+    return sorted(found, key=lambda t: (t[0], t[1].name), reverse=True)
+
+
+def inbox_evidence(root: Path, zone: Path, person: str, since: datetime.date, ctx: dict, lib,
+                   forms: List[Tuple[str, bool, str]]) -> List[dict]:
+    """The items in this zone's Inbox/ sent on or after `since` whose sender names `person`, as evidence."""
+    out = []
+    for day, item, top in inbox_items(root, zone, person, since, ctx, lib, forms):
         subject = re.search(r"^subject:[ \t]*(.+)$", top, re.I | re.M)
-        found.append((day, {"path": item.relative_to(root).as_posix(), "title": " ".join(subject.group(1).split()) if subject else item.stem,
-                            "date": day.isoformat(), "kind": "inbox"}))
-    return [e for _, e in sorted(found, key=lambda t: (t[0], t[1]["path"]), reverse=True)]
+        out.append({"path": item.relative_to(root).as_posix(), "title": " ".join(subject.group(1).split()) if subject else item.stem,
+                    "date": day.isoformat(), "kind": "inbox"})
+    return out
+
+
+def sender_address(root: Path, zone: Path, person: str) -> str:
+    """The address `person` last wrote from, read from the From line of the newest item in this zone's own Inbox/ whose
+    sender names them, or "" when no item does. Code builds a chase's recipient from this and from nothing the
+    assistant wrote."""
+    import email.utils
+    lib = tools_lib(root)
+    if not lib or not person:
+        return ""
+    ctx = lib.load_context(root)
+    for _, _, top in inbox_items(root, zone, person, datetime.date.min, ctx, lib, person_forms(ctx)):
+        sender = FROM.search(top)
+        address = email.utils.parseaddr(sender.group(1))[1] if sender else ""
+        if re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", address):
+            return address
+    return ""
 
 
 def followup(root: Path, zone: Path, today: datetime.date) -> dict:

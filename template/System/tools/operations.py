@@ -314,6 +314,10 @@ DECLARED: Dict[str, Op] = {
     # *Commit them* on the Overview's row for changes not committed (#595): the listed files of one zone, committed by
     # the engine's bounded commit, or that commit taken back (`undo` with its `repo`). Only the app's bridge.
     "commit-files": _op(("zone", "files", "undo", "repo"), ("zone", "files", "undo"), "zone", True),
+    # *Chase* on a Follow-ups row (#603): a Waiting on line whose chase day has come, by key. It drafts a message and, at
+    # Act, queues the send through `hold`; it never sends and never writes a file. Only the app's bridge. A second one
+    # for a line already held is refused by the handler.
+    "chase": _op(("zone", "file", "key"), ("file", "key"), "zone", False, "safe"),
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),

@@ -408,6 +408,20 @@ class SweepJobTest(unittest.TestCase):
         rows = self.job.next_actions(self.root, self.zone)
         self.assertEqual([("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Dana to send the volumes")], rows)
 
+    def test_a_hub_beside_its_threads_is_swept_while_it_keeps_a_resume_point(self):
+        """#604: a hub's resume point stays read beside its threads; a heading's hub and an Outcome are not."""
+        self.next_rows("Acme Review", "Pricing", "Dana to send the volumes")
+        hub = self.zone / "Acme Review" / "Acme Review.md"
+        hub.write_text("---\ntitle: Acme Review\nstatus: active\n---\n\n# Acme Review\n\n### Resume here\n\n"
+                       "| | |\n|---|---|\n| Next action | Jo to sign the order |\n", encoding="utf-8")
+        rows = self.job.next_actions(self.root, self.zone)
+        self.assertIn(("Zones/Work/Acme Review/Acme Review.md", "Jo to sign the order"), rows)
+        self.assertIn(("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Dana to send the volumes"), rows)
+        hub.write_text(hub.read_text(encoding="utf-8").replace("### Resume here", "### Outcome"), encoding="utf-8")
+        self.assertNotIn("Zones/Work/Acme Review/Acme Review.md", [r[0] for r in self.job.next_actions(self.root, self.zone)])
+        hub.write_text("---\ntitle: Acme Review\nlayout: thread-first\n---\n\n### Resume here\n\n| Next action | not read |\n", encoding="utf-8")
+        self.assertNotIn("Zones/Work/Acme Review/Acme Review.md", [r[0] for r in self.job.next_actions(self.root, self.zone)])
+
     def test_the_prompt_lists_paths_and_rows_and_names_its_tools_and_needs_no_listing(self):
         prompt = self.job.prompt_for("Work", "2026-03-20", 7, ["Wikis/Meetings/wiki/sources/260310-acme-kickoff.md"],
                                      [("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Dana to send the volumes")])

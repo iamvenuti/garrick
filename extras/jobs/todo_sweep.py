@@ -134,12 +134,28 @@ def next_action(note: Path) -> str:
     return ""
 
 
+def hub_keeps_resume(hub: Path) -> bool:
+    """As `garrick_lib.hub_keeps_resume`: the hub holds a `### Resume here` block and is not a heading."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    head = text[3:].split("\n---", 1)[0] if text.startswith("---") else ""
+    if re.search(r"(?im)^layout:\s*[\"']?thread-first[\"']?\s*$", head):
+        return False
+    return any(l.strip().lower() == "### resume here" for l in text.splitlines())
+
+
 def thread_notes(zone: Path) -> List[Path]:
-    """The live thread notes of the zone, and the hubs of projects that have no threads: a note whose status is done or parked is left out."""
+    """The live thread notes of the zone, and the hubs of projects that have no threads or keep a resume point of their own beside
+    them (a `### Resume here` block, in a project that is not a heading): a note whose status is done or parked is left out."""
     notes = []
     for project in sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "archive"):
         threads = project / "Threads"
-        found = [t / (t.name + ".md") for t in sorted(threads.iterdir()) if t.is_dir()] if threads.is_dir() else [project / (project.name + ".md")]
+        hub = project / (project.name + ".md")
+        found = [t / (t.name + ".md") for t in sorted(threads.iterdir()) if t.is_dir()] if threads.is_dir() else [hub]
+        if threads.is_dir() and hub_keeps_resume(hub):
+            found.insert(0, hub)
         notes += [n for n in found if n.is_file() and front(n).get("status", "active").lower() not in ("done", "parked")]
     return notes
 

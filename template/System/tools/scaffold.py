@@ -4,7 +4,7 @@
     python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden" [--open]
     python3 System/tools/scaffold.py zone --name Garden --walled | --open [--yes]
     python3 System/tools/scaffold.py party --name "Acme Corp" --zone Work --what "Supplier" [--check]
-    python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] --thread "Pricing"
+    python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] [--thread "Pricing"] [--heading]
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
@@ -32,9 +32,13 @@ changes its flag, the one place a wall is set: open to walled writes, runs the
 workspace's wall check and lists what now crosses; walled to open says how many files
 it releases and writes only with `--yes`. Both are refused, writing nothing, while the
 Zones table has no Walled column (the update to zone walls has not been accepted).
-A project always starts with its first thread. A thread inherits its project's party,
-if it has one: `--party` is optional, an index and never a wall. `--check` applies
-every refusal and makes nothing, so a form can check a name as it is typed.
+A project need not start with a thread: `--thread` is optional. Without `--heading` the
+project is one piece of work: its hub holds a `### Resume here` block, and it has `Sources/`
+and `Deliverables/` and no `Threads/` until a thread is added. With `--heading` it is a
+heading over separate pieces of work: the hub says `layout: thread-first`, holds no resume
+point and no `Sources/` or `Deliverables/`, and may stay empty. A thread inherits its
+project's party, if it has one: `--party` is optional, an index and never a wall. `--check`
+applies every refusal and makes nothing, so a form can check a name as it is typed.
 
 `party` adds a row to the Parties table in System/context.md and offers the tag
 itself, so nobody has to invent one. The row it adds carries a Learned cell,
@@ -739,32 +743,82 @@ def cmd_new_party(root, args, today):
     return "\n".join(said)
 
 
+STATE_OF_PLAY = "## State of play"
+
+
+def hub_resume_section(root):
+    """The thread template's `## State of play` section, which is what a hub that keeps its own
+    resume point holds too: one block, one shape."""
+    template = root / "System" / "templates" / "thread"
+    note = next((p for p in sorted(template.glob("*.md"))), None)
+    text = note.read_text(encoding="utf-8") if note else ""
+    at = text.find(STATE_OF_PLAY)
+    if at < 0:
+        raise Refusal("System/templates/thread has no State of play section to start a hub's resume point from.")
+    return text[at:].rstrip("\n") + "\n"
+
+
+def shape_hub(hub, root, heading, with_thread):
+    """A hub made from the project template, shaped for what the project is. One piece of work with
+    no thread yet gets a resume point and no Threads list entry; a heading gets `layout: thread-first`
+    and no Sources or Deliverables rows; a project made with its first thread is as it has always been."""
+    text = hub.read_text(encoding="utf-8")
+    if not with_thread:
+        text = re.sub(r"(?m)^- \[\[[^\n]*<what it produces>\n", "", text, count=1)
+    if heading:
+        text = re.sub(r"(?m)^(status: .*)$", r"\1\nlayout: thread-first", text, count=1)
+        text = re.sub(r"(?m)^\| `(Sources|Deliverables)/` \|.*\n", "", text)
+        text = text.replace("| `Threads/` | One folder per thread, each with its resume point |",
+                            "| `Threads/` | One folder per thread, each with its resume point and its own `Sources/` and `Deliverables/` |")
+        text = text.replace("<One or two sentences: what this project is, and what falls outside it.>",
+                            "<One or two sentences: what this heading covers, and what falls outside it.>")
+    elif not with_thread:
+        section = hub_resume_section(root)
+        text = re.sub(r"(?m)^## Threads$", lambda m: section + "\n## Threads", text, count=1)
+    hub.write_text(text, encoding="utf-8")
+
+
 def cmd_project(root, args, today):
     zone_dir = find_zone(root, args.zone)
-    name, thread = args.name.strip(), args.thread.strip()
+    name = args.name.strip()
+    thread = (args.thread or "").strip()
+    heading = bool(getattr(args, "heading", False))
     if name.lower() == INBOX.lower():
         raise Refusal(f"{INBOX} is where {zone_dir.name}'s mail and files wait to be filed. Pick another name for the project.")
     spoken = (args.spoken or "").strip()
     thread_spoken = (args.thread_spoken or "").strip()
+    if thread_spoken and not thread:
+        raise Refusal("--thread-spoken says how the first thread's name is said, and no first thread is named.")
     check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
-    check_name(thread, [], "thread", name, spoken=thread_spoken)
+    if thread:
+        check_name(thread, [], "thread", name, spoken=thread_spoken)
     party = check_party(root, args.party, zone_dir.name)
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
-    asked = say_how(name, "project", spoken) + say_how(thread, "thread", thread_spoken)
+    asked = say_how(name, "project", spoken) + (say_how(thread, "thread", thread_spoken) if thread else [])
+    kind = "a heading over separate pieces of work" if heading else "one piece of work"
     if getattr(args, "check", False):
-        return "\n".join([f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."] + asked)
+        first = f", and {thread} as its first thread" if thread else ""
+        return "\n".join([f"{name} will do as a project in {zone_dir.name}, as {kind}{first}."] + asked)
     values = {"ZONE": zone_dir.name, "PROJECT": name, "THREAD": thread, "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "project", target, values)
     hub = target / f"{name}.md"
     if spoken and hub.is_file():
         hub.write_text(set_spoken(hub.read_text(encoding="utf-8"), spoken), encoding="utf-8")
-    make_thread(root, target, thread, party, today, thread_spoken)
+    if hub.is_file():
+        shape_hub(hub, root, heading, bool(thread))
+    if heading:
+        for papers in ("Sources", "Deliverables"):       # just copied from the template: nothing of anyone's in them
+            shutil.rmtree(target / papers, ignore_errors=True)
+    if thread:
+        make_thread(root, target, thread, party, today, thread_spoken)
     if not party:
         drop_empty_party(hub)
-    link_thread_in_hub(hub, thread, today)
-    return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
+    if thread:
+        link_thread_in_hub(hub, thread, today)
+    made = f"Created project {name} in {zone_dir.name}, as {kind}"
+    return "\n".join([made + (f", with its first thread, {thread}." if thread else ".")] + asked)
 
 
 def cmd_thread(root, args, today):
@@ -2110,11 +2164,13 @@ def main(argv=None):
     y.add_argument("--what", help="what it is, in a few words, for the table")
     y.add_argument("--also", action="store_true",
                    help="a second row for an organisation already in Parties, in another capacity")
-    p = sub.add_parser("project", help="a new project, with its first thread")
+    p = sub.add_parser("project", help="a new project: one piece of work, or a heading over separate pieces; the first thread is optional")
     p.add_argument("--zone", required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--party", help="tag from Parties in System/context.md, or several separated by commas; optional, an index")
-    p.add_argument("--thread", required=True, help="name of the first thread")
+    p.add_argument("--thread", help="name of the first thread; optional")
+    p.add_argument("--heading", action="store_true",
+                   help="a heading over separate pieces of work (layout: thread-first), not one piece of work")
     p.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     p.add_argument("--thread-spoken", dest="thread_spoken",
                    help="how the first thread's name is said, where it does not say it")

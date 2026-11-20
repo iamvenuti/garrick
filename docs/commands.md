@@ -68,13 +68,19 @@ for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.co
 
 ## Your first project
 
-A project always starts with its first thread. A party tag from the Parties table in `System/context.md` is optional: it is an index, not a wall. The commands below use `acme`, which exists in the demo workspace; on your own install, use one of your own tags. From the workspace root:
+A project need not start with a thread. It is either one piece of work (the default) or a heading over separate pieces. A party tag from the Parties table in `System/context.md` is optional: it is an index, not a wall. The commands below use `acme`, which exists in the demo workspace; on your own install, use one of your own tags. From the workspace root:
 
 ```sh
-python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme --thread "Pricing"
+python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme
 ```
 
-This creates `Zones/Work/Acme/`, its hub note, `Sources/`, `Deliverables/`, and the first thread at `Zones/Work/Acme/Threads/Pricing/Pricing.md`, then lists the thread in the hub. A later thread in the same project:
+This creates `Zones/Work/Acme/`, with its hub note, `Sources/` and `Deliverables/`. The project is one piece of work: the hub holds the `### Resume here` block, and there is no `Threads/` folder until a thread is added. Add `--thread "Pricing"` to make the first thread at the same time, at `Zones/Work/Acme/Threads/Pricing/Pricing.md`, listed in the hub. A project that is a heading over separate pieces of work takes `--heading`:
+
+```sh
+python3 System/tools/scaffold.py project --zone Work --name "Marketing" --heading
+```
+
+Its hub says `layout: thread-first`, holds no resume point and has no `Sources/` or `Deliverables/` of its own. It lists its threads, and may be made empty: the check does not warn that it has none. A later thread in the same project:
 
 ```sh
 python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Supplier Audit"
@@ -232,7 +238,7 @@ A hub's frontmatter can change what is checked in its project:
 
 | Key | Means |
 |---|---|
-| `layout: thread-first` | Everything sits inside the threads, each with its own `Sources/` and `Deliverables/`; nothing but `Threads/` at the project's top |
+| `layout: thread-first` | The project is a heading over separate pieces of work: everything sits inside the threads, each with its own `Sources/` and `Deliverables/`; nothing but `Threads/` at the project's top, and no resume point in the hub. `scaffold.py project --heading` makes one |
 | `anonymous: true` | The project makes things that name nobody: its deliverables are read for the other parties of its zone, their people, aliases and domains. A list, such as `anonymous: [Cedar Labs]`, adds names to keep out |
 | `share: <folder>` | The project's files also live on a shared drive. A path in its resume points that is not here is not reported |
 

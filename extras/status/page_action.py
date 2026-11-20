@@ -114,6 +114,15 @@ zone's repository, as the skills would:
                 none a link, none changed more than 30 days ago, no more than COMMIT_MOST of them. With an engine that has no
                 bounded commit, or one that is not available (Ask off, a failed capability check), nothing is written
                 and the reply says so
+    chase       the *Chase* button of a Follow-ups row on the Overview: {"zone", "file", "key"}, a Waiting on line whose chase day has
+                come. Only the app's bridge (`via: page`). It hands the line to the engine at the Ask channel's own autonomy
+                to draft the message (Read tools only), and then code decides. At Act, or Full, it queues the send through
+                `hold` and sends nothing: the tool is the one `chase.tool` names in System/garrick-settings.json and the
+                recipient is an address read from this zone's Inbox, so the confirmation shows both, built by code and not
+                by the assistant. At Read, with no such tool or address, or when a send is already waiting for the line,
+                it returns the draft to copy and holds nothing. With the engine unavailable (not Claude, a failed
+                capability check, Ask off) nothing is drafted and the reply says so, with the request to give an assistant.
+                It never sends
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
@@ -338,7 +347,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
          "commit-files",
          "todo-edit",
-         "todo-retire")
+         "todo-retire",
+         "chase")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -5487,6 +5497,121 @@ def commit_files(ws: Path, req: dict, now=None) -> object:
                         "files": [str(x) for x in (out.get("files") or files)]}}
 
 
+class Unavailable(Refused):
+    """A refusal that tells the page the background assistant is not there, with the request to give a visible one."""
+
+    def __init__(self, say: str, request: str):
+        super().__init__(say)
+        self.reply = {"unavailable": True, "request": request}
+
+
+CHASE_RUNNER = None         # a test's stand-in for the assistant call that drafts a chase
+CHASE_DRAFT = 2000          # characters of a draft kept
+
+
+def chase_setting(ws: Path) -> str:
+    """The connector tool a chase is queued with, `chase.tool` of System/garrick-settings.json, as the owner wrote it, or
+    "": it must be shaped as a connector tool and be one that sends. Nothing else is ever held for a chase."""
+    try:
+        saved = prefs().lib(ws).read_settings(ws)
+    except Exception:
+        saved = {}
+    tool = (saved.get("chase") or {}).get("tool") if isinstance(saved.get("chase"), dict) else ""
+    eng = engine_lib()
+    held = getattr(eng, "hold", None) if eng is not None else None
+    if not isinstance(tool, str) or held is None or not held.TOOL_RE.match(tool) or held.kind_of({"tool": tool}) != "send":
+        return ""
+    return tool
+
+
+def chase(ws: Path, req: dict) -> object:
+    """*Chase* on a Follow-ups row: draft the message that asks for what a Waiting on line is waiting for, and, where
+    the owner has set a send tool and the person's address is in this zone's Inbox, queue it for their yes through
+    `hold`. Nothing is sent from here, whatever the autonomy: Act and Full queue it, Read shows the draft. The line, the
+    person, the address, the tool and the words of the confirmation are all built here, from the zone's own files and
+    the owner's settings; what the assistant wrote is the body of the message and nothing else. A line that has moved
+    since the page was built is refused."""
+    zone = zone_dir(ws, req.get("zone"))
+    key = req.get("key")
+    if req.get("file") not in (None, "Todo.md") or not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{16}", key):
+        raise Refused("that is not a line of the zone's Todo.md")
+    task = next((t for t in todo_lines().tasks(str(zone)) if t["key"] == key and t["file"] == "Todo.md" and t["waiting"]), None)
+    if task is None:
+        raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+    try:
+        found = json.loads((zone / ".todo-followups.json").read_text(encoding="utf-8")).get(key)
+    except (OSError, ValueError, AttributeError):
+        found = None
+    found = found if isinstance(found, dict) else {}
+    person = " ".join(str(found.get("person") or "").split())[:80]
+    line = " ".join(plain_line(task["text"]).split())[:300]
+    source = " ".join(("%s, %s" % (found.get("title"), found.get("date"))).split())[:160] if found.get("title") else ""
+    ask_for = "chase %s about: %s" % (person or "them", line)
+    eng = engine_lib()
+    chan = getattr(eng, "channels", None) if eng is not None else None
+    saved = {}
+    try:
+        saved = prefs().lib(ws).read_settings(ws)
+    except Exception:
+        pass
+    if eng is None or chan is None or saved.get("ask") is False:
+        raise Unavailable("The background assistant is not available, so nothing was drafted or sent. Ask your assistant to %s." % ask_for, ask_for)
+    cap = chan.capability(ws)
+    if chan.assistant() != "claude" or not cap.get("ok"):
+        raise Unavailable("The background assistant is not available, so nothing was drafted or sent. Ask your assistant to %s." % ask_for, ask_for)
+    autonomy = chan.effective(ws, "ask", cap)["autonomy"]
+    hold = eng.hold
+    exchange = "chase-%s" % key
+    if any(e.get("exchange") == exchange for e in hold.pending()):
+        raise Refused("a chase for that line is already waiting for your yes")
+    prompt = ("Write the short message the user would send to %s to ask for what this line says is owed, in plain words, "
+              "polite, no more than five sentences, with no subject line and no greeting name you do not know. Say the "
+              "message and nothing else; do not send anything.\n<line>%s</line>%s"
+              % (person or "the person it is about", line, "\n<source>%s</source>" % source if source else ""))
+    got = eng.run(ws, "ask", prompt, zone.name, {"id": exchange}, CHASE_RUNNER, cap, level="read")
+    draft = str(got.get("say") or "").strip()[:CHASE_DRAFT]
+    if not got.get("ok") or not draft:
+        raise Refused(draft or "the assistant could not draft it, so nothing was sent")
+    for e in got.get("held") or []:
+        hold.cancel(e["id"])                        # a drafting call has no `hold` tool; any entry it made is taken away
+    tool = chase_setting(ws) if autonomy in ("act", "full") else ""
+    todo = load_todo_skill(ws)
+    to = todo.sender_address(Path(ws).resolve(), zone, person) if tool and todo is not None and person else ""
+    if not tool or not to:
+        why = ("this is the Ask channel at Read" if autonomy == "read" else
+               "no send tool is set for it under chase in System/garrick-settings.json" if not tool else
+               "no address for %s is in the zone's Inbox" % (person or "them"))
+        return {"say": "Here is a draft. Nothing was sent, and nothing is waiting for your yes: %s." % why, "draft": draft, "held": ""}
+    entry = hold.add("ask", zone.name, exchange, "Send a follow-up to %s about: %s" % (person, line[:120]), to,
+                     {"tool": tool, "args": {"to": [to], "subject": "Following up: %s" % line[:80], "body": draft}})
+    return {"say": "A follow-up to %s is waiting for your yes. Nothing has been sent." % person, "draft": draft, "held": entry["id"]}
+
+
+def plain_line(text: str) -> str:
+    """A Todo line's words without its links, tags and fields, for a sentence."""
+    text = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", str(text or ""))
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\ufe0f? *\d{4}-\d{2}-\d{2}", "", text)
+    return re.sub(r"(?:^|\s)#[\w/-]+", "", text).strip(" ·")
+
+
+def load_todo_skill(ws: Path):
+    """The todo skill's todo.py, the workspace's own copy first, then the one in a Garrick clone, or None."""
+    for src in (Path(ws) / "System" / "skills" / "todo" / "todo.py", HERE.parent / "skills" / "todo" / "todo.py",
+                HERE.parent.parent / "template" / "System" / "skills" / "todo" / "todo.py"):
+        if not src.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_page_todo_skill", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception:
+            continue
+        if callable(getattr(mod, "sender_address", None)):
+            return mod
+    return None
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5575,6 +5700,8 @@ def act(ws: Path, req, today=None, now=None):
         return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "commit-files":
         return commit_files(ws, req, now)
+    if req["verb"] == "chase":
+        return chase(ws, req)
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":
@@ -5609,7 +5736,8 @@ PAGE_SETTLE = 10        # seconds the build waits for another request first, so 
 CALLERS = ("page", "ask", "session")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
-             "commit-files")
+             "commit-files",
+             "chase")
 
 
 def builds_page(req) -> bool:

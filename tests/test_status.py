@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(23, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(24, html.count("</script>"))         # the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -2261,9 +2261,27 @@ class TestPanels(StatusCase):
         self.assertIn('<span class="wwhat">Work, Meetings</span>', row)             # the zones, in the zone column
         self.assertIn('data-request="process the inbox" data-folder="%s"' % self.root, row)
         self.assertIn(">Process the Inbox</button>", row)
-        self.assertRegex(row, r'<a class="alt" href="file://[^"]*">Open the inbox</a>')   # the link is secondary
+        # each place the row names has its own link, secondary to the button (W4)
+        self.assertIn('<a class="alt" href="%s">Open the Work inbox</a>' % (self.root / "Zones" / "Work" / "Inbox").as_uri(), row)
+        self.assertIn('<a class="alt" href="%s">Open the Meetings inbox</a>' % (self.root / "Wikis" / "Meetings" / "raw" / "inbox").as_uri(), row)
         self.assertIn("<h2>One thing needs you.</h2>", html)                        # the items are one thing in the sentence, counted once (#595)
         self.assertNotIn('id="lead"', html)
+
+    def test_each_zone_named_by_the_inbox_row_has_its_own_link_to_its_own_inbox(self):
+        """W4: the row linked the first zone's inbox whatever zones it named, so Personal's link opened Work's."""
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        write(self.root / "Zones" / "Personal" / "Inbox" / "Receipt.eml", "Subject: receipt\n\nhello\n")
+        row = self.inbox_rows(self.page())[0]
+        self.assertIn('<span class="wwhat">Personal, Work</span>', row)
+        links = re.findall(r'<a class="alt" href="([^"]*)">Open the ([A-Za-z]+) inbox</a>', row)
+        self.assertEqual([("Personal", (self.root / "Zones" / "Personal" / "Inbox").as_uri()),
+                          ("Work", (self.root / "Zones" / "Work" / "Inbox").as_uri())], [(n, h) for h, n in links])
+        self.assertNotIn(">Open the inbox<", row)                                   # no link that could be any one of them
+
+    def test_one_zone_with_items_keeps_its_one_link(self):
+        write(self.root / "Zones" / "Personal" / "Inbox" / "Receipt.eml", "Subject: receipt\n\nhello\n")
+        row = self.inbox_rows(self.page())[0]
+        self.assertIn('<a class="alt" href="%s">Open the inbox</a>' % (self.root / "Zones" / "Personal" / "Inbox").as_uri(), row)
 
     def test_a_request_button_opens_the_menus_assistant_or_copies(self):
         js = status.JS

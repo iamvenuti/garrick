@@ -23,6 +23,10 @@ REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "template" / "System" / "tools"
 
 
+HUB_BLOCK = ("\n## State of play\n\n### Resume here\n\n**Where it stands, 1 March 2026.** The main line goes on here.\n\n"
+             "| | |\n|---|---|\n| Next action | send the draft |\n| Waiting on | nobody |\n")
+
+
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, str(path))
     module = importlib.util.module_from_spec(spec)
@@ -162,8 +166,6 @@ class TestMakingAThread(LayoutCase):
         self.assertNotEqual(0, r.returncode)
 
 
-HUB_BLOCK = ("\n## State of play\n\n### Resume here\n\n**Where it stands, 1 March 2026.** The main line goes on here.\n\n"
-             "| | |\n|---|---|\n| Next action | send the draft |\n| Waiting on | nobody |\n")
 OUTCOME = "\n## State of play\n\n### Outcome\n\nDelivered and accepted.\n"
 
 
@@ -237,6 +239,124 @@ class TestThePage(LayoutCase):
         self.assertIn("Birch", data["projects"])
         self.assertEqual(["Birch"], data["headings"])
         self.assertNotIn("first", status.manage_data(T, {"parties": {}}, True))
+
+
+import test_ask_make as tam  # noqa: E402  (its cases are not imported: they would run twice)
+from test_ask import ask  # noqa: E402
+from fixtures import project_hub, thread_note  # noqa: E402
+
+
+def heading_hub(zone, project):
+    return project_hub(zone, project, "acme", ["Pricing", "Freight"]).replace("status: active", "status: active\nlayout: thread-first")
+
+
+class TestNaming(tam.MakeCase):
+    """A project's name in a request: a piece of work resolves to its hub; a heading asks which thread, naming them;
+    a question reads every thread under it; nothing reads another zone's project of the same name."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Cedar" / "Cedar.md", heading_hub("Work", "Cedar"))
+        for t in ("Pricing", "Freight"):
+            write(self.work / "Cedar" / "Threads" / t / (t + ".md"), thread_note("Cedar", t, "acme", body="The %s price is 40." % t))
+        write(self.work / "Maple" / "Maple.md", project_hub("Work", "Maple", "acme", ["Rates"]) + HUB_BLOCK)
+        write(self.work / "Maple" / "Threads" / "Rates" / "Rates.md", thread_note("Maple", "Rates", "acme"))
+        far = self.root / "Zones" / "Personal"
+        write(far / "Cedar" / "Cedar.md", heading_hub("Personal", "Cedar"))
+        write(far / "Cedar" / "Threads" / "Private Plan" / "Private Plan.md",
+              thread_note("Cedar", "Private Plan", "acme", body="The private price is 99."))
+        self.names = ask.scan(self.root)
+
+    def test_the_list_marks_a_heading(self):
+        self.assertTrue(self.names["Work"]["Cedar"].get("heading"))
+        self.assertFalse(self.names["Work"]["Maple"].get("heading"))
+        text = ask.render(self.names)
+        self.assertIn("- Cedar [active] heading threads: Freight; Pricing", text)
+        self.assertIn("- Maple [active] threads: Rates", text)
+
+    def test_opening_a_piece_of_work_opens_its_hub(self):
+        kind, item = self.propose({"verb": "open", "zone": "Work", "project": "Maple"})
+        self.assertEqual("launch", kind)
+        self.assertTrue(item["note"].endswith("Maple/Maple.md"))
+
+    def test_opening_a_heading_asks_which_thread_naming_them(self):
+        with self.assertRaises(ask.Needs) as asked:
+            self.propose({"verb": "open", "zone": "Work", "project": "Cedar"})
+        self.assertEqual("Which thread of Cedar: Freight or Pricing?", asked.exception.question)
+        self.assertEqual(["Freight", "Pricing"], [c["label"] for c in asked.exception.choices])
+        self.assertNotIn("Private", asked.exception.question)           # the other zone's project of that name is not read
+        kind, item = self.propose({"verb": "open", "zone": "Work", "project": "Cedar", "thread": "Pricing"})
+        self.assertEqual("launch", kind)
+
+    def test_a_new_project_has_no_thread_and_is_a_heading_only_when_the_request_says_so(self):
+        _, item = self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour", "party": "acme", "heading": True},
+                               tam.project_named(parties=("acme",)))
+        self.assertNotIn("heading", item)
+        self.assertNotIn("thread", item)
+        named = tam.Named({"acme"}, [])
+        named = type("N", (), {"text": "new project Harbour as a heading for Acme", "parties": {"acme"}, "entries": [], "zone": "Work"})()
+        _, item = self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour", "party": "acme", "heading": True}, named)
+        self.assertTrue(item["heading"])
+
+    def test_a_question_about_a_heading_names_each_answers_thread_and_reads_one_zone(self):
+        sc = ask_scope = ask.scope_lib()
+        scope = ask_scope.Scope("thread", "Work", "Cedar", None, ["price"], set())
+        found = ask_scope.search(self.root, scope, {"parties": {}, "zones": {}}, ask_scope.lib(self.root))
+        paths = [r["path"] for r in found]
+        self.assertTrue([r for r in found if r.get("thread") == "Pricing"], paths)
+        self.assertTrue([r for r in found if r.get("thread") == "Freight"], paths)
+        self.assertFalse([p for p in paths if p.startswith("Zones/Personal")], paths)
+        self.assertFalse([r for r in found if r.get("thread") == "Private Plan"])
+
+
+class TestTheDispatcherNames(unittest.TestCase):
+    """The Telegram channel settles a project's name through the intake skill (purpose ask)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        for tool in ("garrick_lib.py",):
+            write(self.root / "System" / "tools" / tool, (TOOLS / tool).read_text(encoding="utf-8"))
+        self.intake = load("garrick_intake_layout", REPO / "template" / "System" / "skills" / "intake" / "intake.py")
+        work = self.root / "Zones" / "Work"
+        write(work / "Cedar" / "Cedar.md", heading_hub("Work", "Cedar"))
+        for t in ("Pricing", "Freight"):
+            write(work / "Cedar" / "Threads" / t / (t + ".md"), thread_note("Cedar", t, "acme"))
+        write(work / "Maple" / "Maple.md", project_hub("Work", "Maple", "acme", ["Rates"]) + HUB_BLOCK)
+        write(work / "Maple" / "Threads" / "Rates" / "Rates.md", thread_note("Maple", "Rates", "acme"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_a_piece_of_work_with_a_resume_point_settles_to_its_hub(self):
+        place = self.intake.resolve_destination(self.root, "Maple", "x", purpose="ask")
+        self.assertEqual(("Maple", None), (place["project"], place["thread"]))
+
+    def test_a_piece_of_work_without_one_keeps_what_it_did(self):
+        place = self.intake.resolve_destination(self.root, "Acme Review", "x", purpose="ask")
+        self.assertEqual(("Acme Review", "Pricing"), (place["project"], place["thread"]))
+
+    def test_a_heading_asks_which_thread_and_names_its_own_zones_threads_only(self):
+        with self.assertRaises(self.intake.Confirm) as asked:
+            self.intake.resolve_destination(self.root, "Cedar", "x", purpose="ask")
+        self.assertEqual("Which thread of Cedar: Freight or Pricing?", str(asked.exception))
+        self.assertEqual(["Freight", "Pricing"], [o["thread"] for o in asked.exception.offer])
+
+    def test_a_note_keeps_its_wording(self):
+        with self.assertRaises(self.intake.Confirm) as asked:
+            self.intake.resolve_destination(self.root, "Cedar", "x")
+        self.assertEqual("Which thread of Cedar is the note about: Freight or Pricing?", str(asked.exception))
+
+    def test_a_heading_of_the_same_name_in_another_zone_is_asked_about_by_zone_and_never_read(self):
+        write(self.root / "Zones" / "Personal" / "Cedar" / "Cedar.md", heading_hub("Personal", "Cedar"))
+        write(self.root / "Zones" / "Personal" / "Cedar" / "Threads" / "Private Plan" / "Private Plan.md",
+              thread_note("Cedar", "Private Plan", "acme"))
+        with self.assertRaises(self.intake.Confirm) as asked:
+            self.intake.resolve_destination(self.root, "Cedar", "x", purpose="ask")
+        self.assertEqual("Which do you mean: Cedar in Personal or Cedar in Work?", str(asked.exception))
+        self.assertNotIn("Private", str(asked.exception))
+        self.assertEqual([], getattr(asked.exception, "offer", []))
 
 
 class HubBesideThreads(unittest.TestCase):

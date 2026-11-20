@@ -804,9 +804,20 @@ def _text(ws: Path, path: Path, sources: bool) -> Optional[str]:
     return None
 
 
+def _thread_of(ws: Path, path: Path, zone: Optional[str]) -> Optional[str]:
+    """The thread a file of a zone's project sits in, `Zones/<Zone>/<Project>/Threads/<Thread>/...`: its name, or
+    None for any other file."""
+    try:
+        parts = path.relative_to(ws).parts
+    except ValueError:
+        return None
+    return parts[4] if zone and len(parts) > 5 and parts[0] == "Zones" and parts[1] == zone and parts[3] == "Threads" else None
+
+
 def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     """Every record inside the scope that the words find, best first, as
-    {"path", "date", "imported", "title", "zones", "text"}: the whole of it
+    {"path", "date", "imported", "title", "zones", "text"} (and "thread", the thread of its project a record
+    under `Threads/` came from, so an answer about a heading names the piece of work it rests on): the whole of it
     a prompt or a citation may hold. `date` is when it happened, `imported`
     when it was filed.
 
@@ -838,6 +849,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                   "title": title.strip(), "zones": [zone] if zone else [], "text": passage(body, looked, own=first)}
         if public:
             record["public"] = True             # published: the one record that is read with no zone
+        elsewhere = _thread_of(ws, path, zone)
+        if elsewhere:
+            record["thread"] = elsewhere
         found.append((rank, record))
 
     def reads(zone: Optional[str]) -> bool:

@@ -65,7 +65,9 @@ The actions, each an object:
 
 - {"verb": "open", "zone": Z, "project": P}
   open a project the way clicking it does, in whatever the user's Settings
-  pick for that
+  pick for that. A project the list marks `heading` is a heading over
+  separate pieces of work: its name alone does not say which one is meant,
+  so Garrick asks which thread, naming them
 - {"verb": "open", "zone": Z, "project": P, "thread": T}
   the same, for a thread
 - add "app": "claude" | "codex" | "cmux" | "finder" to an open to use that
@@ -91,13 +93,15 @@ The actions, each an object:
   true; never guess a place for a note
 - {"verb": "new-thread", "zone": Z, "project": P, "name": N}
   make a thread in a project the list has
-- {"verb": "new-project", "zone": Z, "name": N, "party": "<tag>", "thread": T}
-  make a project, with its first thread. "party" is the tag `<names>` gives
+- {"verb": "new-project", "zone": Z, "name": N, "party": "<tag>", "thread": T, "heading": true}
+  make a project: one piece of work, with no thread to start with. "party" is the tag `<names>` gives
   for a party the request itself names ("for Birch", "for Acme Corp"). Leave
   "party" out when the request names none, and Garrick asks which, with
   nothing made until the user answers; never pick one, and never make a
   party: a party that is not in `<names>` is not one you can use. Leave
-  "thread" out when the request names no first thread. Add "spoken": "..."
+  "thread" out when the request names no first thread. Add "heading": true
+  only when the request itself says the project is a heading over separate
+  pieces of work; otherwise leave it out. Add "spoken": "..."
   to either only when the user has said how the name is heard, in the
   request or in answer to Garrick's question; copy their words exactly,
   never make one up

@@ -18,7 +18,7 @@ Three levels, always. Start a project or a thread by asking the assistant, or wi
             <Thread>.md       thread note, with the resume point
             (working notes for this thread)
 
-Every piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.
+A project is one of two kinds. One piece of work keeps its resume point in its hub, beside any threads, and a thread either uses the project's `Sources/` and `Deliverables/` or keeps its own. A heading over separate pieces of work (`layout: thread-first` in its hub) has no resume point and no papers of its own: each thread under it is a piece of work with its own. Every thread keeps its resume point in its note.
 
 ## Parties
 

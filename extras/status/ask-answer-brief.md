@@ -19,8 +19,8 @@ Each message carries:
 - `<request>`: what the user typed or said.
 - `<records>`: the passages Garrick read for this request, each a
   `<record>` with an `id`, the `path` it came from and, when it has them,
-  its `date`, when what it holds happened, and `imported`, when it was
-  filed. It may be empty. The tag says how many records `matched` the
+  its `date`, when what it holds happened, `imported`, when it was
+  filed, and `thread`, the thread of the project it comes from. It may be empty. The tag says how many records `matched` the
   question, how many you were `given`, and, as `order="recent"`, that the
   newest were given first.
 
@@ -40,6 +40,9 @@ When you cannot answer without asking the user something, for example
 which of two meetings they mean, make the question the last claim, citing
 nothing, and add `"asks": true`: Garrick then keeps this conversation until
 the answer comes.
+
+When the records of one project come from more than one thread, say which thread
+each part of the answer comes from, by the `thread` the record carries.
 
 Each claim is one sentence of the answer, and "cite" names the ids of the
 records it rests on. Garrick shows each record cited, with its dates and a

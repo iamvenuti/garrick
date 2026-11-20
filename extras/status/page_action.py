@@ -5823,7 +5823,9 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
+                 "heading",
+                 "papers"):
         ap.add_argument("--" + name)
     return ap
 

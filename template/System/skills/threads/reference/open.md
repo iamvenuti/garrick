@@ -6,14 +6,26 @@ Read after `SKILL.md`: the dispatcher's *Resolving a name* and *Listening mode* 
 
 These are the rules in `System/rules.md` that this request carries out, word for word.
 
-- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread. A project that is only ever one thread may keep that section in its hub instead.
+- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread. A project that is one piece of work keeps its resume point in its hub, beside any threads.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
 
 ## Open: "open X"
 
-1. Resolve X.
+1. Resolve X. **A project's name alone** says which piece of work is meant
+   when the project is one piece of work: X is its hub. When the project is a
+   heading (`layout: thread-first` on its hub), its name does not: ask which
+   thread in one line that names them, "Which thread of Birch: Pricing or
+   Freight?", and never guess. A thread's name is needed only to open that
+   thread itself.
 2. Read that thread's `### Resume here` block. Nothing else: not the hub, not
-   the working notes, not the dated entries, unless the user asks.
+   the working notes, not the dated entries, unless the user asks. For a
+   project that is one piece of work, read the hub's `### Resume here` block
+   the same way, while it is there (an `### Outcome` in its place ends it), and
+   add one line that lists the threads beside it, by name and status. A thread
+   of such a project is opened by its own block: that one wins for "open <Thread>".
+   A question about a heading ("where are we on Birch") reads every thread
+   under it, and each part of the answer names the thread it comes from. Never
+   read a project or thread of another zone to settle a name.
 3. **Read the checkpoint beside it**, the `### Checkpoint` block under Resume
    here, with the tool rather than by eye, so both hashes are in hand from the
    start:

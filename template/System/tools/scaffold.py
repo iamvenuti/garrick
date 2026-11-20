@@ -829,6 +829,8 @@ def cmd_project(root, args, today):
     kind = "a heading over separate pieces of work" if heading else "one piece of work"
     if getattr(args, "check", False):
         first = f", and {thread} as its first thread" if thread else ""
+        if thread and not heading:                  # as it has always said it
+            return "\n".join([f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."] + asked)
         return "\n".join([f"{name} will do as a project in {zone_dir.name}, as {kind}{first}."] + asked)
     values = {"ZONE": zone_dir.name, "PROJECT": name, "THREAD": thread, "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "project", target, values)
@@ -846,6 +848,8 @@ def cmd_project(root, args, today):
         drop_empty_party(hub)
     if thread:
         link_thread_in_hub(hub, thread, today)
+    if thread and not heading:                      # as it has always said it
+        return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
     made = f"Created project {name} in {zone_dir.name}, as {kind}"
     return "\n".join([made + (f", with its first thread, {thread}." if thread else ".")] + asked)
 

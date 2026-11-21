@@ -1286,7 +1286,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		let p = Process()
 		p.executableURL = URL(fileURLWithPath: python)
-		p.arguments = [script.path, "--workspace", workspace.path]
+		p.arguments = [script.path, "--workspace", workspace.path, "--via", "page"]
 		p.currentDirectoryURL = workspace
 		let input = Pipe(), output = Pipe()
 		p.standardInput = input

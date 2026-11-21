@@ -319,11 +319,11 @@ class TestTheCallerIsNamed(ExecutorCase):
         self.session("wake", "--zone", "Work", "--project", "Acme", "--thread", "Pricing")           # refused: active already
         with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "memory-preview"}))), \
                 contextlib.redirect_stdout(io.StringIO()):
-            pa.main(["--workspace", str(self.root)])                                                  # a read
+            pa.main(["--workspace", str(self.root), "--via", "page"])                                                  # a read
         with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "wake", "zone": "Work", "project": "Acme",
                                                               "thread": "Freight"}))), \
                 mock.patch.object(self.lib, "detach", return_value=True), contextlib.redirect_stdout(io.StringIO()):
-            pa.main(["--workspace", str(self.root)])                                                  # as the app sends it
+            pa.main(["--workspace", str(self.root), "--via", "page"])                                                  # as the app sends it
         lines = self.log()
         self.assertEqual(4, len(lines), lines)         # the stack is read, and a read is logged too
         self.assertRegex(lines[0], r"  ->  ok: Acme, Freight is parked  \(session\)$")

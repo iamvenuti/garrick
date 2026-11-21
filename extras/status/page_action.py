@@ -5985,8 +5985,9 @@ def command_parser() -> argparse.ArgumentParser:
         description="Do what a status page button asks. With a verb, from the options below; without one, "
                     "reading one JSON request on stdin.")
     ap.add_argument("--workspace", help="the workspace (default: the one this script is in)")
-    ap.add_argument("--via", choices=CALLERS, help="who is asking, for the log and the record (default: session "
-                                                  "with a verb, page with JSON)")
+    ap.add_argument("--via", choices=CALLERS, help="who is asking, for the log and the record (default: session, "
+                                                  "whatever the form of the request; only the app's bridge "
+                                                  "sends --via page)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
                  "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
@@ -6000,7 +6001,7 @@ def main(argv=None) -> int:
     args = command_parser().parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
     cli = args.verb is not None
-    via = args.via or ("session" if cli else "page")
+    via = args.via or "session"          # S9: only an explicit --via page is the page
     req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():

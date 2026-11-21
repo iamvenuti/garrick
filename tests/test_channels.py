@@ -593,6 +593,26 @@ class TestBoundedRun(EngineCase):
         self.assertEqual("sonnet", run.seen[0]["tier"])
         self.assertIn("<autonomy>act</autonomy>", cmd[cmd.index("-p") + 1])
 
+    def test_c11_each_file_is_read_once_through_a_refused_commit(self):
+        """#600 C11: the files git reports changed are read once per state they are in, not once for every snapshot."""
+        import collections
+        import pathlib
+        other = self.root / "Zones" / "Work" / "Acme Review" / "Notes" / "loose.md"
+        write(other, "A note nobody committed.\n")
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
+        reads = collections.Counter()
+        real = pathlib.Path.read_bytes
+
+        def counting(path):
+            reads[str(path)] += 1
+            return real(path)
+        with mock.patch.object(pathlib.Path, "read_bytes", counting):
+            got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit(), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertTrue(reads[str(other)] or reads[str(self.file)], "the check read the changed files")
+        self.assertEqual([], [(p, n) for p, n in reads.items() if n > 1])
+        self.assertEqual("A note nobody committed.\n", other.read_text())                 # what it restores is unchanged
+
     def test_a_refused_commit_leaves_no_edit(self):
         self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
         before, text = self.head(), self.file.read_text()

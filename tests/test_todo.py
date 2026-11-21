@@ -1033,6 +1033,43 @@ class DistilTest(unittest.TestCase):
         self.assertEqual(before, self.text())
         self.assertEqual(3, len(out["notes"]))
 
+    LONG = "Acme Review/Threads/Pricing/Pricing"
+
+    def test_n4_a_long_plan_label_reaches_a_short_line(self):
+        out = self.run_plan({"thread": "[[%s|Pricing]]" % self.LONG,
+                             "retired": [{"line": "Send Dana the price sheet"}]})
+        self.assertEqual(1, out["counts"]["retired"])
+        self.assertNotIn("Send Dana the price sheet", self.text())
+
+    def test_n4_a_short_plan_label_reaches_a_long_line(self):
+        write(self.zone / "Todo.md", DISTIL_LIST.replace("[[Pricing]]: Ask Dana", "[[%s|Pricing]]: Ask Dana" % self.LONG))
+        out = self.run_plan({"changed": [{"line": "Ask Dana whether the Harbour team travels",
+                                           "text": "Ask Dana whether the Harbour team travels, and the dates"}]})
+        self.assertEqual(1, out["counts"]["reworded"])
+        self.assertIn(", and the dates", self.text())
+
+    def test_n4_the_two_forms_name_one_thread(self):
+        names = todo.thread_index(self.zone)
+        self.assertEqual(todo.thread_of("- [ ] [[Pricing]]: x", names), todo.thread_of("- [ ] [[%s|Pricing]]: x" % self.LONG, names))
+        self.assertEqual(todo.target_of("Pricing", names), todo.target_of("[[%s|Pricing]]" % self.LONG, names))
+
+    def test_n4_a_short_name_two_projects_share_matches_no_long_line(self):
+        write(self.zone / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", "# Pricing\n")
+        write(self.zone / "Todo.md", DISTIL_LIST.replace("## Done", "- [ ] [[%s|Pricing]]: Send Theo the volume tiers\n"
+              "- [ ] [[Birch Entry/Threads/Pricing/Pricing|Pricing]]: Send Jo the rate card\n\n## Done" % self.LONG))
+        out = self.run_plan({"done": ["Send Theo the volume tiers", "Send Jo the rate card"],
+                             "retired": [{"line": "Send Theo the volume tiers"}]}, yes=True)
+        self.assertEqual(0, out["counts"]["retired"])
+        self.assertEqual(0, out["counts"]["ticked"])
+        self.assertIn("- [ ] [[%s|Pricing]]: Send Theo the volume tiers" % self.LONG, self.text())
+        self.assertIn("- [ ] [[Birch Entry/Threads/Pricing/Pricing|Pricing]]: Send Jo the rate card", self.text())
+
+    def test_n4_a_label_that_matches_no_line_changes_nothing(self):
+        before = self.text()
+        out = self.run_plan({"thread": "Freight Audit", "done": ["Send Dana the price sheet"]}, yes=True)
+        self.assertEqual(before, self.text())
+        self.assertEqual(0, out["counts"]["ticked"])
+
     def test_a_short_phrase_is_refused_but_the_whole_line_is_taken(self):
         before = self.text()
         out = self.run_plan({"retired": [{"line": "Dana"}], "done": ["Send"]})

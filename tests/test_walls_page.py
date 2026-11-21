@@ -67,8 +67,9 @@ class WallsPageCase(unittest.TestCase):
         git(self.root, "add", ".gitignore")
         git(self.root, "commit", "-q", "-m", "start")
 
-    def send(self, req, via=None):
-        """One request as page_action.py's own command reads it: JSON on stdin, the reply on stdout. The audit log is written."""
+    def send(self, req, via="page"):
+        """One request as page_action.py's own command reads it: JSON on stdin, the reply on stdout. The audit log is written.
+        The app's bridge says `--via page`; `via=None` sends no `--via` at all, as a stray process would."""
         argv = ["--workspace", str(self.root)] + (["--via", via] if via else [])
         out = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(req))), mock.patch.object(sys, "stdout", out):
@@ -143,6 +144,28 @@ class TestLook(WallsPageCase):
                 self.assertNotIn("harvest", path.read_text(encoding="utf-8", errors="ignore"), str(path))
         self.assertIn("walls-look", self.log_text())                                   # the request itself is logged, as every one is
 
+    def test_s9_json_with_no_via_is_a_session_and_is_refused_the_page_only_verbs(self):
+        """#600 S9: with no `--via`, a request on stdin was taken as the page. It is a session, whatever its form."""
+        f = self.wording()
+        req = {"verb": "walls-look", "place": "Zones/Work", "path": COPY, "id": f["id"]}
+        got = self.send(req, None)
+        self.assertFalse(got["ok"])
+        self.assertNotIn("run", got)
+        self.assertNotIn("harvest", json.dumps(got))
+        self.assertTrue(self.send(req, "page")["ok"])                                  # the explicit page is accepted as before
+        look = self.look()
+        before = self.head()
+        allow = {"verb": "walls-allow", "path": COPY, "id": f["id"], "blob": look["blob"]}
+        self.assertFalse(self.send(allow, None)["ok"])
+        self.assertEqual(before, self.head())
+        self.assertEqual([], self.ledger())                                            # nothing was written
+
+    def test_s9_the_apps_bridge_says_via_page(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        line = next(l for l in swift.splitlines() if "p.arguments = [script.path," in l)
+        self.assertIn('"--via", "page"', line)
+        self.assertEqual(1, swift.count('appendingPathComponent("page_action.py")'), "one place starts page_action.py")
+
     def test_only_the_apps_bridge_may_ask(self):
         f = self.wording()
         req = {"verb": "walls-look", "place": "Zones/Work", "path": COPY, "id": f["id"]}
@@ -187,7 +210,7 @@ class TestLook(WallsPageCase):
 
 
 class TestAllow(WallsPageCase):
-    def allow(self, via=None, **more):
+    def allow(self, via="page", **more):
         look = self.look()
         req = {"verb": "walls-allow", "path": COPY, "id": self.wording()["id"], "blob": look["blob"]}
         req.update(more)

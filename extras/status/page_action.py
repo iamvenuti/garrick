@@ -5698,8 +5698,7 @@ def finding_keep(ws: Path, fq, kind: str, answer: str, rel: str, which: str) -> 
     if kind not in fq.KEEPABLE:
         raise Refused("not an answer Garrick offers for this finding")
     key = fq.later_key(kind, rel, which)
-    parts = rel.split("/")
-    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis"):
+    if not fq.keepable_path(rel):
         raise Refused("only a page of a zone or a wiki can be left as it is")
     with held("page-action-keep.lock", busy="another answer to a finding is still being saved"):
         if answer == fq.UNKEEP:
@@ -5729,8 +5728,7 @@ def finding_decision_holds(ws: Path, rel: str, today: dt.date) -> object:
     if note.is_symlink() or not note.is_file():
         raise Refused("that decision is not there any more; the page rebuilds now")
     with zone_lock(wiki):
-        before = note.read_bytes()
-        text = before.decode("utf-8")
+        text = note.read_bytes().decode("utf-8")
         m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
         fm = m.group(1) if m else ""
         if not m or not re.search(r"(?m)^type:\s*decision\s*$", fm) or not re.search(r"(?m)^status:\s*valid\s*$", fm):
@@ -5738,12 +5736,17 @@ def finding_decision_holds(ws: Path, rel: str, today: dt.date) -> object:
         if not re.search(r"(?m)^revisit:\s*\S", fm):
             raise Refused("that decision carries no flag to review, so it is left as it is")
         new = set_front(text, {"reviewed": today.isoformat()}, drop=("revisit",))
-        note.write_text(new, encoding="utf-8")
-        try:
-            commit_all(wiki, [(note, before)], "Meetings: decision %s reviewed, it still holds" % note.stem, wall=wall_refusal(ws))
-        except Refused:
-            note.write_bytes(before)
-            raise
+
+        def change(w):
+            write_question(note, new)       # watched, so a refusal puts the page back as it was
+
+        def after(result, done):
+            if done["refused"]:             # the repository that holds the page, through the wall check
+                raise Refused(next(iter(done["refused"].values())))
+            if done["uncommitted"]:
+                raise Refused("not committed, so nothing changed: the page is in no repository")
+            return result
+        transaction(ws, change, commit=lambda label, rels: "Meetings: decision %s reviewed, it still holds" % note.stem, after=after)
     return {"say": "Marked as still holding. Its status and its words are as they were."}
 
 

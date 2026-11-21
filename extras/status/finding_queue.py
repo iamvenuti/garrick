@@ -271,6 +271,12 @@ def later_key(kind: str, path: str, which: str = "") -> str:
     return hashlib.sha1(("%s\0%s%s" % (kind, path, "\0" + which if which else "")).encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
+def keepable_path(rel: str) -> bool:
+    """Whether a page can be left as it is: a page of a zone or a wiki. The one test the offer and the verb share."""
+    parts = str(rel).split("/")
+    return len(parts) >= 3 and parts[0] in ("Zones", "Wikis")
+
+
 def which_other(item: dict) -> str:
     """Six hex digits of the finding's own check and text: the Not now key of a kind other finding names this one finding."""
     text = "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
@@ -755,6 +761,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
         answers = []
         for a in ANSWERS_OTHER:
             a = dict(a)
+            if a["action"] == "keep" and not keepable_path(path):
+                continue            # the verb would refuse it: only a page of a zone or a wiki can be left as it is
             if a["action"] == "handoff":
                 a["phrase"] = other_phrase(item)
             else:
@@ -869,7 +877,7 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, ke
                 key = later_key(ident, str(item["path"]), which_other(item) if ident == OTHER else "")
                 now = file_hash(ws, str(item["path"]))
                 if now and kept.get(key) == now:
-                    if kept_out is not None:
+                    if kept_out is not None and not any(r.get("key") == key for r in kept_out):
                         kept_out.append(keep_record(ident, item, key, ws))
                     continue            # left as it is by the user, and the file is as it was
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None

@@ -1575,6 +1575,17 @@ class TestLeaveItAsItIs(unittest.TestCase):
         req = next(a for a in other["answers"] if a["id"] == "keep")["req"]
         self.assertRegex(req["answer"], r"^keep-[0-9a-f]{6}$")                           # one finding of the file, as Not now's mark
 
+    def test_other_has_the_keep_answer_only_for_a_page_the_verb_accepts(self):
+        """Fix round C8: one function decides for the offer and for the verb."""
+        under = fq.question(item("judgment", "orphans", "System/tools/x.py", "%(p)s: odd"), "System")
+        self.assertNotIn("keep", [a["id"] for a in under["answers"]])
+        self.assertNotEqual("keep", under["recommended"])
+        page = fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: odd"), "Zones/Work")
+        self.assertIn("keep", [a["id"] for a in page["answers"]])
+        self.assertTrue(fq.keepable_path("Wikis/Meetings/wiki/a.md"))
+        self.assertFalse(fq.keepable_path("System/tools/x.py"))
+        self.assertFalse(fq.keepable_path("Zones/Work"))
+
     def test_the_store_keeps_hashes_only_and_not_now_and_keep_do_not_disturb_each_other(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
@@ -1741,6 +1752,19 @@ class TestKeepOnThePage(QueueCase):
             done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True, timeout=30)
             self.assertEqual(0, done.returncode, done.stderr)
 
+    def test_a_kept_error_finding_is_listed_once_and_counted_once(self):
+        """Fix round C7: the forecast pass drops it, quick_needs must not add it back as an extra, and the second pass must not record it again."""
+        page_md = "Zones/Work/Orphan.md"
+        write(self.root / page_md, "# Orphan\n\nA page.\n")
+        finding = {"kind": "judgment", "check": "orphans", "path": page_md, "line": "%s: an orphan page" % page_md}
+        self.record([finding])
+        self.quick({"check": "orphans", "severity": "error", "path": page_md, "message": "an orphan page"})
+        key = fq.later_key("other", page_md, fq.which_other({"check": "orphans", "message": "an orphan page"}))
+        fq.kept_put(self.root, key, fq.file_hash(self.root, page_md))
+        card = self.card(self.page())
+        self.assertEqual(1, card.count('data-keep="1"'))
+        self.assertIn("Kept by you · 1", card)
+
     def test_the_script_undoes_a_keep_from_the_queue_and_from_the_card(self):
         self.assertIn("/^keep/.test(q.answer||'')", fq.QUEUE_JS)
         self.assertIn("/^unkeep/.test(q.answer||'')", fq.QUEUE_JS)
@@ -1764,8 +1788,15 @@ class TestItStillHolds(PanelCase):
 
     def setUp(self):
         super().setUp()
+        # an installed workspace has one repository at Wikis/, none of its own in Meetings/
+        shutil.rmtree(self.meetings / ".git", ignore_errors=True)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "config", "maintenance.auto", "false")
+        git(wikis, "config", "gc.auto", "0")
+        commit_all(wikis)
         write(self.root / self.REL, self.PAGE)
-        commit_all(self.meetings, "a decision")
+        commit_all(wikis, "a decision")
         self.page = self.root / self.REL
         self.base = len(self.log())
 
@@ -1839,7 +1870,7 @@ class TestItStillHolds(PanelCase):
         self.assertFalse(self.ask(kind="note-long")["ok"])
 
     def test_a_wall_refusal_puts_the_page_back_as_it_was(self):
-        hook = self.meetings / ".git" / "hooks" / "pre-commit"
+        hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
         hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
         hook.chmod(0o755)

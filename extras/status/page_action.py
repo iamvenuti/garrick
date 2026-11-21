@@ -1913,22 +1913,29 @@ def set_machine_role(ws: Path, req: dict) -> dict:
 
 
 def guard_hooks():
-    """extras/hooks/read_guard.py, next to the status page (System/status/hooks/ in a workspace, extras/hooks/ in a clone):
-    the one `read_guard.py --check` reports on, and the one that writes the registration. None when it is not there."""
-    for folder in (HERE / "hooks", HERE.parent / "hooks"):
+    """read_guard.py from where Garrick keeps it: `extras/hooks/` in a clone, or beside a Garrick hook the assistants'
+    settings already point at (`settings_guard.hook_folders()`). It is the one `read_guard.py --check` reports on and the
+    one that writes the registration. (None, None) when no copy is found: the workspace carries none of its own."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        folders = found.hook_folders()
+    except Exception:
+        return None, None
+    for folder in folders:
         src = folder / "read_guard.py"
-        if src.is_file():
-            spec = importlib.util.spec_from_file_location("garrick_read_guard_register", str(src))
-            mod = importlib.util.module_from_spec(spec)
-            sys.path.insert(0, str(folder))
-            try:
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            finally:
-                if sys.path and sys.path[0] == str(folder):
-                    sys.path.pop(0)
-            return mod, src
+        spec = importlib.util.spec_from_file_location("garrick_read_guard_register", str(src))
+        mod = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(folder))
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            continue
+        finally:
+            if sys.path and sys.path[0] == str(folder):
+                sys.path.pop(0)
+        return mod, src
     return None, None
 
 
@@ -1972,7 +1979,7 @@ def set_read_guard(ws: Path, req: dict) -> dict:
     if mode is not None:
         guard, src = guard_hooks()
         if guard is None:
-            raise fails("guard-file", "extras/hooks/read_guard.py is not beside the status page")
+            raise fails("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
         home = str(Path.home())
         try:
             guard.register(str(src), home, install=mode != "off")
@@ -6153,8 +6160,8 @@ FAILURES = (
      "Open Settings and choose Show why."),
     ("guard-assistant", "The read guard was not changed: no assistant is set up on this computer.", "Show why", "why",
      "Open Settings and choose Show why."),
-    ("guard-file", "The read guard was not changed: its hook file is not on this computer.", "Show why", "why",
-     "Open Settings and choose Show why."),
+    ("guard-file", "The read guard was not changed: Garrick could not find its hook file on this computer.", "Show why", "why",
+     "Register the zone guard from the Garrick download you keep, as the hooks page says, then choose the read guard again."),
     ("guard-read", "The read guard was not changed: your assistant's settings could not be read, so they were left as they are.",
      "Show why", "why", "Open Settings and choose Show why."),
     ("guard-write", "The read guard was not changed: your assistant's settings could not be written.", "Try again", "retry",

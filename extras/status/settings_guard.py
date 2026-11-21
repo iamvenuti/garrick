@@ -22,6 +22,7 @@ import html
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -87,12 +88,35 @@ def esc(text) -> str:
 # ---------------------------------------------------------------------------------------------------- what the guard holds
 
 
-def guard_module():
-    """read_guard.py, next to the status page (System/status/hooks/ in a workspace, extras/hooks/ in a clone), or None."""
-    for folder in (HERE / "hooks", HERE.parent / "hooks"):
-        src = folder / "read_guard.py"
-        if not src.is_file():
+HOOK_NAME = re.compile(r"[^\s\"']*(?:zone_guard|read_guard|waiting_hook)\.py")
+
+
+def hook_folders(home: Optional[str] = None) -> List[Path]:
+    """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
+    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace).
+    The workspace has no copy of its own: the hooks stay where the Garrick download is."""
+    home = home or str(Path.home())
+    folders = [HERE.parent / "hooks"]
+    for rel in (".claude/settings.json", ".codex/hooks.json"):
+        try:
+            text = (Path(home) / rel).read_text(encoding="utf-8")
+        except OSError:
             continue
+        for found in HOOK_NAME.findall(text):
+            there = Path(os.path.expanduser(found))
+            if there.is_absolute():
+                folders.append(there.parent)
+    out = []
+    for f in folders:
+        if f not in out and (f / "read_guard.py").is_file():
+            out.append(f)
+    return out
+
+
+def guard_module():
+    """read_guard.py, from the first of `hook_folders()` that loads, or None."""
+    for folder in hook_folders():
+        src = folder / "read_guard.py"
         sys.path.insert(0, str(folder))
         try:
             spec = importlib.util.spec_from_file_location("garrick_read_guard_settings", str(src))

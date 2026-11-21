@@ -141,8 +141,7 @@ PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._-]+$")
 # the Garrick band run from a Garrick you keep outside the workspace, so they
 # are not here.
 EXTRAS = (
-    # The hooks come with the status page, so Settings can register the read guard from where the page runs (#621).
-    ("status", "the status page", (("extras/status", "System/status", ()), ("extras/hooks", "System/status/hooks", ("README.md",)))),
+    ("status", "the status page", (("extras/status", "System/status", ()),)),
     ("jobs", "the scheduled jobs", (("extras/jobs", "System/jobs", ()),)),
     ("cmux", "desk, for cmux", (("extras/cmux", "System/cmux", ("desk",)),
                                 ("extras/cmux/desk", "System/skills/desk", ()))),

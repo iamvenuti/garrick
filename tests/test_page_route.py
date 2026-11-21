@@ -177,3 +177,10 @@ class TestWhatCountsAsTheApp(RouteCase):
     def test_the_parent_of_a_test_run_is_not_the_app(self):
         # Nothing patched: the process that started this one is the test runner.
         self.assertFalse(pa.page_route(self.root))
+
+
+class TestTheDocsSayWhoCannotPress(unittest.TestCase):
+    def test_a_scratch_build_a_build_elsewhere_and_a_translocated_app_are_named(self):
+        text = (Path(__file__).resolve().parent.parent / "docs" / "enforced.md").read_text(encoding="utf-8")
+        for words in ("outside `~/Applications` or `/Applications`", "scratch build", "translocated", "cannot press the page-only buttons"):
+            self.assertIn(words, text)

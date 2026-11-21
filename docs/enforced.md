@@ -85,7 +85,7 @@ Some buttons on the page are for the page alone: the wall questions' *Show both*
 - the bundle's identifier is Garrick's own, and the workspace it names is the one the request is for;
 - the lookup worked. When it does not, or on a machine that is not a Mac, the answer is no.
 
-A request that says `--via page` and fails this is treated as a session's. A page-only verb is then refused, with the same sentence a session always got, and every other verb does what it did. The log line and the record name the caller it was treated as. A command line that says `--via ask` or `--via outbox` is a session too: those two are callers inside the process, never a command line.
+The app has to be the installed one: a build outside `~/Applications` or `/Applications`, a scratch build (its identifier differs) or an app macOS has translocated cannot press the page-only buttons, and each of them answers that it is the page's own button. A request that says `--via page` and fails this is treated as a session's. A page-only verb is then refused, with the same sentence a session always got, and every other verb does what it did. The log line and the record name the caller it was treated as. A command line that says `--via ask` or `--via outbox` is a session too: those two are callers inside the process, never a command line.
 
 No argument, environment variable or file switches the check off or on. Tests replace the one function in their own process.
 

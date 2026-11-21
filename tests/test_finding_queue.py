@@ -1788,8 +1788,15 @@ class TestItStillHolds(PanelCase):
 
     def setUp(self):
         super().setUp()
+        # an installed workspace has one repository at Wikis/, none of its own in Meetings/
+        shutil.rmtree(self.meetings / ".git", ignore_errors=True)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "config", "maintenance.auto", "false")
+        git(wikis, "config", "gc.auto", "0")
+        commit_all(wikis)
         write(self.root / self.REL, self.PAGE)
-        commit_all(self.meetings, "a decision")
+        commit_all(wikis, "a decision")
         self.page = self.root / self.REL
         self.base = len(self.log())
 
@@ -1863,7 +1870,7 @@ class TestItStillHolds(PanelCase):
         self.assertFalse(self.ask(kind="note-long")["ok"])
 
     def test_a_wall_refusal_puts_the_page_back_as_it_was(self):
-        hook = self.meetings / ".git" / "hooks" / "pre-commit"
+        hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
         hook.parent.mkdir(parents=True, exist_ok=True)
         hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
         hook.chmod(0o755)

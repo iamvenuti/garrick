@@ -411,6 +411,27 @@ class TestLayout(LayoutCase):
         self.assertEqual("The deck is Deliverables/%s here.\n" % self.DECK, outside.read_text())
 
 
+class TestThePageBuildsBesideAHub(LayoutCase):
+    """A hub that keeps `### Resume here` beside a thread is a row of Your work, not of the Threads card, and the
+    page builds."""
+
+    def test_the_page_builds_and_your_work_shows_both_rows(self):
+        import subprocess
+        import sys as _sys
+        self.make("project", "--zone", "Work", "--name", "Gate Beside")
+        self.make("thread", "--zone", "Work", "--project", "Gate Beside", "--name", "Side Thread", "--papers", "own")
+        out = self.base / "status.html"
+        r = subprocess.run([_sys.executable, str(REPO / "extras" / "status" / "status.py"), "--workspace", str(self.root),
+                            "--out", str(out), "--no-cmux"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        T = status.threads(self.root)["Work"]
+        self.assertEqual(["Side Thread"], [x["thread"] for x in T["rows"] if x["project"] == "Gate Beside"])
+        self.assertEqual(["Gate Beside"], [x["thread"] for x in T["hubs"] if x["project"] == "Gate Beside"])
+        names = status.short_names(status.threads(self.root))
+        self.assertEqual("Gate Beside", names[("Work", "Gate Beside", "Gate Beside")])
+        self.assertEqual("Side Thread", names[("Work", "Gate Beside", "Side Thread")])
+
+
 class TestThePage(LayoutCase):
     """The page's verbs and dialogs (page_action.py, status.py)."""
 

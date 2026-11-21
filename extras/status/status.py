@@ -4257,8 +4257,14 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
     for _, p, t in every:
         threads_n[t.lower()] = threads_n.get(t.lower(), 0) + 1
         pairs_n[(p.lower(), t.lower())] = pairs_n.get((p.lower(), t.lower()), 0) + 1
-    return {(z, p, t): (t if threads_n[t.lower()] == 1 else "%s, %s" % (p, t) if pairs_n[(p.lower(), t.lower())] == 1
-                        else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
+    out = {(z, p, t): (t if threads_n[t.lower()] == 1 else "%s, %s" % (p, t) if pairs_n[(p.lower(), t.lower())] == 1
+                       else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
+    # A hub that keeps its own resume point beside its threads is a row of Your work only: it says the project's
+    # name, and it takes no part in how the threads are named.
+    for z, data in T.items():
+        for r in data.get("hubs", []):
+            out.setdefault((r["zone"], r["project"], r["thread"]), r["project"])
+    return out
 
 
 def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False,

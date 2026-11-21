@@ -20,7 +20,7 @@ The role is in one small file outside the workspace, `~/.config/garrick/machine.
 
 `name` is this machine's name, and `server` is the server's. `workspace` is where the workspace sits on this machine. `peers` may list the names of other machines that sync with this one. With no file, or a file Garrick cannot read, or a role it does not know, the role is `solo`.
 
-Write the file with the command below. Run it yourself, in a terminal. An assistant session cannot write anything in `~/.config/garrick/`: the zone guard refuses it, so that a session can never change its own role.
+Write the file with the command below. Run it yourself, in a terminal. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
 
 ```sh
 python3 System/tools/machine.py set --role roaming --name laptop --server mini --workspace ~/Garrick

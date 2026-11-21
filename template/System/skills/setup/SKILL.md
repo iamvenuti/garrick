@@ -230,7 +230,7 @@ says the role now. Then show the user the one command to run themselves, in a te
     python3 System/tools/machine.py set --role <role> --name <this machine> --server <the server> --workspace <the workspace's path>
 
 **Never write `~/.config/garrick/machine.json` with an edit tool.** The role is the user's to set, and the zone guard
-refuses any session's write in that folder, so that a session cannot change its own role. Say why in one sentence.
+refuses an edit tool's write to that file, a guard against a mistaken edit and no lock: a shell command can still change it. The mail, bridge certificate and Telegram files in that folder are written as before. Say why in one sentence.
 Then point to `System/garrick-docs/machines.md` for the sync rules, the drop folders and
 the outbox: the role file says nothing about which sync tool to use, and this skill installs none. Say in one line
 what `roaming` changes, since it is the surprise: no job runs there, no commit is made there, and a write outside the

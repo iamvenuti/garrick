@@ -220,6 +220,22 @@ than nothing: it looks like an answer.
 4. After each one: "Next is <Thread>. Or stop here?" Stop whenever the user
    says so.
 
+## "The workspace is on more than one machine"
+
+Only when the user says it: a server that holds the workspace and a laptop that keeps a copy, say. Ask which role
+this machine has, one question: `solo` (one machine does everything, and the default), `server` (holds the workspace
+that counts, runs the sessions and the jobs) or `roaming` (a copy that only receives). `python3 System/tools/machine.py`
+says the role now. Then show the user the one command to run themselves, in a terminal, with their own values:
+
+    python3 System/tools/machine.py set --role <role> --name <this machine> --server <the server> --workspace <the workspace's path>
+
+**Never write `~/.config/garrick/machine.json` with an edit tool.** The role is the user's to set, and the zone guard
+refuses an edit tool's write to that file, a guard against a mistaken edit and no lock: a shell command can still change it. The mail, bridge certificate and Telegram files in that folder are written as before. Say why in one sentence.
+Then point to `System/garrick-docs/machines.md` for the sync rules, the drop folders and
+the outbox: the role file says nothing about which sync tool to use, and this skill installs none. Say in one line
+what `roaming` changes, since it is the surprise: no job runs there, no commit is made there, and a write outside the
+drop folders is refused.
+
 ## Never
 
 - Never install, download, sign in to or configure an app for the user.

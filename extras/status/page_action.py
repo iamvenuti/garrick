@@ -354,7 +354,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "commit-files",
          "todo-edit",
          "todo-retire",
-         "chase")
+         "chase",
+         "outbox-drop")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -5690,6 +5691,67 @@ def load_todo_skill(ws: Path):
     return None
 
 
+def finding_keep(ws: Path, fq, kind: str, answer: str, rel: str, which: str) -> object:
+    """Leave it as it is (#535), or take that back: one record for the finding's kind and file, in the page's own file, holding
+    while the file is exactly as it is now. A wall finding and a hook of the user's own are not in KEEPABLE, so the table has
+    already refused them. Under one lock, so a double press makes one record."""
+    if kind not in fq.KEEPABLE:
+        raise Refused("not an answer Garrick offers for this finding")
+    key = fq.later_key(kind, rel, which)
+    if not fq.keepable_path(rel):
+        raise Refused("only a page of a zone or a wiki can be left as it is")
+    with held("page-action-keep.lock", busy="another answer to a finding is still being saved"):
+        if answer == fq.UNKEEP:
+            gone = fq.kept_drop(ws, key)
+            return {"say": "Undone. Garrick asks again when the page is built." if gone else "It was not left as it is."}
+        fh = fq.file_hash(ws, rel)
+        if not fh:
+            raise Refused("that file is not there any more; the page rebuilds now")
+        fq.kept_put(ws, key, fh)
+    return {"say": "Left as it is. Garrick asks again if the page changes.",
+            "undo": {"verb": "finding", "kind": kind, "path": rel, "answer": fq.UNKEEP + ("-" + which if which else "")}}
+
+
+DECISION_DIR = ("Wikis", "Meetings") + WIKI_DECISION_DIR
+
+
+def finding_decision_holds(ws: Path, rel: str, today: dt.date) -> object:
+    """*It still holds* on a decision to review (#542): the user's own press says the decision stands, so the page takes the
+    `revisit:` flag out of the decision page's frontmatter and notes the day in `reviewed:`. Nothing else changes: not its status,
+    not a word below the frontmatter. Committed in the Meetings wiki through its wall check, under its lock. A page that is not
+    a valid decision, or carries no flag, is refused and left as it is."""
+    parts = rel.split("/")
+    if tuple(parts[:4]) != DECISION_DIR or not rel.endswith(".md") or len(parts) < 5:
+        raise Refused("only a decision page of the Meetings wiki can be marked as still holding")
+    wiki = ws / "Wikis" / "Meetings"
+    note = ws / rel
+    if note.is_symlink() or not note.is_file():
+        raise Refused("that decision is not there any more; the page rebuilds now")
+    with zone_lock(wiki):
+        text = note.read_bytes().decode("utf-8")
+        m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+        fm = m.group(1) if m else ""
+        if not m or not re.search(r"(?m)^type:\s*decision\s*$", fm) or not re.search(r"(?m)^status:\s*valid\s*$", fm):
+            raise Refused("that page is not a valid decision, so it is left as it is")
+        if not re.search(r"(?m)^revisit:\s*\S", fm):
+            raise Refused("that decision carries no flag to review, so it is left as it is")
+        new = set_front(text, {"reviewed": today.isoformat()}, drop=("revisit",))
+        if repo_of_path(ws, note) is None:      # nothing could commit it, so nothing is written (fix round N4)
+            raise Refused("not committed, so nothing changed: the page is in no repository")
+
+        def change(w):
+            write_question(note, new)       # watched, so a refusal puts the page back as it was
+
+        def after(result, done):
+            if done["refused"]:             # the repository that holds the page, through the wall check
+                raise Refused(next(iter(done["refused"].values())))
+            if done["uncommitted"]:
+                raise Refused("not committed, so nothing changed: the page is in no repository")
+            return result
+        transaction(ws, change, commit=lambda label, rels: "Meetings: decision %s reviewed, it still holds" % note.stem, after=after)
+    return {"say": "Marked as still holding. Its status and its words are as they were."}
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5698,8 +5760,8 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     if not isinstance(kind, str) or kind not in fq.VERB_ANSWERS:
         raise Refused("not a kind of finding Garrick answers")
     which = ""
-    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"later-[0-9a-f]{6}", answer):
-        answer, which = "later", answer[6:]        # this one finding is put off, not every finding of the file
+    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"(?:later|keep|unkeep)-[0-9a-f]{6}", answer):
+        answer, which = answer[:-7], answer[-6:]   # this one finding is put off or kept, not every finding of the file
     if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
@@ -5713,6 +5775,12 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
         return {"say": "Undone: the page is as it was."}
     if answer in fq.BOUNDED.get(kind, ()):
         return finding_bounded(ws, req, kind, answer, rel)
+    if answer in (fq.KEEP, fq.UNKEEP):
+        return finding_keep(ws, fq, kind, answer, rel, which)
+    if answer == "decision-holds":
+        if kind != "decision-review":
+            raise Refused("not an answer Garrick offers for this finding")
+        return finding_decision_holds(ws, rel, today)
     if answer == "later":
         until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
@@ -5780,6 +5848,8 @@ def act(ws: Path, req, today=None, now=None):
         return commit_files(ws, req, now)
     if req["verb"] == "chase":
         return chase(ws, req)
+    if req["verb"] == "outbox-drop":
+        return outbox_lib().drop(ws, req.get("zone"), req.get("id"))
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":
@@ -5812,12 +5882,22 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
                "todo-edit",
                "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
-CALLERS = ("page", "ask", "session")
+CALLERS = ("page", "ask", "session", "outbox")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
              "chase",
-             "layout")
+             "layout",
+             "outbox-drop")
+
+
+# The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
+PAGE_ONLY_ANSWERS = ("keep", "unkeep", "decision-holds")
+
+
+def page_only_answer(req) -> bool:
+    return (isinstance(req, dict) and req.get("verb") == "finding" and isinstance(req.get("answer"), str)
+            and re.sub(r"-[0-9a-f]{6}$", "", req["answer"]) in PAGE_ONLY_ANSWERS)
 
 
 def only_looks(req) -> bool:
@@ -5941,6 +6021,9 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     try:
         try:
             joined = None
+            queued = outbox_gate(ws, req, via)
+            if queued is not None:
+                return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)
             if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).
@@ -5948,6 +6031,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             if isinstance(req, dict) and req.get("verb") in PAGE_ONLY and via != "page":
                 # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
                 # never reach it, and the command line has no verb for it.
+                raise Refused("this is the page's own button; it is not for the ask box or a session")
+            if via != "page" and page_only_answer(req):
+                # Leaving a finding as it is, taking that back, and marking a decision as still holding are the user's own press:
+                # the ask box and a session never send them.
                 raise Refused("this is the page's own button; it is not for the ask box or a session")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
@@ -5984,6 +6071,35 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why
+
+
+_OUTBOX = None
+
+
+def outbox_lib():
+    """outbox.py beside this file, loaded once; None when it is not there or does not load."""
+    global _OUTBOX
+    if _OUTBOX is None:
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_outbox", str(HERE / "outbox.py"))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules.setdefault("garrick_outbox", mod)
+            spec.loader.exec_module(mod)
+            _OUTBOX = mod
+        except Exception:
+            _OUTBOX = False
+    return _OUTBOX or None
+
+
+def outbox_gate(ws: Path, req, via: str):
+    """outbox.gate(): `via: outbox` is limited to its four verbs, and on a roaming machine a page action is queued or
+    refused in place of being done (#612). None to carry on, which is every other machine."""
+    box = outbox_lib()
+    if box is None:
+        if via == "outbox":
+            raise Refused("the outbox is not installed here")
+        return None
+    return box.gate(ws, req, via)
 
 
 def start_record(ops, req: dict, via: str):

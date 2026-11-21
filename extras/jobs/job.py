@@ -602,6 +602,33 @@ def notifications():
     return _NOTIFY or None
 
 
+ROAMING_SAID = ("job.py: this machine's role is roaming, so it runs no scheduled jobs: the server does. Nothing was run. "
+                "Unload this agent with launchctl bootout.")
+
+
+def machine_role() -> str:
+    """This machine's role from System/tools/machine.py (a workspace's tools folder beside this one, else
+    GARRICK_WORKSPACE's), solo when it is not there or cannot be read (#612)."""
+    here = Path(__file__).resolve().parent
+    places = [here.parent / "tools"]
+    if os.environ.get("GARRICK_WORKSPACE"):
+        places.append(Path(os.environ["GARRICK_WORKSPACE"]).expanduser() / "System" / "tools")
+    places.append(here.parent.parent / "template" / "System" / "tools")
+    for folder in places:
+        src = folder / "machine.py"
+        if not src.is_file():
+            continue
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("garrick_machine", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.role()
+        except Exception:
+            continue
+    return "solo"
+
+
 def notify(kind: str, title: str, message: str, log=None, job: str = "", code: Optional[int] = None,
            zone: Optional[Path] = None, event: Optional[str] = None) -> bool:
     """Send a notice through System/tools/notifications.py, which sends it
@@ -1122,6 +1149,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("job.py: --timeout is %g; give the seconds a run may take, above zero" % args.timeout,
               file=sys.stderr)
         return agent.EXIT_USAGE
+    if machine_role() == "roaming":
+        print(ROAMING_SAID, file=sys.stderr)       # a roaming copy runs no job; check.py reports the loaded agent (#612)
+        return 0
     if args.detach:
         return detach([a for a in argv[:split] if a != "--detach"] + argv[split:])
     # The env file first: every setting below may come from it.

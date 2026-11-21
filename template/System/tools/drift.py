@@ -73,8 +73,20 @@ macOS keeps a scheduled job out of ~/Library/CloudStorage, so this runs
 from a session or the app, never from launchd. It changes nothing but
 System/generated/drift.json, and only with --save.
 
+On a workspace that lives on more than one machine (machine.py), a share link
+that does not resolve here is not a failure of every row under it. A `server`
+or `roaming` machine skips those rows and reports each such link once, as
+`unreachable`: "not reachable here". The machine that does reach the share
+runs this too: on `roaming`, `--save` writes what it found, a zone at a time,
+into that zone's drop folder (`Zones/<Zone>/Inbox/.machines/drift-<name>.json`),
+and the sync carries it to the server. On the server, `--save` reads those files,
+not older than two weeks, and puts their rows into drift.json, so the status
+page shows them. A link a roaming file covers is no longer reported as
+unreachable. On `solo`, which is the default, none of this applies.
+
 Exit codes: 0; 1 when a copy drifted or is missing, a row does not read, or
-a sync left a conflict copy; 2 outside a workspace.
+a sync left a conflict copy; 2 outside a workspace. An unreachable link is not
+a failure.
 
 Standard library only, Python 3.9 or later.
 """
@@ -100,6 +112,15 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import parse_frontmatter, workspace_root  # noqa: E402
 
+
+def machine_record() -> dict:
+    """machine.py's record of this machine, solo when machine.py is not beside this file or cannot be read."""
+    try:
+        import machine
+        return machine.read()
+    except Exception:
+        return {"role": "solo", "name": ""}
+
 LEDGER = ("Deliverables", "published.md")
 LINKS = ".shared"
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
@@ -111,6 +132,9 @@ HISTORY = re.compile(r"^\|\s*(withdrawn|replaced|sent)\s+(\d{4}-\d{2}-\d{2})\s*\
 HEADER = re.compile(r"^\|\s*Date\s*\|", re.I)
 RULE = re.compile(r"^\|[\s:|-]+\|$")
 SAVED = ("System", "generated", "drift.json")
+DROP = (("Inbox", ".machines"))                 # in each zone: what a roaming machine found, for the server to read
+DROP_PREFIX = "drift-"
+DROP_DAYS = 14                                  # a drop file older than this is not read
 HISTORY_WORDS = ("withdrawn", "replaced", "sent")
 ATTENTION = ("drifted", "missing", "unread", "conflict")     # the states that exit 1; behind is what a share row expects
 
@@ -356,10 +380,22 @@ def conflicts(watched: Dict[Path, dict], published: Dict[Path, dict]) -> List[di
     return out
 
 
-def survey(root: Path) -> List[dict]:
+def link_of(row_destination: str, hub_value: Optional[str]) -> str:
+    """The name of the link under .shared/ a row's destination goes through: the one before `:` in a `<link>:<path>`
+    destination, else the first part of the hub's `shared:` value; "" when neither names one."""
+    if ":" in row_destination:
+        return row_destination.partition(":")[0]
+    parts = [p for p in str(hub_value or "").strip().strip("/").split("/") if p]
+    return parts[0] if parts else ""
+
+
+def survey(root: Path, spread: bool = False) -> List[dict]:
+    """Every ledger's rows, compared. With `spread` (a `server` or `roaming` machine), a row whose link under
+    .shared/ does not resolve here is left out, and each such link is reported once, as `unreachable`."""
     out = []
     watched: Dict[Path, dict] = {}
     published: Dict[Path, dict] = {}
+    cannot: Dict[Tuple[str, str], dict] = {}
     for zone, project, thread, folder in projects(root):
         hub = project / (project.name + ".md")
         value = parse_frontmatter(hub).get("shared") if hub.is_file() else None
@@ -385,6 +421,10 @@ def survey(root: Path) -> List[dict]:
             if not ours.exists() and (folder.parent / row["file"]).exists():
                 ours = folder.parent / row["file"]           # kept outside Deliverables/, named from the project's (or thread's) folder
             theirs = destination(zone, hub_shared, row["destination"])
+            link = link_of(row["destination"], value)
+            if spread and theirs is None and link and not _resolves(zone, link):
+                cannot.setdefault((zone.name, link), dict(zone=zone.name, link=link))
+                continue
             if theirs is None:
                 state, say = "unchecked", ("the hub names no shared folder, `shared:`, through a link in %s/%s/"
                                            % (zone.name, LINKS) if ":" not in row["destination"]
@@ -398,8 +438,75 @@ def survey(root: Path) -> List[dict]:
                 published.setdefault(theirs.parent, where)
             copies = both_copies(root, ours, theirs) if theirs is not None else {}
             out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
-                            date=row["date"], state=state, say=say, **copies))
-    return out + conflicts({k: v for k, v in watched.items() if k.is_dir()}, published)
+                            date=row["date"], state=state, say=say, **({"link": link} if spread else {}), **copies))
+    gone = [dict(c, file="", state="unreachable", project="", say="the share %s is not reachable on this machine" % c["link"])
+            for _, c in sorted(cannot.items())]
+    return out + conflicts({k: v for k, v in watched.items() if k.is_dir()}, published) + gone
+
+
+def _resolves(zone: Path, link: str) -> bool:
+    """Whether the link under the zone's .shared/ leads to a folder here."""
+    return (zone / LINKS / link).exists()
+
+
+# --------------------------------------------------------------------------- what a roaming machine hands the server
+
+
+def drop_folder(zone: Path) -> Path:
+    return zone.joinpath(*DROP)
+
+
+def write_drops(root: Path, found: List[dict], name: str) -> List[Path]:
+    """On a roaming machine: what was found, a zone at a time, in each zone's drop folder. Nothing of one zone is
+    written in another's. A zone with nothing to hand over keeps no file."""
+    written = []
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", name or "roaming") or "roaming"
+    for zone in _visible(root / "Zones"):
+        mine = [f for f in found if f.get("zone") == zone.name and f.get("state") != "unreachable"]
+        target = drop_folder(zone) / ("%s%s.json" % (DROP_PREFIX, safe))
+        if not mine:
+            if target.exists():
+                target.unlink()                       # an earlier result that no longer holds
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps({"checked": datetime.datetime.now().isoformat(timespec="seconds"), "machine": name,
+                                   "zone": zone.name, "files": mine}, indent=1) + "\n", encoding="utf-8")
+        os.replace(str(tmp), str(target))
+        written.append(target)
+    return written
+
+
+def read_drops(root: Path, now: Optional[datetime.datetime] = None) -> List[dict]:
+    """On the server: the rows the roaming machines handed over, each zone's own files read for that zone alone,
+    each row marked with the machine that found it. A file that does not read, names another zone or is older than
+    DROP_DAYS is left out."""
+    now = now or datetime.datetime.now()
+    rows = []
+    for zone in _visible(root / "Zones"):
+        folder = drop_folder(zone)
+        for path in sorted(folder.glob(DROP_PREFIX + "*.json")) if folder.is_dir() else []:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                when = datetime.datetime.fromisoformat(str(data["checked"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if not isinstance(data, dict) or data.get("zone") != zone.name or (now - when).days > DROP_DAYS:
+                continue
+            for f in data.get("files") or []:
+                if (isinstance(f, dict) and f.get("zone") == zone.name and f.get("state") != "unreachable"
+                        and all(isinstance(f.get(k), str) for k in ("state", "project", "file"))):
+                    rows.append(dict(f, say=str(f.get("say") or ""), machine=str(data.get("machine") or ""), found=data["checked"]))
+    return rows
+
+
+def merge_drops(found: List[dict], drops: List[dict]) -> List[dict]:
+    """The server's findings with the roaming machines' rows added. A link the roaming machine reached is no longer
+    unreachable; a row both machines made keeps the server's."""
+    reached = {(d.get("zone"), d.get("link")) for d in drops if d.get("link")}
+    kept = [f for f in found if not (f.get("state") == "unreachable" and (f.get("zone"), f.get("link")) in reached)]
+    have = {(f.get("zone"), f.get("project"), f.get("thread"), f.get("file"), f.get("destination")) for f in kept}
+    return kept + [d for d in drops if (d.get("zone"), d.get("project"), d.get("thread"), d.get("file"), d.get("destination")) not in have]
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -413,8 +520,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     except FileNotFoundError:
         print("drift: not inside a Garrick workspace", file=sys.stderr)
         return 2
-    found = survey(root)
-    if a.save:
+    record = machine_record()
+    role = record.get("role", "solo")
+    found = survey(root, spread=role != "solo")
+    if role == "server":
+        found = merge_drops(found, read_drops(root))
+    if a.save and role == "roaming":
+        write_drops(root, found, str(record.get("name") or ""))      # the copy only receives: the server reads what is handed over
+    elif a.save:
         target = root.joinpath(*SAVED)
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")    # its own: two sessions at once share none
@@ -435,6 +548,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         for f in sorted(found, key=lambda f: f["state"] == "behind"):    # what the ledger expects, after the rest
             if f["state"] in HISTORY_WORDS:
                 continue                                 # the record of what left, not something to look at
+            if f["state"] == "unreachable":
+                print("%s: %s: not reachable here" % (f["zone"], f["link"]))
+                continue
             print("%s, %s: %s%s%s" % (f["zone"], f["project"] + (", " + f["thread"] if f.get("thread") else ""),
                                       f["file"] or "published.md",
                                       ": " + f["state"] if f["state"] != "same" else ": the same",

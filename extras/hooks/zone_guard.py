@@ -34,8 +34,12 @@ otherwise the event's cwd. Paths are judged where they really lead, through
 any link, and on a disk that ignores case, as a Mac's does, without it. A scheduled job (GARRICK_HEADLESS=1) has nobody to
 ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
-One place is never let through, in a session of any home and in a scheduled job: the notes ledger,
-System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584).
+Some places are never let through, in a session of any home and in a scheduled job: the notes ledger,
+System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584); and the
+role file, ~/.config/garrick/machine.json, and a temporary file beside it (#612); the rest of that folder is as before. These
+refusals cover the file-editing tools only: a shell command can still change those files, so the guard stops a mistaken edit and is no lock. On a machine whose role is
+`roaming`, a write anywhere in the workspace outside the drop folders (each zone's Inbox/ and the workspace's
+own) is refused too: the copy only receives, and the sync would put the server's file back.
 
     python3 zone_guard.py --check
 
@@ -257,7 +261,114 @@ def ledger_edits(event):
         names = parts(root, path, case_blind(root))
         if names and len(names) == 2 and names[0].casefold() == "system" and names[1].casefold().startswith(LEDGER):
             found.append(path)
+    found.extend(read_guard_edits(edits(event)))
     return found
+
+
+def machine_home():
+    """The folder HOME names now, as a real path (a test points HOME at a temporary folder)."""
+    return os.path.realpath(os.environ.get("HOME") or os.path.expanduser("~"))
+
+
+def machine_role():
+    """This machine's role from ~/.config/garrick/machine.json: solo, server or roaming. The same reading as
+    System/tools/machine.py, which a hook run from a Garrick kept outside the workspace cannot import: a missing
+    file, one that cannot be read, or an unknown role is solo."""
+    try:
+        with open(os.path.join(machine_home(), ".config", "garrick", "machine.json"), encoding="utf-8") as f:
+            role = json.load(f).get("role")
+    except (OSError, ValueError, AttributeError):
+        return "solo"
+    role = role.strip().lower() if isinstance(role, str) else ""
+    return role if role in ("server", "roaming") else "solo"
+
+
+def config_edits(event):
+    """The role file the tool call would write (#612): ~/.config/garrick/machine.json and a temporary file that
+    machine.py writes beside it (machine.json.tmp), on every role. Any other file in that folder (the mail, bridge
+    certificate and Telegram configs) is written as before. Through any link, and on a disk that ignores case,
+    without it. A guard against a mistaken edit by a file-editing tool: a shell command can still write the file."""
+    home = machine_home()
+    folder = os.path.realpath(os.path.join(home, ".config", "garrick"))
+    blind = case_blind(home)
+    names = ("machine.json", "machine.json.tmp")
+    found = []
+    for path in edits(event):
+        a, b = (folder.casefold(), path.casefold()) if blind else (folder, path)
+        if os.path.dirname(b) == a and os.path.basename(b) in names:
+            found.append(path)
+    return found
+
+
+def roaming_edits(event):
+    """The files in the workspace, outside the drop folders, the tool call would write on a roaming machine (#612).
+    A roaming machine holds a copy that only receives: the next sync puts the server's files back over a write
+    made here. Its drop folders (each zone's Inbox/ and the workspace's own) sync both ways, so they are open."""
+    if machine_role() != "roaming":
+        return []
+    found = []
+    for path in edits(event):
+        root = workspace_root(os.path.dirname(path))
+        if root is None:
+            continue
+        names = parts(root, path, case_blind(root))
+        if not names:
+            continue
+        low = [n.casefold() for n in names]
+        if len(low) >= 2 and low[0] == "inbox":
+            continue
+        if len(low) >= 4 and low[0] == "zones" and low[2] == "inbox":
+            continue
+        found.append(path)
+    return found
+
+
+def deny(reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+def machine_refusal(event):
+    """The reply that refuses a write the machine's role forbids (#612), or None. It holds in a session of any home
+    and in a scheduled job."""
+    if event.get("hook_event_name") != "PreToolUse":
+        return None
+    if config_edits(event):
+        return deny("Zone guard: the machine's role file in ~/.config/garrick/ is changed by the user, not by a session. "
+                    "This guard stops a mistaken edit; it is not a lock. Show the user the command to run: "
+                    "python3 System/tools/machine.py set --role <solo|server|roaming>.")
+    if roaming_edits(event):
+        return deny("Zone guard: this machine holds a copy of the workspace that only receives, and the next sync would put the "
+                    "server's file back over this edit. Write what you need to keep in a drop folder: Inbox/ in the workspace, "
+                    "or the Inbox/ of the zone. The server files it on its next run.")
+    return None
+
+
+def read_guard_edits(paths):
+    """The paths that fall in the read guard's own folder, where a session's scope record would widen its own reads (#613).
+    The folder is where garrick_lib.read_guard_dir() puts it: next to the jobs' folder when GARRICK_JOBS_DIR is set,
+    else the Mac's Logs or the state folder. Written here by hand, because this hook cannot import garrick_lib."""
+    jobs = os.environ.get("GARRICK_JOBS_DIR")
+    if jobs:
+        folder = os.path.join(os.path.dirname(os.path.expanduser(jobs).rstrip(os.sep)), "garrick-read-guard")
+    elif sys.platform == "darwin":
+        folder = os.path.join(os.path.expanduser("~"), "Library", "Logs", "garrick-read-guard")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), ".local", "state", "garrick-read-guard")
+    folder = os.path.realpath(folder)
+    if case_blind(nearest_existing(folder)):
+        return [p for p in paths if p.casefold() == folder.casefold() or p.casefold().startswith(folder.casefold() + os.sep)]
+    return [p for p in paths if p == folder or p.startswith(folder + os.sep)]
+
+
+def nearest_existing(path):
+    """`path`, or its nearest ancestor that exists: where a disk's case rule can be read for a folder not made yet."""
+    while path and not os.path.exists(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path or os.sep
 
 
 def decide(event):
@@ -266,7 +377,10 @@ def decide(event):
     if stage == "PreToolUse" and ledger_edits(event):
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "Zone guard: the notes ledger is written only by the channel that "
-                                       "receives a note. An assistant session never writes it."}}
+                                       "receives a note, and the read guard's own folder is written only by the guard. An assistant session never writes either."}}
+    refused = machine_refusal(event)
+    if refused:
+        return refused
     home, away = outside(event)
     if not away:
         return None
@@ -385,7 +499,21 @@ def check():
             print("%s: the zone guard is registered on %s." % (name, " and ".join(e for e, _ in events)))
     if not found:
         print("Neither Claude Code nor Codex is set up for this user, so the guard runs nowhere.")
+    else:
+        for line in read_guard_lines():
+            print(line)
     return 0 if ok and found else 1
+
+
+def read_guard_lines():
+    """What read_guard.py's own check says, beside this one (#613). The read guard is optional, so a line that says
+    it is not registered never changes this check's exit code."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import read_guard
+        return read_guard.check_lines()[0]
+    except Exception:
+        return []
 
 
 def main():
@@ -394,7 +522,8 @@ def main():
     try:
         event = json.load(sys.stdin)
         if os.environ.get("GARRICK_HEADLESS") == "1":          # nobody to ask, so the zone check stands aside; the ledger never does
-            reply = decide(dict(event, hook_event_name="PreToolUse")) if ledger_edits(event) else None
+            stopped = dict(event, hook_event_name="PreToolUse")
+            reply = decide(stopped) if ledger_edits(event) else machine_refusal(stopped)
         else:
             reply = decide(event)
     except Exception:

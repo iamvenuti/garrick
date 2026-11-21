@@ -2535,6 +2535,6 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
         self.assertIn("page's own wall buttons", section)

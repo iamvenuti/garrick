@@ -22,8 +22,9 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import write  # noqa: E402
-from test_page_action import ActionCase, REPO, git, pa  # noqa: E402
+from fixtures import git, write  # noqa: E402
+from panel_case import PanelCase, commit_all  # noqa: E402
+from test_page_action import ActionCase, REPO, pa  # noqa: E402
 from test_status import StatusCase, status  # noqa: E402
 
 sys.path.insert(0, str(REPO / "extras" / "status"))
@@ -98,7 +99,7 @@ class TestKindTable(unittest.TestCase):
         decision = fq.decision_question({"file": "wiki/261001 - Call.md", "title": "Use Cedar", "revisit": "A newer call says otherwise"})
         for q in (wiki, verdict, decision):
             self.assertTrue(q["answers"], q["id"])
-        self.assertEqual(["fix-now", "later"], [a["id"] for a in fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"]])
+        self.assertEqual(["fix-now", "keep", "later"], [a["id"] for a in fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"]])
         self.assertFalse(hasattr(fq, "FREE_ONLY"))
 
     def test_no_question_shows_a_command_outside_details(self):
@@ -112,7 +113,8 @@ class TestKindTable(unittest.TestCase):
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
-        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed"), fq.PLAIN_KINDS)
+        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction"),
+                         fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
         self.assertEqual("mechanical", fq.MECHANICAL)
@@ -122,7 +124,9 @@ class TestPlainWording(unittest.TestCase):
             self.assertEqual(plain, fq.plain_kind(it), plain)
         self.assertEqual("mechanical", fq.plain_kind({"kind": "mechanical", "check": "links", "line": "x"}))
         self.assertEqual("", fq.plain_kind({"kind": "judgment", "check": "links", "line": "Zones/Work/a.md: something odd"}))
-        self.assertEqual("", fq.plain_kind({"kind": "attribution", "check": "memory", "line": "a"}))
+        self.assertEqual("attribution", fq.plain_kind({"kind": "attribution", "check": "memory", "line": "a"}))
+        self.assertEqual("correction", fq.plain_kind({"kind": "correction", "check": "", "line": "a"}))
+        self.assertEqual("", fq.plain_kind({"kind": "fade", "check": "", "line": "a"}))              # a kind the card never shows keeps no wording
         # the same words under another check are not the same finding
         self.assertEqual("", fq.plain_kind(dict(KINDS["resume-long"], check="threads")))
 
@@ -160,10 +164,10 @@ class TestPlainWording(unittest.TestCase):
     def test_each_kind_shows_its_sentence_reason_and_buttons(self):
         want = {
             "note-long": ("The Acme Review project page is getting long: about 14,000 words.",
-                          ["Move older entries to history", "Show me what would move", "Not now"]),
-            "resume-long": ("The resume point of Pricing is getting long: about 500 words.", ["Shorten it", "Not now"]),
-            "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Not now"]),
-            "meeting-long": ("The meeting note “Call”, 12 Oct, is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
+                          ["Move older entries to history", "Show me what would move", "Leave it as it is", "Not now"]),
+            "resume-long": ("The resume point of Pricing is getting long: about 500 words.", ["Shorten it", "Leave it as it is", "Not now"]),
+            "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Leave it as it is", "Not now"]),
+            "meeting-long": ("The meeting note “Call”, 12 Oct, is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Leave it as it is", "Not now"]),
             "hooks-blocked": ("The Work zone does not check the walls before a commit.", ["Add the wall check to my hook"]),
             "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Show me both texts", "Take it out", "The words are mine, keep them"]),
         }
@@ -202,17 +206,19 @@ class TestPlainWording(unittest.TestCase):
 
     def test_the_answers_are_the_planned_ones(self):
         ids = {k: [(a["id"], a["action"]) for a in v] for k, v in fq.ANSWERS.items()}
-        self.assertEqual([("move-older", "run"), ("preview", "preview"), ("later", "later")], ids["note-long"])
-        self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["resume-long"])
-        self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["todo-long"])
-        self.assertEqual([("shorten", "handoff"), ("open", "open"), ("later", "later")], ids["meeting-long"])
+        self.assertEqual([("move-older", "run"), ("preview", "preview"), ("keep", "keep"), ("later", "later")], ids["note-long"])
+        self.assertEqual([("shorten", "handoff"), ("keep", "keep"), ("later", "later")], ids["resume-long"])
+        self.assertEqual([("shorten", "handoff"), ("keep", "keep"), ("later", "later")], ids["todo-long"])
+        self.assertEqual([("shorten", "handoff"), ("open", "open"), ("keep", "keep"), ("later", "later")], ids["meeting-long"])
         self.assertEqual([("add-check", "handoff")], ids["hooks-blocked"])                    # no Not now: hidden, the walls go unchecked
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
-        self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later", "shorten", "undo-bounded"), "todo-long": ("later",),
-                          "meeting-long": ("later", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
+        self.assertEqual({"note-long": ("move-older", "preview", "keep", "later", "unkeep"), "resume-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"),
+                          "todo-long": ("keep", "later", "unkeep"),
+                          "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
-                          "verdict": ("later",), "decision-review": ("later",), "other": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep"),
+                          "attribution": ("later",), "correction": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -224,19 +230,19 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual("A check found something in “Stray” in Work.", q["sentence"])
         self.assertEqual("Links", q["tag"])
         self.assertEqual("something odd about a link", q["details"].split(": ", 1)[1])      # the check's own text waits under Details
-        self.assertEqual([("fix-now", "handoff"), ("later", "later")], [(a["id"], a["action"]) for a in q["answers"]])
+        self.assertEqual([("fix-now", "handoff"), ("keep", "keep"), ("later", "later")], [(a["id"], a["action"]) for a in q["answers"]])
         self.assertEqual("Ask my assistant to fix it", q["answers"][0]["label"])
-        self.assertEqual("Not now", q["answers"][1]["label"])
+        self.assertEqual("Not now", q["answers"][2]["label"])
         self.assertEqual("fix-now", q["recommended"])
         self.assertEqual({"verb": "finding", "kind": "other", "path": q["path"], "answer": "later-" + fq.which_other(
             {"kind": "judgment", "check": "links", "path": q["path"], "line": "Zones/Work/Acme Review/Stray.md: something odd about a link"})},
-            q["answers"][1]["req"])
+            q["answers"][2]["req"])
         phrase = q["answers"][0]["phrase"]
         self.assertNotIn("something odd about a link", phrase)                               # the check's text stays under Details
         self.assertIn("“Stray” in Work", phrase)                                             # the file's name and its place
         self.assertNotIn("Zones/Work/Acme Review/Stray.md", phrase)
         markup = fq.question_html(q)
-        self.assertEqual(2, markup.count("data-fa"))
+        self.assertEqual(3, markup.count("data-fa"))
         shown = text_of(markup)
         self.assertNotIn("something odd about a link", shown)                                # outside Details it is not shown
         self.assertNotIn("Zones/Work", shown)
@@ -269,7 +275,7 @@ class TestPlainWording(unittest.TestCase):
         b = dict(item("judgment", "links", "Zones/Work/A.md", "%(p)s: an odd heading"), scope="Zones/Work")
         qa, qb = (fq.question(i, "Zones/Work") for i in (a, b))
         self.assertNotEqual(qa["key"], qb["key"])
-        self.assertEqual(qa["key"], fq.later_key("other", "Zones/Work/A.md", qa["answers"][1]["req"]["answer"][6:]))
+        self.assertEqual(qa["key"], fq.later_key("other", "Zones/Work/A.md", qa["answers"][2]["req"]["answer"][6:]))
         left = fq.forecast_questions([a, b], {qa["key"]})["Zones/Work"]
         self.assertEqual([qb["key"]], [q["key"] for q in left])                              # only the one that was put off is hidden
         self.assertEqual({}, fq.forecast_questions([a, b], {fq.later_key("other", "Zones/Work/A.md")}))   # an older key hides both, as before
@@ -320,7 +326,7 @@ class TestPlainWording(unittest.TestCase):
 
     def test_the_keys_and_the_free_text_field(self):
         js = fq.QUEUE_JS
-        self.assertIn("/^[1-4]$/.test(e.key)", js)                                           # 1 to 4 pick an answer
+        self.assertIn("/^[1-9]$/.test(e.key)", js)                                           # 1 to 9 pick an answer: a note has four and the field
         self.assertIn("o.classList.contains('other')", js)                                   # the free-text field is a number too: it takes the focus
         self.assertIn("e.key==='Enter'", js)                                                 # Return takes the recommended one
         self.assertIn("tagName==='INPUT'", js)                                               # and sends the text while typing in the field
@@ -806,16 +812,18 @@ class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
         self.assertRegex(h, r'<label class="opt other" data-ansrow hidden><span class="n">4</span>')
         self.assertIn("Not now", h)
 
-    def test_a_decision_to_review_is_opened_or_put_off_and_never_confirmed_here(self):
+    def test_a_decision_to_review_is_opened_held_or_put_off_and_its_status_is_never_written_here(self):
         q = self.one(asked(decisions=[DECISION]))[0]
         h = fq.question_html(q)
         self.assertIn('<span class="tag">Decision to review</span>', h)
         self.assertIn("Plan B stays Harbour", h)
         self.assertIn("Flagged: a later meeting named another vendor. Only you change a decision.", h)
         got = options(h)
-        self.assertEqual([(1, "open"), (2, "later")], [(n, i) for n, i, _ in got])
-        for gone in ("It still holds", "<input"):
-            self.assertNotIn(gone, h)                                                  # nothing writes a decision's status
+        self.assertEqual([(1, "open"), (2, "holds"), (3, "later")], [(n, i) for n, i, _ in got])
+        self.assertIn("It still holds", h)
+        self.assertNotIn("<input", h)                                                  # no field: nothing here takes a word of the user's
+        self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md",
+                          "answer": "decision-holds"}, got[1][2]["req"])
         self.assertEqual([{"verb": "note-open", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"}], got[0][2]["reqs"])
 
     def test_each_answer_is_the_verb_the_panels_button_used(self):
@@ -833,7 +841,7 @@ class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
         self.assertEqual({"verb": "finding", "kind": "verdict", "path": "Wikis/Meetings/questions/261104 - Renewal owner.md", "answer": "later"}, by["later"])
         d = fq.question_html(self.one(asked(decisions=[DECISION]))[0])
         self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md", "answer": "later"},
-                         {k: v for k, v in options(d)[1][2]["req"].items()})
+                         {k: v for k, v in options(d)[2][2]["req"].items()})
 
     def test_the_scripts_send_the_panels_fields_and_parse(self):
         js = fq.QUEUE_JS
@@ -898,7 +906,7 @@ class TestNotNowForTheWikisKinds(ActionCase):
 
     def test_not_now_on_one_other_finding_is_saved_under_that_finding_alone(self):
         a = fq.question(item("judgment", "links", self.rel, "%(p)s: a broken link"), "Wikis/Meetings")
-        got = self.ask(**{k: v for k, v in a["answers"][1]["req"].items() if k != "verb"})
+        got = self.ask(**{k: v for k, v in a["answers"][2]["req"].items() if k != "verb"})
         self.assertTrue(got["ok"], got)
         data = json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))
         self.assertEqual([a["key"]], list(data["later"]))
@@ -1039,7 +1047,7 @@ class TestFindingVerb(ActionCase):
                     self.assertIsNone(ops.validate("walls-look", dict(a["req"], path=DECK, id="0123456789")), a)
                 elif a["action"] == "allow":
                     self.assertIsNone(ops.validate("walls-allow", dict(a["req"], path=DECK, id="0123456789", blob="a" * 40)), a)
-                elif a["action"] in ("run", "preview", "later"):
+                elif a["action"] in ("run", "preview", "later", "keep"):
                     self.assertIsNone(ops.validate("finding", a["req"]), a)
                     sent += 1
                 elif a["action"] == "open":
@@ -1049,7 +1057,7 @@ class TestFindingVerb(ActionCase):
                 else:
                     self.assertEqual("handoff", a["action"])
                     self.assertTrue(a["phrase"])
-        self.assertEqual(6, sent)
+        self.assertEqual(10, sent)
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
 
 
@@ -1161,7 +1169,7 @@ class TestLongNoteFromItsPlan(QueueCase):
         return [a["id"] for a in q["answers"]]
 
     def assert_handoff_first(self, q):
-        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertEqual(["split", "keep", "later"], self.ids(q))
         self.assertEqual("split", q["recommended"])
         self.assertNotIn("preview", self.ids(q))
         a = q["answers"][0]
@@ -1191,14 +1199,14 @@ class TestLongNoteFromItsPlan(QueueCase):
 
     def test_a_hub_with_no_state_of_play_offers_no_move(self):
         q = self.ask(note_text(above="## Notes\n\n" + "word " * 50, state=False), rel=HUB)
-        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertEqual(["split", "keep", "later"], self.ids(q))
         self.assertIn("project's folder", q["answers"][0]["phrase"])
         self.assertIn("no state-of-play section", q["why"])
         self.assertIn("no `## State of play`", q["details"] + "no `## State of play`")
 
     def test_eight_entries_with_old_ones_move_first_with_the_plans_figures(self):
         q = self.ask(note_text(entries="".join(dated(n, 600) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
-        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+        self.assertEqual(["move-older", "preview", "keep", "later"], self.ids(q))
         self.assertEqual("move-older", q["recommended"])
         self.assertRegex(q["why"], r"^3 older entries would move, taking the page from about [\d,]+ words to about [\d,]+ words\.")
         self.assertEqual("split", q["answers"][0]["fallback"]["id"])           # the handoff that stands in for a refused move
@@ -1207,10 +1215,10 @@ class TestLongNoteFromItsPlan(QueueCase):
         plan = {"moves": 2, "before": 9000, "after": 7000, "still_over": True, "case": "", "skipped": ""}
         q = fq.question(dict(KINDS["note-long"]), "Zones/Work", plan)
         self.assertIn("The move alone will not bring it under its limit.", q["why"])
-        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+        self.assertEqual(["move-older", "preview", "keep", "later"], self.ids(q))
 
     def test_no_plan_asked_keeps_the_kinds_own_answers(self):
-        self.assertEqual(["move-older", "preview", "later"], self.ids(fq.question(dict(KINDS["note-long"]), "Zones/Work")))
+        self.assertEqual(["move-older", "preview", "keep", "later"], self.ids(fq.question(dict(KINDS["note-long"]), "Zones/Work")))
 
     def test_a_plan_that_fails_counts_as_nothing_moves(self):
         write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
@@ -1220,12 +1228,12 @@ class TestLongNoteFromItsPlan(QueueCase):
         for result in bad:
             with mock.patch.object(fq.subprocess, "run", return_value=result):
                 q = fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]
-            self.assertEqual(["split", "later"], self.ids(q), result)
+            self.assertEqual(["split", "keep", "later"], self.ids(q), result)
             self.assertIn("could not ask what would move", q["why"])
         with mock.patch.object(fq.subprocess, "run", side_effect=subprocess.TimeoutExpired("history.py", 15)):
-            self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+            self.assertEqual(["split", "keep", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
         (self.root / "System" / "tools" / "history.py").unlink()                                    # a missing tool
-        self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+        self.assertEqual(["split", "keep", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
 
     def test_the_plan_is_a_dry_run_asked_once_a_finding_and_bounded_by_a_budget(self):
         write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
@@ -1328,12 +1336,15 @@ class TestEveryQuestionNamesItsSubject(unittest.TestCase):
             "meeting-long": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", MEETING_LINE),
             "hooks-blocked": ("Zones/Work", "Zones/Personal", HOOKS_LINE),
             "fix-failed": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: fixed (held: refused by the wall check)"),
+            "attribution": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", "%(p)s: unfinished: no zone"),
+            "correction": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: holds the value being corrected"),
         }
         self.assertEqual(set(fq.PLAIN_KINDS), set(pairs), "a kind with plain wording needs a pair here")
         for plain, (one, two, line) in pairs.items():
-            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical"}.get(plain, "judgment")
+            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "attribution": "attribution",
+                    "correction": "correction"}.get(plain, "judgment")
             check = {"note-long": "projects", "resume-long": "resume", "todo-long": "todo", "meeting-long": "meetings",
-                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x"}[plain]
+                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x", "attribution": "meetings", "correction": ""}[plain]
             sentences = []
             for path in (one, two):
                 it = item(kind, check, path, line, **({"listed": True, "message": "%s: repeats eight or more words from Personal: '%s'" % (path, REPEATED)} if plain == "wall" else {}))
@@ -1510,7 +1521,7 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
 
     def test_the_summary_counts_a_skipped_question_apart_from_not_now(self):
         js = fq.QUEUE_JS
-        self.assertIn("['later','put off to next week'],['skipped','skipped']", js)
+        self.assertIn("['later','put off to next week'],['kept','left as it is'],['skipped','skipped']", js)
         self.assertIn("LINES.forEach(function(l){if(tally[l[0]])", js)
 
     def test_a_reload_after_a_refusal_keeps_nothing_of_it(self):
@@ -1530,9 +1541,430 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
             self.assertEqual(0, done.returncode, done.stderr)
 
     def test_an_answer_the_queue_script_can_send_still_goes_through_the_verb(self):
-        self.assertEqual(("move-older", "preview", "later"), fq.VERB_ANSWERS["note-long"])
+        self.assertEqual(("move-older", "preview", "keep", "later", "unkeep"), fq.VERB_ANSWERS["note-long"])
+
+
+
+
+# ---- Leave it as it is (#535) -----------------------------------------------------------------------------------------
+
+class TestLeaveItAsItIs(unittest.TestCase):
+    """#535 point 7: a finding the user accepts is recorded for that file only, holds while the file is as it was, and can be undone."""
+
+    def test_the_four_long_kinds_and_other_have_it_and_no_other_kind_does(self):
+        for kind in ("note-long", "resume-long", "todo-long", "meeting-long"):
+            ids = [a["id"] for a in fq.ANSWERS[kind]]
+            self.assertIn("keep", ids, kind)
+            self.assertLess(ids.index("keep"), ids.index("later"), kind)                 # before Not now, after the recommended answer
+            self.assertNotEqual("keep", ids[0], kind)                                    # never the recommended answer
+        self.assertIn("keep", [a["id"] for a in fq.ANSWERS_OTHER])
+        for kind in ("wall", "hooks-blocked", "fix-failed"):
+            self.assertNotIn("keep", [a["action"] for a in fq.ANSWERS[kind] if a["id"] != "keep"], kind)   # a wall's own allowance is another answer
+            self.assertNotIn("keep", [a["action"] for a in fq.ANSWERS[kind]], kind)
+            self.assertNotIn(kind, fq.KEEPABLE)
+        for kind in fq.ASKED_KINDS:
+            self.assertNotIn(kind, fq.KEEPABLE)
+
+    def test_the_button_is_the_apps_own_and_carries_the_verb_and_names_no_path(self):
+        q = fq.question(KINDS["note-long"], "Zones/Work")
+        keep = next(a for a in q["answers"] if a["id"] == "keep")
+        self.assertEqual({"verb": "finding", "kind": "note-long", "path": HUB, "answer": "keep"}, keep["req"])
+        self.assertEqual("Leave it as it is", keep["label"])
+        self.assertNotIn("Zones/", text_of(fq.question_html(q)))
+        other = fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")
+        req = next(a for a in other["answers"] if a["id"] == "keep")["req"]
+        self.assertRegex(req["answer"], r"^keep-[0-9a-f]{6}$")                           # one finding of the file, as Not now's mark
+
+    def test_other_has_the_keep_answer_only_for_a_page_the_verb_accepts(self):
+        """Fix round C8: one function decides for the offer and for the verb."""
+        under = fq.question(item("judgment", "orphans", "System/tools/x.py", "%(p)s: odd"), "System")
+        self.assertNotIn("keep", [a["id"] for a in under["answers"]])
+        self.assertNotEqual("keep", under["recommended"])
+        page = fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: odd"), "Zones/Work")
+        self.assertIn("keep", [a["id"] for a in page["answers"]])
+        self.assertTrue(fq.keepable_path("Wikis/Meetings/wiki/a.md"))
+        self.assertFalse(fq.keepable_path("System/tools/x.py"))
+        self.assertFalse(fq.keepable_path("Zones/Work"))
+
+    def test_the_store_keeps_hashes_only_and_not_now_and_keep_do_not_disturb_each_other(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            key = fq.later_key("note-long", HUB)
+            fq.kept_put(ws, key, "0123456789ab")
+            fq.later_put(ws, fq.later_key("todo-long", TODO), dt.date(2026, 11, 20))
+            data = json.loads(fq.later_path(ws).read_text(encoding="utf-8"))
+            self.assertEqual({key: "0123456789ab"}, data["kept"])
+            self.assertEqual(1, len(data["later"]))
+            raw = fq.later_path(ws).read_text(encoding="utf-8")
+            for word in ("Zones", "Acme", ".md"):
+                self.assertNotIn(word, raw)                                              # no path and no text
+            self.assertEqual({key: "0123456789ab"}, fq.kept_hashes(ws))
+            self.assertTrue(fq.kept_drop(ws, key))
+            self.assertFalse(fq.kept_drop(ws, key))
+            self.assertNotIn("kept", json.loads(fq.later_path(ws).read_text(encoding="utf-8")))
+            self.assertEqual(1, len(fq.later_hidden(ws, dt.date(2026, 11, 21))))          # Not now is as it was
+
+    def test_a_badly_formed_row_keeps_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            fq.later_path(ws).parent.mkdir(parents=True)
+            fq.later_path(ws).write_text(json.dumps({"version": 1, "later": {}, "kept": {"zz": "x", fq.later_key("a", "b"): 5,
+                                                                                         fq.later_key("c", "d"): "0123456789ab"}}))
+            self.assertEqual({fq.later_key("c", "d"): "0123456789ab"}, fq.kept_hashes(ws))
+            fq.later_path(ws).write_text("not json")
+            self.assertEqual({}, fq.kept_hashes(ws))
+
+
+class TestKeepVerb(ActionCase):
+    """The verb: one record, held under a lock, only from the page's own button, refused for a wall and for a hook."""
+    def setUp(self):
+        super().setUp()
+        for tool in ("history.py", "check.py", "nurture.py"):
+            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
+        self.hub = self.work / "Acme Review" / "Acme Review.md"
+        today = dt.date.today()
+        entries = "".join("**%d %s %d.** Entry %d settled the plan. %s\n\nSecond paragraph %d.\n\n" % (
+            d.day, d.strftime("%B"), d.year, i, "word " * 30, i) for i, d in enumerate(
+                today - dt.timedelta(days=n) for n in (1, 2, 3, 4, 5, 300, 310, 320)))
+        write(self.hub, "---\ntitle: Acme Review\ntype: project\nparty: acme\nstatus: active\ncreated: 2026-01-05\nupdated: 2026-11-10\n---\n\n"
+                        "# Acme Review\n\n## State of play\n\n### Resume here\n\n**Where it stands.** Under way.\n\n---\n\n" + entries)
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "add a long hub")
+        self.rel = "Zones/Work/Acme Review/Acme Review.md"
+
+    def ask(self, **req):
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+
+    def store(self):
+        return json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))
+
+    def test_keep_writes_one_record_for_the_file_as_it_is_and_replies_with_its_undo(self):
+        got = self.ask(kind="note-long", answer="keep", path=self.rel)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual({fq.later_key("note-long", self.rel): fq.file_hash(self.root, self.rel)}, self.store()["kept"])
+        self.assertEqual({"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "unkeep"}, got["undo"])
+        self.assertIsNone(pa.ops_lib(self.root).validate("finding", got["undo"]))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())              # no zone file is touched
+
+    def test_a_double_press_is_recorded_once(self):
+        first = self.ask(kind="note-long", answer="keep", path=self.rel)
+        second = self.ask(kind="note-long", answer="keep", path=self.rel)
+        self.assertTrue(first["ok"] and second["ok"], (first, second))
+        self.assertEqual(1, len(self.store()["kept"]))                                      # one keep, however often it is pressed
+        self.assertEqual({fq.later_key("note-long", self.rel): fq.file_hash(self.root, self.rel)}, self.store()["kept"])
+        self.assertEqual(["add a long hub"], git(self.work, "log", "-1", "--format=%s").splitlines())      # and no commit at all
+
+    def test_undo_takes_it_away_and_a_second_undo_says_there_was_none(self):
+        self.ask(kind="note-long", answer="keep", path=self.rel)
+        got = self.ask(kind="note-long", answer="unkeep", path=self.rel)
+        self.assertTrue(got["ok"], got)
+        self.assertNotIn("kept", self.store())
+        self.assertEqual("It was not left as it is.", pa.act(self.root, {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "unkeep"})["say"])
+
+    def test_one_other_finding_is_kept_apart_from_a_second_of_the_same_file(self):
+        rel = self.rel
+        self.assertTrue(self.ask(kind="other", answer="keep-abcdef", path=rel)["ok"])
+        self.assertEqual({fq.later_key("other", rel, "abcdef")}, set(self.store()["kept"]))
+        self.assertFalse(self.ask(kind="other", answer="keep-XYZ123", path=rel)["ok"])
+        self.assertFalse(self.ask(kind="other", answer="keep", path=rel)["ok"] and False)  # a bare keep of "other" is the older key; it is allowed
+        self.assertTrue(self.ask(kind="other", answer="unkeep-abcdef", path=rel)["ok"])
+
+    def test_a_wall_a_hook_a_held_fix_and_the_wikis_kinds_cannot_be_kept(self):
+        for kind in ("wall", "hooks-blocked", "hooks-missing", "fix-failed", "verdict", "decision-review", "answers-held"):
+            for answer in ("keep", "unkeep"):
+                got = self.ask(kind=kind, answer=answer, path=self.rel)
+                self.assertFalse(got["ok"], (kind, answer))
+        self.assertFalse((self.root / "System" / "generated" / "status-later.json").exists())
+
+    def test_a_file_that_is_not_there_is_not_kept(self):
+        self.assertFalse(self.ask(kind="note-long", answer="keep", path="Zones/Work/Missing.md")["ok"])
+        self.assertFalse((self.root / "System" / "generated" / "status-later.json").exists())
+
+    def test_the_ask_box_and_a_session_never_keep_and_the_page_does(self):
+        ops = pa.ops_lib(self.root)
+        for via in ("ask", "session"):
+            for answer in ("keep", "unkeep", "keep-abcdef"):
+                got = pa.perform(self.root, {"verb": "finding", "kind": "other" if "-" in answer else "note-long", "path": self.rel, "answer": answer},
+                                 ops, via=via)[0]
+                self.assertFalse(got["ok"], (via, answer))
+                self.assertIn("page's own button", got["say"])
+        self.assertFalse((self.root / "System" / "generated" / "status-later.json").exists())
+        self.assertTrue(pa.perform(self.root, {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "keep"}, ops, via="page")[0]["ok"])
+        self.assertTrue(pa.perform(self.root, {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "later"}, ops, via="ask")[0]["ok"])   # Not now is as it was
+
+
+class TestKeepOnThePage(QueueCase):
+    """The queue leaves out a kept finding while its file is as it was, lists it under Kept by you, and asks again when the file changes."""
+
+    def standing_note(self):
+        return [{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}},
+                {"kind": "judgment", "check": "resume", "path": THREAD, "line": RESUME_LINE % {"p": THREAD}}]
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / HUB, "# Acme Review\n\nA hub.\n")
+        write(self.root / THREAD, "# Pricing\n\nA thread.\n")
+
+    def test_a_kept_finding_leaves_the_queue_and_the_count_and_comes_back_when_the_file_changes(self):
+        self.record(self.standing_note())
+        self.assertEqual(2, self.view(self.page()).count("data-q "))
+        fq.kept_put(self.root, fq.later_key("note-long", HUB), fq.file_hash(self.root, HUB))
+        self.list_record(self.standing_note())
+        page = self.page()
+        self.assertEqual(1, self.view(page).count("data-q "))
+        self.assertIn("<b>Work</b>: 1 question", self.card(page))
+        write(self.root / HUB, "# Acme Review\n\nA hub, edited.\n")
+        self.list_record(self.standing_note())
+        self.assertEqual(2, self.view(self.page()).count("data-q "))                       # the file changed: it is asked again
+
+    def test_kept_by_you_lists_it_with_a_plain_sentence_and_undo_and_counts_its_own_place(self):
+        self.record(self.standing_note())
+        fq.kept_put(self.root, fq.later_key("note-long", HUB), fq.file_hash(self.root, HUB))
+        self.list_record(self.standing_note())
+        card = self.card(self.page())
+        self.assertIn('id="kept-by-you"', card)
+        self.assertIn("Kept by you · 1", card)
+        self.assertIn('data-unkeep="1"', card)
+        row = card[card.index('data-keep="1"'):]
+        row = row[:row.index("</li>")]
+        self.assertIn("The Acme Review project page is getting long", row)
+        self.assertNotIn("note-max-words", row)                                              # no setting name, no command
+        self.assertNotIn("history.py", row)
+        self.assertIn('data-kind="note-long"', row)
+
+    def test_a_wall_finding_is_never_left_out_whatever_the_store_holds(self):
+        wall = KINDS["wall"]
+        self.record([{"kind": "wall", "path": wall["path"], "line": wall["line"]}])
+        self.quick({"check": "walls", "severity": "error", "path": wall["path"], "message": wall["message"]})
+        write(self.root / wall["path"], "A deck.\n")
+        fq.kept_put(self.root, fq.later_key("wall", wall["path"]), fq.file_hash(self.root, wall["path"]))
+        self.assertEqual(1, self.view(self.page()).count('data-kind="wall"'))
+
+    def test_a_double_press_sends_one_request(self):
+        """While an answer is out (pend holds the question's key) a second press of any answer of that question sends nothing."""
+        js = fq.QUEUE_JS
+        guard = "if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;"
+        self.assertIn(guard, js)
+        self.assertLess(js.index(guard), js.index("host.postMessage({act:d.req})"))                 # before the first send
+        self.assertLess(js.index(guard), js.index("pend={key:q.dataset.gk,id:d.id};save();host.postMessage"))
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_a_kept_error_finding_is_listed_once_and_counted_once(self):
+        """Fix round C7: the forecast pass drops it, quick_needs must not add it back as an extra, and the second pass must not record it again."""
+        page_md = "Zones/Work/Orphan.md"
+        write(self.root / page_md, "# Orphan\n\nA page.\n")
+        finding = {"kind": "judgment", "check": "orphans", "path": page_md, "line": "%s: an orphan page" % page_md}
+        self.record([finding])
+        self.quick({"check": "orphans", "severity": "error", "path": page_md, "message": "an orphan page"})
+        key = fq.later_key("other", page_md, fq.which_other({"check": "orphans", "message": "an orphan page"}))
+        fq.kept_put(self.root, key, fq.file_hash(self.root, page_md))
+        card = self.card(self.page())
+        self.assertEqual(1, card.count('data-keep="1"'))
+        self.assertIn("Kept by you · 1", card)
+
+    def test_the_script_undoes_a_keep_from_the_queue_and_from_the_card(self):
+        self.assertIn("/^keep/.test(q.answer||'')", fq.QUEUE_JS)
+        self.assertIn("/^unkeep/.test(q.answer||'')", fq.QUEUE_JS)
+        self.assertIn("['kept','left as it is']", fq.QUEUE_JS)
+        panel = status.questions_mod()
+        self.assertIn("data-unkeep", panel.CX_JS)
+        self.assertIn("verb:'finding'", panel.CX_JS)
+
+    def test_no_check_and_no_nurture_reads_the_keep(self):
+        for tool in (self.root / "System" / "tools").glob("*.py"):
+            self.assertNotIn("status-later", tool.read_text(encoding="utf-8"), tool.name)
+
+
+class TestItStillHolds(PanelCase):
+    """#542: *It still holds* on a decision to review. The user's own press takes the review flag off and notes the day; the
+    decision's status and its words are as they were, and it is committed in its wiki through the wall check."""
+
+    REL = "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"
+    PAGE = ("---\ntype: decision\ntitle: Plan B stays Harbour\nstatus: valid\ndecided: 2026-10-20\nzone: Work\nparties: [harbour]\n"
+            "revisit: a later meeting named another vendor\n---\n\n## Decision\n\nPlan B stays Harbour.\n\n## Revisit when\n\nA vendor changes.\n")
+
+    def setUp(self):
+        super().setUp()
+        # an installed workspace has one repository at Wikis/, none of its own in Meetings/
+        shutil.rmtree(self.meetings / ".git", ignore_errors=True)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "config", "maintenance.auto", "false")
+        git(wikis, "config", "gc.auto", "0")
+        commit_all(wikis)
+        write(self.root / self.REL, self.PAGE)
+        commit_all(wikis, "a decision")
+        self.page = self.root / self.REL
+        self.base = len(self.log())
+
+    def ask(self, via="page", **req):
+        return pa.perform(self.root, dict({"verb": "finding", "kind": "decision-review", "path": self.REL, "answer": "decision-holds"}, **req),
+                          pa.ops_lib(self.root), via=via)[0]
+
+    def log(self):
+        return git(self.meetings, "log", "--format=%s").splitlines()
+
+    def test_the_press_takes_the_flag_off_notes_the_day_and_changes_nothing_else(self):
+        got = self.ask()
+        self.assertTrue(got["ok"], got)
+        text = self.page.read_text(encoding="utf-8")
+        self.assertNotIn("revisit:", text)
+        self.assertIn("reviewed: %s\n" % dt.date.today().isoformat(), text)
+        before, after = self.PAGE.split("\n---\n", 1), text.split("\n---\n", 1)
+        self.assertEqual(before[1], after[1])                                            # not a word below the frontmatter
+        keep = [l for l in before[0].splitlines() if not l.startswith("revisit:")]
+        self.assertEqual(keep, [l for l in after[0].splitlines() if not l.startswith("reviewed:")])    # status, decided, zone, parties as they were
+        self.assertIn("status: valid", text)
+
+    def test_one_commit_in_the_wiki_and_none_in_a_zone(self):
+        zone_before = git(self.work, "log", "--format=%s").splitlines()
+        self.ask()
+        self.assertEqual(self.base + 1, len(self.log()))
+        self.assertEqual("Meetings: decision 261020 - Plan B reviewed, it still holds", self.log()[0])
+        self.assertEqual(zone_before, git(self.work, "log", "--format=%s").splitlines())
+        self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
+
+    def test_a_page_in_no_repository_is_refused_and_left_as_it_was(self):
+        """Fix round N4: with no repository to commit it, nothing is written."""
+        shutil.rmtree(self.root / "Wikis" / ".git")
+        got = self.ask()
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+
+    def test_a_double_press_is_recorded_once(self):
+        first, second = self.ask(), self.ask()
+        self.assertTrue(first["ok"], first)
+        self.assertFalse(second["ok"], second)                                            # the flag is gone: nothing to do, nothing written
+        self.assertEqual(self.base + 1, len(self.log()))                                  # one commit for two presses
+        self.assertEqual(1, self.page.read_text(encoding="utf-8").count("reviewed:"))
+
+    def test_the_decision_review_finding_does_not_come_back(self):
+        """The finding reads the flag: with it off, the page is no longer listed, so the question does not return."""
+        self.ask()
+        status = _status_for_panel()
+        qp = status.questions_mod()
+        data = qp.build(self.root, None, dt.date.today(), lambda p: str(p))
+        listed = [d["file"] for b in (data or {}).get("buckets", {}).values() for d in b.get("decisions", [])]
+        self.assertEqual([], listed)
+
+    def test_the_ask_box_and_a_session_never_send_it(self):
+        for via in ("ask", "session"):
+            got = self.ask(via=via)
+            self.assertFalse(got["ok"], via)
+            self.assertIn("page's own button", got["say"])
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+        self.assertEqual(self.base, len(self.log()))
+
+    def test_it_is_refused_for_a_page_that_is_not_a_valid_decision_with_a_flag(self):
+        for text in (self.PAGE.replace("status: valid", "status: superseded"), self.PAGE.replace("type: decision", "type: note"),
+                     self.PAGE.replace("revisit: a later meeting named another vendor\n", ""), "no frontmatter\n"):
+            write(self.page, text)
+            commit_all(self.meetings, "changed")
+            got = self.ask()
+            self.assertFalse(got["ok"], text)
+            self.assertEqual(text, self.page.read_text(encoding="utf-8"))
+
+    def test_it_is_refused_for_any_file_that_is_not_a_decision_page_of_the_meetings_wiki(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "261020 - Call.md", self.PAGE)
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "decisions" / "261020 - Plan B.md", self.PAGE)
+        for rel in ("Wikis/Meetings/wiki/261020 - Call.md", "Wikis/Knowledge/wiki/decisions/261020 - Plan B.md",
+                    "Zones/Work/Todo.md", "Wikis/Meetings/wiki/decisions"):
+            self.assertFalse(self.ask(path=rel)["ok"], rel)
+        self.assertFalse(self.ask(kind="verdict")["ok"])                                 # only the decision kind takes this answer
+        self.assertFalse(self.ask(kind="note-long")["ok"])
+
+    def test_a_wall_refusal_puts_the_page_back_as_it_was(self):
+        hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        got = self.ask()
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+        self.assertEqual(self.base, len(self.log()))
+        self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
+
+    def test_the_request_is_valid_for_the_verb(self):
+        self.assertIsNone(pa.ops_lib(self.root).validate("finding", {"verb": "finding", "kind": "decision-review", "path": self.REL,
+                                                                     "answer": "decision-holds"}))
+
+
+def _status_for_panel():
+    from test_questions_panel import status as panel_status
+    return panel_status
+
+
+class TestAttributionAndCorrection(unittest.TestCase):
+    """#535: the two Nurture kinds that need a person had no wording of their own and fell to the generic sentence. They have it now,
+    with answers that go through the verbs there are: the assistant, the notes app, and Not now."""
+
+    PAGE = "Wikis/Meetings/wiki/261012 - Call.md"
+    ATTR = {"kind": "attribution", "check": "meetings", "path": PAGE, "scope": "Wikis/Meetings", "line": PAGE + ": unfinished: no zone or parties; ask which"}
+    CORR = {"kind": "correction", "check": "", "path": "Zones/Work/Acme Review/Acme Review.md", "scope": "Zones/Work",
+            "line": "Zones/Work/Acme Review/Acme Review.md: holds the value being corrected"}
+
+    def test_each_has_its_sentence_reason_tag_and_answers_and_no_path(self):
+        for it, sentence, labels in (
+                (self.ATTR, "“261012 - Call” in the Meetings wiki has a question only you can answer.",
+                 ["Sort it out with my assistant", "Let me open it", "Not now"]),
+                (self.CORR, "A correction in “Acme Review” in Work is not finished.",
+                 ["Finish the correction with my assistant", "Let me open it", "Not now"])):
+            q = fq.question(it, it["scope"])
+            self.assertEqual(sentence, q["sentence"])
+            self.assertEqual(labels, [a["label"] for a in q["answers"]])
+            self.assertTrue(q["why"] and q["tag"])
+            self.assertEqual(q["answers"][0]["id"], q["recommended"])
+            shown = text_of(fq.question_html(q))
+            for gone in ("Zones/", "Wikis/", ".md", "`", "--", "unfinished: no zone"):
+                self.assertNotIn(gone, shown)                                            # the check's own text is under Details only
+            self.assertIn(it["line"].split(": ", 1)[1], q["details"])
+            self.assertNotEqual("other", q["id"])
+            self.assertEqual(fq.QUESTION, fq.KIND_CLASS[q["id"]])
+
+    def test_they_have_no_keep_and_not_now_is_the_usual_one(self):
+        for kind in ("attribution", "correction"):
+            self.assertEqual(["later"], [a["id"] for a in fq.ANSWERS[kind] if a["action"] in ("later", "keep", "run")])
+            self.assertNotIn(kind, fq.KEEPABLE)
+        q = fq.question(self.ATTR, "Wikis/Meetings")
+        later = next(a for a in q["answers"] if a["id"] == "later")
+        self.assertEqual({"verb": "finding", "kind": "attribution", "path": self.PAGE, "answer": "later"}, later["req"])
+        self.assertEqual(fq.later_key("attribution", self.PAGE), q["key"])
+
+    def test_the_hand_off_names_the_file_and_never_the_checks_words(self):
+        for it in (self.ATTR, self.CORR):
+            phrase = fq.question(it, it["scope"])["answers"][0]["phrase"]
+            self.assertIn(it["path"], phrase)
+            self.assertIn("show me the change before anything is committed", phrase.lower())
+            self.assertNotIn("unfinished", phrase)
+            self.assertNotIn("holds the value", phrase)
+
+    def test_each_is_in_the_queue_of_its_own_place_and_not_now_hides_it(self):
+        out = fq.forecast_questions([self.ATTR, self.CORR], set())
+        self.assertEqual({"Wikis/Meetings", "Zones/Work"}, set(out))
+        self.assertEqual(["attribution"], [q["id"] for q in out["Wikis/Meetings"]])
+        self.assertEqual(["correction"], [q["id"] for q in out["Zones/Work"]])
+        self.assertEqual({"Zones/Work"}, set(fq.forecast_questions([self.ATTR, self.CORR], {fq.later_key("attribution", self.PAGE)})))
+
+    def test_a_page_with_a_wall_finding_has_no_question_of_its_own(self):
+        path = "Zones/Work/Acme Review/Deliverables/261027 - Sales deck.md"
+        wall = dict(KINDS["wall"], scope="Zones/Work")
+        attr = dict(self.ATTR, path=path, scope="Zones/Work", line=path + ": unfinished: no zone")
+        corr = dict(self.CORR, path=path)
+        got = fq.forecast_questions([wall, attr, corr], set())["Zones/Work"]
+        self.assertEqual(["wall"], [q["id"] for q in got])
+
+    def test_every_request_they_send_is_valid_for_the_verb_it_names(self):
+        for it in (self.ATTR, self.CORR):
+            for a in fq.question(it, it["scope"])["answers"]:
+                if a["action"] == "open":
+                    for req in a["reqs"]:
+                        self.assertEqual("note-open", req["verb"])
+                elif a["action"] == "later":
+                    self.assertIn(a["req"]["answer"], fq.VERB_ANSWERS[it["kind"]])
 
 
 if __name__ == "__main__":
     unittest.main()
-

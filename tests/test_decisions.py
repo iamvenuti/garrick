@@ -415,15 +415,131 @@ class TestWhatThePanelLists(DecisionCase):
         self.assertNotIn("Acme: which", json.dumps(got["buckets"]["Work"]["decisions"]))
         self.assertIn("Birch: which volume floor holds?", self.titles(got["buckets"]["Work"]))
 
-    def test_the_queue_asks_a_decision_to_review_and_never_confirms_one(self):
+    def test_the_queue_asks_a_decision_to_review_with_it_still_holds(self):
         from test_finding_queue import fq
         d = self.data()
         qs = fq.asked_questions(d, set())["Zones/Work"]
         rev = [q for q in qs if q["id"] == "decision-review"]
-        self.assertEqual(["Open the decision", "Not now"], [a["label"] for a in rev[0]["answers"]])
+        self.assertEqual(["Open the decision", "It still holds", "Not now"], [a["label"] for a in rev[0]["answers"]])
         self.assertNotIn("not built yet", fq.QUEUE_JS)
         self.assertEqual("Decision to review", rev[0]["tag"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# The read guard and the connector filter (#613, #614): the same decide(), asked of a read
+# ---------------------------------------------------------------------------
+
+from read_guard_case import GuardCase  # noqa: E402
+
+HOOKS = Path(__file__).resolve().parent.parent / "extras" / "hooks"
+
+
+def load_read_guard():
+    if str(HOOKS) not in sys.path:
+        sys.path.insert(0, str(HOOKS))
+    spec = importlib.util.spec_from_file_location("read_guard_decisions_test", str(HOOKS / "read_guard.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestReadDecisions(GuardCase):
+    """One row per scope and per label, from the root's point of view and each zone's: what a session may read.
+    `-` is a page with no zone, `K` a Knowledge page."""
+
+    ROWS = [
+        # scope, path, expected
+        ("Work", "Zones/Work/Acme/Acme.md", "allow"),
+        ("Work", "Wikis/Meetings/wiki/acme-kickoff.md", "allow"),
+        ("Work", "Zones/Personal/Birch/Birch.md", "deny"),
+        ("Work", "Wikis/Meetings/wiki/birch-pricing.md", "deny"),
+        ("Work", "Zones/Ventures/Cedar/Cedar.md", "allow"),
+        ("Work", "Wikis/Meetings/wiki/cedar-garden.md", "allow"),
+        ("Work", "Wikis/Meetings/wiki/loose.md", "deny"),
+        ("Work", "Wikis/Knowledge/wiki/standard.md", "allow"),
+        ("Work", "System/notes.md", "allow"),
+        ("Personal", "Zones/Work/Acme/Acme.md", "deny"),
+        ("Personal", "Zones/Personal/Birch/Birch.md", "allow"),
+        ("Personal", "Wikis/Meetings/wiki/birch-pricing.md", "allow"),
+        ("Ventures", "Zones/Ventures/Cedar/Cedar.md", "allow"),
+        ("Ventures", "Wikis/Meetings/wiki/cedar-garden.md", "allow"),
+        ("Ventures", "Zones/Work/Acme/Acme.md", "deny"),
+        ("Ventures", "Wikis/Meetings/wiki/loose.md", "deny"),
+        ("root", "Zones/Work/Acme/Acme.md", "allow"),
+        ("root", "Wikis/Meetings/wiki/birch-pricing.md", "allow"),
+        ("root", "Wikis/Meetings/wiki/loose.md", "allow"),
+        ("System", "Zones/Personal/Birch/Birch.md", "allow"),
+        ("System", "Wikis/Meetings/wiki/loose.md", "allow"),
+    ]
+
+    def test_every_row(self):
+        lib_path = TOOLS
+        if str(lib_path) not in sys.path:
+            sys.path.insert(0, str(lib_path))
+        import garrick_lib as lib
+        guard = load_read_guard()
+        ctx = lib.load_context(self.root)
+        homes = {"Work": self.acme, "Personal": self.birch, "Ventures": self.cedar, "root": self.root, "System": self.root / "System"}
+        for scope_name, rel, expect in self.ROWS:
+            with self.subTest(scope=scope_name, path=rel):
+                scope = guard.derive(lib, str(self.root), str(homes[scope_name]))
+                got, _ = guard.judge(lib, str(self.root), ctx, scope, str(self.root / rel), False)
+                self.assertEqual(expect, got)
+
+    def test_the_read_is_decided_by_decide_and_nothing_of_its_own(self):
+        import garrick_lib as lib
+        guard = load_read_guard()
+        ctx = lib.load_context(self.root)
+        calls = []
+        real = lib.decide
+
+        def spy(scope, labels, action, context):
+            calls.append((scope, labels, action))
+            return real(scope, labels, action, context)
+        with mock.patch.object(lib, "decide", spy):
+            scope = guard.derive(lib, str(self.root), str(self.acme))
+            guard.judge(lib, str(self.root), ctx, scope, str(self.birch / "Birch.md"), False)
+        self.assertEqual([({"Work"}, {"Personal"}, "read")], calls)
+
+
+class TestConnectorDecisions(GuardCase):
+    """A connector result labelled by its addresses, decided as a read: the same rows, from the scope's side.
+    `-` is a result no party labels (an unknown domain, personal webmail, only your own address)."""
+
+    ROWS = [
+        ("Work", "dana@acme.example", True),
+        ("Work", "theo@birch.example", False),
+        ("Work", "pat@cedar.example", True),
+        ("Work", "x@stranger.example", False),
+        ("Work", "friend@gmail.com", False),
+        ("Work", "jo@home.example", False),
+        ("Work", "dana@acme.example theo@birch.example", False),
+        ("Work", "dana@acme.example pat@cedar.example", True),
+        ("Work", "a@maple.example", False),
+        ("Personal", "theo@birch.example", True),
+        ("Personal", "dana@acme.example", False),
+        ("Ventures", "pat@cedar.example", True),
+        ("Ventures", "dana@acme.example", False),
+        ("Ventures", "x@stranger.example", False),
+    ]
+
+    def test_every_row(self):
+        import garrick_lib as lib
+        guard = load_read_guard()
+        ctx = lib.load_context(self.root)
+        suggest = guard.load_suggest(str(self.root))
+        homes = {"Work": self.acme, "Personal": self.birch, "Ventures": self.cedar}
+        for scope_name, addresses, expect in self.ROWS:
+            with self.subTest(scope=scope_name, addresses=addresses):
+                scope = guard.derive(lib, str(self.root), str(homes[scope_name]))
+                self.assertEqual(expect, guard.decide_result(lib, ctx, scope, suggest, addresses))
+
+    def test_the_root_is_not_asked(self):
+        import garrick_lib as lib
+        guard = load_read_guard()
+        scope = guard.derive(lib, str(self.root), str(self.root))
+        self.assertEqual("root", scope["kind"])

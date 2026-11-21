@@ -31,6 +31,8 @@ Both assistants read the same files, but that alone does not show they do the sa
 | First-session approvals, on a clean account | Not yet tested | Not yet tested |
 | Unattended jobs | 2.1.287 and 2.1.288: the allow list, the deny profile, the settings sources and the permission mode, checked by hand | 0.160.0: a job that only reads ran read-only, writing nothing and with no connector, browser or web tools. Not yet run end to end through `job.py` |
 | Connectors in a job | Not yet tested live | Switched off for a job that only reads (0.160.0). With a job that writes: not yet tested |
+| Read guard: records the session's scope at start, decides each read | 2.1.330: written for `SessionStart` and `PreToolUse` on `Read`, `Grep`, `Glob` and `Bash`; a refusal is a permission denial, and a read across a wall can raise the permission prompt. Tested by feeding the hook events, not yet run live in a session | 0.171.0-alpha.13: written for `SessionStart` and `PreToolUse` on `Bash`, which its hook parser accepts; not yet run live. A hook cannot ask, so a read across a wall is refused once and goes through on a second try. Files are read through the shell, which the guard reads on a best-effort basis |
+| Connector filter: removes a refused result from a mail or calendar tool's output | 2.1.330: proven, a `PostToolUse` hook replaced a test tool's output before the model saw it | 0.171.0-alpha.13: not possible, the hook output field that replaces a tool's output is refused. No hook is built; its connector results are kept apart by the instructions only |
 
 [Scheduled jobs](extras/scheduled-jobs.md) gives the details of each check. Another assistant counts as supported once it passes the same rows; following `AGENTS.md` alone does not establish it.
 
@@ -45,6 +47,10 @@ Zones never mix in storage. Giving each zone its own repository makes that true 
 The price is that an assistant which stops at a repository's root sees less from inside a zone. Codex is one. A Codex session opened anywhere inside `Zones/Work` reads `Zones/Work/AGENTS.md`, because that is its repository's root file. It does not reach the workspace root's `AGENTS.md`, `System/rules.md` or `System/context.md`, because those sit in a different repository.
 
 That's why each zone's `AGENTS.md`, from `template/System/templates/zone/AGENTS.md`, opens with an explicit pointer: "Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own." `Wikis/AGENTS.md` carries the same line, pointing one level up. Claude Code reads instruction files in the folders above as well, past the repository boundary. The pointer is there for an assistant that stops at the boundary, and costs the other nothing to follow.
+
+## More than one machine
+
+A workspace can live on a server and travel on a laptop. That setup has its own roles and sync rules: see [One workspace on more than one machine](machines.md).
 
 ## Skill discovery
 

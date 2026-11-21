@@ -412,7 +412,7 @@ class TestTheQueueAsksEveryKind(CardCase):
         self.assertIn("Record as a decision", work)
         self.assertIn(">Accept<", work)                                              # a verdict
         self.assertIn("Open the decision", work)
-        self.assertNotIn("It still holds", work)                                     # left out: only the user changes a decision
+        self.assertIn("It still holds", work)                                        # the user's own press; it never writes a status
         verbs = set(re.findall(r'&quot;verb&quot;: &quot;([a-z-]+)&quot;', work))
         self.assertEqual({"question-answer", "question-decide", "question-later", "question-close", "note-open", "finding"}, verbs)
 

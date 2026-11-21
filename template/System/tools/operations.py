@@ -141,7 +141,7 @@ OP_RE = re.compile(r"[0-9a-f]{8,32}")
 STATES = ("queued", "running", "completed", "failed")
 # Who sent a request, named in its record and in the audit log (#344): a click
 # on the page, the ask box, or an assistant's session at the command line.
-CALLERS = ("page", "ask", "session")
+CALLERS = ("page", "ask", "session", "outbox")
 OUTCOMES = ("saved", "refused", "crashed", "unknown", "lost")
 SUCCESS_VERBS = ("saved", "parked", "ticked", "added", "renamed", "made", "committed")
 
@@ -328,12 +328,27 @@ DECLARED: Dict[str, Op] = {
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),
+    # A request held in a zone's outbox, taken out of it unapplied (#612): only the app's bridge.
+    "outbox-drop": _op(("zone", "id"), ("zone", "id"), "zone", retry="safe"),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since
 # 0.26.0, and the name read() reports, so it keeps meaning exactly that.
 RECORDED = ("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add")
 OPS: Dict[str, Op] = {verb: DECLARED[verb] for verb in RECORDED}
+# A roaming machine's copy of the workspace only receives, so a Todo action made there is queued in its zone's outbox
+# and applied on the server, `via: outbox` (#612). It carries these four verbs and no other, and `via_refusal` says so.
+OUTBOX_VERBS = ("todo-done", "todo-undo", "todo-edit", "todo-add")
+OUTBOX_ONLY = "the outbox carries only a tick, an untick, a reworded line and a new line"
+
+
+def via_refusal(via, verb) -> Optional[str]:
+    """Why `via` may not send this verb, or None. Only the outbox is limited: its four verbs, and nothing else."""
+    if via == "outbox" and verb not in OUTBOX_VERBS:
+        return OUTBOX_ONLY
+    return None
+
+
 # What an absent field means, so that leaving it out and sending it say the same.
 DEFAULTS = {"target": "-", "date": "-"}
 # For park and wake, the status the verb would set, and so the one a note

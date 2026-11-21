@@ -27,7 +27,8 @@ or, with none of them, the period kept in System/garrick-settings.json under
 "catch-up", the last day until it is changed.
 
 **What it reads, per thread** (a thread note, or a project with no threads,
-whose hub is its thread):
+whose hub is its thread; and a hub that still holds its own `### Resume here`
+block, beside its threads, whose folder is the project's without them):
 
 - the zone's git history of the thread's folder in the period: each commit's
   hash, time, author, subject, body and the files it touched there, newest
@@ -240,9 +241,10 @@ def stamp(day: datetime.date) -> str:
     return "%s 00:00:00" % day.isoformat()
 
 
-def commits(repo: Path, rel: str, since: datetime.date) -> Optional[List[dict]]:
+def commits(repo: Path, rel: str, since: datetime.date, skip: Optional[str] = None) -> Optional[List[dict]]:
     out = git(repo, "log", "--since=" + stamp(since), "--name-only",
-              "--format=" + SEP + FIELD.join(("%H", "%h", "%aI", "%an", "%s", "%b")) + FIELD, "--", rel)
+              "--format=" + SEP + FIELD.join(("%H", "%h", "%aI", "%an", "%s", "%b")) + FIELD, "--", rel,
+              *([":(exclude)%s/%s" % (rel, skip)] if skip else []))
     if out is None:
         return None
     found = []
@@ -256,8 +258,9 @@ def commits(repo: Path, rel: str, since: datetime.date) -> Optional[List[dict]]:
     return found
 
 
-def uncommitted(repo: Path, rel: str) -> List[str]:
-    out = git(repo, "status", "--porcelain", "--untracked-files=all", "--", rel)
+def uncommitted(repo: Path, rel: str, skip: Optional[str] = None) -> List[str]:
+    out = git(repo, "status", "--porcelain", "--untracked-files=all", "--", rel,
+              *([":(exclude)%s/%s" % (rel, skip)] if skip else []))
     return [line[3:] for line in (out or "").splitlines() if len(line) > 3]
 
 
@@ -399,7 +402,8 @@ def visible(folder: Path) -> List[Path]:
 
 def notes(zone: Path) -> List[dict]:
     """Every thread in a zone: a thread note, or a project with no thread
-    note, whose hub is its thread. A parked project parks its threads."""
+    note, whose hub is its thread, and a hub that keeps its own resume point
+    beside its threads. A parked project parks its threads."""
     out = []
     for project in visible(zone):
         if project.name in SKIP:
@@ -408,8 +412,15 @@ def notes(zone: Path) -> List[dict]:
         hub_state = str(gl.parse_frontmatter(hub).get("status") or "").strip().lower() if hub.is_file() else ""
         found = [(t.name, t / (t.name + ".md")) for t in visible(project / "Threads")]
         found = [(name, note) for name, note in found if note.is_file()]
-        if not found and hub.is_file():
+        pfm = gl.parse_frontmatter(hub) if hub.is_file() else {}
+        if hub.is_file() and not found:
+            if str(pfm.get("layout") or "").strip().lower() == "thread-first":
+                continue                                       # a heading with no thread is no piece of work
             out.append({"project": project.name, "thread": None, "note": hub, "folder": project, "status": hub_state})
+        elif hub.is_file() and hub_state not in (DONE,) and gl.hub_keeps_resume(hub.read_text(encoding="utf-8", errors="replace"), pfm):
+            # The hub's own resume point, beside the threads': its folder is the project's without them.
+            out.append({"project": project.name, "thread": None, "note": hub, "folder": project, "status": hub_state,
+                        "skip": "Threads"})
         for name, note in found:
             state = str(gl.parse_frontmatter(note).get("status") or "").strip().lower()
             out.append({"project": project.name, "thread": name, "note": note, "folder": note.parent,
@@ -511,7 +522,8 @@ def thread(root: Path, zone: Path, row: dict, since: datetime.date, today: datet
         text = row["note"].read_text(encoding="utf-8", errors="replace")
     except OSError:
         text = ""
-    history = commits(zone, rel_folder, since)
+    skip = row.get("skip")
+    history = commits(zone, rel_folder, since, skip)
     then, known = before(zone, rel_note, since)
     now_block, then_block = resume(text), resume(then)
     held = history_files(row["note"])
@@ -527,7 +539,7 @@ def thread(root: Path, zone: Path, row: dict, since: datetime.date, today: datet
         added = [e for e in now_entries if e["date"] and e["date"] >= since.isoformat()]
     cp = checkpoint(text)
     todo = lines_for(found, row, zone, shared)
-    dirty = uncommitted(zone, rel_folder)
+    dirty = uncommitted(zone, rel_folder, skip)
     times = ([c["when"][:10] for c in history or []] + [t["done"] for t in todo["ticked"]]
              + [e["date"] for e in added if e["date"]] + ([today.isoformat()] if dirty else []))
     if cp and cp["at"]:

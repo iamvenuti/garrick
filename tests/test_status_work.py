@@ -663,6 +663,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"note-add"}
         # Distil (#591): a line reworded or retired by a session or the digest's apply, never from a button.
         unzoned |= {"todo-edit", "todo-retire"}
+        # *Chase* (#603) drafts a message and queues it through hold: it commits nothing in any zone.
+        unzoned |= {"chase"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

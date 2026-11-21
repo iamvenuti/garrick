@@ -56,6 +56,7 @@ HELD_KINDS = ("send", "share", "delete")        # a held tool is one of these ki
 # The arguments a confirmation shows, whatever `what` and `where` say: who it goes to, and what it touches.
 SHOWN_ARGS = ("to", "cc", "bcc", "recipients", "recipient", "attendees", "email", "emails", "target", "share_with",
               "shared_with", "user", "users", "path", "file_path")
+SHOWN_TEXT = 400                                 # the most of a chase's subject or body a confirmation shows
 _mutex = threading.RLock()
 _depth = [0]
 _lock_fh: list = []
@@ -249,6 +250,11 @@ def shown(e: dict) -> str:
             got = _flat(args[key])
             if got:
                 parts.append("%s: %s" % (key, ", ".join(got)))
+    if str(e.get("exchange") or "").startswith("chase-"):         # a chase is text the owner has not read: show it all
+        for key in ("subject", "body"):
+            text = " ".join(str(args.get(key) or "").split())
+            if text:
+                parts.append("%s: %s" % (key, text if len(text) <= SHOWN_TEXT else text[:SHOWN_TEXT] + " [cut]"))
     return "; ".join(parts)
 
 

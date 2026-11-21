@@ -1095,6 +1095,19 @@ def _live_threads(folder: Path, only_active: bool = False) -> List[str]:
     return out
 
 
+def _hub_kind(folder: Path) -> str:
+    """What a project's hub says about the project: `heading` (layout thread-first: a heading over separate pieces
+    of work), `resume` (a piece of work whose hub keeps its own `### Resume here`), or `plain`."""
+    hub = folder / (folder.name + ".md")
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "plain"
+    if str(parse_frontmatter(hub).get("layout") or "").strip().lower() == "thread-first":
+        return "heading"
+    return "resume" if re.search(r"(?mi)^###[ \t]+Resume here[ \t]*$", text) else "plain"
+
+
 def _said(project: str, thread: Optional[str]) -> str:
     return "%s, %s" % (project, thread) if thread else project
 
@@ -1138,7 +1151,9 @@ def resolve_destination(root: Path, spoken: str, about: str = "", purpose: str =
 
     `purpose="ask"` is for a question about a place, not a note (the Telegram channel's dispatcher): the questions
     are worded without "note", a name that settled to nothing but a party lists the party's places, and a project
-    alone is enough: with one live thread it settles to that thread, with several to the project (thread None)."""
+    alone is enough: with one live thread it settles to that thread, with several to the project (thread None); a piece
+    of work whose hub keeps its own resume point settles to the project's hub, whatever its threads, and a heading,
+    which has none, asks which of its threads."""
     asking = purpose == "ask"
     if asking:
         ask_q = "Which thread?"
@@ -1193,7 +1208,13 @@ def resolve_destination(root: Path, spoken: str, about: str = "", purpose: str =
         project, thread = projects[0], None
         many = _live_threads(root / "Zones" / zone / project)
         live = _live_threads(root / "Zones" / zone / project, True)
-        if asking and len(live) == 1:
+        kind = _hub_kind(root / "Zones" / zone / project)
+        if asking and kind == "heading" and many:
+            # A heading has no resume point of its own: the project's name alone does not say which piece of work.
+            offer = [{"zone": zone, "project": project, "thread": t, "said": _said(project, t),
+                      "folder": root / "Zones" / zone / project / "Threads" / t} for t in many[:3]]
+            raise NoPlace("Which thread of %s: %s?" % (project, _which(many)), offer)
+        if asking and len(live) == 1 and kind != "resume":
             thread = live[0]                     # one active thread: the question is about that thread
         elif many and not asking:
             raise Confirm("Which thread of %s is the note about: %s?" % (project, _which(many)))

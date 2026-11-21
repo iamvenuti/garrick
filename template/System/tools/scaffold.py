@@ -4,14 +4,17 @@
     python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden" [--open]
     python3 System/tools/scaffold.py zone --name Garden --walled | --open [--yes]
     python3 System/tools/scaffold.py party --name "Acme Corp" --zone Work --what "Supplier" [--check]
-    python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] --thread "Pricing"
+    python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] [--thread "Pricing"] [--heading]
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
+    python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Side Deal" --papers own
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
     python3 System/tools/scaffold.py park    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py wake    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
     python3 System/tools/scaffold.py move    --zone Work --project Acme --thread Pricing --to Birch
+    python3 System/tools/scaffold.py layout  --zone Work --project Acme --thread Pricing --papers own|project [--check]
+    python3 System/tools/scaffold.py layout  --zone Work --project Acme --heading [--check]
     python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
     python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
     echo '{"verb":"checkpoint","zone":"Work","project":"Acme","thread":"Pricing", ...}' \
@@ -32,9 +35,15 @@ changes its flag, the one place a wall is set: open to walled writes, runs the
 workspace's wall check and lists what now crosses; walled to open says how many files
 it releases and writes only with `--yes`. Both are refused, writing nothing, while the
 Zones table has no Walled column (the update to zone walls has not been accepted).
-A project always starts with its first thread. A thread inherits its project's party,
-if it has one: `--party` is optional, an index and never a wall. `--check` applies
-every refusal and makes nothing, so a form can check a name as it is typed.
+A project need not start with a thread: `--thread` is optional. Without `--heading` the
+project is one piece of work: its hub holds a `### Resume here` block, and it has `Sources/`
+and `Deliverables/` and no `Threads/` until a thread is added. With `--heading` it is a
+heading over separate pieces of work: the hub says `layout: thread-first`, holds no resume
+point and no `Sources/` or `Deliverables/`, and may stay empty. A new thread in one piece of
+work uses the project's papers, and `--papers own` gives it `Sources/` and `Deliverables/` of
+its own; a heading's threads always keep their own, so nothing is asked there. A thread inherits its
+project's party, if it has one: `--party` is optional, an index and never a wall. `--check`
+applies every refusal and makes nothing, so a form can check a name as it is typed.
 
 `party` adds a row to the Parties table in System/context.md and offers the tag
 itself, so nobody has to invent one. The row it adds carries a Learned cell,
@@ -74,6 +83,16 @@ what would go; with it, the folder, the hub's line and the open Todo.md lines
 naming it go in one commit, which `undo` reverts while it is still the zone's
 last commit. Both refuse while what they
 would change has changes not committed, or a cmux tab is mid-turn in it.
+
+`layout` changes where a thread keeps its papers later, or makes a project a heading. `--thread T --papers own`
+moves the project's `Sources/` and `Deliverables/` files that only that thread's note names into the thread;
+`--papers project` moves the thread's papers back up; `--heading` gives each top-level file to the one thread that
+names it and sets `layout: thread-first`. A file moves only when exactly one thread note names it (and no other
+note of the project does): any other is listed for the owner to place, and Garrick never guesses. The ledger rows
+of a moved file follow it, with their share destination unchanged, and the links to it are pointed at the new
+place. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and
+a refused commit leaves every file and row where it was. Nothing leaves the project. It is not run on an update:
+an existing project keeps its layout until the owner asks.
 
 `checkpoint` writes the unconfirmed record of what a session has done into a
 thread note, directly under its Resume here block, which it never touches, and
@@ -176,7 +195,7 @@ WALL_SENTENCE = "A wall holds some material back from this project, so I have no
 # The verbs that change what the status page shows. After one, the page is
 # asked for a build in the background, which waits PAGE_SETTLE seconds for
 # another request first, so a run of commands makes one page (#243).
-PAGE_VERBS = ("zone", "project", "thread", "rename", "move", "delete", "park", "wake", "undo")
+PAGE_VERBS = ("zone", "project", "thread", "rename", "move", "delete", "park", "wake", "undo", "layout")
 PAGE_SETTLE = 10
 
 
@@ -361,7 +380,29 @@ def link_thread_in_hub(hub, thread, today):
     hub.write_text(text, encoding="utf-8")
 
 
-def make_thread(root, project_dir, name, party, today, spoken=None):
+PAPERS = ("Sources", "Deliverables")
+
+
+def is_heading(project_dir):
+    """Is the project a heading over separate pieces of work: `layout: thread-first` in its hub?"""
+    hub = project_dir / f"{project_dir.name}.md"
+    return hub.is_file() and str(parse_frontmatter(hub).get("layout") or "").strip().lower() == "thread-first"
+
+
+def papers_choice(project_dir, papers):
+    """Whether a new thread keeps its own `Sources/` and `Deliverables/`. In a heading it always does, and
+    the choice is not offered; in one piece of work it uses the project's unless it is told `own`."""
+    if papers not in (None, "", "own", "project"):
+        raise Refusal("--papers is own or project: the thread keeps its own papers, or uses the project's.")
+    if is_heading(project_dir):
+        if papers == "project":
+            raise Refusal(f"{project_dir.name} is a heading over separate pieces of work, so every thread under it "
+                          "keeps its own papers. Leave out --papers.")
+        return True
+    return papers == "own"
+
+
+def make_thread(root, project_dir, name, party, today, spoken=None, papers=False):
     threads = project_dir / "Threads"
     check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
     target = threads / name
@@ -376,6 +417,10 @@ def make_thread(root, project_dir, name, party, today, spoken=None):
         note.write_text(set_spoken(note.read_text(encoding="utf-8"), spoken), encoding="utf-8")
     if not party:
         drop_empty_party(note)
+    if papers:
+        for folder in PAPERS:
+            (target / folder).mkdir(exist_ok=True)
+            (target / folder / ".gitkeep").touch()
     return target
 
 
@@ -739,32 +784,86 @@ def cmd_new_party(root, args, today):
     return "\n".join(said)
 
 
+STATE_OF_PLAY = "## State of play"
+
+
+def hub_resume_section(root):
+    """The thread template's `## State of play` section, which is what a hub that keeps its own
+    resume point holds too: one block, one shape."""
+    template = root / "System" / "templates" / "thread"
+    note = next((p for p in sorted(template.glob("*.md"))), None)
+    text = note.read_text(encoding="utf-8") if note else ""
+    at = text.find(STATE_OF_PLAY)
+    if at < 0:
+        raise Refusal("System/templates/thread has no State of play section to start a hub's resume point from.")
+    return text[at:].rstrip("\n") + "\n"
+
+
+def shape_hub(hub, root, heading, with_thread):
+    """A hub made from the project template, shaped for what the project is. One piece of work with
+    no thread yet gets a resume point and no Threads list entry; a heading gets `layout: thread-first`
+    and no Sources or Deliverables rows; a project made with its first thread is as it has always been."""
+    text = hub.read_text(encoding="utf-8")
+    if not with_thread:
+        text = re.sub(r"(?m)^- \[\[[^\n]*<what it produces>\n", "", text, count=1)
+    if heading:
+        text = re.sub(r"(?m)^(status: .*)$", r"\1\nlayout: thread-first", text, count=1)
+        text = re.sub(r"(?m)^\| `(Sources|Deliverables)/` \|.*\n", "", text)
+        text = text.replace("| `Threads/` | One folder per thread, each with its resume point |",
+                            "| `Threads/` | One folder per thread, each with its resume point and its own `Sources/` and `Deliverables/` |")
+        text = text.replace("<One or two sentences: what this project is, and what falls outside it.>",
+                            "<One or two sentences: what this heading covers, and what falls outside it.>")
+    elif not with_thread:
+        section = hub_resume_section(root)
+        text = re.sub(r"(?m)^## Threads$", lambda m: section + "\n## Threads", text, count=1)
+    hub.write_text(text, encoding="utf-8")
+
+
 def cmd_project(root, args, today):
     zone_dir = find_zone(root, args.zone)
-    name, thread = args.name.strip(), args.thread.strip()
+    name = args.name.strip()
+    thread = (args.thread or "").strip()
+    heading = bool(getattr(args, "heading", False))
     if name.lower() == INBOX.lower():
         raise Refusal(f"{INBOX} is where {zone_dir.name}'s mail and files wait to be filed. Pick another name for the project.")
     spoken = (args.spoken or "").strip()
     thread_spoken = (args.thread_spoken or "").strip()
+    if thread_spoken and not thread:
+        raise Refusal("--thread-spoken says how the first thread's name is said, and no first thread is named.")
     check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
-    check_name(thread, [], "thread", name, spoken=thread_spoken)
+    if thread:
+        check_name(thread, [], "thread", name, spoken=thread_spoken)
     party = check_party(root, args.party, zone_dir.name)
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
-    asked = say_how(name, "project", spoken) + say_how(thread, "thread", thread_spoken)
+    asked = say_how(name, "project", spoken) + (say_how(thread, "thread", thread_spoken) if thread else [])
+    kind = "a heading over separate pieces of work" if heading else "one piece of work"
     if getattr(args, "check", False):
-        return "\n".join([f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."] + asked)
+        first = f", and {thread} as its first thread" if thread else ""
+        if thread and not heading:                  # as it has always said it
+            return "\n".join([f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."] + asked)
+        return "\n".join([f"{name} will do as a project in {zone_dir.name}, as {kind}{first}."] + asked)
     values = {"ZONE": zone_dir.name, "PROJECT": name, "THREAD": thread, "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "project", target, values)
     hub = target / f"{name}.md"
     if spoken and hub.is_file():
         hub.write_text(set_spoken(hub.read_text(encoding="utf-8"), spoken), encoding="utf-8")
-    make_thread(root, target, thread, party, today, thread_spoken)
+    if hub.is_file():
+        shape_hub(hub, root, heading, bool(thread))
+    if heading:
+        for papers in ("Sources", "Deliverables"):       # just copied from the template: nothing of anyone's in them
+            shutil.rmtree(target / papers, ignore_errors=True)
+    if thread:
+        make_thread(root, target, thread, party, today, thread_spoken, papers=heading)
     if not party:
         drop_empty_party(hub)
-    link_thread_in_hub(hub, thread, today)
-    return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
+    if thread:
+        link_thread_in_hub(hub, thread, today)
+    if thread and not heading:                      # as it has always said it
+        return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
+    made = f"Created project {name} in {zone_dir.name}, as {kind}"
+    return "\n".join([made + (f", with its first thread, {thread}." if thread else ".")] + asked)
 
 
 def cmd_thread(root, args, today):
@@ -777,15 +876,17 @@ def cmd_thread(root, args, today):
     name = args.name.strip()
     spoken = (args.spoken or "").strip()
     asked = say_how(name, "thread", spoken)
+    own = papers_choice(project_dir, getattr(args, "papers", None))
+    keeps = " It keeps its own papers." if own else ""
     if getattr(args, "check", False):
         threads = project_dir / "Threads"
         check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
         if (threads / name).exists():
             raise Refusal(f"{(threads / name).relative_to(root)} already exists.")
-        return "\n".join([f"{name} will do as a thread in {project_dir.name}."] + asked)
-    target = make_thread(root, project_dir, name, party, today, spoken)
+        return "\n".join([f"{name} will do as a thread in {project_dir.name}." + keeps] + asked)
+    target = make_thread(root, project_dir, name, party, today, spoken, papers=own)
     link_thread_in_hub(hub, name, today)
-    said = [f"Created thread {name} in {project_dir.name}."] + asked
+    said = [f"Created thread {name} in {project_dir.name}." + keeps] + asked
     if getattr(args, "touched", False):
         # What it wrote, from the zone, for a caller that commits it by name and nothing else (#183).
         said.append("Touched: " + json.dumps([target.relative_to(zone_dir).as_posix(),
@@ -853,7 +954,8 @@ def zone_notes(zone_dir):
     repository of its own inside a project, nothing waiting in the inbox."""
     listing = git_value(["ls-files", "-z", "--", "*.md"], zone_dir)
     for name in sorted(n for n in listing.split("\0") if n and not n.startswith(INBOX + "/")):
-        yield zone_dir / name
+        if not (zone_dir / name).is_symlink():          # a link may lead out of the zone: never write through one
+            yield zone_dir / name
 
 
 def preflight(zone_dir, folder, verb):
@@ -1551,6 +1653,292 @@ def cmd_move(root, args, today):
     return "\n".join(said)
 
 
+# --------------------------------------------------------------------------- layout
+
+LAYOUT_ACTION = "Garrick-Action: layout"
+LAYOUT_SAID_MOST = 8
+
+
+def tracked_under(zone_dir, folder):
+    """The files git tracks under `folder`, from the zone's top, as paths: never a link, which a move would follow."""
+    rel = folder.relative_to(zone_dir).as_posix()
+    listing = git_value(["ls-files", "-z", "--", rel], zone_dir)
+    out = []
+    for name in sorted(n for n in listing.split("\0") if n):
+        path = zone_dir / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        out.append(name)
+    return out
+
+
+def names_file(text, rel, name):
+    """Does a note name a file: by its path from the project, or by its name (a note also without the extension),
+    as a whole word, written plainly or as a URL writes it."""
+    forms = {rel, urllib.parse.quote(rel)}
+    bare = {name, urllib.parse.quote(name)}
+    if name.endswith(".md"):
+        forms |= {rel[:-3]}
+        bare |= {name[:-3]}
+    # A bare name is not a path: a "/" before it is another folder's file of the same name.
+    return any(re.search(r"(?<![\w.-])%s(?![\w])" % re.escape(f), text) for f in forms if f) or \
+        any(re.search(r"(?<![\w./-])%s(?![\w])" % re.escape(f), text) for f in bare if f)
+
+
+def ledger_rows_of(ledger, folder):
+    """The rows of a ledger with the file each one names, resolved as drift.py does: under the ledger's own
+    Deliverables folder, else from that folder's parent. A list of (row line, path)."""
+    try:
+        lines = ledger.read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or not cells[1] or set(cells[0]) <= set("-: ") or cells[0].lower() == "date":
+            continue
+        first = folder / cells[1]
+        out.append((line, first if first.exists() else folder.parent / cells[1]))
+    return out
+
+
+def plan_layout(zone_dir, project_dir, thread, papers, heading):
+    """(moves, left, what): the files to move as (from, to) paths from the zone's top, the files listed for the
+    owner to place with why, and what the change is. Reads, writes nothing. A file moves only when exactly one
+    thread note names it, and no other note of the project does; a file that no thread names, or that two
+    notes name, is listed, and Garrick does not guess a thread for it."""
+    rel = lambda p: p.relative_to(zone_dir).as_posix()                # noqa: E731
+    pname = project_dir.name
+    hub = project_dir / f"{pname}.md"
+    ledger = project_dir / "Deliverables" / "published.md"
+    threads = [project_dir / "Threads" / n for n in children(project_dir / "Threads")]
+    threads = [t for t in threads if (t / f"{t.name}.md").is_file()]
+    notes = {t.name: (t / f"{t.name}.md").read_text(encoding="utf-8", errors="replace") for t in threads}
+    hub_text = hub.read_text(encoding="utf-8", errors="replace") if hub.is_file() else ""
+    moves, left = [], []
+
+    def top_files():
+        """The project's own files, as paths from the project: not its hub, its ledger, its threads or its archive."""
+        out = []
+        for name in tracked_under(zone_dir, project_dir):
+            inside = Path(name).relative_to(rel(project_dir)).as_posix()
+            if Path(inside).parts[0] in ("Threads", "archive") or inside in (f"{pname}.md", "Deliverables/published.md") \
+                    or Path(inside).name == ".gitkeep":
+                continue
+            out.append(inside)
+        return out
+
+    if heading:
+        if is_heading(project_dir):
+            raise Refusal(f"{pname} is a heading over separate pieces of work already.")
+        for inside in top_files():
+            namers = [t.name for t in threads if names_file(notes[t.name], inside, Path(inside).name)]
+            hub_names = names_file(hub_text, inside, Path(inside).name)
+            target = f"{rel(project_dir)}/Threads/{namers[0]}/{inside}" if namers else ""
+            if len(namers) == 1 and not hub_names and (zone_dir / target).exists():
+                left.append((f"{rel(project_dir)}/{inside}", "the thread has a file of that name already"))
+            elif len(namers) == 1 and not hub_names:
+                moves.append((f"{rel(project_dir)}/{inside}", target))
+            else:
+                left.append((f"{rel(project_dir)}/{inside}", "no thread names it" if not namers else
+                             "more than one note names it" if len(namers) > 1 or hub_names else ""))
+        return moves, left, f"{pname} becomes a heading over separate pieces of work"
+    tdir = project_dir / "Threads" / thread
+    if is_heading(project_dir):
+        raise Refusal(f"{pname} is a heading, so every thread under it keeps its own papers already.")
+    if papers == "own":
+        for inside in top_files():
+            if Path(inside).parts[0] not in PAPERS:
+                continue                                              # a thread's own papers are Sources and Deliverables
+            namers = [t.name for t in threads if names_file(notes[t.name], inside, Path(inside).name)]
+            hub_names = names_file(hub_text, inside, Path(inside).name)
+            if namers == [thread] and not hub_names and (tdir / inside).exists():
+                left.append((f"{rel(project_dir)}/{inside}", "the thread has a file of that name already"))
+            elif namers == [thread] and not hub_names:
+                moves.append((f"{rel(project_dir)}/{inside}", f"{rel(tdir)}/{inside}"))
+            elif not namers:
+                left.append((f"{rel(project_dir)}/{inside}", "no thread names it"))
+            elif thread in namers and (len(namers) > 1 or hub_names):
+                left.append((f"{rel(project_dir)}/{inside}", "more than one note names it"))
+        return moves, left, f"{thread} keeps its own papers"
+    for name in tracked_under(zone_dir, tdir):
+        inside = Path(name).relative_to(rel(tdir)).as_posix()
+        if Path(inside).parts[0] not in PAPERS or Path(inside).name == ".gitkeep" or inside == "Deliverables/published.md":
+            continue
+        target = f"{rel(project_dir)}/{inside}"
+        if (zone_dir / target).exists():
+            left.append((name, "the project has a file of that name already"))
+        else:
+            moves.append((name, target))
+    return moves, left, f"{thread} uses the project's papers"
+
+
+def say_files(names):
+    names = list(names)
+    return ", ".join(names[:LAYOUT_SAID_MOST]) + (f" and {len(names) - LAYOUT_SAID_MOST} more" if len(names) > LAYOUT_SAID_MOST else "")
+
+
+def hub_keeps_resume_block(hub):
+    try:
+        return any(l.strip().lower() == RESUME_HEADING.lower() for l in hub.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return False
+
+
+def cmd_layout(root, args, today):
+    """Change where a thread keeps its papers, or make a project a heading, and carry the files with their
+    ledger rows and links, in one commit. `--check` says the plan and writes nothing. A file moves only when
+    exactly one thread note names it; any other is listed. Nothing leaves the project, so nothing leaves the
+    zone. A commit that is refused leaves every file and ledger row where it was."""
+    zone_dir, project_dir, thread_dir, note = target_of(root, args)
+    heading = bool(getattr(args, "heading", False))
+    papers = getattr(args, "papers", None)
+    if heading and (papers or args.thread):
+        raise Refusal("--heading is for the whole project: leave out --thread and --papers.")
+    if not heading and not (args.thread and papers):
+        raise Refusal("Say what changes: --thread with --papers own or project, or --heading for the whole project.")
+    pname = project_dir.name
+    hub = project_dir / f"{pname}.md"
+    rel = lambda p: p.relative_to(zone_dir).as_posix()                # noqa: E731
+    prefix = rel(project_dir) + "/"
+    moves, left, what = plan_layout(zone_dir, project_dir, args.thread, papers, heading)
+    if any(not (a.startswith(prefix) and b.startswith(prefix)) for a, b in moves):
+        raise Refusal("A move would leave the project, so nothing is changed.")
+    needs_folders = papers == "own" and not all((thread_dir / k).is_dir() for k in PAPERS)
+    lines = [f"{what}: {len(moves)} file{'' if len(moves) == 1 else 's'} to move, {len(left)} left for you to place."]
+    if moves:
+        lines.append("Moves: " + say_files(f"{a[len(prefix):]} to {b[len(prefix):]}" for a, b in moves) + ".")
+    if left:
+        lines.append("Left for you to place: " + say_files(f"{n[len(prefix):]} ({why})" for n, why in left) + ".")
+    if heading and hub_keeps_resume_block(hub):
+        lines.append("The hub still holds a Resume here block, and a heading holds none: move it into a thread, or close it as an Outcome.")
+    if getattr(args, "check", False):
+        return "\n".join(lines + ["Nothing was changed."])
+    if not moves and not heading and not needs_folders:
+        return "\n".join(lines + ["Nothing was changed."])
+    made = preflight(zone_dir, project_dir, "change the layout")
+    moved_abs = {zone_dir / a: zone_dir / b for a, b in moves}
+    changes = {}                                                      # where a file is to be written -> its new text
+    # The ledger rows follow their files, to the ledger of the folder the file moved into. A row's share
+    # destination is never touched: only the ledger it sits in changes.
+    new_rows = {}
+    for base in [project_dir] + ([thread_dir] if papers == "project" else []):
+        ledger = base / "Deliverables" / "published.md"
+        if not ledger.is_file():
+            continue
+        text = ledger.read_text(encoding="utf-8")
+        keep = text.split("\n")
+        for row, path in ledger_rows_of(ledger, base / "Deliverables"):
+            dst = moved_abs.get(path)
+            if dst is None:
+                continue
+            under = dst.relative_to(project_dir).parts
+            dest = project_dir / "Threads" / under[1] if under[0] == "Threads" else project_dir
+            if dest != base:
+                keep.remove(row)
+                new_rows.setdefault(dest / "Deliverables" / "published.md", []).append((ledger, row))
+        if "\n".join(keep) != text:
+            changes[ledger] = "\n".join(keep)
+    for dest, rows in new_rows.items():
+        if dest in changes:
+            body = changes[dest]
+        elif dest.is_file():
+            body = dest.read_text(encoding="utf-8")
+        else:
+            src = rows[0][0].read_text(encoding="utf-8").split("\n")
+            first = next((i for i, r in enumerate(src) if r.startswith("|---")), len(src) - 1)
+            body = "\n".join(src[:first + 1]) + "\n"
+        changes[dest] = body.rstrip("\n") + "\n" + "\n".join(r for _, r in rows) + "\n"
+    # The notes as they are now, read before anything moves: the links in them are pointed at the new places once the files are there.
+    notes_text = {}
+    for path in zone_notes(zone_dir):
+        try:
+            notes_text[path] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    dirty = uncommitted(zone_dir, [project_dir])
+    if dirty:
+        raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
+                      "Commit or undo them, then change the layout.")
+    if mid_turn(root, project_dir):
+        raise Refusal(f"A session is mid-turn in {pname}. Let it finish, then change the layout.")
+    clear_machine_made(zone_dir, project_dir, made)
+    keeps = [project_dir / "Threads" / n for n in children(project_dir / "Threads")] if heading \
+        else [thread_dir] if papers == "own" else []
+    unresolved = []
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
+    outside = []
+    try:
+        for a, b in moves:
+            (zone_dir / b).parent.mkdir(parents=True, exist_ok=True)
+            git_ok(["mv", "--", a, b], zone_dir)
+        for folder in keeps:                                          # a heading's threads, and a thread with its own, keep both folders
+            for kind in PAPERS:
+                (folder / kind).mkdir(parents=True, exist_ok=True)
+                if not any((folder / kind).iterdir()):
+                    (folder / kind / ".gitkeep").touch()
+        # The links, as they were written, pointed at the new places, in every note of the zone.
+        for path, text in notes_text.items():
+            changed = changes.pop(path, text)
+            for a, b in moves:
+                noext = lambda x: x[:-3] if x.endswith(".md") else x     # noqa: E731
+                swaps = [(a, b), (noext(a), noext(b))]
+                if path == hub or project_dir in path.parents:
+                    swaps += [(a[len(prefix):], b[len(prefix):]), (noext(a[len(prefix):]), noext(b[len(prefix):]))]
+                changed = relink(changed, swaps, [], Path(a).name, Path(b).name, heads)
+                changed = md_relink(changed, rel(path), rel(moved_abs.get(path, path)), a, b, zone_dir, zone_dir.name,
+                                    Path(a).stem, unresolved)
+            here = moved_abs.get(path, path)
+            if changed != text or here in changes:
+                changes[here] = changed
+        if heading:
+            text = changes.get(hub) or hub.read_text(encoding="utf-8")
+            text = re.sub(r"(?m)^(status: .*)$", r"\1\nlayout: thread-first", text, count=1)
+            changes[hub] = re.sub(r"(?m)^updated: .*$", f"updated: {today}", text, count=1)
+        outside = [p for p in changes if project_dir not in p.parents and p != hub]
+        present = [p for p in outside if p.exists()]
+        dirty = uncommitted(zone_dir, present) if present else []       # a note elsewhere in the zone that a link change would touch
+        if dirty:
+            raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
+                          "Commit or undo them, then change the layout.")
+        linked = [p for p in changes if p.is_symlink() or any(q.is_symlink() for q in p.parents if zone_dir in q.parents)]
+        if linked:                                                     # never write through a link, inside or out of the zone
+            raise Refusal(f"{', '.join(rel(p) for p in linked[:3])} is a link, so the layout was not changed. "
+                          "Replace the link with the file itself, then change the layout.")
+        for path, text in changes.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        if papers == "project":
+            # A thread's own papers go once they hold nothing; what was left stays. Its ledger goes once it has no row.
+            ledger = thread_dir / "Deliverables" / "published.md"
+            if ledger.is_file() and not ledger_rows_of(ledger, thread_dir / "Deliverables"):
+                git_ok(["rm", "-q", "-f", "--", rel(ledger)], zone_dir)
+            for kind in PAPERS:
+                folder = thread_dir / kind
+                if folder.is_dir() and not [n for n in tracked_under(zone_dir, folder) if Path(n).name != ".gitkeep"] \
+                        and not any(f.name != ".gitkeep" for f in folder.rglob("*") if f.is_file()):
+                    shutil.rmtree(folder, ignore_errors=True)
+        git_ok(["add", "-A", "--", rel(project_dir)] + [rel(p) for p in outside], zone_dir)
+        problem = wall_hook_problem(zone_dir)
+        if problem:
+            raise Refusal(f"{problem}, so nothing was committed.")
+        git(["commit", "-q", "-m", f"{pname}: layout, {what}", "-m", f"{LAYOUT_ACTION}\nGarrick-Moved-Files: {len(moves)}"], zone_dir)
+    except (GitError, Refusal, OSError) as exc:
+        git_value(["reset", "-q"], zone_dir)
+        git_value(["checkout", "HEAD", "--", rel(project_dir)] + [rel(p) for p in outside], zone_dir)
+        git_value(["clean", "-fdq", "--", rel(project_dir)], zone_dir)
+        raise Refusal("The change was not committed, so every file and ledger row is where it was: " + " ".join(str(exc).split()))
+    commit = git_value(["rev-parse", "--short", "HEAD"], zone_dir).strip()
+    lines[0] = lines[0].replace(" to move,", " moved,")
+    lines.append(f"Changed in commit {commit}. To take it back: scaffold.py undo --zone {zone_dir.name} --commit {commit}.")
+    if unresolved:
+        lines.append("Markdown links left as they are, because they could not be resolved plainly: "
+                     + ", ".join(f"{n} ({l})" for n, l in unresolved[:5]) + ".")
+    return "\n".join(lines)
+
+
 def open_lines(zone_dir, paths, bare):
     """The open lines of the zone's Todo.md that link to one of `paths` (from
     the zone's top, without .md), or to one of `bare`, names that no other
@@ -1656,7 +2044,7 @@ def cmd_undo(root, args, today):
     subject = git_value(["log", "-1", "--format=%s"], zone_dir).strip()
     body = git_value(["log", "-1", "--format=%B"], zone_dir)
     is_move = MOVE_ACTION in body.splitlines()                 # a move is known by its trailer, never by its subject
-    if not (is_move or re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+, first thread .+$", subject)):
+    if not (is_move or re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+$|: layout, .+$", subject)):
         raise Refusal(f"{args.commit} is not a rename, a move, a deletion or a new project or thread: {subject}")
     if git_value(["status", "--porcelain", "--untracked-files=no"], zone_dir).strip():
         raise Refusal(f"{zone_dir.name} has changes not committed. Commit or undo them first.")
@@ -2110,11 +2498,13 @@ def main(argv=None):
     y.add_argument("--what", help="what it is, in a few words, for the table")
     y.add_argument("--also", action="store_true",
                    help="a second row for an organisation already in Parties, in another capacity")
-    p = sub.add_parser("project", help="a new project, with its first thread")
+    p = sub.add_parser("project", help="a new project: one piece of work, or a heading over separate pieces; the first thread is optional")
     p.add_argument("--zone", required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--party", help="tag from Parties in System/context.md, or several separated by commas; optional, an index")
-    p.add_argument("--thread", required=True, help="name of the first thread")
+    p.add_argument("--thread", help="name of the first thread; optional")
+    p.add_argument("--heading", action="store_true",
+                   help="a heading over separate pieces of work (layout: thread-first), not one piece of work")
     p.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     p.add_argument("--thread-spoken", dest="thread_spoken",
                    help="how the first thread's name is said, where it does not say it")
@@ -2123,6 +2513,9 @@ def main(argv=None):
     t.add_argument("--project", required=True)
     t.add_argument("--name", required=True)
     t.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
+    t.add_argument("--papers", choices=("own", "project"),
+                   help="in a project that is one piece of work: the thread keeps its own Sources/ and Deliverables/, "
+                        "or uses the project's (the default); a heading's threads always keep their own")
     t.add_argument("--touched", action="store_true",
                    help="end with a line `Touched: [...]`, the paths from the zone it wrote, for a caller that commits them")
     r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")
@@ -2137,6 +2530,13 @@ def main(argv=None):
     mv.add_argument("--thread", required=True, help="the thread to move")
     mv.add_argument("--to", required=True, help="the project it goes to, in the same zone")
     mv.add_argument("--no-state", dest="no_state", action="store_true", help=argparse.SUPPRESS)
+    ly = sub.add_parser("layout", help="change where a thread keeps its papers, or make a project a heading, and carry the files")
+    ly.add_argument("--zone", required=True)
+    ly.add_argument("--project", required=True)
+    ly.add_argument("--thread", help="the thread whose papers change")
+    ly.add_argument("--papers", choices=("own", "project"),
+                    help="own: the files only this thread's note names move into it; project: its files move up")
+    ly.add_argument("--heading", action="store_true", help="make the project a heading: each file goes to the one thread that names it")
     d = sub.add_parser("delete", help="delete a project or a thread; without --confirm, only say what would go")
     d.add_argument("--zone", required=True)
     d.add_argument("--project", required=True)
@@ -2153,7 +2553,7 @@ def main(argv=None):
     u = sub.add_parser("undo", help="revert a rename, a move, a deletion or a new project or thread, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
-    for each in (y, p, t, r, mv):
+    for each in (y, p, t, r, mv, ly):
         each.add_argument("--check", action="store_true",
                           help="say what this would do, and make nothing")
     args = ap.parse_args(argv)
@@ -2173,7 +2573,7 @@ def main(argv=None):
             print(json.dumps(reply, ensure_ascii=False, sort_keys=True))
             return 0 if reply.get("ok") else 1
         run = {"zone": cmd_zone, "party": cmd_party, "project": cmd_project, "thread": cmd_thread,
-               "rename": cmd_rename, "move": cmd_move, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
+               "rename": cmd_rename, "move": cmd_move, "layout": cmd_layout, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
                "wake": cmd_park}[args.command]
         print(run(root, args, today))
         ask_for_page(root, args)

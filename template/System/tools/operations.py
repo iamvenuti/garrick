@@ -203,18 +203,25 @@ DECLARED: Dict[str, Op] = {
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
-    "new-project": _op(("zone", "name", "party", "thread", "spoken", "thread_spoken"), ("name",), "zone", True, "safe"),
+    "new-project": _op(("zone", "name", "party", "thread", "spoken", "thread_spoken",
+                        "heading",
+                        ), ("name",), "zone", True, "safe"),
     # The same, with a party added first on the user's own choice in the page's dialog (#522): `perform` refuses it
     # from any caller but the page.
-    "new-project-party": _op(("zone", "name", "thread", "spoken", "thread_spoken", "new_party", "party_what"),
-                             ("name",), "zone", True, "safe"),
-    "new-thread": _op(("zone", "project", "name", "spoken"), ("project", "name"), "zone", True, "safe"),
+    "new-project-party": _op(("zone", "name", "thread", "spoken", "thread_spoken", "new_party", "party_what",
+                              "heading",
+                              ), ("name",), "zone", True, "safe"),
+    "new-thread": _op(("zone", "project", "name", "spoken",
+                       "papers",
+                       ), ("project", "name"), "zone", True, "safe"),
     "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
                       ("kind", "name", "to"), "none"),
     "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
     "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
+    # Where a thread keeps its papers, or a project made a heading (#604): `check` asks for the plan and writes nothing.
+    "layout": _op(("zone", "project", "thread", "papers", "heading", "check"), ("project", "thread", "papers", "heading"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
@@ -314,6 +321,10 @@ DECLARED: Dict[str, Op] = {
     # *Commit them* on the Overview's row for changes not committed (#595): the listed files of one zone, committed by
     # the engine's bounded commit, or that commit taken back (`undo` with its `repo`). Only the app's bridge.
     "commit-files": _op(("zone", "files", "undo", "repo"), ("zone", "files", "undo"), "zone", True),
+    # *Chase* on a Follow-ups row (#603): a Waiting on line whose chase day has come, by key. It drafts a message and, at
+    # Act, queues the send through `hold`; it never sends and never writes a file. Only the app's bridge. A second one
+    # for a line already held is refused by the handler.
+    "chase": _op(("zone", "file", "key"), ("file", "key"), "zone", False, "safe"),
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),

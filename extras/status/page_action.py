@@ -45,9 +45,14 @@ zone's repository, as the skills would:
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
-    new-project a project and its first thread, as "new project" by voice:
-                {"zone", "name", "party", "thread"}; committed in the zone
-    new-thread  a thread in a project: {"zone", "project", "name"}
+    new-project a project, as "new project" by voice: {"zone", "name", "party",
+                "thread", "heading"}; one piece of work unless "heading" says a
+                heading over separate pieces, and no thread unless one is
+                named; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name", "papers"};
+                "papers" is "own" for a thread that keeps its own Sources and
+                Deliverables, and the project's otherwise (a heading's threads
+                always keep their own)
     check-name  whether a new name would do, making nothing, for the form as
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
@@ -114,6 +119,15 @@ zone's repository, as the skills would:
                 none a link, none changed more than 30 days ago, no more than COMMIT_MOST of them. With an engine that has no
                 bounded commit, or one that is not available (Ask off, a failed capability check), nothing is written
                 and the reply says so
+    chase       the *Chase* button of a Follow-ups row on the Overview: {"zone", "file", "key"}, a Waiting on line whose chase day has
+                come. Only the app's bridge (`via: page`). It hands the line to the engine at the Ask channel's own autonomy
+                to draft the message (Read tools only), and then code decides. At Act, or Full, it queues the send through
+                `hold` and sends nothing: the tool is the one `chase.tool` names in System/garrick-settings.json and the
+                recipient is an address read from this zone's Inbox, so the confirmation shows both, built by code and not
+                by the assistant. At Read, with no such tool or address, or when a send is already waiting for the line,
+                it returns the draft to copy and holds nothing. With the engine unavailable (not Claude, a failed
+                capability check, Ask off) nothing is drafted and the reply says so, with the request to give an assistant.
+                It never sends
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
@@ -331,6 +345,7 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo",
+         "layout",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
@@ -338,7 +353,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
          "commit-files",
          "todo-edit",
-         "todo-retire")
+         "todo-retire",
+         "chase")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -2094,16 +2110,25 @@ def scaffold(ws: Path, *args) -> str:
     return r.stdout.strip()
 
 
-def first_thread() -> str:
-    """The name of a project's first thread when none is given: ask.py's FIRST_THREAD, the box's own, read from
-    its file beside this one so that the page and the box never name it twice. Refused where ask.py is not there."""
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', (HERE / "ask.py").read_text(encoding="utf-8"), re.M)
-    except OSError:
-        found = None
-    if not found:
-        raise Refused("no first thread given, and ask.py, which names the default one, is not beside this file")
-    return found.group(1)
+def wants_heading(req: dict) -> bool:
+    """Is the new project a heading over separate pieces of work, rather than one piece of work (the default)?
+    True, or the word yes or true from a command line; anything else but nothing is refused."""
+    value = req.get("heading")
+    if value is None or value is False or (isinstance(value, str) and value.strip().lower() in ("no", "false")):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("yes", "true")):
+        return True
+    raise Refused("not a heading choice: %r" % (value,))
+
+
+def papers_of(req: dict) -> Optional[str]:
+    """A new thread's papers, own or project; none when the request does not say."""
+    value = req.get("papers")
+    if value is None:
+        return None
+    if value in ("own", "project"):
+        return value
+    raise Refused("papers is own or project, not %r" % (value,))
 
 
 def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
@@ -2153,14 +2178,16 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     flag = ["--check"] if check else []
     if verb in ("new-project", "new-project-party"):
         name = field(req, "name")
-        # A first thread left empty is the one the ask box gives (ask.py's FIRST_THREAD, read from there), and a
-        # party left out is none: scaffold.py's --party is optional, an index.
-        thread = field(req, "thread", required=False) or first_thread()
+        # A first thread left out is none: a project need not start with one. A party left out is none too:
+        # scaffold.py's --party is optional, an index.
+        thread = field(req, "thread", required=False)
         party = field(req, "party", required=False)
+        heading = wants_heading(req)
         made = [p for p in (zone / name,) if not p.exists()]
         spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
                   *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
-        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []), "--thread", thread, *spoken]
+        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []),
+                *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         if verb == "new-project-party":
             if party:
                 raise Refused("pick a party from the list, or add a new one, not both")
@@ -2180,13 +2207,15 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
             if check:
                 return said_party
             party = new_party(ws, zone, pname, what)
-            args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
+            args = ["project", "--zone", z, "--name", name, "--party", party,
+                    *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         elif not check:
             asks_how(ws, args)
         try:
             said = scaffold(ws, *args, *flag)
             if not check:
-                commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
+                commit_new(zone, [name], "New project %s%s%s" % (name, " (%s)" % party if party else "",
+                                                                  ", first thread %s" % thread if thread else ""),
                            made, {}, wall=wall_refusal(ws))
                 return first_line(said)
         except Refused as e:
@@ -2204,8 +2233,10 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
+        papers = papers_of(req)
         args = ["thread", "--zone", z, "--project", project, "--name", name,
-                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
+                *(["--papers", papers] if papers else [])]
         if not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
@@ -2229,6 +2260,14 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         return scaffold(ws, "undo", "--zone", z, "--commit", commit)
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
+    if verb == "layout":
+        # Where a thread keeps its papers, or a project made a heading (scaffold.py layout): the plan, with `check`,
+        # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
+        papers, heading = papers_of(req), wants_heading(req)
+        want_plan = check or req.get("check") is True
+        said = scaffold(ws, "layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else []),
+                        *(["--check"] if want_plan else []))
+        return said_all(said)
     if verb == "move":
         project, to = field(req, "project"), field(req, "to")
         if not thread:
@@ -2784,13 +2823,47 @@ def question(ws: Path, req: dict) -> tuple:
     return zone, q, note, parts, work_name(zone, parts)
 
 
+def hub_keeps_resume(hub: Path) -> bool:
+    """Does the hub hold the project's own resume point beside its threads: a `### Resume here` block and no
+    `layout: thread-first`? An `### Outcome` in its place ends it (status.py and garrick_lib read it the same way)."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
+    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
+    src = hub.parent.parent.parent.parent / "System" / "tools" / "garrick_lib.py"
+    if src.is_file():
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_page_lib", str(src))
+            lib = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(lib)
+            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
+        except Exception:
+            pass
+    lines = text.splitlines()
+    front = {}
+    if lines and lines[0].strip() == "---":
+        for l in lines[1:]:
+            if l.strip() == "---":
+                break
+            if l.lower().startswith("layout:"):
+                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
+    if str(front.get("layout") or "").strip().lower() == "thread-first":
+        return False
+    return any(l.strip().lower() == "### resume here" for l in lines)
+
+
 def work_name(zone: Path, parts: tuple) -> str:
     """A piece of work as the home names it: the project's name for a project
-    that is one thread, "Project, Thread" where it has more than one."""
+    that is one thread, "Project, Thread" where it has more than one, or where
+    the hub keeps its own resume point beside the thread."""
     if len(parts) == 2:
         return parts[0]
     threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
+    if len(threads) <= 1 and not hub_keeps_resume(zone / parts[0] / (parts[0] + ".md")):
+        return parts[0]
+    return "%s, %s" % (parts[0], parts[2])
 
 
 def say_name(ws: Path, zone: Path, parts: tuple) -> str:
@@ -5487,6 +5560,128 @@ def commit_files(ws: Path, req: dict, now=None) -> object:
                         "files": [str(x) for x in (out.get("files") or files)]}}
 
 
+class Unavailable(Refused):
+    """A refusal that tells the page the background assistant is not there, with the request to give a visible one."""
+
+    def __init__(self, say: str, request: str):
+        super().__init__(say)
+        self.reply = {"unavailable": True, "request": request}
+
+
+CHASE_RUNNER = None         # a test's stand-in for the assistant call that drafts a chase
+CHASE_DRAFT = 2000          # characters of a draft kept
+
+
+def chase_setting(ws: Path) -> str:
+    """The connector tool a chase is queued with, `chase.tool` of System/garrick-settings.json, as the owner wrote it, or
+    "": it must be shaped as a connector tool and be one that sends. Nothing else is ever held for a chase."""
+    try:
+        saved = prefs().lib(ws).read_settings(ws)
+    except Exception:
+        saved = {}
+    tool = (saved.get("chase") or {}).get("tool") if isinstance(saved.get("chase"), dict) else ""
+    eng = engine_lib()
+    held = getattr(eng, "hold", None) if eng is not None else None
+    if not isinstance(tool, str) or held is None or not held.TOOL_RE.match(tool) or held.kind_of({"tool": tool}) != "send":
+        return ""
+    return tool
+
+
+def chase(ws: Path, req: dict) -> object:
+    """*Chase* on a Follow-ups row: draft the message that asks for what a Waiting on line is waiting for, and, where
+    the owner has set a send tool and the person's address is in this zone's Inbox, queue it for their yes through
+    `hold`. Nothing is sent from here, whatever the autonomy: Act and Full queue it, Read shows the draft. The line, the
+    person, the address, the tool and the words of the confirmation are all built here, from the zone's own files and
+    the owner's settings; what the assistant wrote is the body of the message and nothing else. A line that has moved
+    since the page was built is refused."""
+    zone = zone_dir(ws, req.get("zone"))
+    key = req.get("key")
+    if req.get("file") not in (None, "Todo.md") or not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{16}", key):
+        raise Refused("that is not a line of the zone's Todo.md")
+    task = next((t for t in todo_lines().tasks(str(zone)) if t["key"] == key and t["file"] == "Todo.md" and t["waiting"]), None)
+    if task is None:
+        raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+    try:
+        found = json.loads((zone / ".todo-followups.json").read_text(encoding="utf-8")).get(key)
+    except (OSError, ValueError, AttributeError):
+        found = None
+    found = found if isinstance(found, dict) else {}
+    person = " ".join(str(found.get("person") or "").split())[:80]
+    line = " ".join(plain_line(task["text"]).split())[:300]
+    reply_day = " ".join(str(found.get("date") or "").split())[:10]
+    # The source's own words (a mail subject, a page title) are inbound text: they never reach the drafting prompt.
+    kind = "a meeting page" if str(found.get("source") or "").startswith("Wikis/") else "a mail"
+    source = ("%s, dated %s" % (kind, reply_day) if reply_day else kind) if found.get("title") else ""
+    ask_for = "chase %s about: %s" % (person or "them", line)
+    eng = engine_lib()
+    chan = getattr(eng, "channels", None) if eng is not None else None
+    saved = {}
+    try:
+        saved = prefs().lib(ws).read_settings(ws)
+    except Exception:
+        pass
+    if eng is None or chan is None or saved.get("ask") is False:
+        raise Unavailable("The background assistant is not available, so nothing was drafted or sent. Ask your assistant to %s." % ask_for, ask_for)
+    cap = chan.capability(ws)
+    if chan.assistant() != "claude" or not cap.get("ok"):
+        raise Unavailable("The background assistant is not available, so nothing was drafted or sent. Ask your assistant to %s." % ask_for, ask_for)
+    autonomy = chan.effective(ws, "ask", cap)["autonomy"]
+    hold = eng.hold
+    exchange = "chase-%s" % key
+    if any(e.get("exchange") == exchange for e in hold.pending()):
+        raise Refused("a chase for that line is already waiting for your yes")
+    prompt = ("Write the short message the user would send to %s to ask for what this line says is owed, in plain words, "
+              "polite, no more than five sentences, with no subject line and no greeting name you do not know. Say the "
+              "message and nothing else; do not send anything.\n<line>%s</line>%s"
+              % (person or "the person it is about", line, "\nA reply of theirs exists: %s." % source if source else ""))
+    got = eng.run(ws, "ask", prompt, zone.name, {"id": exchange}, CHASE_RUNNER, cap, level="read")
+    draft = str(got.get("say") or "").strip()[:CHASE_DRAFT]
+    if not got.get("ok") or not draft:
+        raise Refused(draft or "the assistant could not draft it, so nothing was sent")
+    for e in got.get("held") or []:
+        hold.cancel(e["id"])                        # a drafting call has no `hold` tool; any entry it made is taken away
+    tool = chase_setting(ws) if autonomy in ("act", "full") else ""
+    todo = load_todo_skill(ws)
+    to = todo.sender_address(Path(ws).resolve(), zone, person) if tool and todo is not None and person else ""
+    # The confirmation of a held send shows at most hold.SHOWN_TEXT characters of the body. A longer draft is never
+    # held, so a yes never sends words the confirmation did not show: it is given to copy instead.
+    too_long = len(draft) > getattr(hold, "SHOWN_TEXT", 0)
+    if not tool or not to or too_long:
+        why = ("this is the Ask channel at Read" if autonomy == "read" else
+               "no send tool is set for it under chase in System/garrick-settings.json" if not tool else
+               "no address for %s is in the zone's Inbox" % (person or "them") if not to else
+               "the draft is longer than a confirmation can show in full")
+        return {"say": "Here is a draft. Nothing was sent, and nothing is waiting for your yes: %s." % why, "draft": draft, "held": ""}
+    entry = hold.add("ask", zone.name, exchange, "Send a follow-up to %s about: %s" % (person, line[:120]), to,
+                     {"tool": tool, "args": {"to": [to], "subject": "Following up: %s" % line[:80], "body": draft}})
+    return {"say": "A follow-up to %s is waiting for your yes. Nothing has been sent." % person, "draft": draft, "held": entry["id"]}
+
+
+def plain_line(text: str) -> str:
+    """A Todo line's words without its links, tags and fields, for a sentence."""
+    text = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", str(text or ""))
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\ufe0f? *\d{4}-\d{2}-\d{2}", "", text)
+    return re.sub(r"(?:^|\s)#[\w/-]+", "", text).strip(" ·")
+
+
+def load_todo_skill(ws: Path):
+    """The todo skill's todo.py, the workspace's own copy first, then the one in a Garrick clone, or None."""
+    for src in (Path(ws) / "System" / "skills" / "todo" / "todo.py", HERE.parent / "skills" / "todo" / "todo.py",
+                HERE.parent.parent / "template" / "System" / "skills" / "todo" / "todo.py"):
+        if not src.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_page_todo_skill", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception:
+            continue
+        if callable(getattr(mod, "sender_address", None)):
+            return mod
+    return None
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5575,6 +5770,8 @@ def act(ws: Path, req, today=None, now=None):
         return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "commit-files":
         return commit_files(ws, req, now)
+    if req["verb"] == "chase":
+        return chase(ws, req)
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":
@@ -5593,7 +5790,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo", "layout"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -5603,13 +5800,16 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo",
+               "layout",
                "todo-edit",
                "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
-             "commit-files")
+             "commit-files",
+             "chase",
+             "layout")
 
 
 def builds_page(req) -> bool:
@@ -5718,10 +5918,15 @@ def start_record(ops, req: dict, via: str):
 # (`--line`), and resolved here to the key the page would send.
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
-    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
-    "new-thread": ("zone", "project", "name", "spoken"),
+    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken",
+                    "heading",
+                    ),
+    "new-thread": ("zone", "project", "name", "spoken",
+                   "papers",
+                   ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
+    "layout": ("zone", "project", "thread", "papers", "heading"),
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
@@ -5784,7 +5989,9 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
+                 "heading",
+                 "papers"):
         ap.add_argument("--" + name)
     return ap
 

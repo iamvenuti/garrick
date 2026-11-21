@@ -87,8 +87,8 @@ class TestProposals(MakeCase):
         for party in ("Birch & Co", "BIRCH", "`birch`"):                    # a name or a tag, as System/context.md writes it
             self.assertEqual("birch", self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour",
                                                     "party": party}, {"birch"})[1]["party"], party)
-        self.assertEqual(ask.FIRST_THREAD, got and self.propose(
-            {"verb": "new-project", "zone": "Work", "name": "Harbour", "party": "birch"}, {"birch"})[1]["thread"])
+        self.assertNotIn("thread", self.propose(
+            {"verb": "new-project", "zone": "Work", "name": "Harbour", "party": "birch"}, {"birch"})[1])
         # a request that names exactly one party of the zone settles it when the session left the party out
         self.assertEqual("acme", self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour"}, {"acme"})[1]["party"])
 
@@ -342,12 +342,13 @@ class TestMakingThem(MakeCase):
         self.assertEqual("Undo", out["choices"][0]["label"])
         self.assertIn("Work", asker.heard)                   # the session now holds that zone, for the wall reset
 
-    def test_no_first_thread_named_is_getting_started(self):
+    def test_no_first_thread_named_makes_no_thread(self):
         _, out = self.run_ask("new project Harbour for Birch & Co in Work",
                               {"say": "Making it.", "do": [{"verb": "new-project", "zone": "Work", "name": "Harbour",
                                                             "party": "birch"}]})
         self.assertTrue(out["ok"], out["done"])
-        self.assertTrue((self.work / "Harbour" / "Threads" / "Getting started" / "Getting started.md").is_file())
+        self.assertFalse((self.work / "Harbour" / "Threads").exists())
+        self.assertIn("### Resume here", (self.work / "Harbour" / "Harbour.md").read_text())
 
     def test_no_party_named_asks_and_writes_nothing_until_it_is_answered(self):
         proposal = {"verb": "new-project", "zone": "Work", "name": "Harbour", "party": "birch"}

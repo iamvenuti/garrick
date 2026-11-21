@@ -658,6 +658,50 @@ def checkpoint_chip(r: dict) -> str:
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
 
 
+def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: Path, pfm: dict, fm: dict, state: str) -> dict:
+    """One row of threads(): a thread note's, or a hub's own."""
+    read = resume_read(note)
+    has_block, resumed = read["block"], read["date"]
+    mark = checkpoint_mark(note, ws)
+    updated = as_date(fm.get("updated"))
+    when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
+    return {"zone": zone.name, "project": project.name, "thread": name, "note": note,
+            "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
+            "party": tags(fm.get("party") or pfm.get("party")),
+            "updated": updated, "status": state,
+            "resume": has_block, "resumed": resumed,
+            "checkpoint": mark, "touched": max(when) if when else None,
+            "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+
+
+def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
+    """Does a hub hold the project's own resume point beside its threads: a `### Resume here` block, and no
+    `layout: thread-first`? An `### Outcome` in its place ends it. The same reading as garrick_lib's."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
+    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
+    lib = workspace_lib(hub.parent.parent.parent.parent)
+    if lib is not None and callable(getattr(lib, "hub_keeps_resume", None)):
+        try:
+            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
+        except Exception:
+            pass
+    lines = text.splitlines()
+    front = {}
+    if lines and lines[0].strip() == "---":
+        for l in lines[1:]:
+            if l.strip() == "---":
+                break
+            if l.lower().startswith("layout:"):
+                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
+    if str(front.get("layout") or "").strip().lower() == "thread-first":
+        return False
+    return any(l.strip().lower() == "### resume here" for l in lines)
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
     note was last updated, read from frontmatter like "what's open"; and
@@ -678,7 +722,7 @@ def threads(ws: Path) -> Dict[str, dict]:
     its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep, finished, projects = [], [], 0, [], [], {}
+        rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
@@ -690,12 +734,13 @@ def threads(ws: Path) -> Dict[str, dict]:
                 asleep.append(project.name)
             found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
             own = False
-            if not any(n.is_file() for _, n in found) and hub.is_file() and \
+            heading = as_text(pfm.get("layout")).strip().lower() == "thread-first"     # no piece of work of its own
+            if not any(n.is_file() for _, n in found) and hub.is_file() and not heading and \
                     as_text(pfm.get("type")).strip().lower() == "project":
                 found, own = [(project.name, hub)], True
             if hub.is_file() or any(n.is_file() for _, n in found):
                 projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own,
+                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
                                           "hub": hub if hub.is_file() else None, "party": tags(pfm.get("party"))}
             for name, note in found:
                 fm = pfm if note == hub else frontmatter(note, ws)
@@ -710,28 +755,21 @@ def threads(ws: Path) -> Dict[str, dict]:
                     continue
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
-                read = resume_read(note)
-                has_block, resumed = read["block"], read["date"]
-                mark = checkpoint_mark(note, ws)
-                updated = as_date(fm.get("updated"))
-                when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
-                row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                       "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
-                       "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": updated, "status": state,
-                       "resume": has_block, "resumed": resumed,
-                       "checkpoint": mark, "touched": max(when) if when else None,
-                       "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+                row = thread_row(ws, zone, project, name, note, hub, pfm, fm, state)
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
+            # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
+            if not own and hub.is_file() and not hub_parked and hub_state not in DONE and hub_keeps_resume(hub, pfm) \
+                    and any(n.is_file() for _, n in found):
+                hubs.append(thread_row(ws, zone, project, project.name, hub, hub, pfm, pfm, hub_state))
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
         parked.sort(key=by_name)
         finished.sort(key=by_name)
         out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
-                          "finished": finished, "projects": projects}
+                          "finished": finished, "projects": projects, "hubs": hubs}
     return out
 
 
@@ -969,7 +1007,7 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
                 folders.setdefault(Path(a["file"]).parent.as_posix(), []).append(a)
             elif a["label"]:
                 labels.setdefault(a["label"].casefold(), []).append(a)
-        for r in data["rows"] + data["parked"]:
+        for r in data["rows"] + data["parked"] + data.get("hubs", []):
             mine, seen = [], set()
             for a in labels.get(r["thread"].casefold(), []) + folders.get(Path(r["rel"]).parent.as_posix(), []):
                 if (a["file"], a["key"]) not in seen:
@@ -981,7 +1019,8 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
             r["next"] = mine[0] if mine else None
             r["late"] = any(a["late"] for a in mine)
             r["checks"] = []
-            for path in sorted(p for p in flags if p.startswith(here)):
+            hub_own = r["note"] == r.get("hub")           # a hub's own row leaves its threads' files to their rows
+            for path in sorted(p for p in flags if p.startswith(here) and not (hub_own and p[len(here):].startswith("Threads/"))):
                 for x in flags[path]:
                     if "fixed_by" not in x:
                         x["fixed_by"] = nurture_fix(ws, x["finding"])
@@ -1943,20 +1982,25 @@ function watch(d){var i=d.querySelector('#mg-name');i.addEventListener('input',f
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
 function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say')+DUP,
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div><div id="mg-papers"></div>'+field('mg-name','Name, one you can say')+DUP,
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>'}
+/* in a piece of work a thread chooses its papers; under a heading every thread keeps its own, so nothing is asked */
+function papers(){var z=val(d,'mg-zone'),p=val(d,'mg-project'),h=((D.zones[z]||{}).headings||[]).indexOf(p)>=0;
+d.querySelector('#mg-papers').innerHTML=p&&!h?select('mg-own','Does this thread keep its own papers, or use the project’s?',[['project','The project’s papers'],['own','Its own papers']],'project'):''}
+function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>';
+var s=d.querySelector('#mg-project');if(s)s.onchange=papers;papers()}
 d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
+var own=val(d,'mg-own')==='own';if(own)q.papers='own';
+d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project+(own?', with its own papers':''),'Copied “new thread '+q.name+' in '+q.project+(own?', with its own papers':'')+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
-/* D.first is the name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, put in the page's data */
-var first=D.first||'',
-d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'
+/* a project is one piece of work unless it is a heading over separate pieces; it gets no thread unless one is named */
+var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP
++select('mg-kind','Is this project one piece of work, or a heading over separate pieces?',[['piece','One piece of work'],['heading','A heading over separate pieces of work']],'piece')
++'<div id="mg-pt"></div>'
 +'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
-+'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="'
-+esc(first?'Empty gives '+first:'Empty gives a first thread of its own')+'">',
++'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="None to start with">',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
 function names(){return((D.zones[val(d,'mg-zone')]||{}).parties||[]).map(function(x){return x[1]})}
 /* a party name close to one this zone has, by the test the project names get: it warns, and Make it still makes it */
@@ -1966,14 +2010,14 @@ function pick(){d.querySelector('#mg-np').hidden=val(d,'mg-party')!==NEW;pdup()}
 function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];
 d.querySelector('#mg-pt').innerHTML=select('mg-party','For',[['','None']].concat(p,[[NEW,'New party…']]),'');d.querySelector('#mg-party').onchange=pick;pick()}
 d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-newparty').addEventListener('input',pdup);d.querySelector('#mg-name').focus();
-d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),q;
+d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),hd=val(d,'mg-kind')==='heading',q;
 if(!nm)return bad(d,'A project needs a name.');
 /* two shapes, one request each: only the New party… choice sends the verb that adds a party (#522) */
 if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-newparty');if(!r.new_party)return bad(d,'Give the new party a name.');
-if(th)r.thread=th;if(w)r.party_what=w;q=r}
-else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;q=o}
+if(th)r.thread=th;if(w)r.party_what=w;if(hd)r.heading=true;q=r}
+else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;if(hd)o.heading=true;q=o}
 if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as a heading':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -2010,7 +2054,8 @@ var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
-else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
+else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1});
+if(q.heading)(z.headings||(z.headings=[])).push(q.name)}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
@@ -2217,8 +2262,10 @@ ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo")
+ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo",
+               "layout")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread", "rename", "move",
+              "layout",
               "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 
@@ -4210,8 +4257,14 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
     for _, p, t in every:
         threads_n[t.lower()] = threads_n.get(t.lower(), 0) + 1
         pairs_n[(p.lower(), t.lower())] = pairs_n.get((p.lower(), t.lower()), 0) + 1
-    return {(z, p, t): (t if threads_n[t.lower()] == 1 else "%s, %s" % (p, t) if pairs_n[(p.lower(), t.lower())] == 1
-                        else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
+    out = {(z, p, t): (t if threads_n[t.lower()] == 1 else "%s, %s" % (p, t) if pairs_n[(p.lower(), t.lower())] == 1
+                       else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
+    # A hub that keeps its own resume point beside its threads is a row of Your work only: it says the project's
+    # name, and it takes no part in how the threads are named.
+    for z, data in T.items():
+        for r in data.get("hubs", []):
+            out.setdefault((r["zone"], r["project"], r["thread"]), r["project"])
+    return out
 
 
 def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False,
@@ -4276,28 +4329,20 @@ def open_naming(zone: Path, names: set) -> int:
     return n
 
 
-def first_thread() -> str:
-    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
-    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
-    src = Path(__file__).with_name("ask.py")
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
-    except OSError:
-        return ""
-    return found.group(1) if found else ""
-
-
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     """For the New project and New thread dialogs: each zone's projects and
     the parties a project there can be for; and whether the app acts, or the
     page only copies the phrase to say."""
     zones = {}
     for zone, data in T.items():
-        projects = sorted({r["project"] for r in data["rows"] + data["parked"] if r.get("hub")}, key=str.casefold)
+        P = data.get("projects", {})
+        projects = sorted({r["project"] for r in data["rows"] + data["parked"] if r.get("hub")}
+                          | {n for n, v in P.items() if v.get("heading") and v.get("hub") and v["status"] != "done"}, key=str.casefold)
+        headings = sorted((n for n in projects if P.get(n, {}).get("heading")), key=str.casefold)
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
-        zones[zone] = {"projects": projects, "parties": parties}
-    return {"zones": zones, "acting": acting, "first": first_thread()}
+        zones[zone] = {"projects": projects, "parties": parties, "headings": headings}
+    return {"zones": zones, "acting": acting}
 
 
 def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folders: bool, today: dt.date) -> dict:
@@ -5709,7 +5754,9 @@ def work_name_for(r: dict) -> str:
         return r["project"]
     project = r["note"].parents[2]
     threads = [t for t in (project / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return r["project"] if len(threads) <= 1 else "%s, %s" % (r["project"], r["thread"])
+    if len(threads) <= 1 and not (r["hub"] and hub_keeps_resume(r["hub"], None)):
+        return r["project"]
+    return "%s, %s" % (r["project"], r["thread"])
 
 
 def example_zone(ws: Path) -> Optional[str]:
@@ -5749,7 +5796,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
     owners = known_owners(workspace_context(ws), me)
     out = []
     for zone, data in T.items():
-        for r in data["rows"]:
+        for r in data["rows"] + data.get("hubs", []):
             read = r.get("read") or {}
             rows = read.get("rows") or {}
             nxt = filled(rows.get("Next action"))
@@ -7426,18 +7473,31 @@ def attn_need(level: str, line: str, href, **over) -> dict:
 LATE_LINES = 8        # the late lines one row shows; the rest are on the list its link opens
 
 
+def due_followups(z: dict) -> List[dict]:
+    """The lines of one zone's Todo.md that a follow-up is about: open, waiting on somebody, and their chase day is today or
+    past. They show in the Follow-ups row (#603), so Late actions leaves them out and no line shows twice. A due waiting
+    line in a thread note stays in Late actions: a follow-up looks at Todo.md alone."""
+    return [r for _, rows in z["groups"] for r in rows if r["waiting"] and r["late"] and not r.get("done") and r.get("file") == "Todo.md"]
+
+
+def late_actions(z: dict) -> List[dict]:
+    """The late lines of one zone that Late actions shows: every late line but the ones due_followups() takes."""
+    own = {id(r) for r in due_followups(z)}
+    return [r for _, rows in z["groups"] for r in rows if r["late"] and id(r) not in own]
+
+
 def late_need(z: dict, today: dt.date, actions: bool = False) -> dict:
     """One zone's late actions, as one thing that waits: its count, and since when the oldest has been late. It
     belongs to that zone only; nothing here adds one zone to another. With `actions`, the late lines themselves, each
-    with its tick and its date (#595), the oldest first, at most LATE_LINES of them."""
+    with its tick and its date (#595), the oldest first, at most LATE_LINES of them. The Waiting on lines whose chase
+    day has come are the Follow-ups row's (#603)."""
+    mine = late_actions(z)
     oldest = None
-    for _, rows in z["groups"]:
-        for r in rows:
-            if r["late"] and r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
-                oldest = r
-    n = z["late"]
-    shown = sorted((r for _, rows in z["groups"] for r in rows if r["late"]),
-                   key=lambda r: (r["when"] or dt.date.max, r["alpha"]))[:LATE_LINES] if actions else []
+    for r in mine:
+        if r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
+            oldest = r
+    n = len(mine)
+    shown = sorted(mine, key=lambda r: (r["when"] or dt.date.max, r["alpha"]))[:LATE_LINES] if actions else []
     return {"kind": "late", "group": "todo", "level": "late", "zone": z["zone"], "count": n,
             "lines": "".join(todo_row(r, today, True, said_late=True) for r in shown),
             "text": "%d late action%s" % (n, "" if n == 1 else "s"),
@@ -7445,15 +7505,134 @@ def late_need(z: dict, today: dt.date, actions: bool = False) -> dict:
             "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
 
 
+# ---- Waiting on you now > Follow-ups (#603) ---------------------------------------------
+# One row for each zone that has a Waiting on line whose chase day has come. What the follow-up found is read from the
+# zone's own .todo-followups.json, written by the todo skill's script; this file only reads it. A line nobody has looked at
+# is still shown, with its words and its day, and the two buttons that need no assistant.
+
+def short_day(day) -> str:
+    """A day as 18 Nov; "" for what is not one."""
+    try:
+        d = dt.date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return ""
+    return "%d %s" % (d.day, d.strftime("%b"))
+
+
+def followup_records(z: dict) -> Dict[str, dict]:
+    """The zone's follow-up records by line key; {} when there are none or the file does not read."""
+    folder = Path(z["file"]).parent if z.get("file") else None
+    try:
+        found = json.loads((folder / ".todo-followups.json").read_text(encoding="utf-8")) if folder else {}
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+
+
+def chase_days_of(ws: Path, zone: str) -> int:
+    """Days *Still waiting* and *Give it a week* move a chase day on: `todo-chase-days` of the check settings, a week
+    when it is 0 or not set, so a button always moves the day."""
+    try:
+        value = json.loads((ws / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get("todo-chase-days")
+    except (OSError, ValueError, AttributeError):
+        return 7
+    value = value.get(zone) if isinstance(value, dict) else value
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 7
+
+
+def followup_entries(ws: Path, lists: List[dict], link: "Links", today: dt.date) -> Dict[str, List[dict]]:
+    """For each zone with a due waiting line, its lines with what a follow-up found: {zone: [{"r": the row, "rec": the
+    record, "href": the attributes of a link to the source's page, "days": days a button moves the day on}]}. A record
+    counts only when it is for this very line, which its key says."""
+    out: Dict[str, List[dict]] = {}
+    for z in lists:
+        due = due_followups(z)
+        if not due:
+            continue
+        records = followup_records(z)
+        days = chase_days_of(ws, z["zone"])
+        entries = []
+        for r in sorted(due, key=lambda r: (r["when"] or dt.date.max, r["alpha"])):
+            rec = records.get(r["key"]) or {}
+            src = rec.get("source") if isinstance(rec.get("source"), str) else ""
+            page = Path(os.path.abspath(str(ws / src))) if src and not src.startswith(("/", "..")) and ".." not in Path(src).parts else None
+            ok = page is not None and (page == Path(os.path.abspath(str(ws))) or Path(os.path.abspath(str(ws))) in page.parents)
+            entries.append({"r": r, "rec": rec, "href": link.attrs(page) if ok else "", "days": days})
+        out[z["zone"]] = entries
+    return out
+
+
+def followup_said(e: dict) -> Tuple[str, str]:
+    """(the sentence, the state) of one follow-up line, the state one of delivered, part, none and unlooked."""
+    r, rec = e["r"], e["rec"]
+    name = (str(rec.get("person") or "").split() or [""])[0]
+    line = plain_text(r["text"])
+    result = rec.get("result")
+    if result in ("delivered", "in part") and rec.get("title"):
+        src = "%s, %s" % (rec["title"], short_day(rec.get("date"))) if short_day(rec.get("date")) else str(rec["title"])
+        who = name or "They"
+        return ("%s %s: \u201c%s\u201d, %s." % (who, "sent it" if result == "delivered" else "sent part of it", line, src),
+                "delivered" if result == "delivered" else "part")
+    if result == "no sign":
+        since = short_day(rec.get("since"))
+        return ("No reply%s%s: \u201c%s\u201d." % (" from " + name if name else "", " since " + since if since else "", line), "none")
+    when = short_day(r["field"])
+    return ("\u201c%s\u201d: chase day %s." % (line, when) if when else "\u201c%s\u201d." % line, "unlooked")
+
+
+FOLLOW_BUTTONS = {
+    "delivered": (("todo-done", "Tick it", True), ("todo-date", "Still waiting", False), ("show", "Show me", False)),
+    "part": (("chase", "Chase", True), ("show", "Show me", False), ("todo-date", "Still waiting", False), ("todo-done", "Tick it", False)),
+    "none": (("chase", "Chase", True), ("todo-date", "Give it a week", False), ("todo-done", "Tick it", False)),
+    "unlooked": (("todo-done", "Tick it", True), ("todo-date", "Give it a week", False)),
+}
+
+
+def followup_row(e: dict, today: dt.date) -> str:
+    """One due Waiting on line in the Follow-ups row: the sentence, and the buttons its state offers, the main one first.
+    The buttons are the page's own verbs: `todo-done` and `todo-date` (the Todo tab's, one commit each through the wall
+    check) and `chase`. A date a button sets is worked out here, from today, so a page built yesterday still means it."""
+    r = e["r"]
+    said, state = followup_said(e)
+    moved = (today + dt.timedelta(days=e["days"])).isoformat()
+    buttons = ""
+    for verb, label, main in FOLLOW_BUTTONS[state]:
+        if verb == "show":
+            if e["href"]:
+                buttons += '<a class="alt" %s>%s</a>' % (e["href"], E(label))
+            continue
+        buttons += ('<button class="%s" type="button" data-fu="%s"%s>%s</button>'
+                    % ("act" if main else "alt", verb, ' data-date="%s"' % moved if verb == "todo-date" else "", E(label)))
+    return ('<div class="wfu" data-z="%s" data-f="%s" data-k="%s" data-state="%s"><span class="wfut">%s</span><span class="wacts">%s</span></div>'
+            % (E(r["zone"]), E(r["file"]), E(r["key"]), state, E(said), buttons))
+
+
+def followup_need(z: dict, entries: List[dict], today: dt.date) -> dict:
+    """One zone's Follow-ups, as one thing that waits: how many lines are due, since when the oldest has been, and the
+    lines themselves with their buttons. It belongs to that zone only."""
+    n = len(entries)
+    oldest = min((e["r"]["when"] for e in entries if e["r"]["when"]), default=None)
+    return {"kind": "followups", "group": "todo", "level": "late", "zone": z["zone"], "count": n,
+            "lines": "".join(followup_row(e, today) for e in entries),
+            "text": "%d follow-up%s" % (n, "" if n == 1 else "s"),
+            "late": "oldest chase day was %s" % day_said(oldest, today) if oldest else "",
+            "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the follow-ups"}
+
+
 def needs_you(attn: List[tuple], lists: List[dict], today: dt.date, detail: Optional[Dict[str, dict]] = None,
-              actions: bool = False) -> List[dict]:
+              actions: bool = False, followups: Optional[Dict[str, List[dict]]] = None) -> List[dict]:
     """What waits on the user, apart from the sessions that wait for an answer (the card draws those live):
     what failed first, then each zone's late actions, then the warnings. The lead sentence counts these and the
     sessions; the card lists them, in the same order, so the two always agree. `detail` is what the build knows
     of a line beyond its text (job_need, the inbox count, a repository's files), keyed by that text."""
     detail = detail or {}
     out = [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k == "critical"]
-    out += [late_need(z, today, actions) for z in lists if z["late"]]
+    followups = followups or {}
+    for z in lists:
+        if late_actions(z):
+            out.append(late_need(z, today, actions))
+        if followups.get(z["zone"]):
+            out.append(followup_need(z, followups[z["zone"]], today))      # each zone's Follow-ups row follows its Late actions (#603)
     # The Context queue owns the check's warnings, one finding at a time (#595): they are no row here. An error stays.
     out += [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k != "critical" and detail.get(t, {}).get("kind") != "warnings"]
     return out
@@ -7524,6 +7703,10 @@ def need_row(n: dict) -> str:
     late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
     go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
                                                   ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
+    if len(n.get("links") or []) > 1:
+        # One link for each place the row names, each its own (W4): never a link to a place the row does not name.
+        go = "".join('<a class="act" href="%s">Open the %s inbox</a>' % (E(href), E(name)) for name, href in n["links"])
+        go = go.replace('class="act"', 'class="alt"')
     if n.get("act") or n.get("lines"):
         # The main button does the work, or the late lines themselves do; the link to where the item lives is secondary (#595).
         go = '<span class="wacts">%s%s</span>' % (n.get("act", ""), go.replace('class="act"', 'class="alt"', 1))
@@ -7822,6 +8005,33 @@ if(prev)return prev(q,out)};
 """
 
 
+# ---- Waiting on you now > Follow-ups (#603): the lines of a zone's Follow-ups row ------
+FOLLOWUP_CSS = r"""
+.wfu{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}.wfu:first-child{border-top:0}
+.wfu .wfut{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
+.wfu .wnote{flex:1 0 100%;padding:0;color:var(--ink2);font-size:var(--fs-meta)}.wfu .wdraft{display:block;margin-top:4px;padding:8px 10px;border-radius:8px;background:var(--sunk);color:var(--ink);white-space:pre-wrap;user-select:text}
+.wfu button.alt{background:none;border:0;font:inherit;font-size:var(--fs-meta);cursor:pointer}
+"""
+
+FOLLOWUP_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+function mk(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e}
+function note(row,text,draft){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote',text);
+if(draft){var d=mk('span','wdraft',draft);n.appendChild(d)}row.appendChild(n)}
+function rowOf(q){var r=null;[].forEach.call(document.querySelectorAll('#wneeds .wfu'),function(x){if(x.dataset.z===q.zone&&x.dataset.k===q.key)r=x});return r}
+function go(row,b){var q={verb:b.dataset.fu,zone:row.dataset.z,file:row.dataset.f,key:row.dataset.k};
+var more=q.verb==='todo-date'?{date:b.dataset.date}:null;for(var k in more||{})q[k]=more[k];b.disabled=true;
+var said=q.verb==='chase'?'Preparing the follow-up\u2026':q.verb==='todo-done'?'Ticking it\u2026':'Moving the day on\u2026';note(row,said);
+if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q})}
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('#wneeds [data-fu]');if(!b)return;e.preventDefault();go(b.closest('.wfu'),b)});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&q.verb==='chase'){var row=rowOf(q);if(row){var again=row.querySelector('[data-fu="chase"]');
+note(row,(out&&out.say)||(out&&out.ok?'Done.':'Nothing was sent.'),out&&out.draft);if(again)again.disabled=false}return}
+if(prev)return prev(q,out)};
+})();
+"""
+
+
 # ---- The look (#551): one type family, and the rules that come last --------------------
 # One family for everything: the system's own sans-serif, as --sans says. No font file travels with the page and the
 # page asks the network for none. Big numbers use it at weight 600 with tabular figures. Monospace is for the code
@@ -7983,9 +8193,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         # its button, a link to the first of those inboxes beside it. The count is the whole-workspace figure the lead shows.
         said_inbox = "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s")
         full = [(name, f) for name, f, n in IB if n]
-        attn.append(("warning", said_inbox, link(full[0][1])))
+        # A row that names several zones links each one's own inbox, read from the row's own list of zones, so no link points at a
+        # zone the row does not name (W4). With one zone the link is that inbox, as it was; with several, the attention list's own
+        # link is the card, since no single inbox is the row.
+        attn.append(("warning", said_inbox, link(full[0][1]) if len(full) == 1 else "#waiting-now"))
         detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
-                              "act": request_button("Process the Inbox", "process the inbox", ws)}
+                              "act": request_button("Process the Inbox", "process the inbox", ws),
+                              "links": [(name, link(f)) for name, f in full] if len(full) > 1 else []}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
         attn.append(("warning", said_warn, "#checks"))
@@ -8428,7 +8642,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail, acting)  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
+    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date()))  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
@@ -8495,12 +8709,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

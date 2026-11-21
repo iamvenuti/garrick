@@ -133,7 +133,8 @@ def threads(root: Path) -> List[dict]:
     """Every project and thread note, with what the rules need: its zone,
     project, thread, path from the root, status (a parked project parks its
     threads), and its dates. A project with no thread note is its own single
-    thread."""
+    thread, and a hub that still holds a `### Resume here` block is one row
+    beside its threads' (`### Outcome` in its place ends it)."""
     out = []
     for zone in visible(root / "Zones"):
         for project in visible(zone):
@@ -147,8 +148,10 @@ def threads(root: Path) -> List[dict]:
             if hub.is_file() and hub_state == PARKED:
                 out.append(row(root, zone, project, None, hub, pfm, PARKED, whole=True))
                 continue
-            if not found and hub.is_file():
-                out.append(row(root, zone, project, None, hub, pfm, hub_state))
+            heading = str(pfm.get("layout") or "").strip().lower() == "thread-first"     # no piece of work of its own
+            if hub.is_file() and ((not found and not heading) or (found and hub_state not in (PARKED, DONE) and gl.hub_keeps_resume(
+                    hub.read_text(encoding="utf-8", errors="replace"), pfm))):
+                out.append(row(root, zone, project, None, hub, pfm, hub_state))     # the hub's own resume point
             for name, note in found:
                 fm = gl.parse_frontmatter(note)
                 out.append(row(root, zone, project, name, note, fm, str(fm.get("status") or "").strip().lower()))

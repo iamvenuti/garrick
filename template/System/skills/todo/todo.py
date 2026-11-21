@@ -11,6 +11,7 @@ lines it can name; a commit is left to the caller.
     python3 System/skills/todo/todo.py digest  --zone Work
     python3 System/skills/todo/todo.py distil  --zone Work --changes <file or -> [--yes] [--dry-run]
     python3 System/skills/todo/todo.py proposals --zone Work [--drop <id>]
+    python3 System/skills/todo/todo.py followup --zone Work [--answers <file or ->] [--json]
 
 expire   Records, in the zone's .todo-seen.json (never committed), the first
          night each open line under `## Inbox` and `## Waiting on` was seen.
@@ -59,6 +60,21 @@ distil   Applies, or proposes, the changes one thread's material makes to its
          happen. The commit is left to the caller.
 proposals Prints the proposals waiting for the zone, and with `--drop <id>`
          (more than once if needed) takes applied ones out.
+
+followup Looks, with no assistant, for the reply to each open Waiting on line
+         whose `⏳` day is today or past (the Follow up section of SKILL.md).
+         For each such line no follow-up has looked at since it last changed:
+         the zone's own Meetings pages filed since the line was first seen,
+         each one the wall permits this zone to read, and the items of the
+         zone's Inbox/ whose sender names the line's person, by any form
+         System/context.md lists for them. The result goes to the zone's
+         .todo-followups.json (never committed): the line, the result, the
+         source and the day it looked. No evidence is *no sign*. With
+         evidence the line waits as `pending` for a judgement, which
+         `--answers` records: a JSON file, {"answers": [{"key", "result":
+         "delivered" | "in part" | "no sign", "source"}]}, a source being one
+         of those the script found for that line. Todo.md is never changed.
+         `digest` names the counts as one line.
 
 Each prints one line of what it did, and `--json` a count for a job.
 Standard library only, Python 3.9 or later.
@@ -462,6 +478,9 @@ def digest(zone: Path, today: datetime.date) -> str:
     block("Overdue", [x for _, x in sorted(overdue)])
     block("Due today", due)
     block("Chase, they owe you", chase)
+    said = followup_say(followup_counts(zone, today))
+    if said:
+        out += ["", said]
     if open_inbox:
         out += ["", "Inbox · %d untriaged" % len(open_inbox)]
         if len(open_inbox) > 10:
@@ -785,6 +804,360 @@ def say(label: str, counts: dict) -> str:
     return "Distilled %s: %s." % (label, ", ".join(parts)) if parts else "Distilled %s: nothing to change." % label
 
 
+FOLLOWUPS = ".todo-followups.json"
+RESULTS = ("delivered", "in part", "no sign")      # what a follow-up can say of a line; "pending" is a line with evidence, not yet judged
+MOST_EVIDENCE = 5                                  # sources kept for one line
+MOST_READ = 400_000                                # bytes of one page or mail looked at
+SHORTEST = 3                                       # a name shorter than this is never looked for, as Ask's is not
+MEETING_PAGES = ("Wikis", "Meetings", "wiki", "sources")
+_LIB: Dict[str, object] = {}
+
+
+def tools_lib(root: Path):
+    """garrick_lib.py, for the wall check and the context: the workspace's own copy first, then the one beside this
+    skill (System/tools/), which in a Garrick clone is template/System/tools/. None where neither loads."""
+    import importlib.util
+    for src in (root / "System" / "tools" / "garrick_lib.py", HERE.parents[1] / "tools" / "garrick_lib.py"):
+        if not src.is_file():
+            continue
+        if str(src) in _LIB:
+            return _LIB[str(src)]
+        name = "garrick_todo_lib_%s" % hashlib.sha1(str(src.resolve()).encode("utf-8")).hexdigest()[:8]
+        try:
+            spec = importlib.util.spec_from_file_location(name, str(src))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[name] = mod
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop(name, None)
+            continue
+        if all(callable(getattr(mod, f, None)) for f in ("load_context", "decide", "zone_of", "parse_frontmatter")):
+            _LIB[str(src)] = mod
+            return mod
+    return None
+
+
+def read_followups(zone: Path) -> Dict[str, dict]:
+    """The zone's follow-up records by line key; {} where there are none or the file does not read."""
+    try:
+        found = json.loads((zone / FOLLOWUPS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+
+
+def write_followups(zone: Path, found: Dict[str, dict]) -> None:
+    path = zone / FOLLOWUPS
+    if not found:
+        if path.is_file():
+            path.unlink()
+        return
+    tmp = zone / (FOLLOWUPS + ".new")
+    tmp.write_text(json.dumps(dict(sorted(found.items())), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _norm(text: str) -> str:
+    return " ".join(str(text).replace("’", "'").split()).lower()
+
+
+def person_forms(ctx: dict) -> List[Tuple[str, bool, str]]:
+    """(form, counts only with a capital, the person's name) for every way the People and Aliases tables of
+    System/context.md name a person, as the Ask box reads them: the full name, a first name alone (capitalised), and
+    each alias whose meaning is either."""
+    out: List[Tuple[str, bool, str]] = []
+    for person in ctx.get("people", []):
+        name = person.get("name") or ""
+        words = name.split()
+        if not words:
+            continue
+        out.append((name, False, name))
+        if len(words) > 1:
+            out.append((words[0], True, name))
+    by_form: Dict[str, List[str]] = {}
+    for form, _, name in out:
+        by_form.setdefault(_norm(form), []).append(name)
+    for heard, means in (ctx.get("aliases") or {}).items():
+        for name in by_form.get(_norm(means), []):
+            out.append((heard, False, name))
+    return [(f, cap, n) for f, cap, n in out if len(_norm(f)) >= SHORTEST]
+
+
+def _pattern(form: str) -> str:
+    return r"(?<!\w)%s(?!\w)" % r"\s+".join(re.escape(w) for w in _norm(form).split())
+
+
+def name_hits(text: str, forms: List[Tuple[str, bool, str]]) -> List[Tuple[int, int, str]]:
+    """(start, end, person) for each place a person's form stands whole in `text`, longest first at one place."""
+    out = []
+    for form, capital, name in forms:
+        for m in re.finditer(_pattern(form), text, re.I):
+            if capital and not text[m.start()].isupper():
+                continue
+            out.append((m.start(), m.end(), name))
+    return sorted(out, key=lambda h: (h[0], h[0] - h[1]))
+
+
+def person_of(line: str, forms: List[Tuple[str, bool, str]]) -> str:
+    """The person a Waiting on line is about: the first one its words name, "" when none. A first name that two or more
+    people share names nobody, unless the line also holds a full name; then the first unshared name is the person."""
+    hits = name_hits(plain(line), forms)
+    spans: Dict[Tuple[int, int], set] = {}
+    for start, end, name in hits:
+        spans.setdefault((start, end), set()).add(name)
+    ordered = sorted(spans.items())
+    if not ordered:
+        return ""
+    if len(ordered[0][1]) > 1:
+        text = plain(line)
+        full = any(" " in _norm(text[x:y]) for x, y in spans)
+        if not full:
+            return ""
+    for _, names in ordered:
+        if len(names) == 1:
+            return next(iter(names))
+    return ""
+
+
+def _day_text(value) -> Optional[datetime.date]:
+    try:
+        return datetime.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _title_of(fm: dict, path: Path) -> str:
+    value = fm.get("title")
+    return " ".join(str(value).split()) if isinstance(value, str) and value.strip() else path.stem
+
+
+def meeting_evidence(root: Path, zone: str, person: str, since: datetime.date, ctx: dict, lib,
+                     forms: List[Tuple[str, bool, str]]) -> List[dict]:
+    """The Meetings pages of this zone filed after `since` that name `person`. A page is looked at only when its
+    own `zone:` is this zone and the wall's decide() permits this zone to read it: a page of another zone, or of none,
+    is never opened. Newest first."""
+    folder = root.joinpath(*MEETING_PAGES)
+    mine = [f for f in forms if f[2] == person]
+    found = []
+    for page in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        if page.is_symlink() or not page.is_file():
+            continue
+        try:
+            page_zone = lib.zone_of(root, page)
+            if str(page_zone or "").casefold() != zone.casefold() or lib.decide({zone}, {page_zone}, "read", ctx) != "permit":
+                continue
+            fm = lib.parse_frontmatter(page)
+            day = _day_text(fm.get("created")) or _day_text(fm.get("date"))
+            if day is None or day <= since:      # a page filed the day the line was first seen may be its own source
+                continue
+            if page.stat().st_size > MOST_READ:
+                continue
+            text = page.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+        if name_hits(text, mine):
+            held = _day_text(fm.get("date")) or day
+            found.append((held, day, {"path": page.relative_to(root).as_posix(), "title": _title_of(fm, page),
+                                      "date": held.isoformat(), "kind": "meeting"}))
+    return [e for _, _, e in sorted(found, key=lambda t: (t[0], t[1], t[2]["path"]), reverse=True)]
+
+
+FROM = re.compile(r"^from:[ \t]*(.+)$", re.I | re.M)
+SENT = re.compile(r"^date:[ \t]*(.+)$", re.I | re.M)
+
+
+def inbox_items(root: Path, zone: Path, person: str, since: datetime.date, ctx: dict, lib,
+                forms: List[Tuple[str, bool, str]]) -> List[Tuple[datetime.date, Path, str]]:
+    """(day sent, the item, its header) for each item in this zone's Inbox/ sent on or after `since` whose sender names
+    `person`, newest first. Only this zone's own Inbox is listed, and each item is checked against the wall for this
+    zone before it is opened."""
+    import email.utils
+    inbox = zone / "Inbox"
+    mine = [f for f in forms if f[2] == person]
+    found = []
+    for item in sorted(inbox.iterdir()) if inbox.is_dir() else []:
+        if item.name.startswith(".") or item.is_symlink() or not item.is_file() or item.suffix.lower() not in (".eml", ".md", ".txt"):
+            continue
+        try:
+            item_zone = lib.zone_of(root, item)
+            if str(item_zone or "").casefold() != zone.name.casefold() or lib.decide({zone.name}, {item_zone}, "read", ctx) != "permit":
+                continue
+            with item.open("rb") as fh:
+                head = fh.read(20_000).decode("utf-8", errors="replace")
+            mtime = datetime.date.fromtimestamp(item.stat().st_mtime)
+        except (OSError, ValueError):
+            continue
+        top = head.split("\n\n", 1)[0] if item.suffix.lower() == ".eml" else head
+        sender = FROM.search(top)
+        if not sender or not name_hits(sender.group(1), mine):
+            continue
+        day = mtime
+        sent = SENT.search(top)
+        if sent:
+            try:
+                day = email.utils.parsedate_to_datetime(sent.group(1).strip()).date()
+            except (TypeError, ValueError, IndexError):
+                day = _day_text(sent.group(1)) or mtime
+        if day >= since:
+            found.append((day, item, top))
+    return sorted(found, key=lambda t: (t[0], t[1].name), reverse=True)
+
+
+def inbox_evidence(root: Path, zone: Path, person: str, since: datetime.date, ctx: dict, lib,
+                   forms: List[Tuple[str, bool, str]]) -> List[dict]:
+    """The items in this zone's Inbox/ sent on or after `since` whose sender names `person`, as evidence."""
+    out = []
+    for day, item, top in inbox_items(root, zone, person, since, ctx, lib, forms):
+        subject = re.search(r"^subject:[ \t]*(.+)$", top, re.I | re.M)
+        out.append({"path": item.relative_to(root).as_posix(), "title": " ".join(subject.group(1).split()) if subject else item.stem,
+                    "date": day.isoformat(), "kind": "inbox"})
+    return out
+
+
+def sender_address(root: Path, zone: Path, person: str) -> str:
+    """The address `person` wrote from, read from the From line of the items in this zone's own Inbox/ whose display name
+    is their full name as People writes it (case aside; never a first name or an alias alone), or "" when none does or
+    when two or more different addresses do. Code builds a chase's recipient from this and from nothing the assistant
+    wrote."""
+    import email.utils
+    lib = tools_lib(root)
+    if not lib or not person:
+        return ""
+    ctx = lib.load_context(root)
+    found: Dict[str, str] = {}
+    for _, _, top in inbox_items(root, zone, person, datetime.date.min, ctx, lib, person_forms(ctx)):
+        sender = FROM.search(top)
+        shown, address = email.utils.parseaddr(sender.group(1)) if sender else ("", "")
+        if _norm(shown) != _norm(person):
+            continue
+        if re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", address):
+            found[address.casefold()] = address
+    return next(iter(found.values())) if len(found) == 1 else ""
+
+
+WAITING_TAG = re.compile(r"(?:^|\s)#waiting")
+
+
+def due_waiting(lines: List[str], today: datetime.date) -> List[str]:
+    """The lines a follow-up is about: open, tagged `#waiting`, chase day today or past. The status page's Follow-ups row
+    reads the same test (todo_lines.py's `waiting`), so a digest and the page count the same lines."""
+    return [l for l in classify(lines, today)["chase"] if WAITING_TAG.search(l)]
+
+
+def followup(root: Path, zone: Path, today: datetime.date) -> dict:
+    """Follow up on a zone's due Waiting on lines, with no model. A line is due when it is open, waiting, and its `⏳`
+    day is today or past; it is looked at once, until it changes (a changed line has another key). For each: the
+    zone's own Meetings pages and Inbox items since the line was first seen (`.todo-seen.json`) that name its person.
+    With none, the line is recorded as *no sign*. With some, it is recorded as `pending`, with those sources, for the
+    judgement call to answer. A line the ledger had not seen is entered in it now and looked at on the next run.
+    Nothing in Todo.md changes. Returns followup_counts() and {"zone", "pending": [{"key", "line", "person",
+    "evidence"}], "unseen"}."""
+    lines = read(zone)
+    due = due_waiting(lines, today)
+    seen = read_seen(zone)
+    records = read_followups(zone)
+    live = {key(l) for l in due}
+    for k in [k for k in records if k not in live]:
+        del records[k]                                     # a line that changed, was ticked or moved on is looked at afresh
+    lib = tools_lib(root)
+    ctx = lib.load_context(root) if lib else {}
+    forms = person_forms(ctx)
+    out = {"zone": zone.name}
+    unseen = 0
+    new = False
+    for line in due:
+        k = key(line)
+        rec = records.get(k)
+        if rec and rec.get("result") in RESULTS:
+            continue
+        first = _day_text(seen.get(k))
+        if first is None:
+            seen[k] = today.isoformat()                    # first seen now, as expiry would record it; looked at tomorrow
+            new = True
+            unseen += 1
+            continue
+        person = person_of(line, forms)
+        if not person:
+            continue                                       # a line that names nobody is not looked at, and says so
+        evidence = []
+        if person and lib:
+            evidence = meeting_evidence(root, zone.name, person, first, ctx, lib, forms) + inbox_evidence(root, zone, person, first, ctx, lib, forms)
+            evidence = sorted(evidence, key=lambda e: e["date"], reverse=True)[:MOST_EVIDENCE]
+        base = {"line": line, "person": person, "since": first.isoformat(), "looked": today.isoformat()}
+        records[k] = dict(base, result="pending" if evidence else "no sign", source="", title="", date="", evidence=evidence)
+    if new:
+        write_seen(zone, seen)
+    write_followups(zone, records)
+    out.update(followup_counts(zone, today))
+    out["pending"] = [{"key": key(l), "line": l, "person": records[key(l)]["person"], "evidence": records[key(l)]["evidence"]}
+                      for l in due if records.get(key(l), {}).get("result") == "pending"]
+    out["unseen"] = unseen
+    return out
+
+
+def followup_counts(zone: Path, today: datetime.date) -> dict:
+    """The follow-up records of the zone's due lines, counted, with nothing looked at: {"due", "delivered", "in_part",
+    "no_sign", "waiting", "unlooked"}: `waiting` is a due line with evidence that no judgement has answered, `unlooked` one
+    no follow-up has looked at."""
+    due = due_waiting(read(zone), today) if (zone / "Todo.md").is_file() else []
+    records = read_followups(zone)
+    out = {"due": len(due), "delivered": 0, "in_part": 0, "no_sign": 0, "waiting": 0, "unlooked": 0}
+    for line in due:
+        result = (records.get(key(line)) or {}).get("result")
+        if result == "delivered":
+            out["delivered"] += 1
+        elif result == "in part":
+            out["in_part"] += 1
+        elif result == "no sign":
+            out["no_sign"] += 1
+        elif result == "pending":
+            out["waiting"] += 1
+        else:
+            out["unlooked"] += 1
+    return out
+
+
+def record_answers(zone: Path, answers: List[dict], today: datetime.date) -> dict:
+    """Record the judgement call's answers: [{"key", "result", "source"?}]. Code decides what each may mean. The key
+    must be a line waiting for its answer; the result one of RESULTS; and a source, for *delivered* and *in part*, one of
+    the sources code found for that line, never a path the answer brings. An answer that fails any of these is
+    left out and the line stays pending. Returns the counts and the keys that were left out."""
+    records = read_followups(zone)
+    done = {"delivered": 0, "in part": 0, "no sign": 0, "left_out": []}
+    for a in answers if isinstance(answers, list) else []:
+        a = a if isinstance(a, dict) else {}
+        rec = records.get(a.get("key"))
+        result = a.get("result")
+        if not rec or rec.get("result") != "pending" or result not in RESULTS:
+            done["left_out"].append(str(a.get("key")))
+            continue
+        evidence = rec.get("evidence") or []
+        chosen = next((e for e in evidence if e.get("path") == a.get("source")), None)
+        if result != "no sign" and chosen is None:
+            done["left_out"].append(str(a.get("key")))
+            continue
+        rec.update(result=result, looked=today.isoformat(), evidence=[])
+        rec.update(source=chosen["path"] if chosen and result != "no sign" else "",
+                   title=chosen["title"] if chosen and result != "no sign" else "",
+                   date=chosen["date"] if chosen and result != "no sign" else "")
+        done[result] += 1
+    write_followups(zone, records)
+    return done
+
+
+def followup_say(found: dict) -> str:
+    """The digest's line, "Follow-ups: 1 reply found, 2 to chase.", or "" when there is nothing to say. A reply
+    found is a line the call judged delivered or in part; to chase is a line with no sign, or with evidence not yet judged. A line no follow-up has looked at is not counted."""
+    replied = found.get("delivered", 0) + found.get("in_part", 0)
+    chase = found.get("no_sign", 0) + found.get("waiting", 0)
+    parts = []
+    if replied:
+        parts.append("%d repl%s found" % (replied, "y" if replied == 1 else "ies"))
+    if chase:
+        parts.append("%d to chase" % chase)
+    return "Follow-ups: %s." % ", ".join(parts) if parts else ""
+
+
 def zone_of(root: Path, name: str) -> Path:
     zones = root / "Zones"
     match = [z for z in (zones.iterdir() if zones.is_dir() else []) if z.is_dir() and z.name.lower() == name.lower()]
@@ -795,7 +1168,8 @@ def zone_of(root: Path, name: str) -> Path:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Expire, archive and tidy a zone's Todo.md.")
-    ap.add_argument("command", choices=("expire", "archive", "tidy", "all", "oldest", "digest", "distil", "proposals"))
+    ap.add_argument("command", choices=("expire", "archive", "tidy", "all", "oldest", "digest", "distil", "proposals", "followup"))
+    ap.add_argument("--answers", help="followup: the judgement's answers as JSON, or - for standard input")
     ap.add_argument("--changes", help="distil: the JSON file of changes, or - for standard input")
     ap.add_argument("--yes", action="store_true", help="distil: the user has seen the before and after of the lines they moved, and agreed")
     ap.add_argument("--dry-run", action="store_true", help="distil: write nothing, say what would happen")
@@ -822,6 +1196,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(json.dumps({"zone": zone.name, "proposals": found}, ensure_ascii=False))
         else:
             print("\n".join(proposal_text(p) for p in found) if found else "%s: no proposals." % zone.name)
+        return 0
+    if a.command == "followup":
+        if a.answers:
+            try:
+                raw = sys.stdin.read() if a.answers == "-" else Path(a.answers).read_text(encoding="utf-8")
+                got = json.loads(raw)
+            except (OSError, ValueError) as e:
+                raise SystemExit("todo: cannot read the answers: %s" % e)
+            out = record_answers(zone, got.get("answers") if isinstance(got, dict) else got, today)
+            print(json.dumps(dict(out, zone=zone.name)) if a.json else "%s: %d delivered, %d in part, %d no sign%s." % (
+                zone.name, out["delivered"], out["in part"], out["no sign"],
+                ", %d left out" % len(out["left_out"]) if out["left_out"] else ""))
+            return 0
+        out = followup(root, zone, today)
+        print(json.dumps(out, ensure_ascii=False) if a.json else "%s: %d due, %d to judge, %d no sign, %d replies found." % (
+            zone.name, out["due"], len(out["pending"]), out["no_sign"], out["delivered"] + out["in_part"]))
         return 0
     if a.command == "distil":
         if not a.changes:

@@ -985,6 +985,124 @@ class LookItems(unittest.TestCase):
         self.assertIn("<pre><code>ls Zones</code></pre>", shown)                      # any other block stays as it was
 
 
+DANA_LINE = "- [ ] Dana: send the price sheet #waiting \u23f3 2026-11-11"
+THEO_LINE = "- [ ] Theo: send the letter #waiting \u23f3 2026-11-12"
+
+
+def followup_key(line):
+    import hashlib
+    return hashlib.sha1(line.rstrip().encode("utf-8")).hexdigest()[:16]
+
+
+def followups_workspace(records=None, personal=False):
+    """Work holds Dana's due line, a late line of its own and one that is not due yet; with `personal`, Personal holds a due line too."""
+    def extra(root):
+        work = root / "Zones" / "Work"
+        (work / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it \U0001F4C5 2026-11-02\n\n## Waiting on\n\n%s\n"
+                                      "- [ ] Alex: later one #waiting \u23f3 2026-11-30\n\n## Done\n" % DANA_LINE, encoding="utf-8")
+        if records is not None:
+            (work / ".todo-followups.json").write_text(json.dumps(records), encoding="utf-8")
+        if personal:
+            home = root / "Zones" / "Personal"
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "Todo.md").write_text("# Personal: open actions\n\n## Waiting on\n\n%s\n\n## Done\n" % THEO_LINE, encoding="utf-8")
+    return extra
+
+
+class FollowUps(unittest.TestCase):
+    """#603: the Follow-ups row of Waiting on you now, one for each zone with a Waiting on line whose chase day has come."""
+
+    def rows(self, html):
+        start = html.index('id="wneeds"')
+        return re.findall(r'<div class="wrow wneed">.*?(?=<div class="wrow wneed">|</div></section>|</details>)', html[start:], re.S)
+
+    def follow(self, html):
+        return [r for r in self.rows(html) if "follow-up" in r]
+
+    def test_the_waiting_line_leaves_late_actions_and_shows_once(self):
+        html = build_with_beats({}, followups_workspace())
+        late = [r for r in self.rows(html) if "late action" in r]
+        self.assertEqual(1, len(late))
+        self.assertIn("1 late action", late[0])
+        self.assertIn("Send it", late[0])
+        self.assertNotIn("price sheet", late[0])
+        fu = self.follow(html)
+        self.assertEqual(1, len(fu))
+        self.assertIn("1 follow-up", fu[0])
+        self.assertEqual(1, html.count("price sheet</span>") + html.count("price sheet\u201d.</span>") + html.count("price sheet\u201d: chase day"))
+        self.assertNotIn("later one", fu[0])                      # a line not due is no follow-up
+
+    def test_a_zone_with_only_a_due_waiting_line_has_no_late_actions_row(self):
+        html = build_with_beats({}, followups_workspace(personal=True))
+        home = [r for r in self.rows(html) if "Personal" in r]
+        self.assertEqual(["follow-up"], [("follow-up" if "follow-up" in r else "late") for r in home])
+
+    def test_a_line_not_looked_at_is_still_shown_with_its_words_and_day_and_two_buttons(self):
+        fu = self.follow(build_with_beats({}, followups_workspace()))[0]
+        self.assertIn("price sheet", fu)
+        self.assertIn("chase day 11 Nov", fu)
+        self.assertEqual(["todo-done", "todo-date"], re.findall(r'data-fu="([a-z-]+)"', fu))
+        self.assertRegex(fu, r'<button class="act" type="button" data-fu="todo-done">Tick it</button>')
+        self.assertRegex(fu, r'<button class="alt" type="button" data-fu="todo-date" data-date="2026-11-21">Give it a week</button>')
+
+    def test_no_sign_offers_chase_as_the_main_button(self):
+        rec = {followup_key(DANA_LINE): {"line": DANA_LINE, "person": "Dana Whitlock", "result": "no sign", "since": "2026-11-11", "source": "", "title": "", "date": ""}}
+        fu = self.follow(build_with_beats({}, followups_workspace(rec)))[0]
+        self.assertIn("No reply from Dana since 11 Nov", fu)
+        self.assertEqual(["chase", "todo-date", "todo-done"], re.findall(r'data-fu="([a-z-]+)"', fu))
+        self.assertRegex(fu, r'<button class="act" type="button" data-fu="chase">Chase</button>')
+        self.assertIn(">Give it a week<", fu)
+
+    def test_a_reply_found_offers_tick_it_with_its_source_and_a_link_to_the_page(self):
+        def extra(root):
+            followups_workspace({followup_key(DANA_LINE): {"line": DANA_LINE, "person": "Dana Whitlock", "result": "delivered", "since": "2026-11-11",
+                                                          "source": "Wikis/Meetings/wiki/sources/261112-acme-pricing.md", "title": "Acme pricing call", "date": "2026-11-12"}})(root)
+        fu = self.follow(build_with_beats({}, extra))[0]
+        self.assertIn("Dana sent it", fu)
+        self.assertIn("Acme pricing call, 12 Nov", fu)
+        self.assertEqual(["todo-done", "todo-date"], re.findall(r'data-fu="([a-z-]+)"', fu))
+        self.assertRegex(fu, r'<button class="act" type="button" data-fu="todo-done">Tick it</button>')
+        self.assertIn(">Still waiting<", fu)
+        self.assertRegex(fu, r'<a class="alt" href="file://[^"]*/Wikis/Meetings/wiki/sources/261112-acme-pricing.md">Show me</a>')
+
+    def test_a_source_that_leaves_the_workspace_has_no_link(self):
+        rec = {followup_key(DANA_LINE): {"line": DANA_LINE, "person": "Dana", "result": "delivered", "source": "../../etc/passwd", "title": "X", "date": "2026-11-12"}}
+        self.assertNotIn("Show me", self.follow(build_with_beats({}, followups_workspace(rec)))[0])
+
+    def test_each_zone_has_its_own_row_with_its_own_lines(self):
+        html = build_with_beats({}, followups_workspace(personal=True))
+        fu = self.follow(html)
+        self.assertEqual(2, len(fu))
+        work = next(r for r in fu if "Work" in r)
+        home = next(r for r in fu if "Personal" in r)
+        self.assertIn("price sheet", work)
+        self.assertNotIn("letter", work)
+        self.assertIn("letter", home)
+        self.assertNotIn("price sheet", home)
+        self.assertIn("1 follow-up", work)
+        self.assertIn("1 follow-up", home)
+
+    def test_the_lead_sentence_counts_the_row_once(self):
+        html = build_with_beats({}, followups_workspace())
+        self.assertIn("<h2>Two things need you.</h2>", html)          # the late action, and the follow-up
+
+    def test_the_buttons_send_their_verb_and_the_script_names_them(self):
+        offered = {v for buttons in status.FOLLOW_BUTTONS.values() for v, _, _ in buttons}
+        self.assertEqual({"todo-done", "todo-date", "chase", "show"}, offered)
+        self.assertIn("'chase'", status.FOLLOWUP_JS)
+        self.assertIn("{verb:b.dataset.fu,zone:row.dataset.z,file:row.dataset.f,key:row.dataset.k}", status.FOLLOWUP_JS)
+        self.assertIn("host.postMessage({act:q})", status.FOLLOWUP_JS)
+        self.assertIn("GarrickAct(q,said)", status.FOLLOWUP_JS)
+        html = build_with_beats({}, followups_workspace())
+        self.assertIn("function go(row,b)", html)
+
+    def test_the_row_in_a_browser_is_hidden_like_the_late_lines_and_keeps_its_link(self):
+        self.assertIn(".nohost .wacts .act,.nohost .wlate{display:none}", status.WAITING_CSS)
+        fu = self.follow(build_with_beats({}, followups_workspace()))[0]
+        self.assertIn('<div class="wlate">', fu)
+        self.assertRegex(fu, r'<a class="alt" href="#todolist" data-tz-go="Work">Open the list</a>')
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -344,7 +344,9 @@ SHAPES = {
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"run"': ("run",),
              # a `check` chip's Fix on the Threads card (#179)
-             '"fix"': ("fix",)}
+             '"fix"': ("fix",),
+             # Needs you on the Overview: a question's answers and Not now (#503)
+             '"answer"': ("answer",), '"later"': ("later",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'new-project-party'", "onclick: 'rename'", "onclick: 'move'",

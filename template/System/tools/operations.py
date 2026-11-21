@@ -283,7 +283,6 @@ DECLARED: Dict[str, Op] = {
     # a yes making Garrick's record of the work, committed in its zone; a
     # first look written from the work's files; the record put away under the
     # zone's archive/ and brought back. None of them writes in the folder.
-    "discover": _op(("folder",), ("folder",), "workspace"),
     # `owner` answers whose work it is, where the work's zone has no party yet.
     "suggestion": _op(("id", "answer", "name", "zone", "party", "owner"), ("id", "answer", "name"), "zone", True),
     "start": _op(("zone", "file"), ("file",), "zone", True),

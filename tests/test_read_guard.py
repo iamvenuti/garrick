@@ -278,6 +278,46 @@ class WarnOnly(GuardCase):
         self.assertEqual("folder", json.loads(lines[-1])["kind"])
 
 
+class Globs(GuardCase):
+    """Fix round S2: a brace group or a wildcard before the first slash is judged by each literal prefix."""
+
+    def setUp(self):
+        super().setUp()
+        self.settings(**{"read-guard": "enforce"})
+
+    def refused(self, tool, given, home=None):
+        decision, reason = self.decision(self.call(tool, given, home))
+        self.assertEqual("deny", decision, given)
+        self.assertTrue(reason.startswith(SENTENCE))
+        return reason
+
+    def test_a_leading_brace_group_is_judged_by_each_of_its_prefixes(self):
+        self.refused("Glob", {"pattern": "{Zones/Work,Zones/Personal}/**/*.md", "path": str(self.root)}, self.acme)
+        self.refused("Glob", {"pattern": "{../../Personal/Birch,.}/Notes/*.md"}, self.acme)
+        self.refused("Glob", {"pattern": "{x,{../../Personal/Birch,y}}/**"}, self.acme)
+        self.refused("Glob", {"pattern": "../../Personal/Birch/{Notes,Other}/*.md"}, self.acme)
+        self.assertIsNone(self.call("Glob", {"pattern": "{Threads,Sources}/**/*.md"}))
+        self.assertIsNone(self.call("Glob", {"pattern": "{Threads,.}/**/*.md"}))
+
+    def test_a_pattern_with_a_wildcard_before_the_first_slash_is_a_span_of_its_base(self):
+        reason = self.refused("Glob", {"pattern": "*/Birch/**/*.md", "path": str(self.root / "Zones")}, self.acme)
+        self.assertIn(POINTER, reason)
+        self.refused("Glob", {"pattern": "{a,b}*/**/*.md", "path": str(self.root)}, self.acme)
+        self.refused("Glob", {"pattern": "*/wiki/*.md", "path": str(self.root / "Wikis")}, self.acme)
+        self.assertIsNone(self.call("Glob", {"pattern": "*/*.md"}))              # based in the session's own folder
+
+    def test_a_group_with_too_many_expansions_is_cut_at_the_brace(self):
+        many = "{" + ",".join("d%d" % i for i in range(80)) + "}/*.md"
+        self.refused("Glob", {"pattern": many, "path": str(self.root / "Zones")}, self.acme)
+        self.assertIsNone(self.call("Glob", {"pattern": many}))
+        self.refused("Glob", {"pattern": "{Zones/Work", "path": str(self.root)}, self.acme)       # never closed
+
+    def test_a_grep_glob_is_judged_the_same_way(self):
+        self.refused("Grep", {"pattern": "x", "glob": "{../../Personal/Birch,.}/**/*.md"}, self.acme)
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "glob": "{Threads,Sources}/**/*.md"}))
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "glob": "*.md"}))
+
+
 class GuardFolder(GuardCase):
     """Fix round S1: the guard's own folder is never read or written by a session, wherever it sits."""
 

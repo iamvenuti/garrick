@@ -276,6 +276,50 @@ def judge(lib, root, ctx, scope, path, searching):
 # ------------------------------------------------------------------ the tool calls
 
 
+BRACE_LIMIT = 64
+
+
+def braces(pattern):
+    """The patterns a brace group stands for, `{a,b}/x` as `a/x` and `b/x`, nested groups too. More than BRACE_LIMIT
+    of them, or a group never closed, cuts the pattern at the first brace, so it is judged by what comes before."""
+    open_at = pattern.find("{")
+    if open_at < 0:
+        return [pattern]
+    depth, parts, start = 0, [], open_at + 1
+    for i in range(open_at, len(pattern)):
+        c = pattern[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                parts.append(pattern[start:i])
+                head, tail = pattern[:open_at], pattern[i + 1:]
+                out = []
+                for part in parts:
+                    out.extend(braces(head + part + tail))
+                    if len(out) > BRACE_LIMIT:
+                        return [pattern[:open_at] + "*"]
+                return out
+        elif c == "," and depth == 1:
+            parts.append(pattern[start:i])
+            start = i + 1
+    return [pattern[:open_at] + "*"]
+
+
+def glob_paths(cwd, given_base, pattern):
+    """[(real path, searching)] for a glob pattern: each brace expansion judged by its own literal prefix, up to the
+    first wildcard. A prefix that is empty is the folder the pattern is based in, searched as a span of it."""
+    out = []
+    for one in braces(pattern):
+        cut = re.search(r"[*?\[{]", one)
+        prefix = one[:cut.start()] if cut else one
+        prefix = prefix if not cut else prefix.rsplit("/", 1)[0] if "/" in prefix else ""
+        base = os.path.realpath(os.path.join(cwd, given_base, prefix))
+        out.append((base, bool(cut) or os.path.isdir(base)))
+    return out
+
+
 def tool_paths(event, lib):
     """[(real path, searching)] the call names, and whether a part of it could not be read."""
     tool, given = event.get("tool_name"), event.get("tool_input") or {}
@@ -284,15 +328,12 @@ def tool_paths(event, lib):
         return [(os.path.realpath(os.path.join(cwd, os.path.expanduser(given.get("file_path") or ""))), False)], False
     if tool == "Grep":
         base = os.path.realpath(os.path.join(cwd, os.path.expanduser(given.get("path") or "")))
-        return [(base, os.path.isdir(base))], False
+        found = [(base, os.path.isdir(base))]
+        if isinstance(given.get("glob"), str) and given["glob"]:
+            found += glob_paths(cwd, os.path.expanduser(given.get("path") or ""), given["glob"])
+        return found, False
     if tool == "Glob":
-        pattern = os.path.expanduser(given.get("pattern") or "")
-        given_base = os.path.expanduser(given.get("path") or "")
-        cut = re.search(r"[*?\[{]", pattern)
-        prefix = pattern[:cut.start()] if cut else pattern
-        prefix = prefix if not cut else prefix.rsplit("/", 1)[0] if "/" in prefix else ""
-        base = os.path.realpath(os.path.join(cwd, given_base, prefix))
-        return [(base, bool(cut) or os.path.isdir(base))], False
+        return glob_paths(cwd, os.path.expanduser(given.get("path") or ""), os.path.expanduser(given.get("pattern") or "")), False
     if tool in SHELL_TOOLS:
         command = given.get("command") or given.get("cmd") or ""
         if isinstance(command, list):

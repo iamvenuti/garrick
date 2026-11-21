@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
@@ -164,6 +165,60 @@ class CardScript(unittest.TestCase):
         one = self.run_js([row("a", "2026-11-10T09:00:00Z")])
         self.assertFalse(one["calm"])                                        # and leads with the first
         self.assertEqual("One thing needs you.", one["lead"])
+
+
+class Tokens:
+    """The colour tokens of status.CSS, per theme, and the contrast of two of them."""
+
+    @staticmethod
+    def block(css, opener):
+        body = css[css.index(opener) + len(opener):]
+        return dict(re.findall(r"--([\w-]+):(#[0-9a-fA-F]{6})\b", body[:body.index("}")]))
+
+    @classmethod
+    def themes(cls, css):
+        return {"light": cls.block(css, ":root{"), "dark": cls.block(css, ':root[data-theme="dark"]{')}
+
+    @staticmethod
+    def luminance(hex_):
+        r, g, b = (int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in (r, g, b)]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+    @classmethod
+    def contrast(cls, a, b):
+        hi, lo = sorted((cls.luminance(a), cls.luminance(b)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+
+class TheStatusDot(unittest.TestCase):
+    """The dot that marks a state (class `dot`, with `good`, `warning` or `critical` for a state) reads against the card
+    it sits on in both themes: 3:1 or more for its fill, and its words stay, so it is never the only sign."""
+
+    def fills(self):
+        css = status.CSS
+        base = re.search(r"\.dot\{[^}]*background:var\(--(\w+)\)\}", css).group(1)
+        fills = {"none": base}
+        for state in ("good", "warning", "critical"):
+            fills[state] = re.search(r"\.dot\.%s\{background:var\(--(\w+)\)\}" % state, css).group(1)
+        return fills
+
+    def test_every_dot_fill_has_three_to_one_against_the_card_in_both_themes(self):
+        themes = Tokens.themes(status.CSS)
+        for theme, tokens in themes.items():
+            for state, name in self.fills().items():
+                for ground in ("surface", "page"):
+                    ratio = Tokens.contrast(tokens[name], tokens[ground])
+                    self.assertGreaterEqual(ratio, 3.0, "%s dot (%s) on %s in the %s theme: %.2f:1" % (state, name, ground, theme, ratio))
+
+    def test_the_stateless_dot_is_not_the_empty_track_colour(self):
+        self.assertNotEqual("none", self.fills()["none"])
+
+    def test_the_dot_on_the_context_tab_carries_its_words_in_a_title(self):
+        qp = importlib.util.spec_from_file_location("garrick_qp_dot", REPO / "extras" / "status" / "questions_panel.py")
+        mod = importlib.util.module_from_spec(qp)
+        qp.loader.exec_module(mod)
+        self.assertIn('title="Something needs a look"', mod.tab_button("Something needs a look"))
 
 
 if __name__ == "__main__":

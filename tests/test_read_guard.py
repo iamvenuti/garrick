@@ -268,12 +268,103 @@ class WarnOnly(GuardCase):
         self.assertTrue((self.state / "read-guard.log").is_file())
         self.assertFalse(str(self.state).startswith(str(self.root)))
 
-    def test_a_guard_folder_inside_the_workspace_is_refused_even_in_warn(self):
+    def test_a_guard_folder_inside_the_workspace_is_logged_and_allowed_in_warn(self):
         event = {"session_id": "z", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": str(self.acme),
                  "tool_input": {"pattern": "x", "path": str(self.root / "System" / "garrick-read-guard")}}
         done = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True,
                               env=dict(self.env(self.acme), GARRICK_JOBS_DIR=str(self.root / "System" / "jobs")), timeout=60)
-        self.assertEqual("deny", json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"])
+        self.assertEqual("", done.stdout.strip())
+        lines = (self.root / "System" / "garrick-read-guard" / "read-guard.log").read_text().splitlines()
+        self.assertEqual("folder", json.loads(lines[-1])["kind"])
+
+
+class GuardFolder(GuardCase):
+    """Fix round S1: the guard's own folder is never read or written by a session, wherever it sits."""
+
+    def prepare(self, mode="enforce"):
+        self.settings(**{"read-guard": mode})
+        self.start(self.acme)
+        self.assertTrue((self.state / "sessions" / "s1.json").is_file())
+
+    def test_a_read_of_the_folder_is_refused_in_every_form_when_enforcing(self):
+        self.prepare()
+        record = self.state / "sessions" / "s1.json"
+        calls = (("Read", {"file_path": str(record)}), ("Grep", {"pattern": "x", "path": str(self.state)}),
+                 ("Glob", {"pattern": "*.json", "path": str(self.state / "sessions")}),
+                 ("Glob", {"pattern": str(self.state) + "/**/*.log"}),
+                 ("Bash", {"command": "cat " + str(self.state / "read-guard.log")}),
+                 ("Bash", {"command": "ls " + str(self.state / "sessions") + "/*"}))
+        for tool, given in calls:
+            with self.subTest(tool=tool, given=given):
+                decision, reason = self.decision(self.call(tool, given))
+                self.assertEqual(("deny", SENTENCE), (decision, reason))
+
+    def test_a_root_session_is_refused_too(self):
+        self.prepare()
+        self.start(self.root)
+        self.assertEqual("deny", self.decision(self.call("Read", {"file_path": str(self.state / "read-guard.log")}, home=self.root))[0])
+        self.assertIsNone(self.call("Read", {"file_path": str(self.root / "System/notes.md")}, home=self.root))
+
+    def test_in_warn_only_the_read_is_logged_and_allowed(self):
+        self.prepare("warn")
+        self.assertIsNone(self.call("Read", {"file_path": str(self.state / "sessions" / "s1.json")}))
+        last = self.log_lines()[-1]
+        self.assertEqual(("deny", "folder"), (last["decision"], last["kind"]))
+        self.assertNotIn("sessions", self.log_text())
+
+    def test_a_scheduled_job_is_logged_and_never_refused(self):
+        self.prepare()
+        event = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(self.acme),
+                 "tool_input": {"file_path": str(self.state / "read-guard.log")}}
+        self.assertIsNone(self.run_hook(event, project_dir=self.acme, headless=True))
+
+    def write(self, path, tool="Write", home=None, headless=False):
+        home = self.root if home is None else home
+        event = {"session_id": "w", "hook_event_name": "PreToolUse", "tool_name": tool, "cwd": str(home),
+                 "tool_input": {"file_path": str(path), "content": "{}"}}
+        env = self.env(home, headless)
+        done = subprocess.run([sys.executable, str(ZONE_GUARD)], input=json.dumps(event), capture_output=True, text=True,
+                              env=env, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout) if done.stdout.strip() else None
+
+    def test_a_write_into_the_folder_is_refused_in_every_mode_and_from_every_home(self):
+        record = self.state / "sessions" / "s1.json"
+        for home in (self.acme, self.root, self.root / "System"):
+            for tool in ("Write", "Edit"):
+                with self.subTest(home=home, tool=tool):
+                    reply = self.write(record, tool, home)
+                    self.assertEqual("deny", reply["hookSpecificOutput"]["permissionDecision"])
+        self.assertEqual("deny", self.write(self.state / "read-guard.log", headless=True)["hookSpecificOutput"]["permissionDecision"])
+        self.assertIsNone(self.write(self.root / "System" / "notes.md", home=self.root))
+        self.assertIsNone(self.write(self.state.parent / "garrick-read-guard-not" / "x", home=self.root))
+
+    def test_the_two_guards_agree_on_where_the_folder_is(self):
+        import importlib.util
+        from unittest import mock
+        tools = str(REPO / "template" / "System" / "tools")
+        sys.path.insert(0, tools)
+        try:
+            import garrick_lib
+        finally:
+            sys.path.remove(tools)
+        spec = importlib.util.spec_from_file_location("garrick_zone_guard_folder", str(ZONE_GUARD))
+        zg = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = zg
+        spec.loader.exec_module(zg)
+        base = os.path.realpath(str(self.home))
+        for jobs in (None, os.path.join(base, "somewhere", "jobs"), os.path.join(base, "jobs") + os.sep):
+            for platform in ("darwin", "linux"):
+                env = {"HOME": base}
+                if jobs:
+                    env["GARRICK_JOBS_DIR"] = jobs
+                with self.subTest(jobs=jobs, platform=platform), \
+                        mock.patch.dict(os.environ, env), mock.patch.object(sys, "platform", platform):
+                    os.environ.pop("GARRICK_JOBS_DIR", None) if not jobs else None
+                    folder = os.path.realpath(str(garrick_lib.read_guard_dir()))
+                    inside_it = os.path.join(folder, "sessions", "s1.json")
+                    outside_it = folder + "-not"
+                    self.assertEqual([inside_it], zg.read_guard_edits([inside_it, outside_it, base]))
 
 
 class Cost(GuardCase):

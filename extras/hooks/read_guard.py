@@ -337,12 +337,9 @@ def pre(event, lib, root, ctx, scope, folder):
     paths, unread = tool_paths(event, lib)
     mode, cross = lib.read_guard_mode(root), lib.read_guard_cross(root)
     zone = scope["zone"] or scope["kind"]
-    # The guard's own folder, where a setting put it inside a workspace, is never read by a session, in any mode.
-    if folder_in(root, folder):
-        for path, _ in paths:
-            if inside(folder, path):
-                log(folder, tool, DENY, zone, path, "log")
-                return deny_reply(WALL_REFUSAL, DENY)
+    stop = own_folder(event, folder, tool, paths, zone, mode)
+    if stop is not None:
+        return stop or None
     worst, kind, what, named = ALLOW, "ok", "", False
     for path, searching in paths:
         verdict, why = judge(lib, root, ctx, scope, path, searching)
@@ -369,6 +366,18 @@ def pre(event, lib, root, ctx, scope, folder):
             return deny_reply(reason + ASK_AGAIN, DENY)
         return deny_reply(reason, "ask")
     return deny_reply(reason, DENY)
+
+
+def own_folder(event, folder, tool, paths, zone, mode):
+    """The guard's own folder holds the log and the scope records: no session reads it, wherever it sits. None when
+    the call names nothing in it; else {} when it is let through (warn-only, a scheduled job), or the refusal."""
+    hit = [p for p, _ in paths if inside(folder, p)]
+    if not hit:
+        return None
+    log(folder, tool, DENY, zone, hit[0], "folder")
+    if mode != "enforce" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return {}
+    return deny_reply(WALL_REFUSAL, DENY)
 
 
 def codex(event):
@@ -727,14 +736,13 @@ def handle(event):
     if stage == "PostToolUse":
         # The tools seen are noted for every session, the root's too, so the check can name one on no list.
         return post(event, lib, root, lib.load_context(root), scope, folder)
-    if scope["kind"] == "root" and not folder_in(root, folder):
-        return None
+    if scope["kind"] == "root":
+        if event.get("tool_name") not in READ_TOOLS and event.get("tool_name") not in SHELL_TOOLS:
+            return None
+        paths, _ = tool_paths(event, lib)
+        stop = own_folder(event, folder, event.get("tool_name"), paths, "root", lib.read_guard_mode(root))
+        return stop or None
     return pre(event, lib, root, lib.load_context(root), scope, folder)
-
-
-def folder_in(root, folder):
-    """Whether the guard's folder sits inside the workspace, which only a setting can do."""
-    return inside(root, os.path.realpath(folder))
 
 
 def main():

@@ -257,7 +257,23 @@ def ledger_edits(event):
         names = parts(root, path, case_blind(root))
         if names and len(names) == 2 and names[0].casefold() == "system" and names[1].casefold().startswith(LEDGER):
             found.append(path)
+    found.extend(read_guard_edits(edits(event)))
     return found
+
+
+def read_guard_edits(paths):
+    """The paths that fall in the read guard's own folder, where a session's scope record would widen its own reads (#613).
+    The folder is where garrick_lib.read_guard_dir() puts it: next to the jobs' folder when GARRICK_JOBS_DIR is set,
+    else the Mac's Logs or the state folder. Written here by hand, because this hook cannot import garrick_lib."""
+    jobs = os.environ.get("GARRICK_JOBS_DIR")
+    if jobs:
+        folder = os.path.join(os.path.dirname(os.path.expanduser(jobs).rstrip(os.sep)), "garrick-read-guard")
+    elif sys.platform == "darwin":
+        folder = os.path.join(os.path.expanduser("~"), "Library", "Logs", "garrick-read-guard")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), ".local", "state", "garrick-read-guard")
+    folder = os.path.realpath(folder)
+    return [p for p in paths if p == folder or p.startswith(folder + os.sep)]
 
 
 def decide(event):
@@ -266,7 +282,7 @@ def decide(event):
     if stage == "PreToolUse" and ledger_edits(event):
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "Zone guard: the notes ledger is written only by the channel that "
-                                       "receives a note. An assistant session never writes it."}}
+                                       "receives a note, and the read guard's own folder is written only by the guard. An assistant session never writes either."}}
     home, away = outside(event)
     if not away:
         return None

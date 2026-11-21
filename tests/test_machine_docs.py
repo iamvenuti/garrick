@@ -27,9 +27,11 @@ class MachineDocs(unittest.TestCase):
                      "sync-conflict", "conflicted copy", "not reachable here"):
             self.assertIn(word, page, word)
 
-    def test_the_page_says_a_session_cannot_write_the_role_file(self):
+    def test_the_page_says_the_guard_refuses_the_role_file_and_is_not_a_lock(self):
         page = text("docs/machines.md")
-        self.assertRegex(page, r"(?s)assistant session cannot write anything in `~/.config/garrick/`")
+        self.assertIn("The zone guard refuses a file-editing tool's write to that one file", page)
+        self.assertIn("a shell command can still change the role file", page)
+        self.assertIn("It is not a lock.", page)
         self.assertIn("python3 System/tools/machine.py set --role", page)
 
     def test_one_link_from_each_page_that_should_have_one(self):

@@ -1932,15 +1932,16 @@ def guard_hooks():
     return None, None
 
 
-def clean_patterns(value, what: str) -> list:
+def clean_patterns(value, what: str, needs_one: bool = False) -> list:
     """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
-    path separator or a space, no repeat, not many. Refused whole when one is not."""
-    if not isinstance(value, list) or len(value) > MAX_PATTERNS:
-        raise fails("guard-value", "%s is a list of at most %d tool names" % (what, MAX_PATTERNS))
+    path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
+    and calendar tools with none would switch the filter off with the guard still On. Refused whole when one is not."""
+    if not isinstance(value, list) or len(value) > MAX_PATTERNS or (needs_one and not value):
+        raise fails("guard-value", "%s is a list of at most %d tool names%s" % (what, MAX_PATTERNS, ", and not empty" if needs_one else ""))
     out = []
     for item in value:
         item = item.strip() if isinstance(item, str) else item
-        if not isinstance(item, str) or not TOOL_PATTERN.fullmatch(item) or ".." in item:
+        if not isinstance(item, str) or not TOOL_PATTERN.fullmatch(item) or ".." in item or not item.strip("*?"):
             raise fails("guard-value", "%r is not a tool name or a pattern for one" % (item,))
         if item.lower() not in [x.lower() for x in out]:
             out.append(item)
@@ -1962,7 +1963,7 @@ def set_read_guard(ws: Path, req: dict) -> dict:
             raise fails("guard-value", "across a wall is refuse or ask me, not %r" % (req["cross"],))
         new["read-guard-cross-zone"] = req["cross"]
     if "tools" in req:
-        new["connector-tools"] = clean_patterns(req["tools"], "the mail and calendar tools")
+        new["connector-tools"] = clean_patterns(req["tools"], "the mail and calendar tools", needs_one=True)
     if "skip" in req:
         new["connector-tools-skip"] = clean_patterns(req["skip"], "the tools with nothing to check")
     if mode is None and not new:

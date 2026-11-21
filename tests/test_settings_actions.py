@@ -345,6 +345,17 @@ class TestTheReadGuard(SettingsCase):
         self.failed(out, "guard-save")
         self.assertNotEqual("enforce", self.saved().get("read-guard"))
 
+    def test_an_empty_mail_and_calendar_list_and_a_pattern_of_only_wildcards_are_refused(self):
+        self.assistants()
+        self.failed(self.go({"verb": "read-guard", "tools": []}), "guard-value")
+        for bad in ("*", "**", "?*", "*?*"):
+            for key in ("tools", "skip"):
+                with self.subTest(key=key, pattern=bad):
+                    self.failed(self.go({"verb": "read-guard", key: [bad]}), "guard-value")
+        self.assertEqual({}, self.saved())
+        self.assertTrue(self.go({"verb": "read-guard", "skip": []})["ok"])               # nothing to skip is a list that can be empty
+        self.assertTrue(self.go({"verb": "read-guard", "tools": ["mcp__x*"]})["ok"])
+
     def test_a_refused_change_never_shows_as_saved(self):
         self.assistants()
         out = self.go({"verb": "read-guard", "mode": "bogus"})

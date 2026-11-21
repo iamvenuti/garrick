@@ -12,7 +12,7 @@ It is optional, and it starts by only watching. You turn it on in Garrick.app: o
 | **Watch only** | Every read goes through. The guard keeps a list of what it would have stopped. |
 | **On** | A read across a wall is stopped, or you are asked, as *Across a wall* says. |
 
-*Across a wall* is **Refuse** (stop every such read, with no question) or **Ask me** (ask you each time, so you can allow one read for one session). *Mail and calendar tools* lists the services whose results are checked, and *Tools with nothing to check* lists those Garrick leaves alone and does not warn about.
+*Across a wall* is **Refuse** (stop every such read, with no question) or **Ask me** (ask you each time, so you can allow one read for one session). *Mail and calendar tools* lists the services whose results are checked, and *Tools with nothing to check* lists those Garrick leaves alone and does not warn about. The first list cannot be empty, and a name that is only wildcards, such as `*`, is refused in both: it would match every tool.
 
 ## One read
 

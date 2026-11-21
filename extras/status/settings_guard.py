@@ -200,7 +200,7 @@ def other_version(home: Optional[str] = None) -> bool:
 def load_hook(folder: Path, name: str):
     """read_guard.py from a folder `hook_folders()` returned, or an exception. The standard modules it imports are loaded
     first, so a file beside it cannot stand in for one; the folder goes last on the path, not first."""
-    import hashlib, json, os, re, shlex, sys, tempfile, time, types  # noqa: F401,E401
+    import hashlib, json, os, re, shlex, shutil, sys, tempfile, time, types  # noqa: F401,E401
     src = folder / "read_guard.py"
     spec = importlib.util.spec_from_file_location(name, str(src))
     mod = importlib.util.module_from_spec(spec)

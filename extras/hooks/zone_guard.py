@@ -273,7 +273,19 @@ def read_guard_edits(paths):
     else:
         folder = os.path.join(os.path.expanduser("~"), ".local", "state", "garrick-read-guard")
     folder = os.path.realpath(folder)
+    if case_blind(nearest_existing(folder)):
+        return [p for p in paths if p.casefold() == folder.casefold() or p.casefold().startswith(folder.casefold() + os.sep)]
     return [p for p in paths if p == folder or p.startswith(folder + os.sep)]
+
+
+def nearest_existing(path):
+    """`path`, or its nearest ancestor that exists: where a disk's case rule can be read for a folder not made yet."""
+    while path and not os.path.exists(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path or os.sep
 
 
 def decide(event):

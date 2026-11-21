@@ -449,6 +449,16 @@ class GuardFolder(GuardCase):
         self.assertIsNone(self.write(self.root / "System" / "notes.md", home=self.root))
         self.assertIsNone(self.write(self.state.parent / "garrick-read-guard-not" / "x", home=self.root))
 
+    def test_a_case_flipped_path_to_the_folder_is_refused_on_a_disk_that_ignores_case(self):
+        """Fix round N1: on a Mac's usual disk the folder named in other case is the same folder."""
+        self.prepare()
+        flipped = Path(str(self.state).swapcase())
+        if not os.path.exists(flipped) or not os.path.samefile(flipped, self.state):
+            self.skipTest("this disk keeps case apart")
+        self.assertEqual("deny", self.decision(self.call("Read", {"file_path": str(flipped / "read-guard.log")}))[0])
+        reply = self.write(flipped / "sessions" / "s1.json", home=self.acme)
+        self.assertEqual("deny", reply["hookSpecificOutput"]["permissionDecision"])
+
     def test_the_two_guards_agree_on_where_the_folder_is(self):
         import importlib.util
         from unittest import mock

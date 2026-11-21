@@ -13,6 +13,9 @@ copy) says which machine is which in one small file outside the workspace,
 
     {"role": "roaming", "name": "laptop", "server": "mini", "workspace": "/Users/jo/Garrick"}
 
+`peers` may list the names of the other machines that sync with this one, so that a conflict copy a shared library
+names after a machine is known (`Plan-laptop.docx`). `workspace` is where the workspace sits on this machine.
+
 The file is outside the workspace on purpose: the workspace is what a sync tool
 copies to the other machine, and the role belongs to the machine. An assistant
 session never writes it (the zone guard refuses), so a session cannot change its
@@ -50,9 +53,9 @@ def path() -> Path:
     return folder() / FILE
 
 
-def read() -> Dict[str, str]:
-    """The record: the four fields as text, the role always one of ROLES."""
-    out = {"role": SOLO, "name": "", "server": "", "workspace": ""}
+def read() -> Dict[str, object]:
+    """The record: the four fields as text, the role always one of ROLES, and `peers`, a list of names."""
+    out: Dict[str, object] = {"role": SOLO, "name": "", "server": "", "workspace": "", "peers": []}
     try:
         data = json.loads(path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -63,6 +66,9 @@ def read() -> Dict[str, str]:
         value = data.get(key)
         if isinstance(value, str):
             out[key] = value.strip()
+    peers = data.get("peers")
+    if isinstance(peers, list):
+        out["peers"] = [p.strip() for p in peers if isinstance(p, str) and p.strip()]
     role = data.get("role")
     out["role"] = role.strip().lower() if isinstance(role, str) and role.strip().lower() in ROLES else SOLO
     return out
@@ -85,18 +91,20 @@ def is_server() -> bool:
 
 
 def known_names() -> set:
-    """The machine names the file knows: this machine's and its server's, lower case."""
+    """The machine names the file knows: this machine's, its server's and its peers', lower case."""
     rec = read()
-    return {n.casefold() for n in (rec["name"], rec["server"]) if n}
+    return {n.casefold() for n in [rec["name"], rec["server"]] + list(rec["peers"]) if n}
 
 
-def write(role_: str, name_: str = "", server_: str = "", workspace_: str = "") -> Path:
+def write(role_: str, name_: str = "", server_: str = "", workspace_: str = "", peers_=()) -> Path:
     if role_ not in ROLES:
         raise ValueError("The role is solo, server or roaming.")
     record = {"role": role_}
     for key, value in (("name", name_), ("server", server_), ("workspace", workspace_)):
         if value:
             record[key] = value
+    if peers_:
+        record["peers"] = list(peers_)
     target = path()
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".tmp")
@@ -113,10 +121,12 @@ def main(argv: Optional[list] = None) -> int:
     setter.add_argument("--role", required=True, choices=ROLES)
     setter.add_argument("--name", default="", help="this machine's name, such as laptop")
     setter.add_argument("--server", default="", help="the server's name, such as mini")
+    setter.add_argument("--peer", action="append", default=[], help="another machine that syncs with this one (repeat for more)")
     setter.add_argument("--workspace", default="", help="the workspace's absolute path on this machine")
     args = parser.parse_args(argv)
     if args.command == "set":
-        target = write(args.role, args.name.strip(), args.server.strip(), args.workspace.strip())
+        target = write(args.role, args.name.strip(), args.server.strip(), args.workspace.strip(),
+                       [p.strip() for p in args.peer if p.strip()])
         print("Wrote the role %s to %s." % (args.role, target))
         return 0
     rec = read()

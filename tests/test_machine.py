@@ -42,7 +42,7 @@ class FakeHome(unittest.TestCase):
 class RoleTest(FakeHome):
     def test_no_file_is_solo(self):
         self.assertEqual(machine.role(), "solo")
-        self.assertEqual(machine.read(), {"role": "solo", "name": "", "server": "", "workspace": ""})
+        self.assertEqual(machine.read(), {"role": "solo", "name": "", "server": "", "workspace": "", "peers": []})
 
     def test_the_three_roles(self):
         for role in ("solo", "server", "roaming"):
@@ -66,8 +66,8 @@ class RoleTest(FakeHome):
         self.assertEqual(machine.role(), "roaming")
 
     def test_known_names(self):
-        self.put(json.dumps({"role": "server", "name": "Mini", "server": "Laptop"}))
-        self.assertEqual(machine.known_names(), {"mini", "laptop"})
+        self.put(json.dumps({"role": "server", "name": "Mini", "server": "Laptop", "peers": ["Tablet", 3, " "]}))
+        self.assertEqual(machine.known_names(), {"mini", "laptop", "tablet"})
 
 
 class SetTest(FakeHome):

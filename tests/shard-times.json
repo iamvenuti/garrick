@@ -34,6 +34,7 @@
   "test_layout_control": 50.0,
   "test_lib": 0.3,
   "test_machine": 0.3,
+  "test_machine_checks": 10.0,
   "test_machine_guard": 3.0,
   "test_meetings": 1.6,
   "test_memory_canary": 28.8,

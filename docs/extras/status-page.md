@@ -537,6 +537,24 @@ Every failure the app can show has one plain sentence and one next step. The too
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 
+Two Settings actions name their failure, since each leaves a place outside the workspace as it was when it fails: *Change…* on *This machine*, which sets the role of this computer, and the *Read guard* rows in Walls. Each failure says one of these sentences, with the one next step beside it, and the tool's own words under *Details*:
+
+| The sentence | The next step |
+|---|---|
+| The role was not changed: a laptop copy needs the name of the home server. | *Show why* |
+| The role was not changed: a computer's name is letters, numbers, dots, dashes and underscores. | *Show why* |
+| The role was not changed: this Garrick has no tool to set it. Update Garrick, then try again. | *Show why* |
+| The role was not changed: this computer's settings folder could not be written. | *Try again* |
+| The read guard was not changed: one of its choices is not one it takes. | *Show why* |
+| The read guard was not changed: no assistant is set up on this computer. | *Show why* |
+| The read guard was not changed: its hook file is not on this computer. | *Show why* |
+| The read guard was not changed: your assistant's settings could not be read, so they were left as they are. | *Show why* |
+| The read guard was not changed: your assistant's settings could not be written. | *Try again* |
+| The read guard was not changed: it did not show as registered afterwards. | *Try again* |
+| The read guard's setting was not saved: the workspace's settings could not be written. | *Try again* |
+
+A refused change never shows as saved, and the dialog or the row keeps what it showed before.
+
 The sentences are one table in `page_action.py` (`FAILURES`). The page reads it when it is built, and a failed reply from `page_action.py` carries the matching `plain` entry, which the Mac app's notification line shows in place of the tool's text.
 
 ## What the actions keep
@@ -546,6 +564,8 @@ The buttons that change something all go through `page_action.py`, from the Mac 
 Each request names one verb, and `page_action.py` takes these and no others. A new verb is a new way for the page to change your workspace, so the test suite fails until it is listed here, where a reviewer sees it.
 
 Two more are the page's own wall buttons, for the Context queue's wall question in the Mac app: one reads the words two files share into the dialog, the other keeps a finding once after you have seen them. Neither has a row here, on purpose: no document an assistant reads offers it. The app's bridge is the only caller they accept, the ask box and a session are refused, and the command line has no verb for either. [Allow once](../enforced.md#allow-once) says what they do. A third is the page's own *Commit them* on a row of *Waiting on you now*, `commit-files`, with the same rule: the app's bridge is its only caller, and it has no row here. It commits the listed files of one zone through the engine's bounded commit, after checking again that each is a file the repository shows as changed now, not a link, not in conflict and not changed more than 30 days ago; with an engine that cannot make that commit, or one that is not available, it writes nothing. A fourth is the page's own *Chase* on a *Follow-ups* row, `chase`, with the same rule: the app's bridge is its only caller and it has no row here. It hands a `Waiting on` line whose chase day has come to the engine, at the Ask channel's own autonomy, to draft the message with its read tools. At Act it then queues the send through `hold`: the tool is the one `chase.tool` names in `System/garrick-settings.json` (a connector tool that sends, as `mcp__<server>__<tool>`), and the recipient is an address read from the From line of items in that zone's `Inbox/` whose display name is the person's full name as People writes it (never a first name or an alias alone), and only when those items give one address, so the confirmation shows the tool and the recipient, built by code and not by the assistant, and the subject and the whole body: a draft longer than 400 characters, the most a confirmation shows, is never held, and is given to copy instead. A reply's subject or page title is never put in the prompt that drafts the message. At Read, with no such tool or address, or with a send already waiting for that line, it returns the draft to copy and holds nothing. With the engine unavailable (the assistant is not Claude, a capability check failed, or the Ask box is switched off) nothing is drafted and the reply says so. It never sends: only your yes in the confirmation does, and it writes no file. A fifth is `layout`, kept for the page alone, which the card's layout buttons call: it changes where a thread keeps its papers (`papers` is `own` or `project`, with `thread`) or makes a project a heading (`heading`), through `scaffold.py layout`, with the same rule: the app's bridge is its only caller, and it has no row here. With `check` it says the plan and writes nothing, and with `plan` as well (the dialog's look) it also returns the plan as data, with no record kept and no rebuild; otherwise it moves only the files exactly one thread note names, with their ledger rows and links, in one commit. The command line keeps `scaffold.py layout`.
+
+Two more page-only verbs are Settings' own, with the same rule: the app's bridge is their only caller and they have no row here. `machine-role` sets this computer's role (`role`, and `name` and `server` where they apply), as `System/tools/machine.py set` does, and writes nothing in the workspace. `read-guard` takes `mode` (`off`, `warn` or `enforce`), `cross` (`deny` or `ask`) and the two lists `tools` and `skip`: it puts the read guard's hook in each assistant's settings, or takes it out, checks that with `read_guard.py --check`, and keeps the choices in `System/garrick-settings.json` through the page's own save. Neither is done on a laptop copy by the queue: a laptop copy may set its own role, and leaves the workspace's settings to the home server. A command line that says `--via page` is believed only when Garrick.app started it ([the page's own route](../enforced.md#the-pages-own-route)).
 
 | Verb | What it does |
 |---|---|

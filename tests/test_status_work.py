@@ -10,6 +10,7 @@ are read for what they hand it.
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import json
 import re
@@ -667,6 +668,9 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"chase"}
         # *Drop it* on a held outbox request (#612) removes the held file from the zone's Inbox/.outbox/: no commit, no lock.
         unzoned |= {"outbox-drop"}
+        # Settings' role (#621) is written outside the workspace, and the read guard registers a hook there and saves the
+        # workspace's settings file: neither commits in a zone or takes its lock.
+        unzoned |= {"machine-role", "read-guard"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 
@@ -814,11 +818,13 @@ class TestFailuresInPlainWords(NodeCase):
                 reply = {"ok": False, "say": tool}
                 if code in ("refused", "crashed", "unknown", "lost"):
                     reply["outcome"] = code
+                elif code.startswith(("role-", "guard-")):
+                    reply["plain"] = {"code": code}                          # Settings' two actions name their own row (#621)
                 elif code not in ("handoff", "noreply"):
                     reply["outcome"] = "never-heard-of"                      # a row the page does not name: the fallback
                 box = self.run_js(("act", 0, q, "Working…"), ("reply", 3, q, reply))[1]["box"]
                 outside, inside, opened = self.details(box)
-                self.assertIn(say, outside)
+                self.assertIn(say, html.unescape(outside))                  # an apostrophe is an entity in the page's markup
                 self.assertIn(button, outside)
                 self.assertNotRegex(outside, self.RAW)
                 self.assertIn("Traceback", inside)

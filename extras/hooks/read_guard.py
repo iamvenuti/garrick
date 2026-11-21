@@ -941,26 +941,117 @@ def registered(path, wants):
     return problems
 
 
+def assistants(home):
+    """Each assistant with a folder in `home`: (name, folder, settings file, what the read guard needs there). `wants` is
+    [(event, matcher, [tools the matcher must cover])]; `check_lines()` reads it and `register()` writes it."""
+    return (("Claude Code", os.path.join(home, ".claude"), "settings.json",
+             [("SessionStart", "", ["startup"]), ("PreToolUse", "|".join(READ_TOOLS + ("Bash",)), list(READ_TOOLS) + ["Bash"]),
+              ("PostToolUse", "mcp__.*", ["mcp__claude_ai_Gmail__search_threads"])]),
+            ("Codex", os.path.join(home, ".codex"), "hooks.json",
+             [("SessionStart", "", ["startup"]), ("PreToolUse", "Bash", ["Bash"])]))
+
+
 def check_lines(home=None):
     """(lines, ok) for the read guard: one line for each assistant found. The zone guard's --check prints these
     beside its own; they never change its exit code, since the read guard is optional."""
     home = home or os.path.expanduser("~")
-    places = (("Claude Code", os.path.join(home, ".claude"), "settings.json",
-               [("SessionStart", ["startup"]), ("PreToolUse", list(READ_TOOLS) + ["Bash"]),
-                ("PostToolUse", ["mcp__claude_ai_Gmail__search_threads"])]),
-              ("Codex", os.path.join(home, ".codex"), "hooks.json",
-               [("SessionStart", ["startup"]), ("PreToolUse", ["Bash"])]))
     lines, ok = [], True
-    for name, folder, settings, wants in places:
+    for name, folder, settings, wants in assistants(home):
         if not os.path.isdir(folder):
             continue
-        problems = registered(os.path.join(folder, settings), wants)
+        problems = registered(os.path.join(folder, settings), [(e, tools) for e, _, tools in wants])
         if problems:
             ok = False
             lines.append("%s: the read guard is not registered. %s." % (name, "; ".join(problems)))
         else:
-            lines.append("%s: the read guard is registered on %s." % (name, " and ".join(e for e, _ in wants)))
+            lines.append("%s: the read guard is registered on %s." % (name, " and ".join(e for e, _, _ in wants)))
     return lines, ok
+
+
+class RegisterError(Exception):
+    """Why the hooks could not be registered or taken out; `kind` says which of the ways it went wrong."""
+
+    def __init__(self, kind, text):
+        super().__init__(text)
+        self.kind = kind
+
+
+def _runs_us(hook):
+    command = hook.get("command", "") if isinstance(hook, dict) else ""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    return any(w.endswith("read_guard.py") for w in words)
+
+
+def register(script, home=None, install=True):
+    """Put the read guard in each assistant's hooks, or take it out (`install` false), the way extras/hooks/README.md
+    says to by hand: for each assistant with a folder in `home`, the events and matchers of `assistants()`, run with
+    `python3 <script>`. Every other hook is kept as it is, and an entry of ours that points anywhere is replaced.
+    A settings file that does not read is never changed. Returns the assistants it wrote to, by name. Raises
+    RegisterError: `none` when no assistant has a folder, `script` when the hook file is not there, `read` when a
+    settings file does not read or its hooks are not in the shape the assistant keeps them, `write` when one cannot be written."""
+    home = home or os.path.expanduser("~")
+    found = [a for a in assistants(home) if os.path.isdir(a[1])]
+    if not found:
+        raise RegisterError("none", "no Claude Code or Codex folder in %s" % home)
+    if install and not os.path.isfile(script):
+        raise RegisterError("script", "%s is not there" % script)
+    command = "python3 %s" % shlex.quote(script)
+    plans = []
+    for name, folder, settings, wants in found:
+        path = os.path.join(folder, settings)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            if not install:
+                continue                # nothing to take out of a file that is not there
+            data = {}
+        except (OSError, ValueError) as exc:
+            raise RegisterError("read", "%s does not read: %s" % (path, exc))
+        if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+            raise RegisterError("read", "%s has a hooks block that is not an object" % path)
+        table = data.setdefault("hooks", {})
+        for event, matcher, _ in wants:
+            entries = table.get(event, [])
+            if not isinstance(entries, list):
+                raise RegisterError("read", "%s has hooks.%s that is not a list" % (path, event))
+            keep = []
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                    rest = [h for h in entry["hooks"] if not _runs_us(h)]
+                    if len(rest) != len(entry["hooks"]):
+                        if rest:
+                            keep.append(dict(entry, hooks=rest))
+                        continue
+                keep.append(entry)
+            if install:
+                entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
+                if matcher:
+                    entry = dict(entry, matcher=matcher)
+                keep.append(entry)
+            if keep:
+                table[event] = keep
+            else:
+                table.pop(event, None)
+        if not table:
+            data.pop("hooks", None)
+        plans.append((name, path, data))
+    done = []
+    for name, path, data in plans:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temporary = "%s.%d.tmp" % (path, os.getpid())
+            with open(temporary, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+                fh.write("\n")
+            os.replace(temporary, path)
+        except OSError as exc:
+            raise RegisterError("write", "%s could not be written: %s" % (path, exc))
+        done.append(name)
+    return done
 
 
 def check():

@@ -3560,6 +3560,8 @@ PREFERENCES = ("zones", "launchers", "default", "notifications", "home", "memory
                "release-notice", "release-notice-every", "ask", "channels")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
+# The read guard's four settings (#613, #614) are kept by Settings › Walls (#621) as well as by hand.
+PREFERENCES = PREFERENCES + (READ_GUARD, READ_GUARD_CROSS, CONNECTOR_TOOLS, CONNECTOR_SKIP)
 
 
 def preferences(root: PathLike) -> dict:

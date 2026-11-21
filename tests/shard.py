@@ -67,7 +67,7 @@ TOUCH_MAP = {
     "extras/status/finding_queue.py": ["test_finding_queue", "test_context_card", "test_decisions", "test_page_action", "test_walls_page"],
     "update.py": ["test_update", "test_merge_hooks"],
     "extras/status/page_action.py": ["test_page_action", "test_finding_queue", "test_operations", "test_walls_page", "test_notes",
-                                     "test_failure_words", "test_page_route"],
+                                     "test_failure_words", "test_page_route", "test_settings_actions"],
     "template/System/skills/intake/intake.py": ["test_intake", "test_notes", "test_notes_process"],
     "template/System/skills/intake/process_notes.py": ["test_notes_process"],
     "extras/jobs/notes_job.py": ["test_notes_process", "test_jobs"],
@@ -94,7 +94,7 @@ TOUCH_MAP = {
     "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],
     "tests/walls/": ["test_walls_cases"],
-    "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard"],
+    "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard", "test_settings_actions"],
     "tests/read_guard_case.py": ["test_read_guard", "test_connector_guard", "test_decisions"],
 }
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.

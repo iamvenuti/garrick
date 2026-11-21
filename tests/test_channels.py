@@ -593,6 +593,55 @@ class TestBoundedRun(EngineCase):
         self.assertEqual("sonnet", run.seen[0]["tier"])
         self.assertIn("<autonomy>act</autonomy>", cmd[cmd.index("-p") + 1])
 
+    def test_c11_each_file_is_read_once_through_a_refused_commit(self):
+        """#600 C11: the files git reports changed are read once per state they are in, not once for every snapshot."""
+        import collections
+        import pathlib
+        other = self.root / "Zones" / "Work" / "Acme Review" / "Notes" / "loose.md"
+        write(other, "A note nobody committed.\n")
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
+        reads = collections.Counter()
+        real = pathlib.Path.read_bytes
+
+        def counting(path):
+            reads[str(path)] += 1
+            return real(path)
+        # The files are made just now, so their times sit inside the racy window; the clock reads two minutes on, as if
+        # the files had been left alone for that long (a change time cannot be set with os.utime).
+        later = mock.patch.object(self.engine, "_now_ns", lambda: __import__("time").time_ns() + 120 * 10**9)
+        with mock.patch.object(pathlib.Path, "read_bytes", counting), later:
+            got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit(), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertTrue(reads[str(other)] or reads[str(self.file)], "the check read the changed files")
+        self.assertEqual([], [(p, n) for p, n in reads.items() if n > 1])
+        self.assertEqual("A note nobody committed.\n", other.read_text())                 # what it restores is unchanged
+
+    def test_a_file_touched_within_two_seconds_of_the_read_is_read_again(self):
+        """#600 S4: a same-size rewrite inside one clock tick of the first read keeps the same stamp; the bytes are not reused."""
+        import time
+        git_ = lambda repo, *a: (0, "?? note.md\0")
+        repo = self.root / "Zones" / "Work"
+        f = repo / "note.md"
+        write(f, "aaaa\n")
+        # A coarse clock: the rewrite leaves size, times and inode exactly as they were.
+        fixed = (5, __import__("time").time_ns(), __import__("time").time_ns(), 1)
+        with mock.patch.object(self.engine, "_stamp", lambda path: fixed):
+            first = self.engine._dirty(git_, repo)
+            write(f, "bbbb\n")
+            again = self.engine._dirty(git_, repo, first)
+        self.assertEqual(b"bbbb\n", again["note.md"])
+        # An old file read well after it was last touched keeps its bytes.
+        later = mock.patch.object(self.engine, "_now_ns", lambda: time.time_ns() + 60 * 10**9)
+        with later:
+            a = self.engine._dirty(git_, repo)
+            b = self.engine._dirty(git_, repo, a)
+        self.assertIs(a["note.md"], b["note.md"])
+        self.assertEqual(a.read_at["note.md"], b.read_at["note.md"])
+        # Read at the moment the file was touched, it is read again.
+        c = self.engine._dirty(git_, repo)
+        d = self.engine._dirty(git_, repo, c)
+        self.assertIsNot(c["note.md"], d["note.md"])
+
     def test_a_refused_commit_leaves_no_edit(self):
         self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
         before, text = self.head(), self.file.read_text()

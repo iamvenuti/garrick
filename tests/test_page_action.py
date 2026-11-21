@@ -1112,7 +1112,7 @@ class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""
 
     def run_script(self, request):
-        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], input=request,
+        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root), "--via", "page"], input=request,
                               capture_output=True, text=True)
 
     def lines(self):
@@ -1176,7 +1176,7 @@ class TestJournal(ActionCase):
         return json.loads(out)
 
     def run_script(self, request, **kw):
-        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(kw.get("ws", self.root))],
+        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(kw.get("ws", self.root)), "--via", "page"],
                               input=json.dumps(request) if not isinstance(request, str) else request,
                               capture_output=True, text=True, env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
         return json.loads(done.stdout)
@@ -1615,7 +1615,9 @@ class TestJournal(ActionCase):
         done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
                               input=json.dumps(dict(self.requests()["todo-done"], op="a19f3c80")),
                               env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
-        self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', done.stdout)    # as it was, byte for byte
+        said = json.loads(done.stdout)         # the action is done as it was; the reply no longer reads as saved (#511)
+        self.assertEqual((True, "Done: Acme Corp: Invoice for September", "unrecorded"), (said["ok"], said["say"], said["plain"]["code"]))
+        self.assertNotIn("outcome", said)
         refused = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16})
         self.assertEqual({"ok": False, "say": "that line has changed since the page was built; it rebuilds now, try again"}, refused)         # a refusal leaves the host to rebuild: its sentence says it does
         reply = self.run_script({"verb": "operations"})
@@ -1976,7 +1978,7 @@ class TestScript(ActionCase):
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                code = pa.main(["--workspace", str(self.root)])
+                code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)
@@ -1999,7 +2001,7 @@ class TestScript(ActionCase):
         buf = io.StringIO()
         try:
             with mock.patch.object(pa, "ops_lib", return_value=None), contextlib.redirect_stdout(buf):
-                code = pa.main(["--workspace", str(self.root)])
+                code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)

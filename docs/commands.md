@@ -100,6 +100,7 @@ A heading asks nothing, because every thread under it keeps its own papers. Its 
 
 ```sh
 python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own --check
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own --check --json
 python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own
 python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers project
 python3 System/tools/scaffold.py layout --zone Work --project "Acme" --heading
@@ -108,6 +109,8 @@ python3 System/tools/scaffold.py layout --zone Work --project "Acme" --heading
 - **A thread to its own papers:** the project's `Sources/` and `Deliverables/` files that only this thread's note names move into the thread, with their ledger rows.
 - **A thread back to the project's papers:** its files and rows move up.
 - **A project to a heading:** each top-level file goes to the one thread that names it, and the hub gets `layout: thread-first`.
+
+The [Garrick App](extras/status-page.md) makes the same change from a card, and the Ask box offers it. On a project's card, *Make a heading…* is the third change; on a thread's card, *Own papers…* and *Project's papers…* are the first two. Each is offered only where it applies: a heading offers none, a thread that already uses the project's papers offers only *Own papers…*, and a thread with papers of its own offers *Project's papers…*. Choosing one runs `--check` and shows its plan in a dialog: what moves and where, and the files listed for you. Nothing is written until you press *Move them*, which makes the change in one commit through the zone's wall check; *Cancel* does nothing. The result line says what moved and that it was committed, or why nothing moved, and the tool's own text sits under *Details*, closed. A refused commit leaves every file and row where it was. For the files listed for you, the dialog shows the project's threads to choose from and a button that hands the file and the thread to your assistant as a request; the dialog never places one itself. Ask the Ask box "make Acme a heading" or "give Pricing its own papers" and it answers with a button that opens the same dialog with the plan. The box never runs the change: only your click on *Move them* does.
 
 A file moves only when exactly one thread note names it, and no other note of the project does. Files that no thread names, or that two notes name, are listed for you to place: Garrick does not guess a thread for them. A file on a share keeps its destination: only the local path in its ledger row changes, so `drift.py` keeps watching it. Links to a moved file follow it. Every move stays inside the project, so inside its zone. Nothing runs on an update: a project that exists keeps its layout and its files until you ask.
 

@@ -1519,6 +1519,9 @@ class Asker:
                 self.question = self.unclear
             return clarify(named.question)
         self.unclear = None
+        offered = self.layout_offer(request, named, names, window)
+        if offered is not None:                     # a change of layout (#604): the dialog is offered, nothing is run
+            return offered
         # A wall between what the request names and what either session
         # holds, or a window now set to another zone than the one the
         # sessions answered in (#317): both start afresh before it is sent.
@@ -1621,6 +1624,70 @@ class Asker:
             raise
         if reset:
             out["reset"] = reset
+        return out
+
+    def layout_offer(self, request: str, named, names, window: Optional[str] = None) -> Optional[dict]:
+        """A request to change how a project or a thread keeps its papers (#604): "make Acme a heading", "give
+        Pricing its own papers", "let Pricing use the project's papers". Code reads it, never a model, and the answer
+        offers the page's dialog with the plan (a button that carries the change, for the app to open). It never runs
+        `layout`: that verb is the page's own button, and the box has nothing that calls it. None for any other request,
+        or one that does not settle to one place, which goes on as before. Only a place in the window's zone (the zone
+        the user picked, or the window's) is named or offered; with no window, only when one zone holds every place the
+        request names. A place in another zone is left to the normal path, which holds the wall logic."""
+        say = " ".join(request.split())
+        verb = re.search(r"\b(make|turn|change|convert|set|give|let|keep|move|put)\b", say, re.I)
+        heading = re.search(r"\bheading\b", say, re.I)
+        own = re.search(r"\bown (papers|files|folders?|sources|deliverables)\b", say, re.I)
+        back = re.search(r"\bthe project'?s? (own )?(papers|files|folders?)\b|\bback (to|into|under) the project\b", say, re.I)
+        if not verb or sum(bool(x) for x in (heading, own, back)) != 1:
+            return None
+        # The places the names settled to, and the names of this workspace's own projects and threads the request holds
+        # as whole words: a project called as a party is is a place all the same. More than one is not settled.
+        places = list(dict.fromkeys(named.places))
+        for z, projects in names.items():
+            for pname, rec in projects.items():
+                if re.search(r"(?<![\w])%s(?![\w])" % re.escape(pname), say, re.I) and (z, pname, None) not in places:
+                    places.append((z, pname, None))
+                for tname in rec["threads"]:
+                    if re.search(r"(?<![\w])%s(?![\w])" % re.escape(tname), say, re.I) and (z, pname, tname) not in places:
+                        places.append((z, pname, tname))
+        if window is not None:
+            places = [p for p in places if p[0] == window]
+        elif len({p[0] for p in places}) > 1:
+            return None
+        threads = [p for p in places if p[2] is not None]
+        if heading:
+            whole = [p for p in places if p[2] is None]
+            if threads or len(whole) != 1:
+                return None
+        elif len(threads) != 1:
+            return None
+        zone, project, thread = (whole[0] if heading else threads[0])
+        rec = names.get(zone, {}).get(project)
+        if rec is None or (not heading and thread not in rec["threads"]):
+            return None
+        who = spoken(names, zone, project, None if heading else thread)
+        folder = self.ws / "Zones" / zone / project / "Threads" / (thread or "")
+        have = [k for k in ("Sources", "Deliverables") if not heading and (folder / k).is_dir()]
+        if heading and rec.get("heading"):
+            return dict(reply("%s is a heading over separate pieces of work already." % who), choices=[])
+        if not heading and rec.get("heading"):
+            return dict(reply("%s is a heading, so every thread under it keeps its own papers already." % project), choices=[])
+        if own and len(have) == 2:
+            return dict(reply("%s keeps its own papers already." % who), choices=[])
+        if back and not have:
+            return dict(reply("%s uses the project's papers already." % who), choices=[])
+        change = {"zone": zone, "project": project}
+        if heading:
+            change["heading"] = True
+            what = "%s becomes a heading over separate pieces of work, and each file goes to the one thread that names it" % who
+        else:
+            change["thread"], change["papers"] = thread, "own" if own else "project"
+            what = ("the files only %s names move into it" % who) if own else ("%s's files move up into the project's papers" % who)
+        out = reply("I can change that: %s. Files no thread names, or that two name, stay where they are and are listed for you. "
+                    "Open the plan to see what would move. Nothing moves until you say so there." % what)
+        out["choices"] = [{"label": "Review the change", "layout": change}]
+        out.update({"acted": [], "usage": {}})
         return out
 
     def engine_wanted(self, request: str) -> bool:

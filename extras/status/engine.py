@@ -43,6 +43,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -329,9 +330,35 @@ def _inside(ws: Path, folder: Path, files, most: int = MOST_FILES, gone_ok: bool
     return out, ""
 
 
-def _dirty(git, repo: Path) -> Optional[Dict[str, Optional[bytes]]]:
+class _Snapshot(dict):
+    """{path: bytes or None} as `_dirty` returns it, with `stats`: what each path's file looked like when its bytes were
+    read, so a later snapshot can keep the bytes of a file that has not been touched since."""
+    stats: Dict[str, tuple]
+    read_at: Dict[str, int]
+
+
+RACY_NS = 2_000_000_000                 # a file touched within this long of being read may be rewritten unseen (as git treats it)
+
+
+def _now_ns() -> int:
+    return time.time_ns()
+
+
+def _stamp(path: Path):
+    """What identifies one state of a file: size, change time, modification time and inode. None when it is no file."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_ctime_ns, st.st_mtime_ns, st.st_ino) if stat.S_ISREG(st.st_mode) else None
+
+
+def _dirty(git, repo: Path, known: Optional[Dict[str, Optional[bytes]]] = None) -> Optional[Dict[str, Optional[bytes]]]:
     """{path from the repository: its bytes now (None when gone)} for every path git reports changed or new, or None
-    when there are too many to keep."""
+    when there are too many to keep. Each file's bytes are read once: a file that `known` (an earlier snapshot of this
+    repository) holds, and whose stamp has not changed since, keeps the bytes it was read with, but only when its change and
+    modification times were at least two seconds older than that read: a file touched closer to the read may be rewritten
+    within one clock tick without the stamp moving (racy-clean, as git guards), so it is read again."""
     code, said = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if code != 0:
         return None
@@ -347,12 +374,25 @@ def _dirty(git, repo: Path) -> Optional[Dict[str, Optional[bytes]]]:
                 i += 1                  # a rename names its source next
     if len(paths) > MOST_DIRTY:
         return None
-    out = {}
+    out = _Snapshot()
+    out.stats = {}
+    out.read_at = {}
+    seen = getattr(known, "stats", {})
+    seen_at = getattr(known, "read_at", {})
     for rel in paths:
-        try:
-            out[rel] = (repo / rel).read_bytes() if (repo / rel).is_file() else None
-        except OSError:
+        at = _now_ns()
+        stamp = _stamp(repo / rel)
+        if stamp is None:
             out[rel] = None
+        elif (rel in seen and seen[rel] == stamp and rel in known and rel in seen_at
+              and stamp[1] <= seen_at[rel] - RACY_NS and stamp[2] <= seen_at[rel] - RACY_NS):
+            out[rel], out.stats[rel], out.read_at[rel] = known[rel], stamp, seen_at[rel]
+        else:
+            try:
+                out[rel] = (repo / rel).read_bytes()
+                out.stats[rel], out.read_at[rel] = stamp, at
+            except OSError:
+                out[rel] = None
     return out
 
 
@@ -505,7 +545,7 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
                 elsewhere = _others(ws, repo)
                 got = run(ws, "ask", text, folder.name, {"id": "bounded-%s" % secrets.token_hex(4)}, runner, cap, level="act",
                           commit=False, only=rels)
-                after = _dirty(pa.git, repo)
+                after = _dirty(pa.git, repo, before)
                 if after is None:
                     after = {}
                 for e in got.get("held") or []:
@@ -534,7 +574,7 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
             if code == 0:
                 code, said = pa.git(repo, "commit", "-q", "-m", "%s\n\n%s" % (line, trailer), "--", *inner, timeout=pa.COMMIT_TIMEOUT)
             if code != 0:
-                after = _dirty(pa.git, repo) or {}
+                after = _dirty(pa.git, repo, after if request else before) or {}
                 fresh = [i for i in inner if i not in staged]               # what was staged before is still staged
                 if fresh:
                     pa.git(repo, "reset", "-q", "--", *fresh)

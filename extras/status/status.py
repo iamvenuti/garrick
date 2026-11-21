@@ -671,7 +671,8 @@ def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: 
             "updated": updated, "status": state,
             "resume": has_block, "resumed": resumed,
             "checkpoint": mark, "touched": max(when) if when else None,
-            "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+            "spoken": as_text(fm.get("spoken")).strip(), "read": read,
+            "heading": as_text(pfm.get("layout")).strip().lower() == "thread-first"}
 
 
 def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
@@ -1928,6 +1929,7 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 
 MANAGE_CSS = r"""
 .mg-new{display:flex;gap:6px;justify-content:flex-end;margin:0 0 8px}.mg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+dialog.gmanage .mg-details{margin:10px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-details pre{white-space:pre-wrap;margin:6px 0 0;font:inherit}
 dialog.gmanage .mg-msg{margin:12px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-msg.bad{color:var(--critical)}
 dialog.gmanage select,dialog.gmanage input[type=text]{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;box-sizing:border-box}
 dialog.gmanage .mg-row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
@@ -1955,7 +1957,10 @@ window.GarrickManage=function(o){if(!o||!o.mg||o.held)return'';var m=esc(JSON.st
 return'<div class="mg-acts">'+(k==='project'?'<button class="act" type="button" data-manage="new-thread" data-mg="'+m+'">New thread here</button>':'')
 +'<button class="act" type="button" data-manage="rename" data-mg="'+m+'">Rename…</button>'
 +(k==='thread'?'<button class="act" type="button" data-manage="move" data-mg="'+m+'">Move…</button>':'')
++LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return'<button class="act" type="button" data-manage="layout-'+l[0]+'" data-mg="'+m+'" title="'+esc(l[2])+'">'+esc(l[1])+'</button>'}).join('')
 +'<button class="act" type="button" data-manage="delete" data-mg="'+m+'">Delete…</button></div>'};
+/* the changes of layout (#604), offered by the build only where each applies: code, button, what it is */
+var LAYOUTS=[['own','Own papers…','A thread to its own papers'],['project','Project’s papers…','A thread back to the project’s papers'],['heading','Make a heading…','A project to a heading']];
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
 d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
 document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
@@ -2048,9 +2053,55 @@ d.querySelector('[data-park]').onclick=function(){var q={verb:'park',zone:mg[0],
 if(act)send(q,'Parking '+name+'…');else copy('park '+name,'Copied “park '+name+'”. Paste it to your assistant.')};
 d.querySelector('[data-go]').onclick=function(){var q={verb:'delete',zone:mg[0],project:mg[1],confirm:name};if(mg[2])q.thread=mg[2];if(busy(d,q.zone))return;d.close();
 if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete '+name+'”. Paste it to your assistant, who asks you again.')}}
+/* A change of layout (#604), in two steps. The dialog first asks for the plan (`check` and `plan`: nothing is written) and
+   shows what would move, and the files nobody could place, with the project's threads to choose from. Move them sends
+   the change itself, once, on the owner's click. A file the plan left is never placed here: the choice goes to the
+   assistant as a request. In a browser nothing runs: the dialog copies the phrase to say. */
+var LAYW={};
+function lop(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
+function lbase(name){return String(name).split('/').pop()}
+/* a file name goes into a request for the assistant only when it is plain: letters, digits, spaces and ._-()&,' */
+function lsafe(name){return /^[\p{L}\p{N} ._\-()&,']+$/u.test(name)}
+function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:o.papers==='own'?'into '+o.thread+'’s papers':'into the project’s papers'}
+function lphrase(o){return o.heading?'make '+o.project+' a heading':o.papers==='own'?'give '+o.thread+' its own papers':'let '+o.thread+' use the project’s papers'}
+function details(t){return'<details class="mg-details"><summary>Details</summary><pre>'+esc(t)+'</pre></details>'}
+function lplan(d,o,out){var p=out.plan,h='<p>'+esc(p.what)+'.</p>';
+h+=p.moves.length?'<p class="mg-msg">What moves, and where:</p><ul>'+p.moves.map(function(m){return'<li>'+esc(lbase(m[0]))+' '+esc(lwhere(o,m[1]))+'</li>'}).join('')+'</ul>':'<p class="mg-msg">No file moves.</p>';
+if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block, and a heading holds none: move it into a thread, or close it as an Outcome.</p>';
+if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.papers!=='project';
+h+='<p class="mg-msg">Left for you to place. Nothing here puts them anywhere:</p><ul id="lay-left">'+p.left.map(function(f,i){
+return'<li data-i="'+i+'"><span>'+esc(lbase(f[0]))+' ('+esc(f[1])+')</span>'+(sel?' <select aria-label="Thread for '+esc(lbase(f[0]))+'">'+p.threads.map(function(t){return'<option>'+esc(t)+'</option>'}).join('')+'</select>':'')
++(sel&&z.folder&&lsafe(lbase(f[0]))?' <button class="act" type="button" data-request="" data-folder="'+esc(z.folder)+'" title="Hand the request to your assistant">Ask my assistant</button>':'')+'</li>'}).join('')+'</ul>'}
+h+=details(out.say);d.querySelector('#lay-plan').innerHTML=h;
+/* the request for a left file names the file and the thread chosen; it is built when the choice or the button changes */
+[].forEach.call(d.querySelectorAll('#lay-left li'),function(li){var f=p.left[+li.dataset.i],s=li.querySelector('select'),b=li.querySelector('button');if(!b)return;
+function set(){b.dataset.request='In '+o.project+', place the file "'+lbase(f[0])+'" in the papers of the '+s.value+' thread. Its threads are '+p.threads.join(', ')+'.'}
+s.onchange=set;set()});
+var go=d.querySelector('[data-go]');go.disabled=false}
+function lresult(d,o,out){var said=String((out&&out.say)||''),first=said.split('\n')[0],ok=!!(out&&out.ok),moved=ok&&/Changed in commit ([0-9a-f]{7,40})/.exec(said);
+var line=moved?first.replace(/\.$/,'')+'. It was committed.':ok?'Nothing moved. '+first:'Nothing moved. '+said.split(/\n|: /)[0].replace(/\.?$/,'.');
+var box=d.querySelector('#lay-plan');box.innerHTML='<p class="'+(ok?'':'mg-msg bad')+'" role="status">'+esc(line)+'</p>'+details(said);
+var r=d.querySelector('.mg-row');r.innerHTML='<button class="act primary" type="button" data-cancel>Close</button>';r.querySelector('[data-cancel]').onclick=function(){d.close()};
+if(moved){try{localStorage.setItem('garrick-undo',JSON.stringify({zone:o.zone,commit:moved[1],what:line.replace(/\.$/,''),until:Date.now()+60000}))}catch(e){}}}
+function layout(o){if(!o||!o.zone||!o.project||!(o.heading||(o.thread&&(o.papers==='own'||o.papers==='project')))){say('That change needs a project, or a thread and its papers.');return}
+var title=o.heading?'Make '+o.project+' a heading':o.papers==='own'?o.thread+': its own papers':o.thread+': the project’s papers',
+base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=true;else{base.thread=o.thread;base.papers=o.papers}
+if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':o.papers==='own'?'The files only this thread’s note names move into it.':'Its files move up into the project’s papers.')+' In the Garrick app this shows what would move first.</p>',
+CANCEL+'<button class="act primary" type="button" data-go>Copy the phrase</button>');d0.querySelector('[data-go]').onclick=function(){d0.close();copy(lphrase(o),'Copied “'+lphrase(o)+'”. Paste it to your assistant.')};return}
+var held=window.GarrickBusy&&GarrickBusy(o.zone);if(held){say(o.zone+' is still busy: '+held+' Try again when it is done.');return}
+var d=dialog(title,'<div id="lay-plan" role="status" aria-live="polite"><p>Checking what would move…</p></div>',CANCEL+'<button class="act primary" type="button" data-go disabled>Move them</button>');
+var op=lop();LAYW[op]=function(out){if(out&&out.ok&&out.plan)lplan(d,o,out);else lresult(d,o,out)};
+host.postMessage({act:Object.assign({},base,{check:true,plan:true,op:op})});
+d.querySelector('[data-go]').onclick=function(){if(busy(d,o.zone))return;var go=d.querySelector('[data-go]'),op2=lop();go.disabled=true;
+d.querySelector('#lay-plan').insertAdjacentHTML('afterbegin','<p role="status">Moving…</p>');LAYW[op2]=function(out){lresult(d,o,out)};
+host.postMessage({act:Object.assign({},base,{op:op2})})}}
+window.GarrickLayout=layout;
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
-var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg)},true);
+var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg);
+else if(v==='layout-own'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'own'});
+else if(v==='layout-project'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'project'});
+else if(v==='layout-heading'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true})},true);
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
@@ -2059,6 +2110,7 @@ if(q.heading)(z.headings||(z.headings=[])).push(q.name)}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&q.verb==='layout'&&q.op&&LAYW[q.op]){var w=LAYW[q.op];delete LAYW[q.op];w(out)}
 if(q&&out&&out.ok)listed(q);
 if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename'||q.verb==='move')){var m=out.commit?[0,out.commit]:/commit ([0-9a-f]{7,40})/.exec(out.say||'');   /* the reply's commit (#184), or the one it names */
 try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:q.verb==='move'?'Moved '+q.thread+' to '+q.to:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
@@ -2281,6 +2333,22 @@ WORK_CSS = r"""
 #work .wdet{margin-top:4px;font-size:var(--fs-meta)}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
 """
 
+
+def failure_table():
+    """page_action.py's FAILURES, beside this file: the code, the sentence, the button, what it does and the notification
+    line's hint, for every way a request fails. Without it the page has the one row it can always say, "other"."""
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_page_action_failures", str(Path(__file__).with_name("page_action.py")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = [list(r) for r in mod.FAILURES]
+        if rows and rows[-1][0] == "other":
+            return rows
+    except Exception:
+        pass
+    return [["other", "This did not finish.", "Try again", "retry", ""]]
+
+
 # Its own script, after MANAGE_JS, so it wraps every window.GarrickActed set
 # before it. The page's buttons hand it a request through window.GarrickAct,
 # which sends one that commits in a zone and shows it running, and answers
@@ -2289,7 +2357,7 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,FW=@FAILURES@,SEEN=[],OPS={},
 BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
@@ -2341,15 +2409,15 @@ return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
 function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
-/* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
-   The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
-function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
-if(/^A wall holds /.test(t))return{say:t,next:'',raw:'',act:''};
-if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
-if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='refused')return{say:'This was not saved: the check refused it.',next:'Show why',raw:t,act:'why'};
-return{say:'This was not saved: the action stopped before it finished.',next:'Try again',raw:t,act:'retry'}}
+/* A failure in plain words, with one next step the page already has (#511): the sentence and the button come from FW, the table
+   page_action.py keeps (FAILURES), so the page and the Mac app's notification line say the same. The tool's own text is under
+   Details, closed. The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more.
+   A row the table does not have is its last, "other". */
+function fw(c){for(var i=0;i<FW.length;i++)if(FW[i][0]===c)return FW[i];return FW[FW.length-1]}
+function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'',c=o.plain&&o.plain.code||'';
+if(!c)c=/^A wall holds /.test(t)?'wall':e.q.verb==='continue'?'handoff':!k?'noreply':k;
+var r=fw(c);if(r[0]==='wall')return{say:t,next:'',raw:'',act:''};
+return{say:r[1],next:r[2],raw:t,act:r[3]}}
 function shown(e,now){return!!e.out||!e.q.keys||!!e.shown||now-e.t0>=TOAST*1000}
 function render(){var now=Date.now(),html='';if(box){html=W.map(function(e,i){if(!shown(e,now))return'';
 if(e.out&&!e.out.ok&&!e.out.again){var f=plain(e);
@@ -2426,10 +2494,10 @@ keep();render();run();return}
 /* Saved means saved (#511): a reply with no outcome for an action the record keeps is not worded as saved. The record is asked
    for, and says it; until then the action stays running. The other wrappers get the reply as they always did, so
    a row's follow-ups (the list, the undo record) are made as for a plain ok reply */
-if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
+if(out&&out.ok&&!out.outcome&&!out.again&&((OPS.verbs||[]).indexOf(q.verb)>=0||out.plain&&out.plain.code==='unrecorded')){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){sentDone(e.q.verb,e.q.zone,e.q.file,e.q.keys,now);W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
-else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
+else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again,plain:out&&out.plain||null};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
@@ -2455,7 +2523,8 @@ sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
     .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@BATCH@", str(ACTION_BATCH)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":"))) \
-    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":")))
+    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":"))) \
+    .replace("@FAILURES@", json.dumps(failure_table(), separators=(",", ":"), ensure_ascii=False))
 
 
 TADD_JS = r"""
@@ -4296,13 +4365,28 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
         card["oc"] = [r["zone"], r["rel"]]     # what Open in Claude continues (#180), parked or not
     if r["note"] != r["hub"]:
         card["mg"] = [r["zone"], r["project"], r["thread"], files_in(r["note"].parent),
-                      open_naming(r["note"].parents[3], {r["thread"]})]
+                      open_naming(r["note"].parents[3], {r["thread"]}), [],
+                      layout_offers(r["note"].parent, bool(r.get("heading")), r["hub"] is not None)]
     if drive:
         card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
     live = session_in(desk, r["note"].parent)
     if live:
         card["live"] = live
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
+
+
+def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
+    """The changes of layout a card offers (#604), as `scaffold.py layout` makes them, and only where each applies:
+    `own` for a thread of a project that is one piece of work whose papers are the project's, `project` for one that
+    keeps papers of its own (a folder of Sources or Deliverables), `heading` for a project that is one piece of work
+    (a thread's `folder` is its own, a project's is the project's). A heading offers none: every thread under it
+    keeps its own papers already, and it is not made one piece of work again. A project with no hub offers none."""
+    if heading or not hub:
+        return []
+    if folder.parent.name == "Threads":
+        have = [k for k in ("Sources", "Deliverables") if (folder / k).is_dir()]
+        return (["own"] if len(have) < 2 else []) + (["project"] if have else [])
+    return ["heading"]
 
 
 def files_in(folder: Path) -> int:
@@ -4342,6 +4426,11 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
         zones[zone] = {"projects": projects, "parties": parties, "headings": headings}
+        # `folder`: the zone's folder, where a request the layout dialog hands to the assistant starts (#604). Only a
+        # page that acts carries it, and only for a zone with a layout offer: a project with a hub that is not a
+        # heading offers its change to one (layout_offers()). No other page data holds a zone's absolute folder.
+        if acting and data.get("folder") and any(v.get("hub") and not v.get("heading") for v in P.values()):
+            zones[zone]["folder"] = str(data["folder"])
     return {"zones": zones, "acting": acting}
 
 
@@ -7922,8 +8011,12 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     total = len(rows) + len(needs)
     # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
     html = card("waiting-now", lead_said(total), "",
-                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
+                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows">%s</div>'
                 % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
+    # The region a screen reader listens to sits in the card but outside its body, which the calm rule hides: it says the
+    # lead sentence again whenever the count changes, calm or not (#600). Visually hidden, never display:none.
+    html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
+                                              % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
     html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
     return html
@@ -7934,8 +8027,9 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:var(--fs-meta)}
 .wrow .act{margin-left:auto}
-/* nothing waits: the card is its one line, the sentence (#595); its aria-live region stays in the tree, for the first row */
+/* nothing waits: the card is its one line, the sentence (#595); the live region (#wlive) sits outside the hidden body, for the first row */
 #waiting-now.calm>.body{display:none}#waiting-now.calm>summary .chev{visibility:hidden}
+.srsay{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 #waiting-now>summary h2{font:700 var(--fs-h2)/1.25 var(--sans);letter-spacing:-.01em}
 .wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
 .wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;padding:4px 2px}
@@ -7960,7 +8054,10 @@ else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app
 return d}
 /* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
 function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
-if(h)h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';c.classList.toggle('calm',t<1)}
+var s=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
+if(h)h.textContent=s;c.classList.toggle('calm',t<1);
+/* the live region says it only when it changes, so the build's own sentence is not read out again (#600) */
+var w=document.getElementById('wlive');if(w&&w.textContent!==s)w.textContent=s}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
@@ -8344,7 +8441,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         if hub:
             subs = sorted({r["thread"] for r in items if r["note"] != r["hub"]})
             c["mg"] = [zone, project, "", files_in(hub.parent), open_naming(hub.parent.parent, set(subs) | {project}),
-                       subs]
+                       subs, layout_offers(hub.parent, bool(T[zone].get("projects", {}).get(project, {}).get("heading")), True)]
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
         if DK:

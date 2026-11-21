@@ -192,6 +192,7 @@ let askAfresh = "———  The assistant started afresh here. What is above is 
 // Under the turn after which ask.py renewed the session by its size (#261, slice E, "refreshed": true):
 // the answer stays on screen, and the assistant no longer holds what came before.
 let askRefreshed = "Conversation refreshed"
+let didNotFinish = "This did not finish."
 // The zone the Ask window answers in (#317), its selector's, kept in the app's own defaults and never in the
 // workspace: a question about meetings or a thread is answered inside one zone, the one its names live in or
 // this one. Changing it starts a new conversation, with the divider a wall reset draws.
@@ -981,11 +982,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// opened at once passes it: the app it opened is in front, saying as much,
 	// and a notification for every click of the menu's icons would be noise.
 	// A cold start, which takes seconds, and every failure keep the notification.
-	func toast(_ text: String, alsoNotify: Bool = true) {
-		let quoted = (try? String(data: JSONSerialization.data(withJSONObject: [text]), encoding: .utf8)) ?? "[\"\"]"
+	// `detail` is the tool's own text behind a plain sentence (#511): the window's toast keeps it as its title, and the
+	// notification line carries the sentence alone.
+	func toast(_ text: String, alsoNotify: Bool = true, detail: String = "") {
+		let quoted = (try? String(data: JSONSerialization.data(withJSONObject: [text, detail]), encoding: .utf8)) ?? "[\"\",\"\"]"
 		web.evaluateJavaScript("""
-			(function(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;
-			setTimeout(function(){t.style.opacity=0},4000)})(\(quoted)[0])
+			(function(a){var t=document.getElementById('toast');if(!t)return;t.textContent=a[0];t.title=a[1];t.style.opacity=1;
+			setTimeout(function(){t.style.opacity=0},4000)})(\(quoted))
 			""")
 		// The toast lives in the window. Asked from the menu, the panel or the
 		// Ask box with the window out of sight, the answer would go unseen, so it
@@ -1286,7 +1289,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		let p = Process()
 		p.executableURL = URL(fileURLWithPath: python)
-		p.arguments = [script.path, "--workspace", workspace.path]
+		p.arguments = [script.path, "--workspace", workspace.path, "--via", "page"]
 		p.currentDirectoryURL = workspace
 		let input = Pipe(), output = Pipe()
 		p.standardInput = input
@@ -1320,7 +1323,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// #410, which show their reply in the section), or the wall question's look at a finding ("walls-look", #548), only reads: the reply goes to
 	// the page, with no toast and no rebuild, or asking would rebuild the page
 	// it asks from.
-	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "") }
+	func reading(_ request: [String: Any]) -> Bool {
+		// A layout dialog's plan (#604) only shows what a change would do: no toast, and no rebuild under the dialog.
+		// Only the JSON boolean true counts: the number 1 bridges to Bool in Swift, and the page's rule is `is True`.
+		if request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,
+		   CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }
+		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")
+	}
 
 	// What changes nothing the page shows is not followed by a rebuild, which
 	// would reload the page under the preview: a request that only reads, and
@@ -1332,11 +1341,32 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
 	// has its own reply, and the row moves as fast as after a button.
 	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
-		if toasting && !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
+		if toasting && !reading(request) {
+			let line = bandLine(said)
+			toast(line.sentence, detail: line.detail)
+		}
 		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
 		   let text = String(data: both, encoding: .utf8) {
 			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
 		}
+	}
+
+	// What the toast and the notification line say of a reply (#511). A failure says the plain sentence from page_action.py's
+	// table, which the reply carries as "plain", and its hint for the next step; the tool's own text is the detail, never the
+	// line. A failure with no row there says the fallback. A reply that says it worked, for an action the record keeps but
+	// holds no outcome for, carries a "plain" too, so "saved" is only ever the record's word. A reply that asks whether to
+	// do it again, or says it is under way, is not a failure and keeps its own words.
+	func bandLine(_ said: [String: Any]) -> (sentence: String, detail: String) {
+		let own = said["say"] as? String ?? "That did not work."
+		if let plain = said["plain"] as? [String: Any], let band = plain["band"] as? String, !band.isEmpty {
+			return (band, band == own ? "" : own)
+		}
+		// The rules' wall sentence stands alone, so an older reply that has no "plain" keeps it whole.
+		if said["ok"] as? Bool == false, own.hasPrefix("A wall holds ") { return (own, "") }
+		if said["ok"] as? Bool == false, said["again"] == nil, !["asked", "running", "queued"].contains(said["state"] as? String ?? "") {
+			return (didNotFinish, own)
+		}
+		return (own, "")
 	}
 
 	// Only a folder inside this workspace, and only through Launch Services, as
@@ -2654,6 +2684,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askTurns[askTurns.count - 1].choices = []
 		if let request = choice["act"] as? [String: Any] {
 			act(request)
+			askRender()
+		} else if let change = choice["layout"] as? [String: Any],
+				  let data = try? JSONSerialization.data(withJSONObject: change),
+				  let text = String(data: data, encoding: .utf8) {
+			// A change of layout the box offered (#604): the page's own dialog opens, with the plan. Nothing is run here.
+			showWindow()
+			web.evaluateJavaScript("window.GarrickLayout&&window.GarrickLayout(\(text))")
 			askRender()
 		} else if let request = choice["request"] as? String, !request.isEmpty {
 			askSend(request)

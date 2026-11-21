@@ -477,8 +477,28 @@ def deny_reply(reason, decision):
 # ------------------------------------------------------------------ connector results
 
 
+def mode_of(lib, root):
+    """The connector filter's mode: `enforce` or `warn`. A settings file that is there and cannot be read is `enforce`:
+    the filter cannot tell it was not On, and a result it passed unchecked cannot be taken back. The read checks keep
+    `read_guard_mode()`, which reads such a file as `warn`, as before."""
+    try:
+        if not lib.settings_readable(root):
+            return "enforce"
+    except Exception:
+        return "enforce"
+    return lib.read_guard_mode(root)
+
+
 def note_tool(folder, tool):
-    """Remember the name of a connector tool the session used, and nothing else about the call."""
+    """Remember the name of a connector tool the session used, and nothing else about the call. The note is a
+    convenience for the check: a folder that cannot be written never stops a result being judged."""
+    try:
+        _note_tool(folder, tool)
+    except OSError:
+        pass
+
+
+def _note_tool(folder, tool):
     path = os.path.join(folder, "tools-seen.json")
     try:
         with open(path, encoding="utf-8") as fh:
@@ -748,6 +768,44 @@ def judge_block(lib, ctx, scope, suggest, block, error):
     return ([] if text is None else [dict(block, text=text)]), gone
 
 
+def removal_reply():
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                   "updatedMCPToolOutput": [{"type": "text", "text": WALL_REFUSAL}]}}
+
+
+def cannot_decide(folder, tool, zone, mode):
+    """The filter cannot read the Parties table (or the intake script that matches an address), so it cannot tell which
+    result belongs behind which wall. On: every result of the tool goes, and the wall sentence stands alone, once.
+    Watch only: nothing is removed, and one line says it could not decide. The line names no path, party, title or
+    count. A scheduled job is logged and never refused, as everywhere else."""
+    log(folder, tool, "undecided", zone, tool, "no-parties")
+    if mode != "enforce" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    return removal_reply()
+
+
+def failed_closed(event):
+    """What the hook says when it failed on a connector result: under On, the result is removed, since a result that
+    could not be judged is not one to pass. None for anything else, which goes through as it always did."""
+    if event.get("hook_event_name") != "PostToolUse" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    tool = str(event.get("tool_name") or "")
+    if not tool.startswith("mcp__") or event.get("tool_response") is None:
+        return None
+    root, lib = open_workspace(event)
+    if root is None:
+        return None
+    if mode_of(lib, root) != "enforce" or not lib.tool_matches(lib.connector_patterns(root), tool):
+        return None
+    try:
+        scope = session_scope(lib, root, event, str(lib.read_guard_dir()))
+    except Exception:
+        scope = None
+    if scope is not None and scope.get("kind") == "root":
+        return None
+    return removal_reply()
+
+
 def post(event, lib, root, ctx, scope, folder):
     tool = str(event.get("tool_name") or "")
     if not tool.startswith("mcp__"):
@@ -758,9 +816,14 @@ def post(event, lib, root, ctx, scope, folder):
     response = event.get("tool_response")
     if response is None:
         return None
-    mode = lib.read_guard_mode(root)
+    mode = mode_of(lib, root)
     zone = scope["zone"] or scope["kind"]
-    suggest = load_suggest(root)
+    if lib.connector_filter_problem(root, ctx):
+        return cannot_decide(folder, tool, zone, mode)
+    try:
+        suggest = load_suggest(root)
+    except Exception:
+        return cannot_decide(folder, tool, zone, mode)
     blocks = blocks_of(response)
     error = is_error(event, response)
     extra = response.get("structuredContent") if isinstance(response, dict) else None
@@ -802,7 +865,7 @@ def handle(event):
         return None
     scope = session_scope(lib, root, event, folder)
     if scope is None:
-        return None
+        return failed_closed(event) if stage == "PostToolUse" else None
     if stage == "PostToolUse":
         # The tools seen are noted for every session, the root's too, so the check can name one on no list.
         return post(event, lib, root, lib.load_context(root), scope, folder)
@@ -831,6 +894,12 @@ def main():
             log(str(garrick_lib.read_guard_dir()), event.get("tool_name") or event.get("hook_event_name"), "error", "", "error")
         except Exception:
             pass
+        try:
+            reply = failed_closed(event)
+        except Exception:
+            reply = None
+        if reply:
+            print(json.dumps(reply, ensure_ascii=False))
         return 0
     if reply:
         print(json.dumps(reply, ensure_ascii=False))

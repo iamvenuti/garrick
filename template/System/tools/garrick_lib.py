@@ -3360,6 +3360,34 @@ def read_guard_mode(root: PathLike) -> str:
     return "enforce" if read_settings(root).get(READ_GUARD) == "enforce" else "warn"
 
 
+def settings_readable(root: PathLike) -> bool:
+    """Whether the settings file can be read: a missing file is readable (nothing is set), one that is there and does
+    not parse as an object is not. The read guard treats an unreadable one as On, since it cannot tell it was not."""
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*SETTINGS).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict)
+
+
+INTAKE_SCRIPT = ("System", "skills", "intake", "intake.py")
+
+
+def connector_filter_problem(root: PathLike, context: Optional[dict] = None) -> str:
+    """Why the connector filter cannot decide a result, or "": `parties` when the Parties table has no row it can
+    read (missing, unreadable or empty), `intake` when the intake script that matches an address is not there. The
+    filter and the Settings row both ask this, so they say the same thing."""
+    ctx = context if context is not None else load_context(root)
+    if not ctx.get("parties"):
+        return "parties"
+    if not Path(root).joinpath(*INTAKE_SCRIPT).is_file():
+        return "intake"
+    return ""
+
+
 def read_guard_cross(root: PathLike) -> str:
     return "ask" if read_settings(root).get(READ_GUARD_CROSS) == "ask" else "deny"
 

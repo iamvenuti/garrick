@@ -115,5 +115,63 @@ class TestTheReply(tpa.ActionCase):
         self.assertEqual("unrecorded", out["plain"]["code"])
         self.assertNotRegex(out["plain"]["band"], r"(?i)\bsaved\b")
 
+SWIFT = REPO / "extras" / "status" / "app" / "Garrick.swift"
+
+
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+class TestTheNotificationLine(unittest.TestCase):
+    """The Mac app's toast and notification line say the row page_action.py sent, never the tool's text, and never
+    "saved" for a reply the record did not hold. bandLine() itself, compiled on its own and run on real replies."""
+
+    def test_the_line_is_the_plain_sentence_and_the_tools_text_is_the_detail(self):
+        swift = SWIFT.read_text(encoding="utf-8")
+        fn = swift[swift.index("\tfunc bandLine("):swift.index("\t// Only a folder inside this workspace")]
+        fall = re.search(r'^let didNotFinish = .*$', swift, re.M).group(0)
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, True)
+        (work / "main.swift").write_text(
+            "import Foundation\n" + fall + "\n" + "struct T {\n" + fn + "\n}\n"
+            "let raw = CommandLine.arguments[1]\n"
+            "let said = (try! JSONSerialization.jsonObject(with: raw.data(using: .utf8)!)) as! [String: Any]\n"
+            "let r = T().bandLine(said)\nprint(r.sentence + \"|\" + r.detail)\n", encoding="utf-8")
+        built = subprocess.run(["xcrun", "swiftc", "-o", str(work / "run"), str(work / "main.swift")], capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stderr)
+
+        def line(reply):
+            done = subprocess.run([str(work / "run"), json.dumps(reply)], capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return done.stdout.rstrip("\n").split("|", 1)
+
+        tool = "Not done. Commit refused in /Users/sam/Zones/Work: 2 errors; commit again once they are fixed."
+        for outcome in ("refused", "crashed", "unknown", "lost"):
+            row = pa.plain_failure(outcome)
+            sentence, detail = line({"ok": False, "say": tool, "outcome": outcome, "plain": row})
+            self.assertEqual(row["band"], sentence)
+            self.assertEqual(tool, detail)                                            # nothing dropped
+            self.assertNotRegex(sentence, RAW)
+        # a failure with no row says the fallback, never the tool's text
+        self.assertEqual(["This did not finish.", "Cannot run /usr/bin/python3"], line({"ok": False, "say": "Cannot run /usr/bin/python3"}))
+        # the rules' sentence is said alone
+        wall = pa.plain_failure("wall", WALL)
+        self.assertEqual([WALL, ""], line({"ok": False, "say": WALL, "outcome": "refused", "plain": wall}))
+        # a reply that is a question, or under way, is not a failure
+        self.assertEqual(["Asked.", ""], line({"ok": False, "say": "Asked.", "state": "asked", "again": "a19f3c80"}))
+        self.assertEqual(["Parking it\u2026", ""], line({"ok": True, "say": "Parking it\u2026", "state": "running"}))
+        # saved is the record's word: a reply with no outcome for an action it keeps says it could not confirm
+        sentence, _ = line({"ok": True, "say": "Parked Birch Entry", "plain": pa.plain_failure("unrecorded")})
+        self.assertNotRegex(sentence, r"(?i)\b(saved|parked|done)\b")
+        # and one the record held keeps the handler's own words
+        self.assertEqual(["Parked Birch Entry", ""], line({"ok": True, "say": "Parked Birch Entry", "outcome": "saved", "state": "completed"}))
+
+    def test_the_toast_keeps_the_detail_as_its_title_and_the_notification_the_sentence_alone(self):
+        swift = SWIFT.read_text(encoding="utf-8")
+        toast = swift[swift.index("func toast("):swift.index("func notify(")]
+        self.assertIn("t.title=a[1]", toast)
+        self.assertIn("!window.isVisible || !NSApp.isActive { notify(text) }", toast)
+        acted = swift[swift.index("\tfunc acted("):swift.index("\t// What the toast and the notification line say")]
+        self.assertIn("toast(line.sentence, detail: line.detail)", acted)
+        self.assertNotIn('toast(said["say"]', acted)
+
+
 if __name__ == "__main__":
     unittest.main()

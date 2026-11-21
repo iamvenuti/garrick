@@ -6062,7 +6062,7 @@ def main(argv=None) -> int:
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
     cli = args.verb is not None
     via = args.via or ("session" if cli else "page")
-    req, logged, ops = None, None, None
+    req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
             raise Refused("not a Garrick workspace")
@@ -6082,7 +6082,7 @@ def main(argv=None) -> int:
         out = {"ok": False, "say": str(e)}
     except Exception as e:              # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
-    out = with_plain(out, req, ops)
+    out = with_plain(out, req, ops_lib(ws))
     audit(req if req is not None else {}, out["ok"], logged or out["say"], via=via)
     if cli:                             # a session reads the sentence, not JSON
         undo = ("\nTo undo: python3 System/status/page_action.py undo --zone %s --commit %s" % (args.zone, out["commit"])

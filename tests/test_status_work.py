@@ -665,6 +665,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"todo-edit", "todo-retire"}
         # *Chase* (#603) drafts a message and queues it through hold: it commits nothing in any zone.
         unzoned |= {"chase"}
+        # *Drop it* on a held outbox request (#612) removes the held file from the zone's Inbox/.outbox/: no commit, no lock.
+        unzoned |= {"outbox-drop"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

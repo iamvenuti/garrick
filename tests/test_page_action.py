@@ -1615,7 +1615,9 @@ class TestJournal(ActionCase):
         done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
                               input=json.dumps(dict(self.requests()["todo-done"], op="a19f3c80")),
                               env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
-        self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', done.stdout)    # as it was, byte for byte
+        said = json.loads(done.stdout)         # the action is done as it was; the reply no longer reads as saved (#511)
+        self.assertEqual((True, "Done: Acme Corp: Invoice for September", "unrecorded"), (said["ok"], said["say"], said["plain"]["code"]))
+        self.assertNotIn("outcome", said)
         refused = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16})
         self.assertEqual({"ok": False, "say": "that line has changed since the page was built; it rebuilds now, try again"}, refused)         # a refusal leaves the host to rebuild: its sentence says it does
         reply = self.run_script({"verb": "operations"})

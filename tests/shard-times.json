@@ -23,6 +23,7 @@
   "test_example": 38.5,
   "test_extract": 3.3,
   "test_fade": 11.2,
+  "test_failure_words": 4.0,
   "test_fetch": 0.8,
   "test_finding_queue": 30.0,
   "test_install": 34.6,

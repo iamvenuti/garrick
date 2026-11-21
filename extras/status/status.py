@@ -2331,6 +2331,22 @@ WORK_CSS = r"""
 #work .wdet{margin-top:4px;font-size:var(--fs-meta)}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
 """
 
+
+def failure_table():
+    """page_action.py's FAILURES, beside this file: the code, the sentence, the button, what it does and the notification
+    line's hint, for every way a request fails. Without it the page has the one row it can always say, "other"."""
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_page_action_failures", str(Path(__file__).with_name("page_action.py")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = [list(r) for r in mod.FAILURES]
+        if rows and rows[-1][0] == "other":
+            return rows
+    except Exception:
+        pass
+    return [["other", "This did not finish.", "Try again", "retry", ""]]
+
+
 # Its own script, after MANAGE_JS, so it wraps every window.GarrickActed set
 # before it. The page's buttons hand it a request through window.GarrickAct,
 # which sends one that commits in a zone and shows it running, and answers
@@ -2339,7 +2355,7 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,FW=@FAILURES@,SEEN=[],OPS={},
 BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
@@ -2391,15 +2407,15 @@ return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
 function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
-/* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
-   The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
-function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
-if(/^A wall holds /.test(t))return{say:t,next:'',raw:'',act:''};
-if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
-if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='refused')return{say:'This was not saved: the check refused it.',next:'Show why',raw:t,act:'why'};
-return{say:'This was not saved: the action stopped before it finished.',next:'Try again',raw:t,act:'retry'}}
+/* A failure in plain words, with one next step the page already has (#511): the sentence and the button come from FW, the table
+   page_action.py keeps (FAILURES), so the page and the Mac app's notification line say the same. The tool's own text is under
+   Details, closed. The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more.
+   A row the table does not have is its last, "other". */
+function fw(c){for(var i=0;i<FW.length;i++)if(FW[i][0]===c)return FW[i];return FW[FW.length-1]}
+function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'',c=o.plain&&o.plain.code||'';
+if(!c)c=/^A wall holds /.test(t)?'wall':e.q.verb==='continue'?'handoff':!k?'noreply':k;
+var r=fw(c);if(r[0]==='wall')return{say:t,next:'',raw:'',act:''};
+return{say:r[1],next:r[2],raw:t,act:r[3]}}
 function shown(e,now){return!!e.out||!e.q.keys||!!e.shown||now-e.t0>=TOAST*1000}
 function render(){var now=Date.now(),html='';if(box){html=W.map(function(e,i){if(!shown(e,now))return'';
 if(e.out&&!e.out.ok&&!e.out.again){var f=plain(e);
@@ -2479,7 +2495,7 @@ keep();render();run();return}
 if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){sentDone(e.q.verb,e.q.zone,e.q.file,e.q.keys,now);W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
-else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
+else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again,plain:out&&out.plain||null};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
@@ -2505,7 +2521,8 @@ sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
     .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@BATCH@", str(ACTION_BATCH)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":"))) \
-    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":")))
+    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":"))) \
+    .replace("@FAILURES@", json.dumps(failure_table(), separators=(",", ":"), ensure_ascii=False))
 
 
 TADD_JS = r"""
@@ -5908,7 +5925,7 @@ body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 v
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{min-height:100vh}
 .mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}
-.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}.dot.good{background:var(--good)}.dot.warning{background:var(--warning)}.dot.critical{background:var(--critical)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}.dot.good{background:var(--good)}.dot.warning{background:var(--warning)}.dot.critical{background:var(--critical)}
 .switch{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink2);cursor:pointer}
 .switch input{appearance:none;width:30px;height:18px;border-radius:9px;background:var(--base);position:relative;cursor:pointer;margin:0}
 .switch input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
@@ -7989,8 +8006,12 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     total = len(rows) + len(needs)
     # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
     html = card("waiting-now", lead_said(total), "",
-                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
+                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows">%s</div>'
                 % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
+    # The region a screen reader listens to sits in the card but outside its body, which the calm rule hides: it says the
+    # lead sentence again whenever the count changes, calm or not (#600). Visually hidden, never display:none.
+    html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
+                                              % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
     html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
     return html
@@ -8001,8 +8022,9 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:var(--fs-meta)}
 .wrow .act{margin-left:auto}
-/* nothing waits: the card is its one line, the sentence (#595); its aria-live region stays in the tree, for the first row */
+/* nothing waits: the card is its one line, the sentence (#595); the live region (#wlive) sits outside the hidden body, for the first row */
 #waiting-now.calm>.body{display:none}#waiting-now.calm>summary .chev{visibility:hidden}
+.srsay{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 #waiting-now>summary h2{font:700 var(--fs-h2)/1.25 var(--sans);letter-spacing:-.01em}
 .wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
 .wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;padding:4px 2px}
@@ -8027,7 +8049,10 @@ else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app
 return d}
 /* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
 function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
-if(h)h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';c.classList.toggle('calm',t<1)}
+var s=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
+if(h)h.textContent=s;c.classList.toggle('calm',t<1);
+/* the live region says it only when it changes, so the build's own sentence is not read out again (#600) */
+var w=document.getElementById('wlive');if(w&&w.textContent!==s)w.textContent=s}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});

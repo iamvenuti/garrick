@@ -696,7 +696,7 @@ class TestWorkHosts(unittest.TestCase):
         self.assertIn('func rebuilds(_ request: [String: Any]) -> Bool { !reading(request) && request["verb"] as? String != "note-open" }', swift)
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
         self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)     # #344
-        self.assertIn("if toasting && !reading(request) { toast(", swift)     # note-open still toasts
+        self.assertIn("if toasting && !reading(request) {\n\t\t\tlet line = bandLine(said)\n\t\t\ttoast(line.sentence, detail: line.detail)", swift)     # note-open still toasts, in plain words (#511)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
@@ -791,6 +791,51 @@ class TestFailuresInPlainWords(NodeCase):
         out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "unknown", "say": "x"}),
                           ("next", 4, 0))
         self.assertIn({"rebuild": True}, out[2]["sent"])                      # the page's own rebuild
+
+    RAW = re.compile(r"(?i)(/\w|\.py\b|\bgit\b|traceback|\bexit \d|--\w|wall check)")
+
+    def test_every_row_of_the_table_shows_its_sentence_and_its_button(self):
+        """#511: one test per row of page_action's FAILURES, read by the page as FW. The sentence and the button show; the
+        tool's text, command and path do not, until Details is opened; and Details is closed."""
+        tool = "Not done. Traceback in /Users/sam/System/status/page_action.py: git exited 128 --no-verify"
+        rows = [r for r in page_action.FAILURES if r[0] not in ("wall", "unrecorded")]
+        self.assertGreaterEqual(len(rows), 6)
+        for code, say, button, act, hint in rows:
+            with self.subTest(code=code):
+                q = {"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"} if code == "handoff" else PARK
+                reply = {"ok": False, "say": tool}
+                if code in ("refused", "crashed", "unknown", "lost"):
+                    reply["outcome"] = code
+                elif code not in ("handoff", "noreply"):
+                    reply["outcome"] = "never-heard-of"                      # a row the page does not name: the fallback
+                box = self.run_js(("act", 0, q, "Working…"), ("reply", 3, q, reply))[1]["box"]
+                outside, inside, opened = self.details(box)
+                self.assertIn(say, outside)
+                self.assertIn(button, outside)
+                self.assertNotRegex(outside, self.RAW)
+                self.assertIn("Traceback", inside)
+                self.assertFalse(opened)
+
+    def test_a_failure_not_on_the_list_says_it_did_not_finish(self):
+        outside, inside, opened = self.details(self.failed("a-new-outcome", text="Weird: /tmp/x.py failed"))
+        self.assertIn("This did not finish.", outside)
+        self.assertNotIn("/tmp/x.py", outside)
+        self.assertIn("/tmp/x.py", inside)
+        self.assertFalse(opened)
+
+    def test_a_reply_that_carries_its_row_is_read_by_its_code(self):
+        reply = {"ok": False, "say": "Not done. Something at /x.py", "plain": {"code": "lost"}}
+        box = self.run_js(("act", 0, PARK, "Parking…"), ("reply", 3, PARK, reply))[1]["box"]
+        self.assertIn("This page did not hear back", self.details(box)[0])
+
+    def test_a_details_block_holds_only_the_text_of_the_zone_the_page_shows(self):
+        """Two walled invented zones: the card for Work carries Work's text under Details and nothing of Personal."""
+        work = {"verb": "park", "zone": "Work", "file": "Acme Review/Acme Review.md"}
+        text = "Not done. Commit refused in Work: Acme Review."
+        box = self.run_js(("act", 0, work, "Parking Acme Review…"), ("reply", 3, work, {"ok": False, "outcome": "refused", "say": text}))[1]["box"]
+        self.assertIn("Acme Review", self.details(box)[1])
+        self.assertNotIn("Personal", box)
+        self.assertNotIn("Birch", box)
 
     def test_a_refused_save_never_shows_as_saved(self):
         for outcome in ("refused", "crashed", "unknown"):

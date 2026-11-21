@@ -7338,6 +7338,19 @@ def refusals_report(root: Path) -> str:
     return text
 
 
+ROAMING_COMMIT_SAID = ("Commit refused: this machine holds a copy of the workspace that only receives (its role is roaming), "
+                       "and the server commits. Put what you want kept in a drop folder (Inbox/), and the server files it.")
+
+
+def machine_role() -> str:
+    """This machine's role (machine.py), solo when machine.py is not beside this file or cannot be read."""
+    try:
+        import machine
+        return machine.role()
+    except Exception:
+        return "solo"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["allow"]:
@@ -7413,6 +7426,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         for line in stale_bands(root):         # the band's own copy, read as the settings name it
             print(line)
         return 0
+    if args.staged and machine_role() == "roaming":
+        print(ROAMING_COMMIT_SAID, file=sys.stderr)       # the hook runs this: a roaming copy never commits (#612)
+        return 1
     if args.paths:
         findings = run_path_checks(root, args.paths)
     else:

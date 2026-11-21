@@ -71,6 +71,7 @@
   "test_telegram": 30.0,
   "test_threads_card": 2.0,
   "test_todo_skips": 0.4,
+  "test_todo_solo": 6.0,
   "test_update": 112.7,
   "test_wall_cache": 3.3,
   "test_wall_forms": 10.0,

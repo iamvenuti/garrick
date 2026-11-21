@@ -128,7 +128,16 @@ class TestTheRole(SettingsCase):
         self.assertEqual("This computer is now the home server.", self.go({"verb": "machine-role", "role": "server", "name": "mini", "server": "x"})["say"])
         self.assertEqual({"role": "server", "name": "mini"}, self.role_file())
         self.assertEqual("This computer is now one computer.", self.go({"verb": "machine-role", "role": "solo"})["say"])
-        self.assertEqual({"role": "solo"}, self.role_file())
+        self.assertEqual({"role": "solo", "name": "mini"}, self.role_file())             # the name is kept when none is sent
+
+    def test_the_workspace_path_and_the_name_an_earlier_file_named_are_kept(self):
+        target = self.home / ".config" / "garrick" / "machine.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"role": "roaming", "name": "laptop", "server": "mini", "workspace": "/Users/jo/Garrick"}))
+        self.go({"verb": "machine-role", "role": "roaming", "server": "mini2"})            # no name sent
+        self.assertEqual({"role": "roaming", "name": "laptop", "server": "mini2", "workspace": "/Users/jo/Garrick"}, self.role_file())
+        self.go({"verb": "machine-role", "role": "solo", "name": "desk"})                  # a new name wins; the path stays
+        self.assertEqual({"role": "solo", "name": "desk", "workspace": "/Users/jo/Garrick"}, self.role_file())
 
     def test_the_peers_an_earlier_file_named_are_kept(self):
         target = self.home / ".config" / "garrick" / "machine.json"

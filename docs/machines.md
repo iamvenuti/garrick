@@ -67,7 +67,7 @@ python3 System/tools/machine.py set --role roaming --name laptop --server mini -
 python3 System/tools/machine.py
 ```
 
-`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one, and a change in Settings keeps the peers a file already names. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
+`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one, and a change in Settings keeps what a file already names that the change does not set: its peers, its workspace path, and its name when you leave the name empty. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
 
 ## What you cannot do on the laptop
 

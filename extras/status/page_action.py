@@ -1884,7 +1884,8 @@ def machine_lib(ws: Path):
 def set_machine_role(ws: Path, req: dict) -> dict:
     """Settings › This machine: write the role of this computer, as `machine.py set` does, no more. `role` is one of
     solo, server, roaming; `name` is this computer's name and `server` the home server's, both optional except that a
-    laptop copy needs the server's. The peers an earlier file named are kept. Nothing leaves this computer, and no file
+    laptop copy needs the server's. What an earlier file named is kept: its peers, its workspace path, and its name when the
+    dialog sends none. Nothing leaves this computer, and no file
     in the workspace changes."""
     mod = machine_lib(ws)
     role, name, server = req.get("role"), req.get("name") or "", req.get("server") or ""
@@ -1901,8 +1902,8 @@ def set_machine_role(ws: Path, req: dict) -> dict:
     if mod is None or not callable(getattr(mod, "write", None)):
         raise fails("role-tool", "System/tools/machine.py is not there, or is older than this page")
     try:
-        peers = mod.read().get("peers") or []
-        where = mod.write(role, name, server, "", peers)
+        kept = mod.read()
+        where = mod.write(role, name or kept.get("name") or "", server, kept.get("workspace") or "", kept.get("peers") or [])
     except OSError as e:
         raise fails("role-write", "%s: %s" % (type(e).__name__, e))
     except ValueError as e:

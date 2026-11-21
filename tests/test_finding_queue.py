@@ -22,8 +22,9 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import write  # noqa: E402
-from test_page_action import ActionCase, REPO, git, pa  # noqa: E402
+from fixtures import git, write  # noqa: E402
+from panel_case import PanelCase, commit_all  # noqa: E402
+from test_page_action import ActionCase, REPO, pa  # noqa: E402
 from test_status import StatusCase, status  # noqa: E402
 
 sys.path.insert(0, str(REPO / "extras" / "status"))
@@ -213,7 +214,7 @@ class TestPlainWording(unittest.TestCase):
                           "todo-long": ("keep", "later", "unkeep"),
                           "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
-                          "verdict": ("later",), "decision-review": ("later",), "other": ("later", "keep", "unkeep")}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep")}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -807,16 +808,18 @@ class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
         self.assertRegex(h, r'<label class="opt other" data-ansrow hidden><span class="n">4</span>')
         self.assertIn("Not now", h)
 
-    def test_a_decision_to_review_is_opened_or_put_off_and_never_confirmed_here(self):
+    def test_a_decision_to_review_is_opened_held_or_put_off_and_its_status_is_never_written_here(self):
         q = self.one(asked(decisions=[DECISION]))[0]
         h = fq.question_html(q)
         self.assertIn('<span class="tag">Decision to review</span>', h)
         self.assertIn("Plan B stays Harbour", h)
         self.assertIn("Flagged: a later meeting named another vendor. Only you change a decision.", h)
         got = options(h)
-        self.assertEqual([(1, "open"), (2, "later")], [(n, i) for n, i, _ in got])
-        for gone in ("It still holds", "<input"):
-            self.assertNotIn(gone, h)                                                  # nothing writes a decision's status
+        self.assertEqual([(1, "open"), (2, "holds"), (3, "later")], [(n, i) for n, i, _ in got])
+        self.assertIn("It still holds", h)
+        self.assertNotIn("<input", h)                                                  # no field: nothing here takes a word of the user's
+        self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md",
+                          "answer": "decision-holds"}, got[1][2]["req"])
         self.assertEqual([{"verb": "note-open", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"}], got[0][2]["reqs"])
 
     def test_each_answer_is_the_verb_the_panels_button_used(self):
@@ -834,7 +837,7 @@ class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
         self.assertEqual({"verb": "finding", "kind": "verdict", "path": "Wikis/Meetings/questions/261104 - Renewal owner.md", "answer": "later"}, by["later"])
         d = fq.question_html(self.one(asked(decisions=[DECISION]))[0])
         self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md", "answer": "later"},
-                         {k: v for k, v in options(d)[1][2]["req"].items()})
+                         {k: v for k, v in options(d)[2][2]["req"].items()})
 
     def test_the_scripts_send_the_panels_fields_and_parse(self):
         js = fq.QUEUE_JS
@@ -1730,6 +1733,111 @@ class TestKeepOnThePage(QueueCase):
     def test_no_check_and_no_nurture_reads_the_keep(self):
         for tool in (self.root / "System" / "tools").glob("*.py"):
             self.assertNotIn("status-later", tool.read_text(encoding="utf-8"), tool.name)
+
+
+class TestItStillHolds(PanelCase):
+    """#542: *It still holds* on a decision to review. The user's own press takes the review flag off and notes the day; the
+    decision's status and its words are as they were, and it is committed in its wiki through the wall check."""
+
+    REL = "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"
+    PAGE = ("---\ntype: decision\ntitle: Plan B stays Harbour\nstatus: valid\ndecided: 2026-10-20\nzone: Work\nparties: [harbour]\n"
+            "revisit: a later meeting named another vendor\n---\n\n## Decision\n\nPlan B stays Harbour.\n\n## Revisit when\n\nA vendor changes.\n")
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / self.REL, self.PAGE)
+        commit_all(self.meetings, "a decision")
+        self.page = self.root / self.REL
+        self.base = len(self.log())
+
+    def ask(self, via="page", **req):
+        return pa.perform(self.root, dict({"verb": "finding", "kind": "decision-review", "path": self.REL, "answer": "decision-holds"}, **req),
+                          pa.ops_lib(self.root), via=via)[0]
+
+    def log(self):
+        return git(self.meetings, "log", "--format=%s").splitlines()
+
+    def test_the_press_takes_the_flag_off_notes_the_day_and_changes_nothing_else(self):
+        got = self.ask()
+        self.assertTrue(got["ok"], got)
+        text = self.page.read_text(encoding="utf-8")
+        self.assertNotIn("revisit:", text)
+        self.assertIn("reviewed: %s\n" % dt.date.today().isoformat(), text)
+        before, after = self.PAGE.split("\n---\n", 1), text.split("\n---\n", 1)
+        self.assertEqual(before[1], after[1])                                            # not a word below the frontmatter
+        keep = [l for l in before[0].splitlines() if not l.startswith("revisit:")]
+        self.assertEqual(keep, [l for l in after[0].splitlines() if not l.startswith("reviewed:")])    # status, decided, zone, parties as they were
+        self.assertIn("status: valid", text)
+
+    def test_one_commit_in_the_wiki_and_none_in_a_zone(self):
+        zone_before = git(self.work, "log", "--format=%s").splitlines()
+        self.ask()
+        self.assertEqual(self.base + 1, len(self.log()))
+        self.assertEqual("Meetings: decision 261020 - Plan B reviewed, it still holds", self.log()[0])
+        self.assertEqual(zone_before, git(self.work, "log", "--format=%s").splitlines())
+        self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
+
+    def test_a_double_press_is_recorded_once(self):
+        first, second = self.ask(), self.ask()
+        self.assertTrue(first["ok"], first)
+        self.assertFalse(second["ok"], second)                                            # the flag is gone: nothing to do, nothing written
+        self.assertEqual(self.base + 1, len(self.log()))                                  # one commit for two presses
+        self.assertEqual(1, self.page.read_text(encoding="utf-8").count("reviewed:"))
+
+    def test_the_decision_review_finding_does_not_come_back(self):
+        """The finding reads the flag: with it off, the page is no longer listed, so the question does not return."""
+        self.ask()
+        status = _status_for_panel()
+        qp = status.questions_mod()
+        data = qp.build(self.root, None, dt.date.today(), lambda p: str(p))
+        listed = [d["file"] for b in (data or {}).get("buckets", {}).values() for d in b.get("decisions", [])]
+        self.assertEqual([], listed)
+
+    def test_the_ask_box_and_a_session_never_send_it(self):
+        for via in ("ask", "session"):
+            got = self.ask(via=via)
+            self.assertFalse(got["ok"], via)
+            self.assertIn("page's own button", got["say"])
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+        self.assertEqual(self.base, len(self.log()))
+
+    def test_it_is_refused_for_a_page_that_is_not_a_valid_decision_with_a_flag(self):
+        for text in (self.PAGE.replace("status: valid", "status: superseded"), self.PAGE.replace("type: decision", "type: note"),
+                     self.PAGE.replace("revisit: a later meeting named another vendor\n", ""), "no frontmatter\n"):
+            write(self.page, text)
+            commit_all(self.meetings, "changed")
+            got = self.ask()
+            self.assertFalse(got["ok"], text)
+            self.assertEqual(text, self.page.read_text(encoding="utf-8"))
+
+    def test_it_is_refused_for_any_file_that_is_not_a_decision_page_of_the_meetings_wiki(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "261020 - Call.md", self.PAGE)
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "decisions" / "261020 - Plan B.md", self.PAGE)
+        for rel in ("Wikis/Meetings/wiki/261020 - Call.md", "Wikis/Knowledge/wiki/decisions/261020 - Plan B.md",
+                    "Zones/Work/Todo.md", "Wikis/Meetings/wiki/decisions"):
+            self.assertFalse(self.ask(path=rel)["ok"], rel)
+        self.assertFalse(self.ask(kind="verdict")["ok"])                                 # only the decision kind takes this answer
+        self.assertFalse(self.ask(kind="note-long")["ok"])
+
+    def test_a_wall_refusal_puts_the_page_back_as_it_was(self):
+        hook = self.meetings / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        got = self.ask()
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+        self.assertEqual(self.base, len(self.log()))
+        self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
+
+    def test_the_request_is_valid_for_the_verb(self):
+        self.assertIsNone(pa.ops_lib(self.root).validate("finding", {"verb": "finding", "kind": "decision-review", "path": self.REL,
+                                                                     "answer": "decision-holds"}))
+
+
+def _status_for_panel():
+    from test_questions_panel import status as panel_status
+    return panel_status
 
 
 if __name__ == "__main__":

@@ -5712,6 +5712,40 @@ def finding_keep(ws: Path, fq, kind: str, answer: str, rel: str, which: str) -> 
             "undo": {"verb": "finding", "kind": kind, "path": rel, "answer": fq.UNKEEP + ("-" + which if which else "")}}
 
 
+DECISION_DIR = ("Wikis", "Meetings") + WIKI_DECISION_DIR
+
+
+def finding_decision_holds(ws: Path, rel: str, today: dt.date) -> object:
+    """*It still holds* on a decision to review (#542): the user's own press says the decision stands, so the page takes the
+    `revisit:` flag out of the decision page's frontmatter and notes the day in `reviewed:`. Nothing else changes: not its status,
+    not a word below the frontmatter. Committed in the Meetings wiki through its wall check, under its lock. A page that is not
+    a valid decision, or carries no flag, is refused and left as it is."""
+    parts = rel.split("/")
+    if tuple(parts[:4]) != DECISION_DIR or not rel.endswith(".md") or len(parts) < 5:
+        raise Refused("only a decision page of the Meetings wiki can be marked as still holding")
+    wiki = ws / "Wikis" / "Meetings"
+    note = ws / rel
+    if note.is_symlink() or not note.is_file():
+        raise Refused("that decision is not there any more; the page rebuilds now")
+    with zone_lock(wiki):
+        before = note.read_bytes()
+        text = before.decode("utf-8")
+        m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+        fm = m.group(1) if m else ""
+        if not m or not re.search(r"(?m)^type:\s*decision\s*$", fm) or not re.search(r"(?m)^status:\s*valid\s*$", fm):
+            raise Refused("that page is not a valid decision, so it is left as it is")
+        if not re.search(r"(?m)^revisit:\s*\S", fm):
+            raise Refused("that decision carries no flag to review, so it is left as it is")
+        new = set_front(text, {"reviewed": today.isoformat()}, drop=("revisit",))
+        note.write_text(new, encoding="utf-8")
+        try:
+            commit_all(wiki, [(note, before)], "Meetings: decision %s reviewed, it still holds" % note.stem, wall=wall_refusal(ws))
+        except Refused:
+            note.write_bytes(before)
+            raise
+    return {"say": "Marked as still holding. Its status and its words are as they were."}
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5737,6 +5771,10 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
         return finding_bounded(ws, req, kind, answer, rel)
     if answer in (fq.KEEP, fq.UNKEEP):
         return finding_keep(ws, fq, kind, answer, rel, which)
+    if answer == "decision-holds":
+        if kind != "decision-review":
+            raise Refused("not an answer Garrick offers for this finding")
+        return finding_decision_holds(ws, rel, today)
     if answer == "later":
         until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
@@ -5845,7 +5883,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
 
 
 # The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
-PAGE_ONLY_ANSWERS = ("keep", "unkeep")
+PAGE_ONLY_ANSWERS = ("keep", "unkeep", "decision-holds")
 
 
 def page_only_answer(req) -> bool:
@@ -5983,7 +6021,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
                 # never reach it, and the command line has no verb for it.
                 raise Refused("this is the page's own button; it is not for the ask box or a session")
             if via != "page" and page_only_answer(req):
-                # Leaving a finding as it is, and taking that back, are the user's own press:
+                # Leaving a finding as it is, taking that back, and marking a decision as still holding are the user's own press:
                 # the ask box and a session never send them.
                 raise Refused("this is the page's own button; it is not for the ask box or a session")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):

@@ -62,6 +62,7 @@ from typing import Dict, List, Optional, Tuple
 LATER_DAYS = 7
 KEEPABLE = ("note-long", "resume-long", "todo-long", "meeting-long", "other")      # the kinds with Leave it as it is (#535)
 KEEP, UNKEEP = "keep", "unkeep"
+HOLDS = "decision-holds"      # *It still holds* on a decision to review (#542): the page's own press, through the verb `finding`
 LATER_FILE = ("System", "generated", "status-later.json")
 HISTORY_TOOL = ("System", "tools", "history.py")
 PLAN_TIMEOUT = 15         # seconds one history.py plan may take while the page builds
@@ -174,7 +175,7 @@ BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": (
 UNDO = "undo-bounded"
 for _kind, _ids in BOUNDED.items():
     VERB_ANSWERS[_kind] = VERB_ANSWERS[_kind] + _ids + (UNDO,)
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later", HOLDS), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -927,11 +928,15 @@ def verdict_question(q: dict) -> dict:
 
 
 def decision_question(d: dict) -> dict:
-    """A decision to review: open it, or put it off. Only the user changes a decision's status, so nothing here does."""
+    """A decision to review: open it, say it still holds, or put it off. Only the user changes a decision's status, so nothing here does:
+    *It still holds* takes the review flag off the page and notes the day, and touches nothing else."""
     path = wiki_path("Meetings", d["file"])
     out = asked_base("decision-review", "Decision to review", path, "“%s” may no longer hold." % d["title"],
                      "Flagged: %s. Only you change a decision." % d["revisit"].rstrip("."), d.get("decided") or "", [
-        dict(A("open", "Open the decision", "Change its status there.", "open"), reqs=[{"verb": "note-open", "path": path}]), not_now("decision-review", path)])
+        dict(A("open", "Open the decision", "Change its status there.", "open"), reqs=[{"verb": "note-open", "path": path}]),
+        dict(A("holds", "It still holds", "Takes the review flag off. Its status and its words stay as they are.", "run"),
+             req={"verb": "finding", "kind": "decision-review", "path": path, "answer": HOLDS}),
+        not_now("decision-review", path)])
     return out
 
 

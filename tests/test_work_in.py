@@ -305,6 +305,20 @@ class TestAFailedCallLeavesNothingBehind(Case):
             self.assertEqual("# Index\n", index.read_text(), why)
             self.assertEqual(why, self.held()["Zones/Work"]["why"])
 
+    def test_a_call_that_worked_nothing_in_and_held_nothing_is_incomplete(self):
+        index = self.ws / "Wikis" / "Meetings" / "wiki" / "index.md"
+
+        def fake(tier, prompt, allow=(), cwd=None, **kw):
+            index.write_text("# Index\nhalf written\n")
+            return 0, "WORKED 0 HELD 0\n" + work_in.SENTINEL
+        before = git(self.ws / "Wikis", "rev-parse", "HEAD").strip()
+        with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES[:1])), mock.patch.object(agent, "run", fake):
+            work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
+        self.assertEqual("# Index\n", index.read_text())
+        self.assertEqual(before, git(self.ws / "Wikis", "rev-parse", "HEAD").strip())
+        self.assertNotIn("0 questions", git(self.ws / "Wikis", "log", "--format=%s"))
+        self.assertEqual({"Zones/Work": {"why": "incomplete", "day": "2026-11-13"}}, self.held())
+
     def test_with_a_short_deadline_the_second_place_is_not_started_and_is_held(self):
         calls, now = [], [1000.0]
 

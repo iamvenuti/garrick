@@ -222,6 +222,9 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
         restore(repo, before, folder)
         return ("assistant" if code else "incomplete"), 0
     worked, held = found
+    if worked + held == 0:
+        restore(repo, before, folder)                 # a call that worked nothing in and held nothing back did not finish (#629)
+        return "incomplete", 0
     why = commit(repo, before, folder, place, worked)
     if why:
         return why, 0

@@ -10,6 +10,8 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -139,6 +141,31 @@ class Rows(unittest.TestCase):
         self.assertIn("GarrickNeedsLead", js)
         self.assertIn("window.GarrickNeedsLead=", status.WAITING_JS)
         self.assertIn(js.strip(), self.page())
+
+    def test_the_same_path_in_two_zones_keeps_each_row_to_its_zone(self):
+        personal = self.root / "Zones" / "Personal" / "Acme Review" / "Threads" / "Pricing"
+        write(personal.parent.parent / "Acme Review.md", "---\ntype: project\n---\n# Acme Review\n")
+        write(personal / "Pricing.md", "---\ntype: thread\n---\n# Pricing\n")
+        write(personal / "Needs you" / "a.md", question())
+        write(self.box / "a.md", question())
+        card = self.card(self.page())
+        zones = re.findall(r'data-q="[^"]*" data-qz="([^"]*)"', card)
+        self.assertEqual({"Work", "Personal"}, set(zones))
+        self.assertEqual(len(zones), len(re.findall(r'data-q="', card)))
+        self.assertIn("x.dataset.qz===q.zone", status.QUESTION_JS)
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        script = r"""
+var rows=[];function mk(z){var row={z:z,gone:false,closest:function(s){return s==='.wneed'?row:null}};
+var b={dataset:{q:'P/a.md',qz:z},closest:function(){return row}};row.b=b;row.remove=function(){row.gone=true};return row}
+var A=mk('Work'),B=mk('Personal');
+global.window={};global.document={querySelectorAll:function(){return [A.b,B.b]},getElementById:function(){return null}};
+%s
+window.GarrickActed({verb:'answer',zone:'Personal',file:'P/a.md'},{ok:true});
+console.log(JSON.stringify([A.gone,B.gone]));""" % status.QUESTION_JS
+        r = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual("[false,true]", r.stdout.strip(), r.stderr)
 
     def test_no_question_no_row(self):
         self.assertEqual([], self.needs())

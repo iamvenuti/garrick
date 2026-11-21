@@ -273,10 +273,18 @@ def capability(ws: Path, force: bool = False, probe: Optional[Callable[[], str]]
                     # a check made where the command was on PATH is no answer where it cannot be found now (#628)
                     return dict(kept, ok=False, failed=list(kept.get("failed") or []) + ["binary"],
                                 said=list(kept.get("said") or []) + [NO_BINARY_SAID])
-                return kept
+                if not kept.get("ok") and name == "claude" and probe is None and "probed" not in kept and binary(name):
+                    # a 0.73.0 check made where the command could not be found: ask again now that it can (#628)
+                    pass
+                else:
+                    return kept
         except (OSError, ValueError):
             pass
     found = evaluate(ws, (probe or probe_help)(), guard_works(ws) if guard is None else guard)
+    if probe is None and name == "claude" and not binary(name):
+        # no command to ask: keep nothing, so the next call asks again once it is found
+        return found
+    found["probed"] = True
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".new")

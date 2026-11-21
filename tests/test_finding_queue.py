@@ -1827,6 +1827,13 @@ class TestItStillHolds(PanelCase):
         self.assertEqual(zone_before, git(self.work, "log", "--format=%s").splitlines())
         self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
 
+    def test_a_page_in_no_repository_is_refused_and_left_as_it_was(self):
+        """Fix round N4: with no repository to commit it, nothing is written."""
+        shutil.rmtree(self.root / "Wikis" / ".git")
+        got = self.ask()
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(self.PAGE, self.page.read_text(encoding="utf-8"))
+
     def test_a_double_press_is_recorded_once(self):
         first, second = self.ask(), self.ask()
         self.assertTrue(first["ok"], first)

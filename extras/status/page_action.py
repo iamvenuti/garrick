@@ -5736,6 +5736,8 @@ def finding_decision_holds(ws: Path, rel: str, today: dt.date) -> object:
         if not re.search(r"(?m)^revisit:\s*\S", fm):
             raise Refused("that decision carries no flag to review, so it is left as it is")
         new = set_front(text, {"reviewed": today.isoformat()}, drop=("revisit",))
+        if repo_of_path(ws, note) is None:      # nothing could commit it, so nothing is written (fix round N4)
+            raise Refused("not committed, so nothing changed: the page is in no repository")
 
         def change(w):
             write_question(note, new)       # watched, so a refusal puts the page back as it was

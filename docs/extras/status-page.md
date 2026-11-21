@@ -378,7 +378,6 @@ A field at the top of the menu finds a project or thread: it takes your typing a
 - **Codex** waits only where its rollout records an approval request with nothing after it. A Codex version that writes no such record shows its sessions as working or idle only.
 - A waiting session is not mid-turn, so *While an Agent Is Working* does not count it.
 - **A screen reader hears the card.** The card's sentence, such as *One thing needs you.*, is also kept in a region that is visually hidden but never removed from the page, outside the folded body, so a reader hears it again when the count changes, whether the card shows one line or its list. The page does not read it out again when it loads.
-- **The state dots read on their card.** A dot that marks a state, such as the one on a hidden card's button or the one with no state, has 3:1 contrast or more against the card in the light and the dark theme, and comes with words or a title, so colour is never the only sign.
 
 The app holds the Mac awake itself, so quitting it, or a crash, lets the Mac sleep again. Taking the icon out of the menu bar, or the panel off its edge, turns Keep awake off. A MacBook with its lid closed and no external display sleeps anyway: only an administrator's `pmset` setting can change that, and Garrick doesn't try.
 

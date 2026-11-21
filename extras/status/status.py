@@ -5858,7 +5858,7 @@ body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 v
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{min-height:100vh}
 .mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}
-.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}.dot.good{background:var(--good)}.dot.warning{background:var(--warning)}.dot.critical{background:var(--critical)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}.dot.good{background:var(--good)}.dot.warning{background:var(--warning)}.dot.critical{background:var(--critical)}
 .switch{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink2);cursor:pointer}
 .switch input{appearance:none;width:30px;height:18px;border-radius:9px;background:var(--base);position:relative;cursor:pointer;margin:0}
 .switch input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}

@@ -4,6 +4,36 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-11-21
+
+Garrick can now check what an assistant session reads against the walls, the way it already checks what gets written. It starts by watching, not stopping. Check findings on the Context tab are plain questions you answer with a button. And one workspace can now live on a home server and travel on a laptop.
+
+**Upgrading.**
+- Sessions can now check each read against the walls, through the optional read guard. It starts warn-only: it logs what it would refuse and refuses nothing. After a week of the log, `"read-guard": "enforce"` in `System/garrick-settings.json` turns enforcement on.
+- Mail and calendar results from a connector are checked the same way, in Claude Code. Codex cannot replace a tool's output, so in Codex the instructions alone keep those results apart.
+- Check findings are plain questions in one Context card. A page that is too long can now be left as it is, and a decision to review can be marked as still holding.
+- A machine can be a server or a roaming copy of the workspace. With no role set, nothing changes.
+
+### Added
+
+- **The read guard** (#613). An optional hook, `extras/hooks/read_guard.py`, for Claude Code and Codex. When a session starts, it records where the session was opened. It then decides each `Read`, `Grep` and `Glob`, and each file path a shell command names, with the same wall rule as every other check. A session at the root or in `System/` reads everything, as before. Once enforcement is on, a read across a wall gets the rules' wall sentence and names nothing, and so does a raw search over `Wikis/`, with a pointer to Recall's search. `"read-guard-cross-zone": "ask"` asks you instead of refusing. The log holds the time, the tool, the decision, the zone and a hash, and never a path, a party, a title or a count. It is kept outside the workspace, and the guard keeps sessions out of its own folder. Any error in the guard lets the call through. `extras/hooks/README.md` shows how to register it, and `zone_guard.py --check` now reports it.
+- **Walls on mail and calendar results** (#614). In Claude Code, the same hook looks at each result of a Gmail or Calendar connector. It reads the sender, recipients or attendees against your Parties table, as intake does. Once enforcement is on, a result from across a wall is removed, and the output ends with the wall sentence once, with no count. It reads every list and field of a result, and once anything is removed it drops every count. `connector-tools` lists the tools it checks. `check.py` names any connector tool you used that is on no list.
+- **Leave it as it is** (#535). A page that is too long, and a finding with no plain answer of its own, can now be left as it is. Garrick stops asking until the page changes. *Kept by you* on the Context card lists what you kept, with *Undo*.
+- **It still holds** (#542). A decision to review has a third answer. It takes the review flag off the decision page and notes the day, in one commit through the wall check. The decision's status and words stay as they were.
+- **Server and roaming machines** (#612). `python3 System/tools/machine.py set` gives a machine a role, saved in `~/.config/garrick/machine.json`. *server* holds the workspace that counts and runs the jobs. *roaming* holds a copy that only receives: a session there writes only to the drop folders (each `Inbox/`), commits nothing and runs no scheduled job. On a server, `check.py` reports the copies a sync tool leaves when two machines change one file. On a roaming copy, it reports a path that differs from the server's and a scheduled job that is loaded. `drift.py` reports a share the machine cannot reach as one line, and a roaming machine hands its drift result to the server through the drop folder. The Wrap puts the copy to a share in `Todo.md` for the machine that can reach it.
+- **The Todo outbox** (#612). On a roaming machine, a tick, an untick, a reworded line or a new line waits in an outbox and is applied once on the server, through the same commit and wall check as there. A tick typed into `Todo.md` by hand counts too. Requests apply in the order they were made, and a busy lock or a timeout leaves a request to be tried again. A line that changed on the server meanwhile is held, never applied, and the Todo tab asks about it. On a roaming machine the page header names the role, and a ticked row reads "ticked, waits for the server".
+- A docs page, *One workspace on more than one machine*, covers the roles, the sync rules (the main folder one way, the drop folders in both directions, Syncthing's Send Only and Receive Only folders, no iCloud Drive or Dropbox for the workspace) and the same absolute path on both machines.
+
+### Changed
+
+- The zone guard stops an assistant's editing tools from writing the role file, `~/.config/garrick/machine.json`, on every machine. It guards against a mistaken edit; it is not a lock, and a shell command can still change the file. The other files in that folder can be written as before.
+- Garrick's questions about where a page belongs, and the corrections it could not finish, now say what they are in plain words and have answers of their own.
+- The queue's number keys now reach answer 9.
+
+### Fixed
+
+- Pressing an answer twice in the Context queue sent the request twice. It now sends it once.
+
 ## [0.72.0] - 2026-11-21
 
 The Garrick App now tells you in plain words when something did not work, and what to do next. A project's layout can be changed from the app, after you see the plan.

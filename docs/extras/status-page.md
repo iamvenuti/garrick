@@ -549,7 +549,7 @@ Two Settings actions name their failure, since each leaves a place outside the w
 | The role was not changed: this computer's settings folder could not be written. | *Try again* |
 | The read guard was not changed: one of its choices is not one it takes. | *Show why* |
 | The read guard was not changed: no assistant is set up on this computer. | *Show why* |
-| The read guard was not changed: its hook file is not on this computer. | *Show why* |
+| The read guard was not changed: Garrick could not find its hook file on this computer. | *Show why* |
 | The read guard was not changed: your assistant's settings could not be read, so they were left as they are. | *Show why* |
 | The read guard was not changed: your assistant's settings could not be written. | *Try again* |
 | The read guard was not changed: it did not show as registered afterwards. | *Try again* |

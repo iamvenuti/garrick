@@ -385,7 +385,21 @@ def check():
             print("%s: the zone guard is registered on %s." % (name, " and ".join(e for e, _ in events)))
     if not found:
         print("Neither Claude Code nor Codex is set up for this user, so the guard runs nowhere.")
+    else:
+        for line in read_guard_lines():
+            print(line)
     return 0 if ok and found else 1
+
+
+def read_guard_lines():
+    """What read_guard.py's own check says, beside this one (#613). The read guard is optional, so a line that says
+    it is not registered never changes this check's exit code."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import read_guard
+        return read_guard.check_lines()[0]
+    except Exception:
+        return []
 
 
 def main():

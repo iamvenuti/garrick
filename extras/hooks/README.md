@@ -86,6 +86,39 @@ To run its tests, from the repository:
 python3 -m unittest discover -s tests -p test_zone_guard.py
 ```
 
+## The read guard
+
+`read_guard.py` is the zone guard's counterpart for reads (#613). It is optional, and it ships warn-only: it decides, logs and lets everything through until `System/garrick-settings.json` says `"read-guard": "enforce"`. [What is enforced](../../docs/enforced.md#the-read-guard) says what it covers, what it cannot, and what it logs. Its settings, all in that file:
+
+| Key | Values | Default |
+|---|---|---|
+| `read-guard` | `warn`, `enforce` | `warn`; anything else, or an unreadable file, is `warn` |
+| `read-guard-cross-zone` | `deny`, `ask` | `deny`; `ask` raises Claude Code's permission prompt for a read across a wall |
+
+It needs `python3` and the workspace's own `System/tools`. Point both assistants at `extras/hooks/read_guard.py` in the Garrick download you keep, as for the zone guard.
+
+**Claude Code**: add to the `hooks` block of `~/.claude/settings.json`, beside the zone guard's entries:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/read_guard.py", "timeout": 5 }] }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Bash",
+        "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/read_guard.py", "timeout": 5 }]
+      }
+    ]
+  }
+}
+```
+
+**Codex** (0.124 or later; trust it in `/hooks`): add `SessionStart` and a `PreToolUse` with the matcher `Bash` to `~/.codex/hooks.json`, with the same command.
+
+`python3 read_guard.py --check` says whether it is registered, and `python3 zone_guard.py --check` reports it beside its own line, without changing its exit code. Its tests: `python3 -m unittest discover -s tests -p "test_read_guard.py"`.
+
 ## The waiting hook
 
 `waiting_hook.py` is a second, separate hook, for Claude Code only. A permission prompt is not written to the transcript, so Garrick cannot tell from it that a session is stopped on one. The hook runs on `Notification`, `UserPromptSubmit` and `PostToolUse`. On a `permission_prompt` or an `idle_prompt` notification it writes a small marker for the session, `~/.garrick-waiting/<session id>.json`, holding the kind, the tool's name where the prompt names one, and the time. Nothing else from the event is kept: the message can name a file, a command or a question. The next prompt removes the marker, and so does the result of the tool the prompt was for; the result of another tool does not, and an idle prompt never replaces an open permission prompt. The Overview's [Waiting on you now](../../docs/extras/status-page.md#waiting-on-you-now) card reads it; only a `permission_prompt` makes a session wait. The marker is outside every workspace and never committed. Without the hook, a session on a permission prompt shows as working, and a question it asks with `AskUserQuestion` still shows as waiting.

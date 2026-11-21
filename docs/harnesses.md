@@ -31,6 +31,7 @@ Both assistants read the same files, but that alone does not show they do the sa
 | First-session approvals, on a clean account | Not yet tested | Not yet tested |
 | Unattended jobs | 2.1.287 and 2.1.288: the allow list, the deny profile, the settings sources and the permission mode, checked by hand | 0.160.0: a job that only reads ran read-only, writing nothing and with no connector, browser or web tools. Not yet run end to end through `job.py` |
 | Connectors in a job | Not yet tested live | Switched off for a job that only reads (0.160.0). With a job that writes: not yet tested |
+| Read guard: records the session's scope at start, decides each read | 2.1.330: written for `SessionStart` and `PreToolUse` on `Read`, `Grep`, `Glob` and `Bash`; a refusal is a permission denial, and a read across a wall can raise the permission prompt. Tested by feeding the hook events, not yet run live in a session | 0.171.0-alpha.13: written for `SessionStart` and `PreToolUse` on `Bash`, which its hook parser accepts; not yet run live. A hook cannot ask, so a read across a wall is refused once and goes through on a second try. Files are read through the shell, which the guard reads on a best-effort basis |
 
 [Scheduled jobs](extras/scheduled-jobs.md) gives the details of each check. Another assistant counts as supported once it passes the same rows; following `AGENTS.md` alone does not establish it.
 

@@ -196,6 +196,11 @@ __all__ = [
     "ZONE_TODO",
     "zone_todo",
     "simple_home",
+    "READ_GUARD",
+    "READ_GUARD_CROSS",
+    "read_guard_mode",
+    "read_guard_cross",
+    "read_guard_dir",
     "INSTRUCTION_FILES",
     "LOCAL_RULES",
     "LOCAL_HEADER",
@@ -3332,6 +3337,32 @@ def simple_home(root: PathLike) -> bool:
     """Whether the workspace opens on the simple home, `"home": "simple"` in
     the settings file. One without the key keeps the full page it had."""
     return read_settings(root).get("home") == "simple"
+
+
+# The read guard (#613): a hook in extras/hooks/ that decides, with decide(), what an assistant session may read.
+# Two settings, each with a safe default when it is missing or does not read.
+READ_GUARD = "read-guard"                   # "warn" (default): decide and log, refuse nothing; "enforce": refuse
+READ_GUARD_CROSS = "read-guard-cross-zone"  # "deny" (default), or "ask": a read across a wall raises a permission prompt
+
+
+def read_guard_mode(root: PathLike) -> str:
+    """`enforce` only when the settings say exactly that; anything else, or nothing readable, is `warn`."""
+    return "enforce" if read_settings(root).get(READ_GUARD) == "enforce" else "warn"
+
+
+def read_guard_cross(root: PathLike) -> str:
+    return "ask" if read_settings(root).get(READ_GUARD_CROSS) == "ask" else "deny"
+
+
+def read_guard_dir() -> Path:
+    """Where the read guard keeps its log and the scope of each session: next to
+    the jobs' folder, outside every workspace, so nothing here is committed and no session reads it by default."""
+    jobs = os.environ.get("GARRICK_JOBS_DIR")
+    if jobs:
+        return Path(jobs).expanduser().parent / "garrick-read-guard"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "garrick-read-guard"
+    return Path.home() / ".local" / "state" / "garrick-read-guard"
 
 
 # The status page's builder, where the installer or the status extra put it.

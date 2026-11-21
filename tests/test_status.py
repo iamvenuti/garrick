@@ -1176,8 +1176,8 @@ class TestOpensOnTheWork(StatusCase):
         self.assertLess(listed.index("send the floor"), listed.index("book the call"))       # the late one first
         self.assertIn('<span class="lateby">was due Sun 1 Mar</span>', listed)                 # said in words, not by colour alone
         self.assertIn('data-ok="0"', threads)
-        self.assertRegex(threads, r'<span class="muted subn">\d+ threads? · 1 late')   # the project's row (#233)
-        self.assertRegex(threads, r'<span class="meta mu">\d+ live · 1 late')          # and its zone's meta
+        self.assertRegex(threads, r'<span class="cnt muted subn mu">\d+ threads? · 1 late')   # the project's row (#233)
+        self.assertRegex(threads, r'<span class="meta mu">\d+ live · <span class="late">1 late</span>')          # and its zone's meta
         for gone in (">overdue</span>", ">chase due</span>", "needing a chase"):
             self.assertNotIn(gone, threads)
 
@@ -1637,7 +1637,7 @@ class TestProjectRows(StatusCase):
         zone = zone[:zone.index("</details>")]
         self.assertIn('<button type="button" class="pchev" data-sub="sub-work-acme-review" aria-expanded="false" title="Show its 1 thread">', zone)
         self.assertIn('<div class="subthreads tsort" id="sub-work-acme-review" hidden><div class="thread sub"', zone)
-        self.assertIn('<span class="muted subn">1 thread</span>', zone)
+        self.assertIn('<span class="cnt muted subn mu">1 thread</span>', zone)
         self.assertNotIn('data-sub="sub-work-cedar-notes"', zone)           # a project with no thread notes is a row of its own
         project = [c for c in re.findall(r'class="thread proj"[^>]*data-card="([^"]*)"', zone)]
         self.assertEqual({json.loads(htmllib.unescape(c))["kl"] for c in project}, {"project"})

@@ -69,6 +69,7 @@
   "test_status_work": 3.1,
   "test_todo": 2.1,
   "test_telegram": 30.0,
+  "test_threads_card": 2.0,
   "test_todo_skips": 0.4,
   "test_update": 112.7,
   "test_wall_cache": 3.3,

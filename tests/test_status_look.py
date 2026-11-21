@@ -216,7 +216,7 @@ class Page(unittest.TestCase):
     def test_threads_names_are_body_sub_threads_sub_and_the_rest_meta(self):
         css = status.CSS
         self.assertRegex(css, r"\.thread\{display:grid;grid-template-columns:minmax\(0,1fr\) 70px 34px;[^}]*font-size:var\(--fs-body\)\}")
-        self.assertIn(".thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}", css)
+        self.assertIn(".thread.sub{padding-left:0;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}", css)
         self.assertIn(".thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}", css)
         self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta)", css)
 

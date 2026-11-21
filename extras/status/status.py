@@ -5227,6 +5227,13 @@ def zone_name(zone: str, styles: Dict[str, dict]) -> str:
     return zone_icon(styles.get(zone, {}).get("icon", "")) + E(zone)
 
 
+def zone_label(zone: str, styles: Dict[str, dict]) -> str:
+    """A zone's name on the Threads card (#619): its icon, in the zone's colour, then the name in the card's own ink. The
+    colour is on the icon alone, so it never reads as the alarm a red label would."""
+    icon = zone_icon(styles.get(zone, {}).get("icon", ""))
+    return ('<span class="zic%s">%s</span>' % (zone_class(zone, styles), icon) if icon else "") + E(zone)
+
+
 def zone_css() -> str:
     """Each colour's ink as a variable for each theme, set as the page sets its
     own, and the rule that puts it on a label. Two classes and the root, so a
@@ -6056,9 +6063,15 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
 .attn .adrift{display:flex;align-items:center;gap:6px}.attn .adrift>a{flex:1;min-width:0}.attn .adrift>.act{flex:none}
-.zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 22px}
-.zone>summary{display:flex;align-items:baseline;gap:8px;padding:10px 0 8px}
-.zone>summary h3{margin:0;font-size:var(--fs-meta);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}.zone>summary .meta{margin-left:auto;font-size:var(--fs-meta);color:var(--muted)}
+.zones{display:grid;grid-template-columns:minmax(0,1fr);max-width:760px}
+/* Zones, projects and threads read as three levels (#619): a zone header is body text at weight 600 in the ink colour, its colour on its icon
+   alone; a 1px rule sits above every zone but the first; projects start 24px in and threads 22px further. */
+.zone>summary{display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer}
+.zone+.zone>summary{border-top:1px solid var(--line)}
+.zone>summary h3{margin:0;display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-body);font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink)}
+.zone>summary .chev{width:14px;height:14px;flex:none;color:var(--muted)}.zone>summary .zic{display:inline-flex;flex:none}
+.zone>summary .meta{margin-left:auto;font-size:var(--fs-meta);color:var(--muted);white-space:nowrap}.zone>summary .meta .late{color:var(--critical)}
+.zone .tunit>.thread{margin-left:24px}.zone .thread.sub{margin-left:46px}
 .thread{display:grid;grid-template-columns:minmax(0,1fr) 70px 34px;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--grid);font-size:var(--fs-body)}
 .thread .t{min-width:0}.thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6084,13 +6097,16 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:var(--fs-meta);color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 .pchev{box-sizing:border-box;width:16px;border:0;background:none;padding:0 3px 0 0;margin:0;cursor:pointer;color:var(--muted);line-height:0;vertical-align:-2px}
-.pchev .chev{width:13px;height:13px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.pchev .chev{width:14px;height:14px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 /* a project with no chevron keeps its room, so every name starts in one column */
 .tunit>.thread:not(.proj)>.t{padding-left:16px}
+/* the thread count has a column of its own before the bar, and goes where the bar goes in the Time and Cost views (.mu) */
+.thread.proj{grid-template-columns:minmax(0,1fr) auto 70px 34px}.thread .cnt{text-align:right;white-space:nowrap;font-size:var(--fs-meta);color:var(--muted)}
+@media (max-width:520px){.thread .cnt{white-space:normal;max-width:9em;line-height:1.3}}
 .thread:not(.proj)>.t{display:flex;flex-wrap:wrap;align-items:center;column-gap:6px}.thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0;max-width:none}
 .thread:not(.proj)>.t>.live{flex:none}.thread:not(.proj)>.t>.tchips{flex:none;display:inline-flex;align-items:center;gap:4px}
 .thread:not(.proj)>.t>small{flex:0 0 100%;min-width:0}.tchips .chip{margin:0}
-.thread .t .subn{font-size:var(--fs-meta)}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}.thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}
+.thread .t .subn{font-size:var(--fs-meta)}.thread.proj .t>a{display:inline}.thread.sub{padding-left:0;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}.thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
 .phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
@@ -6158,7 +6174,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
 .glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}
 .glegend>button[aria-pressed="false"]>i{background:none!important;border:1.5px solid var(--muted)}
-.live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.live{display:inline-block;width:6px;height:6px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good)}
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
 @media (prefers-reduced-motion:reduce){.live.working{animation:none}}
@@ -7013,7 +7029,7 @@ function count(z,f,sel){return z.querySelectorAll(sel).length-(f?f.querySelector
 function recount(){var live=0,held=0;document.querySelectorAll('.tview details.zone').forEach(function(z){var f=fold(z,false),
 p=f?f.querySelectorAll('.thread:not(.proj)').length:0,l=count(z,f,'.thread:not(.proj)'),meta=z.querySelector(':scope>summary .meta');
 live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj) .tchip.todo.late'),d=/(\d+) done/.exec(meta.textContent);
-meta.textContent=l+' live'+(a?' · '+a+' late':'')+(d?' · '+d[1]+' done':'')}
+meta.innerHTML=l+' live'+(a?' · <span class="late">'+a+' late</span>':'')+(d?' · '+d[1]+' done':'')}
 if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
 var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
 if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
@@ -8612,7 +8628,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for r in items:
             party += [t for t in r["party"] if t not in party]
         hp = 1 if project in T[zone].get("held", ()) else 0
-        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp,
+        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp, "tn": len(items),
              "w": project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else "",
              "u": link(hub) if hub else link(items[0]["note"])}
         if acting and hub:
@@ -8670,8 +8686,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             late = 0 if parked else sum(1 for r in items if r.get("late"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s" id="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
-                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
-                    '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
+                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s</div>'
+                    '<span class="cnt muted subn mu">%d thread%s%s%s</span>%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
                     % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), row_anchor(zone, project), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d late" % late if late else "",
@@ -8689,17 +8705,17 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         parked_block = ('<details class="parked tsort" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
                         % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
         late = sum(1 for r in data["rows"] if r.get("late"))      # a red todo; a check has its own chip
-        meta = "%d live" % len(data["rows"]) + (" · %d late" % late if late else "") + \
+        meta = "%d live" % len(data["rows"]) + (' · <span class="late">%d late</span>' % late if late else "") + \
             (" · %d done" % data["done"] if data["done"] else "")
-        cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
-                 % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
+        cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
+                 % (slug, E(z), CHEV, zone_label(z, ZS), meta, EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
     # The search box leads the row, New project and New thread follow it, and
     # what it finds takes the columns' place while a query is in it (#140).
     new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>' % FIND_BOX)
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty · Dot: a session is open in it</p></div>'
                         % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
 
 

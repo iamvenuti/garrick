@@ -1242,7 +1242,7 @@ class TestZoneColours(StatusCase):
         write(self.root / "Zones" / "Work" / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] Book the room\n")
         html = self.page()
         icon = status.zone_icon("briefcase")
-        self.assertIn('<h3 class="zc zc-teal">%sWork</h3>' % icon, html)                   # the Threads card
+        self.assertIn('<h3><span class="zic zc zc-teal">%s</span>Work</h3>' % icon, html)   # the Threads card: the colour on the icon alone (#619)
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
@@ -2909,14 +2909,14 @@ class TestWhereTheChoicesLive(StatusCase):
         write(self.root / "System" / "generated" / "status-settings.json",
               json.dumps({"zones": {"Work": {"color": "Teal", "icon": "briefcase"}},
                           "launchers": ["note", "claude"], "default": "claude"}))
-        self.assertIn('<h3 class="zc zc-teal">', self.build_main())          # the page shows them either way
+        self.assertIn('<h3><span class="zic zc zc-teal">', self.build_main())          # the page shows them either way
         kept = json.loads((self.root / self.SETTINGS).read_text(encoding="utf-8"))
         self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}}, kept["zones"])
         self.assertEqual(["note", "claude"], kept["launchers"])
         # Deleting the generated folder and rebuilding keeps every choice.
         shutil.rmtree(str(self.root / "System" / "generated"))
         html = self.build_main()
-        self.assertIn('<h3 class="zc zc-teal">', html)
+        self.assertIn('<h3><span class="zic zc zc-teal">', html)
         self.assertEqual({"launchers": ["note", "claude"], "default": "claude"},
                          json.loads(re.search(r'id="launch-settings">(.*?)</script>', html, re.S).group(1)))
 

@@ -1086,7 +1086,7 @@ class TestOpensOnTheWork(StatusCase):
         self.assertNotIn("Over 45 days", html)
         self.assertNotIn("15 to 45 days", html)
         self.assertIn("a figure, not a fault", threads)
-        self.assertIn("Last touched ", status.PANEL_JS)              # and the card says it plainly
+        self.assertIn("return'Touched '+ago(o.d)", status.PANEL_JS)       # and the card says it plainly (#620)
         self.assertNotIn("Aging", status.PANEL_JS)
         row = threads[threads.index('data-card="%s' % htmllib.escape('{"n":"Pricing"', quote=True)) - 40:]
         self.assertIn('data-ok="1"', row[:60])                       # not something that needs attention
@@ -1601,7 +1601,7 @@ class TestThreadCards(StatusCase):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
             # a row's card as itself, the graph's as a panel, with Preview before the rest (#206)
-            self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o(,window\.GarrickNote\?GarrickNote\.button\(notePath\(n\),n\.N\|\|n\.n\):'')?\)")
+            self.assertRegex(js, r"Panel\.card\(o(,[01])?(,window\.GarrickNote\?GarrickNote\.button\(notePath\(n\),n\.N\|\|n\.n\):'')?\)")
             self.assertNotIn("data-copy=", js)
             self.assertNotIn('class="act"', js)
 
@@ -2127,7 +2127,8 @@ class TestPreviewFeatures(StatusCase):
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
         self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
-        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: Park and Wake sit in the card's menu (#620)
+        self.assertIn("function pflip(o)", status.PANEL_JS)
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 

@@ -2335,7 +2335,7 @@ const ctx = { JSON, String, Array, Object, Math, Date, performance: { now: () =>
                                                        : k === "querySelector" ? (s) => s === ".gzsel" ? sel
                                                          : (s.match(/^\.glegend \[data-k="(\d+)"\]$/) || [])[1] ? kinds.filter((c) => s.indexOf('"' + c.dataset.k + '"') > 0)[0] : any
                                                        : any }),
-              Panel: { esc: (s) => String(s), head: (o) => "<h4>" + o.n + "</h4>", acts: () => "" },
+              Panel: { esc: (s) => String(s), head: (o) => "<h4>" + o.n + "</h4>", acts: () => "", card: (o) => "<h4>" + o.n + "</h4>" },
               requestAnimationFrame: () => 0, setTimeout: () => 0, addEventListener: () => {},
               matchMedia: () => ({ matches: true }), IntersectionObserver: any, ResizeObserver: any, MutationObserver: any,
               getComputedStyle: () => any, location: any, navigator: any, innerWidth: 800, innerHeight: 600, devicePixelRatio: 1 };

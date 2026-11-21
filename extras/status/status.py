@@ -1362,7 +1362,7 @@ def quick_needs(ws: Path, C: Optional[dict], covered: Dict[str, List[dict]]) -> 
 
 
 def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[dict], today: dt.date,
-                   said: Callable[[str], Tuple[str, str]]) -> Optional[Dict[str, List[dict]]]:
+                   said: Callable[[str], Tuple[str, str]], kept_out: Optional[list] = None) -> Optional[Dict[str, List[dict]]]:
     """{scope: its questions} for every scope that needs the user, from the forecast's findings, each enriched with
     the quick check's text where it has the same path and check (a wall: the same path); None when this page has no
     queue to build, and the card then keeps its Nurture button. Built for every scope at page build, as the findings
@@ -1389,11 +1389,12 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
                 it["message"] = it["line"][len(it["path"]) + 2:] if it["line"].startswith(it["path"] + ": ") else it["line"]
         hidden = fq.later_hidden(ws, today)
         planner = fq.Planner(ws)           # one plan budget for the whole build
-        queues = fq.forecast_questions(items, hidden, ws, planner)
+        kept = fq.kept_hashes(ws)
+        queues = fq.forecast_questions(items, hidden, ws, planner, kept, kept_out)
         extra = quick_needs(ws, C, queues)
         for it in extra:
             it["ask"] = said(it["scope"])[1]
-        for scope, qs in fq.forecast_questions(extra, hidden, ws, planner).items():
+        for scope, qs in fq.forecast_questions(extra, hidden, ws, planner, kept, kept_out).items():
             queues.setdefault(scope, qs)
         return queues
     except Exception:
@@ -5710,10 +5711,11 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
         return None
 
 
-def kept_by_you(rows: list, said: Callable[[str], Tuple[str, str]]) -> str:
-    """The Context card's collapsed *Kept by you* lines under the queue (#582), one for each place with its own count; "" with none."""
+def kept_by_you(rows: list, said: Callable[[str], Tuple[str, str]], keeps: Optional[list] = None) -> str:
+    """The Context card's collapsed *Kept by you* lines under the queue (#582), one for each place with its own count; "" with none.
+    `keeps` are the findings the user left as it is (#535), listed with the allowances of their own place."""
     try:
-        return questions_mod().kept_card(rows, lambda sc: scope_title(sc, said))
+        return questions_mod().kept_card(rows, lambda sc: scope_title(sc, said), keeps or ())
     except Exception:
         return ""
 
@@ -8543,7 +8545,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # The card says what needs the user (#530); the figure is one line (#541), the list is the queue's questions.
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
-    queues = finding_queues(ws, history, C, now.date(), said_scope)
+    keeps: list = []        # the findings the user left as it is, for Kept by you (#535)
+    queues = finding_queues(ws, history, C, now.date(), said_scope, keeps)
     fq = None
     if queues is not None or qdata:
         try:
@@ -8566,7 +8569,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None)
-                       + kept_by_you(allowed, said_scope) + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
+                       + kept_by_you(allowed, said_scope, keeps) + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat(), work_places) if fq else ""
 

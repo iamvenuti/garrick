@@ -60,6 +60,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 LATER_DAYS = 7
+KEEPABLE = ("note-long", "resume-long", "todo-long", "meeting-long", "other")      # the kinds with Leave it as it is (#535)
+KEEP, UNKEEP = "keep", "unkeep"
+HOLDS = "decision-holds"      # *It still holds* on a decision to review (#542): the page's own press, through the verb `finding`
 LATER_FILE = ("System", "generated", "status-later.json")
 HISTORY_TOOL = ("System", "tools", "history.py")
 PLAN_TIMEOUT = 15         # seconds one history.py plan may take while the page builds
@@ -67,7 +70,7 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
 # the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed")
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -81,6 +84,7 @@ AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
+    "attribution": QUESTION, "correction": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
@@ -89,6 +93,10 @@ KIND_CLASS = {
 def A(id_: str, label: str, does: str, action: str) -> dict:
     return {"id": id_, "label": label, "does": does, "action": action}
 
+
+# Leave it as it is (#535): the one answer that stops a finding for good, until the file changes. Never for a wall or a hook of
+# the user's own, and undone from the card's *Kept by you* or from the queue's Undo.
+A_KEEP = A("keep", "Leave it as it is", "Garrick stops asking until the page changes. You can undo it.", "keep")
 
 # kind -> (tag, why, answers); the first answer is the recommended one.
 ANSWERS: Dict[str, List[dict]] = {
@@ -100,30 +108,38 @@ ANSWERS: Dict[str, List[dict]] = {
              A("keep", "The words are mine, keep them", "Keeps this file as it is. Garrick stops flagging these words until the file changes.", "allow")],
     "note-long": [A("move-older", "Move older entries to history", "Nothing is deleted.", "run"),
                   A("preview", "Show me what would move", "A preview. No change until you say so.", "preview"),
-                  A("later", "Not now", "Ask again in a week.", "later")],
+                  A_KEEP, A("later", "Not now", "Ask again in a week.", "later")],
     "resume-long": [A("shorten", "Shorten it", "Your assistant writes a shorter one for you to approve.", "handoff"),
-                    A("later", "Not now", "Ask again in a week.", "later")],
+                    A_KEEP, A("later", "Not now", "Ask again in a week.", "later")],
     "todo-long": [A("shorten", "Shorten the line", "Your assistant shortens it and moves what came of it to the thread's notes.", "handoff"),
-                  A("later", "Not now", "Ask again in a week.", "later")],
+                  A_KEEP, A("later", "Not now", "Ask again in a week.", "later")],
     "meeting-long": [A("shorten", "Shorten it", "Your assistant shortens the page. The recording's transcript stays as it is.", "handoff"),
                      A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
-                     A("later", "Not now", "Ask again in a week.", "later")],
+                     A_KEEP, A("later", "Not now", "Ask again in a week.", "later")],
     # A hook of the user's own stands where the wall check goes: Garrick never replaces it. The assistant adds one line to it (#550).
     # A small fix the nightly run could not make: the assistant makes it with the user watching, or it waits (#550).
     "fix-failed": [A("fix-now", "Fix it with my assistant", "Your assistant makes the fix and shows you the change.", "handoff"),
                    A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
+    # Nurture's two kinds that need a person and had no wording of their own (#535): which side something belongs on, and a
+    # correction that could not be finished. Both go to the assistant, or open the file; neither is kept, and Not now is as for the rest.
+    "attribution": [A("sort-it", "Sort it out with my assistant", "Your assistant asks you the question and shows you the change.", "handoff"),
+                    A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
+                    A("later", "Not now", "Ask again in a week.", "later")],
+    "correction": [A("finish", "Finish the correction with my assistant", "Your assistant makes the rest of the change and shows it to you.", "handoff"),
+                   A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
+                   A("later", "Not now", "Ask again in a week.", "later")],
 }
 # The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
 OTHER = "other"
 ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
-                             A("later", "Not now", "Ask again in a week.", "later")]
+                             A_KEEP, A("later", "Not now", "Ask again in a week.", "later")]
 OTHER_WHY = "Garrick has no plain wording for this check yet. Your assistant can look at it with you, and nothing changes until you say yes."
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
     "note-long": [A("split", "Split the long sections into their own notes",
                     "Your assistant splits the long sections into their own notes in the thread's folder, links them, and shows you the change.", "handoff"),
-                  A("later", "Not now", "Ask again in a week.", "later")],
+                  A_KEEP, A("later", "Not now", "Ask again in a week.", "later")],
 }
 # The answer a run that is refused for "nothing can move" is replaced by, by kind and by the answer refused (#540).
 FALLBACKS: Dict[str, Dict[str, str]] = {"note-long": {"move-older": "split"}}
@@ -140,14 +156,17 @@ NO_MOVE = {
     "unknown": ("Garrick could not ask what would move, so it does not offer a move.", "history.py did not answer in time, or is not in this workspace."),
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
-        "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up"}
+        "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up", "attribution": "Needs your answer",
+        "correction": "Tidy up"}
 HELD = re.compile(r"\(held: (.+)\)\s*$")
 # The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
 HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
               ("not committed", "It has changes that are not committed yet."), ("could not be undone", "No single repository holds its files."),
               ("two repositories", "Its files are in two repositories."), ("refused", "The commit was refused by the wall check."),
               ("changed again", "The file changed again while the fix was being checked."))
-WHY = {"fix-failed": "A fix this small is made on its own at night. This one was held back.",
+WHY = {"attribution": "Garrick cannot tell which of two ways is right, and a wrong guess could put material in the wrong project or on the wrong side of a wall.",
+       "correction": "A value you corrected still stands in a file Garrick could not change on its own, so the old and the new value disagree.",
+       "fix-failed": "A fix this small is made on its own at night. This one was held back.",
        "note-long": "Long pages are slow to read and slow for the assistant. Older entries can move to a history page, where they stay linked.",
        "resume-long": "A resume point is what you read first when you come back, so a short one is quicker to take in.",
        "todo-long": "A line names one action. What came of it belongs in the thread's notes.",
@@ -155,9 +174,10 @@ WHY = {"fix-failed": "A fix this small is made on its own at night. This one was
        "hooks-blocked": "Garrick installs this check on its own, but a hook of yours is in the way and Garrick never replaces one of yours. "
                         "Without the check, a commit can carry private material across a wall and nothing warns you."}
 NEVER_LATER = ("wall", "hooks-blocked")     # no Not now: hiding either leaves the walls unchecked
-ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal", "look", "allow")
+ACTIONS = ("handoff", "run", "preview", "open", "later", "keep", "words", "day", "reveal", "look", "allow")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
-VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
+VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later", "keep")) for kind, answers in ANSWERS.items()}
+VERB_ANSWERS = {kind: ids + ((UNKEEP,) if KEEP in ids else ()) for kind, ids in VERB_ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
 # The handoff answers that are one bounded edit of the finding's own file (#592): the engine runs them in the background, in the
@@ -167,7 +187,7 @@ BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": (
 UNDO = "undo-bounded"
 for _kind, _ids in BOUNDED.items():
     VERB_ANSWERS[_kind] = VERB_ANSWERS[_kind] + _ids + (UNDO,)
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",), OTHER: ("later",)})
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later", HOLDS), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -221,6 +241,8 @@ def plain_kind(item: dict) -> str:
         return "wall"
     if kind == MECHANICAL:
         return MECHANICAL
+    if kind in ("attribution", "correction"):
+        return kind
     if kind != "judgment":
         return ""
     if check in ("projects", "threads") and "`note-max-words`" in line and NOTE_RE.search(line):
@@ -278,23 +300,17 @@ def later_hidden(ws, today: Optional[dt.date] = None) -> set:
     return out
 
 
-def later_put(ws, key: str, today: Optional[dt.date] = None) -> str:
-    """Hide a finding for LATER_DAYS days; the day it comes back, ISO. Entries already back are dropped as it
-    writes. The one write this module makes, in a file of its own that nothing but the page reads."""
-    today = today or dt.date.today()
-    until = (today + dt.timedelta(days=LATER_DAYS)).isoformat()
+def write_store(ws, rows: dict, kept: dict) -> None:
+    """The page's own file, written whole and replaced at once: the Not now days and, when there are any, the keeps (#535)."""
     path = later_path(ws)
-    try:
-        rows = json.loads(path.read_text(encoding="utf-8")).get("later") or {}
-    except (OSError, ValueError, AttributeError):
-        rows = {}
-    rows = {k: v for k, v in rows.items() if isinstance(k, str) and isinstance(v, str) and v > today.isoformat()} if isinstance(rows, dict) else {}
-    rows[key] = until
+    doc = {"version": 1, "later": rows}
+    if kept:
+        doc["kept"] = kept
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "later": rows}, f, sort_keys=True)
+            json.dump(doc, f, sort_keys=True)
         os.replace(tmp, str(path))
     except OSError:
         try:
@@ -302,7 +318,58 @@ def later_put(ws, key: str, today: Optional[dt.date] = None) -> str:
         except OSError:
             pass
         raise
+
+
+def read_store(ws) -> Tuple[dict, dict]:
+    """(the Not now rows, the keeps) as the file holds them; a file that is missing, unreadable or of another shape holds none."""
+    try:
+        data = json.loads(later_path(ws).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, {}
+    if not isinstance(data, dict):
+        return {}, {}
+    rows, kept = data.get("later"), data.get("kept")
+    return (rows if isinstance(rows, dict) else {}), (kept if isinstance(kept, dict) else {})
+
+
+def later_put(ws, key: str, today: Optional[dt.date] = None) -> str:
+    """Hide a finding for LATER_DAYS days; the day it comes back, ISO. Entries already back are dropped as it
+    writes. The keeps stay as they are. A file of its own that nothing but the page reads."""
+    today = today or dt.date.today()
+    until = (today + dt.timedelta(days=LATER_DAYS)).isoformat()
+    rows, kept = read_store(ws)
+    rows = {k: v for k, v in rows.items() if isinstance(k, str) and isinstance(v, str) and v > today.isoformat()}
+    rows[key] = until
+    write_store(ws, rows, kept)
     return until
+
+
+# ---- Leave it as it is (#535) -------------------------------------------------------------------------------------
+# A keep is one record for a finding kind and a file: the finding's key (a hash of kind and path, as Not now's) and the
+# twelve hex digits of the file as it was. It holds while the file is exactly that, so any edit, however small, asks the
+# finding again: when in doubt the finding comes back. It is kept in the Not now file, which holds hashes only, never a
+# path or any text, and which no check and no Nurture run reads. A wall finding and a hook of the user's own have none.
+
+def kept_hashes(ws) -> Dict[str, str]:
+    """{key: the file's hash when it was kept}, the well-formed rows only."""
+    return {k: v for k, v in read_store(ws)[1].items()
+            if isinstance(k, str) and re.fullmatch(r"[0-9a-f]{16}", k) and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{12}", v)}
+
+
+def kept_put(ws, key: str, fh: str) -> None:
+    rows, kept = read_store(ws)
+    kept[key] = fh
+    write_store(ws, rows, kept)
+
+
+def kept_drop(ws, key: str) -> bool:
+    """Take a keep away; whether there was one."""
+    rows, kept = read_store(ws)
+    if key not in kept:
+        return False
+    del kept[key]
+    write_store(ws, rows, kept)
+    return True
 
 
 # ---- planning a long note (#539) ---------------------------------------------------------------------------------
@@ -540,6 +607,10 @@ def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
         n = int(MEETING_RE.search(text).group(1))
         title, day = meeting_subject(ws, path)
         return ("The meeting note “%s”%s is longer than usual: %s words." % (title, ", " + day + "," if day else "", about(n)), WHY[plain])
+    if plain == "attribution":
+        return ("“%s” in %s has a question only you can answer." % (stem(path), place(path)), WHY[plain])
+    if plain == "correction":
+        return ("A correction in “%s” in %s is not finished." % (stem(path), place(path)), WHY[plain])
     if plain == "fix-failed":
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
@@ -592,6 +663,11 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
                 "Show me the change before anything is committed." % path)
     if plain == "fix-failed":
         return "Make the small fix that Nurture holds back for %s, and show me the change before anything is committed." % path
+    if plain == "attribution":
+        return ("Ask me the question Nurture holds about %s, and with my answer make the change. Show me the change before anything "
+                "is committed." % path)
+    if plain == "correction":
+        return "Finish the correction that Nurture holds back for %s, and show me the change before anything is committed." % path
     if plain == "hooks-blocked":
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
@@ -640,7 +716,8 @@ def free_prefix(plain: str, item: dict) -> str:
     path = str(item["path"])
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
-             "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back"}.get(plain, "a check finding")
+             "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back",
+             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished"}.get(plain, "a check finding")
     if plain == "wall":
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
@@ -682,7 +759,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
                 a["phrase"] = other_phrase(item)
             else:
                 # the executor's request has three fields and no more: the finding's own mark rides in the answer, `later-<which>`
-                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": "later-" + which}
+                # or `keep-<which>`
+                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": ("keep-" if a["action"] == "keep" else "later-") + which}
             answers.append(a)
         q.update(tag=str(item.get("title") or "Check finding"), sentence=other_sentence(path), why=OTHER_WHY, answers=answers,
                  free=free_prefix("", item), recommended=answers[0]["id"])
@@ -760,15 +838,19 @@ def wall_answers(scope: str) -> List[dict]:
     return out
 
 
-def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) -> Dict[str, List[dict]]:
+def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, kept=None, kept_out=None) -> Dict[str, List[dict]]:
     """The queue of each scope, from the forecast's findings: the list the scope's line on the card counts, less
     what Not now has put off (a wall finding and missing commit hooks are never put off, whatever a file says). The mechanical ones are not
     asked: the nightly run makes them, and one it held back is asked as fix-failed (#550). With `ws`, a long note is asked from its plan (#539); without it, from its kind. A `planner` shared by several calls spends one budget for all of them."""
     out: Dict[str, List[dict]] = {}
     if planner is None and ws is not None:
         planner = Planner(ws)
+    kept = kept or {}
+    walled = {str(i["path"]) for i in items if plain_kind(i) == "wall"}       # a page with a wall finding has no question of its own
     for item in items:
         plain = plain_kind(item)
+        if plain in ("attribution", "correction") and str(item["path"]) in walled:
+            continue
         if plain == MECHANICAL and not held_reason(item):
             continue                # the nightly run makes it, and the card shows nothing (#550)
         if plain == MECHANICAL:
@@ -781,10 +863,27 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
             continue
         if plain not in PLAIN_KINDS and later_key(plain or OTHER, str(item["path"]), which_other(item)) in hidden:
             continue                # this finding was put off; an older key, made with no `which`, hid them all and still does
+        if kept and plain in PLAIN_KINDS + ("",) :
+            ident = plain or OTHER
+            if ident in KEEPABLE:
+                key = later_key(ident, str(item["path"]), which_other(item) if ident == OTHER else "")
+                now = file_hash(ws, str(item["path"]))
+                if now and kept.get(key) == now:
+                    if kept_out is not None:
+                        kept_out.append(keep_record(ident, item, key, ws))
+                    continue            # left as it is by the user, and the file is as it was
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan, ws))
     settle(out)
     return out
+
+
+def keep_record(plain: str, item: dict, key: str, ws=None) -> dict:
+    """One finding the user left as it is, for the card's *Kept by you*: the plain sentence (never a path), the place, and
+    what Undo sends. The path stays in the row, as an allowance's does, so the request can name the file."""
+    path = str(item["path"])
+    sentence = other_sentence(path) if plain == OTHER else said(plain, item, ws)[0]
+    return {"kind": plain, "path": path, "key": key, "which": which_other(item) if plain == OTHER else "", "sentence": sentence}
 
 
 def settle(out: Dict[str, List[dict]]) -> None:
@@ -856,11 +955,15 @@ def verdict_question(q: dict) -> dict:
 
 
 def decision_question(d: dict) -> dict:
-    """A decision to review: open it, or put it off. Only the user changes a decision's status, so nothing here does."""
+    """A decision to review: open it, say it still holds, or put it off. Only the user changes a decision's status, so nothing here does:
+    *It still holds* takes the review flag off the page and notes the day, and touches nothing else."""
     path = wiki_path("Meetings", d["file"])
     out = asked_base("decision-review", "Decision to review", path, "“%s” may no longer hold." % d["title"],
                      "Flagged: %s. Only you change a decision." % d["revisit"].rstrip("."), d.get("decided") or "", [
-        dict(A("open", "Open the decision", "Change its status there.", "open"), reqs=[{"verb": "note-open", "path": path}]), not_now("decision-review", path)])
+        dict(A("open", "Open the decision", "Change its status there.", "open"), reqs=[{"verb": "note-open", "path": path}]),
+        dict(A("holds", "It still holds", "Takes the review flag off. Its status and its words stay as they are.", "run"),
+             req={"verb": "finding", "kind": "decision-review", "path": path, "answer": HOLDS}),
+        not_now("decision-review", path)])
     return out
 
 
@@ -1063,7 +1166,7 @@ var KEY='garrick-queue',st={get:function(k){try{return sessionStorage.getItem(k)
 function say(t){var s=document.getElementById('toast');if(s){s.textContent=t;s.classList.add('on');setTimeout(function(){s.classList.remove('on')},3500)}}
 if(!dlg)return;
 /* the tally's lines, in the order the summary says them: one row to add for a new way of answering */
-var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['skipped','skipped']],UNSAVED=['skipped'];
+var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['kept','left as it is'],['skipped','skipped']],UNSAVED=['skipped'];
 function fresh(){var t={};LINES.forEach(function(l){t[l[0]]=0});return t}
 var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null,taken={};
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
@@ -1170,6 +1273,8 @@ var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');ski
 var un=t.closest('#queue [data-qundo]');if(un){var lu=hand().last;if(!lu||!lu.undo||!host)return;un.disabled=true;host.postMessage({act:lu.undo});return}
 var sh=t.closest('#queue [data-qshow]');if(sh){var ls=hand().last;if(ls&&ls.show&&host)host.postMessage({act:{verb:'note-open',path:ls.show}});return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
+/* a second press while the first answer is still out sends nothing: one answer, one request (#535) */
+if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;
 if(d.a==='handoff'){if(d.req&&boundedOK()){out(q,'Working on it\u2026');pend={key:q.dataset.gk,id:d.id,phrase:d.phrase,bounded:1};save();host.postMessage({act:d.req});return}
 handoff(d.phrase);finish(q,'handed');return}
 if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}
@@ -1187,14 +1292,14 @@ pend={key:q.dataset.gk,id:d.id};save();host.postMessage({act:Object.assign({},d.
 function answerWords(q,input,w){var d;try{d=JSON.parse(input.dataset.ans)}catch(err){return}
 if(!host){handoff(d.prefix+w);finish(q,'handed');return}
 pend={key:q.dataset.gk,id:'answer'};save();host.postMessage({act:Object.assign({},d.req,{words:w})})}
-/* keys: 1 to 4 answer, the last number is the free-text field, Return takes the recommended one, Esc closes (the dialog's own) */
+/* keys: 1 to 9 answer, the last number is the free-text field, Return takes the recommended one, Esc closes (the dialog's own) */
 dlg.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey||e.altKey)return;var q=cur&&pending(cur)[0];if(!q||q.hidden)return;
 var typing=e.target&&e.target.tagName==='INPUT';
 if(typing){if(e.key==='Enter'){if(e.isComposing||e.keyCode===229)return;
 if(e.target.type==='date'){var db=e.target.closest('.opt').querySelector('button[data-fa]');if(db){e.preventDefault();db.click()}return}
 var w=e.target.value.trim();if(w){e.preventDefault();if(e.target.dataset.ans)answerWords(q,e.target,w);else{handoff(e.target.dataset.free+w);finish(q,'handed')}}}return}
 if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector(RECS);if(r){e.preventDefault();r.click()}return}
-if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
+if(/^[1-9]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
 /* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
    an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none.
@@ -1229,11 +1334,12 @@ dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
-if(q&&q.verb==='finding'&&q.answer==='undo-bounded'){var o=hand();if(o.last){o.last.text=(res&&res.say)||(res&&res.ok?'Undone.':'That did not work.');o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
+if(q&&q.verb==='finding'&&(q.answer==='undo-bounded'||/^unkeep/.test(q.answer||''))){var o=hand();if(o.last){o.last.text=(res&&res.say)||(res&&res.ok?'Undone.':'That did not work.');o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
 else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');
+else if(/^keep/.test(q.answer||'')){finish(el,'kept');if(res.undo)setLast(res.say,{undo:res.undo})}
 else if(p&&p.bounded&&res.unavailable){handoff(p.phrase);finish(el,'handed')}
 else{finish(el,'done');if(p&&p.bounded&&res.commit)setLast(res.say,{undo:res.undo||null,show:q.path})}}
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];

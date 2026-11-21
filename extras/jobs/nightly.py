@@ -12,8 +12,8 @@
    it, with `--scope` and `--digest` passed on. It runs check.py in full,
    the night's only full check.
 3. **answers**: `work_in.py`, which works in the answers to the Context card's questions that still wait (#550). It makes one
-   assistant call for each zone, and one for the Knowledge wiki, that holds an answer, under the jobs' own caps and deny
-   profile, and none for a place with nothing waiting. What it cannot work in is kept for the Context card to ask about.
+   assistant call for each answer, the oldest first, under the jobs' own caps and deny profile, and commits each when
+   its call ends (#629); none for a place with nothing waiting. What it cannot work in is kept for the Context card to ask about.
    Skipped when the status page extra is not there.
 4. **effort**: `System/status/effort.py --record`, with `--also` and
    `--moved` passed on, so the Effort view keeps the days Claude Code's

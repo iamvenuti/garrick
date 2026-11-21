@@ -2010,7 +2010,7 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 """
 
 MANAGE_CSS = r"""
-.mg-new{display:flex;gap:6px;justify-content:flex-end;margin:0 0 8px}.mg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mg-new{display:flex;gap:6px;justify-content:flex-end;margin:0 0 8px}
 dialog.gmanage .mg-details{margin:10px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-details pre{white-space:pre-wrap;margin:6px 0 0;font:inherit}
 dialog.gmanage .mg-msg{margin:12px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-msg.bad{color:var(--critical)}
 dialog.gmanage select,dialog.gmanage input[type=text]{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;box-sizing:border-box}
@@ -2035,12 +2035,15 @@ function copy(text,done){var ok=function(){say(done)};if(host){host.postMessage(
 if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(ok,function(){say(text)});return}say(text)}
 function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* the card's own buttons: Rename and Delete on a thread or a project, New thread here on a project */
-window.GarrickManage=function(o){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
-return'<div class="mg-acts">'+(k==='project'?'<button class="act" type="button" data-manage="new-thread" data-mg="'+m+'">New thread here</button>':'')
-+'<button class="act" type="button" data-manage="rename" data-mg="'+m+'">Rename…</button>'
-+(k==='thread'?'<button class="act" type="button" data-manage="move" data-mg="'+m+'">Move…</button>':'')
-+LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return'<button class="act" type="button" data-manage="layout-'+l[0]+'" data-mg="'+m+'" title="'+esc(l[2])+'">'+esc(l[1])+'</button>'}).join('')
-+'<button class="act" type="button" data-manage="delete" data-mg="'+m+'">Delete…</button></div>'};
+var MI={plus:'<path d="M8 3v10M3 8h10"/>',pen:'<path d="M3 13l1-3 7-7 2 2-7 7z"/>',move:'<path d="M3 8h9M9 5l3 3-3 3"/>',list:'<path d="M3 4h10M3 8h7M3 12h7"/>',trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/>'};
+function mi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+MI[d]+'</svg>'}
+/* the card's menu (#620): New thread here, Rename, Move, a change of layout, then what the card passes in (Close session, Park or Wake), then
+   a separator and Delete last, in the critical colour. Every row is the button it was, with the same data-manage and data-mg. */
+window.GarrickManage=function(o,mid){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
+function row(what,label,icon,more){return'<button class="pmi" type="button" data-manage="'+what+'" data-mg="'+m+'"'+(more||'')+'>'+mi(icon)+esc(label)+'</button>'}
+return'<div class="pmenu" role="group">'+(k==='project'?row('new-thread','New thread here','plus'):'')+row('rename','Rename…','pen')+(k==='thread'?row('move','Move…','move'):'')
++LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return row('layout-'+l[0],l[1],'list',' title="'+esc(l[2])+'"')}).join('')
++(mid||'')+'<div class="psep" role="separator"></div><button class="pmi del" type="button" data-manage="delete" data-mg="'+m+'">'+mi('trash')+'Delete…</button></div>'};
 /* the changes of layout (#604), offered by the build only where each applies: code, button, what it is */
 var LAYOUTS=[['own','Own papers…','A thread to its own papers'],['project','Project’s papers…','A thread back to the project’s papers'],['heading','Make a heading…','A project to a heading']];
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
@@ -5289,6 +5292,13 @@ def zone_name(zone: str, styles: Dict[str, dict]) -> str:
     return zone_icon(styles.get(zone, {}).get("icon", "")) + E(zone)
 
 
+def zone_label(zone: str, styles: Dict[str, dict]) -> str:
+    """A zone's name on the Threads card (#619): its icon, in the zone's colour, then the name in the card's own ink. The
+    colour is on the icon alone, so it never reads as the alarm a red label would."""
+    icon = zone_icon(styles.get(zone, {}).get("icon", ""))
+    return ('<span class="zic%s">%s</span>' % (zone_class(zone, styles), icon) if icon else "") + E(zone)
+
+
 def zone_css() -> str:
     """Each colour's ink as a variable for each theme, set as the page sets its
     own, and the rule that puts it on a label. Two classes and the root, so a
@@ -6118,9 +6128,17 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
 .attn .adrift{display:flex;align-items:center;gap:6px}.attn .adrift>a{flex:1;min-width:0}.attn .adrift>.act{flex:none}
-.zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 22px}
-.zone>summary{display:flex;align-items:baseline;gap:8px;padding:10px 0 8px}
-.zone>summary h3{margin:0;font-size:var(--fs-meta);letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}.zone>summary .meta{margin-left:auto;font-size:var(--fs-meta);color:var(--muted)}
+.zones{display:grid;grid-template-columns:minmax(0,1fr);max-width:760px}
+/* Zones, projects and threads read as three levels (#619): a zone header is body text at weight 600 in the ink colour, its colour on its icon
+   alone; a 1px rule sits above every zone but the first; a project's name starts 24px in and a thread's 22px further, its chevron in the zone's column. */
+.zone>summary{display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer}
+.zone+.zone>summary{border-top:1px solid var(--line)}
+.zone>summary h3{margin:0;display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-body);font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink)}
+.zone>summary .chev{width:14px;height:14px;flex:none;color:var(--muted)}.zone>summary .zic{display:inline-flex;flex:none}
+.zone>summary .meta{margin-left:auto;font-size:var(--fs-meta);color:var(--muted);white-space:nowrap}.zone>summary .meta .late{color:var(--critical)}
+/* the chevrons of a zone and of a project share one column; the names and the project's rule step in 24px, then a thread's 22px more */
+.zone .tunit>.thread{position:relative;border-top:0}.zone .tunit>.thread::before{content:"";position:absolute;top:0;left:24px;right:0;border-top:1px solid var(--grid)}
+.zone .tunit>.thread.proj>.t{display:flex;align-items:center}.zone .tunit>.thread.proj .pchev{margin-right:30px;flex:none}.zone .tunit>.thread.proj>.t>a{min-width:0}.zone .tunit>.thread:not(.proj)>.t{padding-left:46px}.zone .thread.sub{margin-left:68px}
 .thread{display:grid;grid-template-columns:minmax(0,1fr) 70px 34px;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--grid);font-size:var(--fs-body)}
 .thread .t{min-width:0}.thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6146,17 +6164,27 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:var(--fs-meta);color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 .pchev{box-sizing:border-box;width:16px;border:0;background:none;padding:0 3px 0 0;margin:0;cursor:pointer;color:var(--muted);line-height:0;vertical-align:-2px}
-.pchev .chev{width:13px;height:13px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.pchev .chev{width:14px;height:14px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 /* a project with no chevron keeps its room, so every name starts in one column */
 .tunit>.thread:not(.proj)>.t{padding-left:16px}
+/* the thread count has a column of its own before the bar, and goes where the bar goes in the Time and Cost views (.mu) */
+.thread.proj{grid-template-columns:minmax(0,1fr) auto 70px 34px}.thread .cnt{text-align:right;white-space:nowrap;font-size:var(--fs-meta);color:var(--muted)}
+@media (max-width:520px){.thread .cnt{white-space:normal;max-width:9em;line-height:1.3}}
 .thread:not(.proj)>.t{display:flex;flex-wrap:wrap;align-items:center;column-gap:6px}.thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0;max-width:none}
 .thread:not(.proj)>.t>.live{flex:none}.thread:not(.proj)>.t>.tchips{flex:none;display:inline-flex;align-items:center;gap:4px}
 .thread:not(.proj)>.t>small{flex:0 0 100%;min-width:0}.tchips .chip{margin:0}
-.thread .t .subn{font-size:var(--fs-meta)}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}.thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}
+.thread .t .subn{font-size:var(--fs-meta)}.thread.proj .t>a{display:inline}.thread.sub{padding-left:0;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}.thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
-.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
-.phead .pflip{flex:none;font-size:var(--fs-meta);padding:3px 8px}.gpop .phead{padding-right:30px}
+.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:6px 14px 0}.phead h4{margin:0;min-width:0}.gpop .phead{padding-right:34px}
+/* the row card (#620): lines of muted text, Open in, then plain menu rows; the chip is the card's only bordered element */
+.pl{padding:0 14px;margin-top:2px;color:var(--muted);font-size:var(--fs-meta)}.pl1{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}.pl1 .chip{margin:0}
+.psess .live{margin:0 6px 1px 0}
+.popen{padding:0 10px;margin:10px 0 8px;align-items:center;gap:4px}.popen .act{border-color:transparent;background:transparent}
+.plbl{display:none;color:var(--muted);font-size:var(--fs-meta);margin:0 6px 0 4px}.appicons .plbl{display:inline}
+.pmenu{border-top:1px solid var(--grid);margin-top:4px;padding-top:4px}.psep{height:1px;background:var(--grid);margin:4px 0}
+.pmi{display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:0;background:none;font:inherit;font-size:var(--fs-meta);color:var(--ink);padding:6px 14px;text-align:left;cursor:pointer}
+.pmi:hover{background:var(--wash)}.pmi svg{width:15px;height:15px;flex:none;color:var(--muted)}.pmi.del,.pmi.del svg{color:var(--critical)}
 .gzsel{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
 appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
 background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
@@ -6198,20 +6226,21 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .gbar .gfind{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px;width:150px;min-width:0}
 .gbar button{border:0;background:none;color:var(--ink2);font:inherit;font-size:var(--fs-meta);padding:4px 9px;border-radius:6px;cursor:pointer}
 .gbar button.on{background:var(--wash);color:var(--ink)}.gbar>button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
-.gpop,.tcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:var(--fs-meta)}
-.gpop{position:absolute;right:10px;top:10px;width:290px;max-height:calc(100% - 20px);overflow:auto}
-.tcard{position:fixed;left:0;top:0;width:300px;max-width:calc(100vw - 16px);z-index:9}
-.gpop h4,.tcard h4{margin:0 22px 2px 0;font-size:var(--fs-sub);font-weight:640;overflow-wrap:anywhere}.tcard h4{margin-right:0}
-.gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:var(--fs-h3);line-height:1;cursor:pointer;padding:2px 4px}
+.gpop,.tcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 0;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:var(--fs-meta)}
+.gpop{position:absolute;right:10px;top:10px;width:264px;max-height:calc(100% - 20px);overflow:auto}
+.tcard{position:fixed;left:0;top:0;width:264px;max-width:calc(100vw - 16px);z-index:9}
+.gpop h4,.tcard h4{margin:0;font-size:var(--fs-sub);font-weight:640;overflow-wrap:anywhere}
+.gpop .x{position:absolute;right:8px;top:6px;z-index:1;border:0;background:none;color:var(--muted);font-size:var(--fs-h3);line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}
 .act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}
 .appicons .gacts{align-items:center}
-.appicons .act[data-k]{width:34px;height:34px;padding:0;font-size:0;color:transparent;border-color:transparent;border-radius:8px;background:transparent var(--ic) center/26px no-repeat}
-.appicons .act[data-k][data-d]{background-color:color-mix(in srgb,var(--accent) 22%,transparent)}
-.appicons .act[data-k]:hover{border-color:var(--base)}
+.appicons .act[data-k]{position:relative;width:30px;height:30px;padding:0;font-size:0;color:transparent;border:0;border-radius:7px;background:transparent var(--ic) center/22px no-repeat}
+/* the default app, the one a click on the name uses, is the one with a 4px accent dot under it */
+.appicons .act[data-k][data-d]::after{content:"";position:absolute;left:50%;bottom:-3px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--accent)}
+.appicons .act[data-k]:hover{background-color:var(--wash)}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:var(--fs-meta);padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
@@ -6220,7 +6249,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
 .glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}
 .glegend>button[aria-pressed="false"]>i{background:none!important;border:1.5px solid var(--muted)}
-.live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.live{display:inline-block;width:6px;height:6px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good)}
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
 @media (prefers-reduced-motion:reduce){.live.working{animation:none}}
@@ -6435,7 +6464,7 @@ return'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title
 function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':noteLink(o));
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
-if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
+if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts popen"><span class="plbl">Open in</span>'+a+'</div>'}
 /* One way to resume, for a row of Your work (#523, #559): a text button, Resume, which runs Settings' Default, and beside it a
    menu of labelled rows, each with a 16 px icon, the default ticked: the ways that are on and installed, then a divider and the
    folder and the note. One way on: Resume alone. The rows carry no data-k, so the app never draws them as its icons. */
@@ -6455,29 +6484,32 @@ return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" 
 /* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
 function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
-return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
-+'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+(s?'Wake':'Park')+'</button>'}
-function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
-+' data-say="Closing the session…">Close session</button>':''}
-/* Park or Wake, beside the name: it acts in the app, and copies the phrase anywhere else;
-   with a session open, Close session sits beside it */
-function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
+return'<button class="pmi pflip" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
++'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
+function pi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+d+'</svg>'}
+function shut(o){return o.dk&&o.live&&host?'<button class="pmi pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
++' data-say="Closing the session…">'+pi('<path d="M4 4l8 8M12 4l-8 8"/>')+'Close session</button>':''}
+/* a menu row: Close session, then Park or Wake, which acts in the app and copies the phrase anywhere else */
 function pflip(o){if(o.fin||o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
 var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
-return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(s?'Wake':'Park')+'</button>'}
+return'<button class="pmi pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 /* how long since the note moved, as a figure: age is not urgency, so nothing here reads as a fault */
 function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
-return'Last touched '+ago(o.d)}
+return'Touched '+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
-function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
-/* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project;
-   the graph's panel, which floats free of any list, keeps them */
-function head(o,row){return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
-+(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
-+line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)
-+(window.GarrickManage?GarrickManage(o):'')}
+/* A row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project; the
+   graph's panel, which floats free of any list, keeps them. The card reads top to bottom (#620): what it is (line 1: the party as a chip, then
+   a project's thread count; line 2: its state, a thread's resume point and an open session), where to open it (acts), what to change
+   (menu), and last, set apart, what removes it. The chip is the only bordered element. */
+function head(o,row){var chips=o.t&&o.t.length?o.t.map(function(t){return'<span class="chip">'+esc(t)+'</span>'}).join(''):'',
+n=o.h&&o.tn?'<span>'+o.tn+' thread'+(o.tn===1?'':'s')+'</span>':'',st=[state(o),resume(o)].filter(Boolean).join(' · ');
+return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4></div>'+(row?'':'<div class="pl pkind">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
++(chips||n?'<div class="pl pl1">'+chips+n+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
++(o.live?'<div class="pl pl2 psess"><span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live)+'</div>':'')}
+function menu(o){var mid=shut(o)+pflip(o),m=window.GarrickManage?GarrickManage(o,mid):'';return m||(mid?'<div class="pmenu" role="group">'+mid+'</div>':'')}
+function card(o,row,pre){return head(o,row)+acts(o,pre)+menu(o)}
 /* what clicking a thread's name does, on its row or among what the search box found (.sres): its own link,
    unless Settings picked an app the Mac app can open it in */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a,.sres .t>a');if(!a||!host)return;
@@ -6486,7 +6518,7 @@ var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x)
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
 var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;if(!(window.GarrickAct&&GarrickAct(q,going(o)))){host.postMessage({act:q});if(window.GarrickSay)GarrickSay(going(o))}return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
-return{esc:esc,acts:acts,head:head,opener:opener}})();
+return{esc:esc,acts:acts,head:head,menu:menu,card:card,opener:opener}})();
 """
 
 JS = r"""
@@ -6677,7 +6709,7 @@ function tPlace(){if(!tRow)return;var b=tRow.getBoundingClientRect();if(b.bottom
 var w=tc.offsetWidth,h=tc.offsetHeight,x=Math.min(b.right-w,innerWidth-w-8),y=b.bottom-1;if(y+h>innerHeight-8&&b.top-h+1>=8)y=b.top-h+1;
 tc.style.left=Math.max(8,x)+'px';tc.style.top=Math.max(8,y)+'px'}
 function tOpen(row){clearTimeout(tHide);clearTimeout(tShow);if(tRow!==row){var o;try{o=JSON.parse(row.dataset.card)}catch(x){return}
-if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.head(o,1)+Panel.acts(o);tc.setAttribute('aria-label',o.n);
+if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.card(o,1);tc.setAttribute('aria-label',o.n);
 row.parentNode.insertBefore(tc,row.nextSibling)}tc.hidden=false;tPlace()}
 function tClose(){clearTimeout(tShow);clearTimeout(tHide);if(tRow)tRow.classList.remove('on');tRow=null;tc.hidden=true;dark()}
 function tLater(){clearTimeout(tShow);clearTimeout(tHide);tHide=setTimeout(tClose,220)}
@@ -7075,7 +7107,7 @@ function count(z,f,sel){return z.querySelectorAll(sel).length-(f?f.querySelector
 function recount(){var live=0,held=0;document.querySelectorAll('.tview details.zone').forEach(function(z){var f=fold(z,false),
 p=f?f.querySelectorAll('.thread:not(.proj)').length:0,l=count(z,f,'.thread:not(.proj)'),meta=z.querySelector(':scope>summary .meta');
 live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj) .tchip.todo.late'),d=/(\d+) done/.exec(meta.textContent);
-meta.textContent=l+' live'+(a?' · '+a+' late':'')+(d?' · '+d[1]+' done':'')}
+meta.innerHTML=l+' live'+(a?' · <span class="late">'+a+' late</span>':'')+(d?' · '+d[1]+' done':'')}
 if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
 var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
 if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
@@ -7542,7 +7574,7 @@ var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 /* each linked note's dot in its kind's colour as the page holds it, so a chosen colour follows the theme (#291) */
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+esc(G.colors[m.k]||'var(--muted)')+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
-pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
+pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.card(o,0,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:var(--fs-meta);padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true;wake()}
@@ -7975,6 +8007,79 @@ def need_groups(needs: List[dict]) -> str:
     return html
 
 
+# ---- Waiting on you now > questions (#503) ----------------------------------------------
+# A question Garrick asked is a file in the `Needs you` folder of the work it blocks. It is a row of Waiting on you now in
+# its own zone, with a button for each answer and *Not now*; both go through page_action.py's `answer` and `later`. Each
+# row is one zone's, and nothing here adds one zone to another.
+QUESTION_BOX = "Needs you"
+QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
+QUESTION_ASK = 200
+
+
+def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
+    """The open questions in one piece of work's `Needs you` folder, oldest first, and the ones put off whose day has
+    come. One put off to a later day, an answered one and a file with no bold line to ask are left out."""
+    out: List[dict] = []
+    box = folder / QUESTION_BOX
+    if not box.is_dir():
+        return out
+    for f in sorted(box.glob("*.md")):
+        if f.name.startswith((".", "_")):
+            continue
+        fm = frontmatter(f)
+        state = as_text(fm.get("status")).strip().lower() or "open"
+        later = as_date(fm.get("later"))
+        if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
+            continue
+        try:
+            body = re.sub(r"\A---\n.*?\n---\n", "", f.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)
+        except OSError:
+            continue
+        ask, opts = "", []
+        for line in body.splitlines():
+            m = QUESTION_OPTION.match(line)
+            if m:
+                opts.append(m.group(1).strip())
+            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
+                ask = line.strip().strip("*").strip()
+        if ask:
+            out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
+                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name})
+    return out
+
+
+def question_need(q: dict, today: dt.date) -> dict:
+    """One question as one thing that waits: what it asks, one button for each answer it lists, *Not now*, and a link to
+    the threads. An answer in the user's own words is the assistant's: the row offers the listed answers only."""
+    own = q["own"].casefold()
+    ask = q["ask"] if len(q["ask"]) <= QUESTION_ASK else q["ask"][:QUESTION_ASK - 1].rstrip() + "\u2026"
+    buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s"' % E(q["file"]))
+                      for label in q["options"] if label.casefold() != own)
+    buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s"' % E(q["file"]))
+    return {"kind": "question", "group": "todo", "level": "warning", "zone": q["zone"], "count": 1,
+            "text": "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
+            "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
+
+
+def question_needs(ws: Path, today: dt.date) -> List[dict]:
+    """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
+    out: List[dict] = []
+    for zone in visible_dirs(ws / "Zones"):
+        found: List[dict] = []
+        for project in visible_dirs(zone):
+            hub = project / (project.name + ".md")
+            if hub.is_file():
+                found += questions_in(project, zone, today)
+            for thread in visible_dirs(project / "Threads"):
+                if (thread / (thread.name + ".md")).is_file():
+                    found += questions_in(thread, zone, today)
+        found.sort(key=lambda q: (q["asked"] or dt.date.max, q["file"]))
+        out += [question_need(q, today) for q in found]
+    return out
+
+
 LATE_ICON = ('<svg class="bi" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" '
              'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["late"])
 
@@ -8219,6 +8324,7 @@ lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+window.GarrickNeedsLead=function(){lead(box.children.length)};
 })();
 """
 
@@ -8253,6 +8359,19 @@ if(out&&out.ok&&b){line(row,say,b.commit,b.repo);var m=row.querySelector('[data-
 else{line(row,say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
+"""
+
+
+# ---- Waiting on you now > questions (#503): the row goes when its answer is noted ------
+# A question's buttons send `answer` or `later` (page_action.py). When the request was done the row goes, the group's count
+# and the card's sentence follow it; a refusal leaves the row, and the page says why in its own line.
+QUESTION_JS = r"""
+(function(){var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file})[0],
+row=b&&b.closest('.wneed');if(row){var g=row.closest('.wgroup'),c=document.getElementById('waiting-now');row.remove();
+if(g){var n=g.querySelector('.wgn'),left=g.querySelectorAll('.wneed').length;if(left)n.textContent=left;else g.remove()}
+if(c){c.dataset.n=Math.max(0,(+c.dataset.n||0)-1);if(window.GarrickNeedsLead)window.GarrickNeedsLead()}}}
+return prev?prev(q,out):undefined};})();
 """
 
 
@@ -8587,7 +8706,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for r in items:
             party += [t for t in r["party"] if t not in party]
         hp = 1 if project in T[zone].get("held", ()) else 0
-        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp,
+        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp, "tn": len(items),
              "w": project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else "",
              "u": link(hub) if hub else link(items[0]["note"])}
         if acting and hub:
@@ -8645,8 +8764,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             late = 0 if parked else sum(1 for r in items if r.get("late"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s" id="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
-                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
-                    '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
+                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s</div>'
+                    '<span class="cnt muted subn mu">%d thread%s%s%s</span>%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
                     % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), row_anchor(zone, project), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d late" % late if late else "",
@@ -8664,17 +8783,17 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         parked_block = ('<details class="parked tsort" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
                         % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
         late = sum(1 for r in data["rows"] if r.get("late"))      # a red todo; a check has its own chip
-        meta = "%d live" % len(data["rows"]) + (" · %d late" % late if late else "") + \
+        meta = "%d live" % len(data["rows"]) + (' · <span class="late">%d late</span>' % late if late else "") + \
             (" · %d done" % data["done"] if data["done"] else "")
-        cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
-                 % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
+        cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
+                 % (slug, E(z), CHEV, zone_label(z, ZS), meta, EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
     # The search box leads the row, New project and New thread follow it, and
     # what it finds takes the columns' place while a query is in it (#140).
     new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>' % FIND_BOX)
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty · Dot: a session is open in it</p></div>'
                         % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
 
 
@@ -8894,7 +9013,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date()))  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
+    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
@@ -8962,7 +9081,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

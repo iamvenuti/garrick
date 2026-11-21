@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""your_work.py: what the simple home and its actions share about the user's own work (#182).
+"""your_work.py: what the page and its actions share about the user's own work (#182).
 
-The simple home's *Add your own work* points Garrick at a folder the user
+*Add your own work* points Garrick at a folder the user
 already keeps, reads only its names and dates (System/tools/discover.py), and
 proposes the pieces of work in it. A yes makes Garrick's record of one: a
 project with one thread whose hub's `folder:` names the folder. *Start with

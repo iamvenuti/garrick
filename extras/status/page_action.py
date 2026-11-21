@@ -186,8 +186,7 @@ zone's repository, as the skills would:
     later       "Not now": {"zone", "file", "until"?}; the question put off
                 to tomorrow, or to the day `until` names, and committed
     continue    a piece of work opened in Claude's desktop app, already
-                oriented: {"zone", "file"}, its note. The simple home's
-                Continue and, since #180, every Open in Claude on a thread
+                oriented: {"zone", "file"}, its note. Continue and, since #180, every Open in Claude on a thread
                 (the Threads card, the graph's panel, the app's menu and
                 panel). Its own record is committed, a headless `claude -p`
                 asks "Where am I on <it>?" (say_name()), and that session
@@ -348,7 +347,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "layout",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
-         "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
+         "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
          "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
          "commit-files",
@@ -2916,7 +2915,7 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
         raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
 
 
-# ---- the simple home (#175): Needs you, Continue, Ask something, the example ----
+# ---- Needs you, Continue, Ask something, the example (#175) ----
 # Needs you is a record, not a view: one file per question Garrick asked, in
 # the folder of the work it blocks, `Needs you/<YYMMDD> - <slug>.md`,
 # committed with the zone. `status: open`, `answered` or `later`; each option
@@ -4384,7 +4383,7 @@ def example(ws: Path, req: dict) -> str:
         raise Refused(said[-1] if said else "example.py refused")
     return said[-1].rstrip(".") if said else ("The example is archived. Nothing of yours was touched" if do == "archive"
                                               else "The example is back")
-# ---- end of the simple home ------------------------------------------------------
+# ---- end of Needs you, Continue and the example ------------------------------------------------------
 
 
 # ---- your own work (#182): a folder you already keep, read and never written ----
@@ -4402,7 +4401,6 @@ def example(ws: Path, req: dict) -> str:
 # of the folder its sessions start in, and by `--settings` on every headless
 # call; a shell command, approved or run by Auto mode, is covered by neither.
 _YW = None
-FOLDER_MAX = 1024
 FIRST_LOOK_TIMEOUT = 360          # seconds for the call that reads a piece of work's files for the first time
 TOOL_TIMEOUT = 300                # for discover.py, which lists a folder that may be a large cloud drive
 EXTRACT_TIMEOUT = 180             # for extract.py, on one piece of work's Office files
@@ -4446,31 +4444,6 @@ def context_of(ws: Path) -> dict:
         return lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
     except Exception:
         return {}
-
-
-def picked_folder(req: dict) -> str:
-    """The folder the picker gave: an absolute path, on one line."""
-    folder = req.get("folder")
-    if not isinstance(folder, str) or not folder.strip() or "\n" in folder or len(folder) > FOLDER_MAX:
-        raise Refused("no folder given")
-    folder = os.path.expanduser(folder.strip())
-    if not os.path.isabs(folder):
-        raise Refused("not a folder Garrick can read: %s" % folder)
-    return folder
-
-
-def discover_folder(ws: Path, req: dict) -> dict:
-    """Add your own work: the picked folder looked through by discover.py,
-    names and dates only, and its proposals kept for the page to show."""
-    out = tool_json(ws, "discover.py", "scan", picked_folder(req))
-    top, more = out.get("top") or [], out.get("more") or []
-    name = out.get("name") or os.path.basename(out.get("folder") or "")
-    if top:
-        said = "Found %d piece%s of work in %s. Nothing in it was changed" % (
-            len(top) + len(more), "" if len(top) + len(more) == 1 else "s", name)
-    else:
-        said = "Nothing new in %s looks like a piece of work. Nothing in it was changed" % name
-    return {"say": said, "view": your_work().view_id(out.get("folder") or "")}
 
 
 def suggestion(ws: Path, pid) -> tuple:
@@ -6010,8 +5983,6 @@ def act(ws: Path, req, today=None, now=None):
         return set_machine_role(ws, req)
     if req["verb"] == "read-guard":
         return set_read_guard(ws, req)
-    if req["verb"] == "discover":
-        return discover_folder(ws, req)
     if req["verb"] == "suggestion":
         return answer_suggestion(ws, req)
     if req["verb"] == "start":

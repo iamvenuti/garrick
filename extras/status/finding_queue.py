@@ -791,9 +791,13 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
     answers = []
     for a in (wall_answers(scope) if plain == "wall" else table):
         a = dict(a)
+        if a["action"] == "keep" and not keepable_path(path):
+            continue                # the verb would refuse it (#623): a page outside a zone or a wiki cannot be left as it is
         if a["action"] == "handoff":
             a["phrase"] = handoff_phrase(plain, a["id"], item)
-            if a["id"] in BOUNDED.get(plain, ()):       # a bounded edit in the finding's own zone (#592): the page asks the engine first
+            # a bounded edit in the finding's own zone (#592): the page asks the engine first. A page outside a zone or a wiki
+            # (a project kept under System/) is in no repository the engine commits in: a visible handoff with its phrase (#623)
+            if a["id"] in BOUNDED.get(plain, ()) and keepable_path(path):
                 a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
         elif a["action"] == "open":
             a["reqs"] = [{"verb": "note-open", "path": path}]

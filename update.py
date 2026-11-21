@@ -164,11 +164,10 @@ def _tree(src, rel, out, fill=None, skip=()):
         out[path] = (data, item.stat().st_mode & 0o777)
 
 
-def shipped(zones, simple=False):
+def shipped(zones):
     """Every file this Garrick's installer writes into a workspace with these
     zones, as {path from the top: (bytes, mode)}. Not System/context.md, which
-    holds the user's answers, and not the version stamp. `simple`, for a
-    workspace on the simple home: its zones' Todo.md has no example line."""
+    holds the user's answers, and not the version stamp."""
     out = {}
     _tree(TEMPLATE, "", out, skip=("System", "Wikis", "Zones"))
     _tree(TEMPLATE / "System", "System", out, skip=("context.md",))
@@ -181,10 +180,6 @@ def shipped(zones, simple=False):
     zone_template = TEMPLATE.joinpath(*install.lib().ZONE_TEMPLATE)
     for zone in zones:
         _tree(zone_template, "Zones/" + zone, out, fill={"ZONE": zone})
-        todo = "Zones/%s/%s" % (zone, install.lib().ZONE_TODO)
-        if simple and todo in out:
-            data, mode = out[todo]
-            out[todo] = (install.lib().zone_todo(data.decode("utf-8"), True).encode("utf-8"), mode)
     for path, text in install.ignore_files(zones).items():
         out[path] = (text.encode("utf-8"), 0o644)
     for path in list(out):
@@ -316,7 +311,7 @@ def plan(root, zones=None):
     recorded = stamp["files"] if listed else {}
     zones = zones if zones is not None else zones_of(root, stamp)
     known = known_hashes(zones)
-    new = shipped(zones, simple=lib.simple_home(root))
+    new = shipped(zones)
     extras = installed_extras(root)
     new.update(extras_shipped(extras))
     actions = {kind: [] for kind in KINDS}
@@ -1706,7 +1701,7 @@ def before_quit_commands(root):
 
 
 def home_steps(root):
-    """The simple home is gone (#503): the Garrick App opens on the full page only, so a `"home"` key in
+    """The Garrick App opens on the full page only, so a `"home"` key in
     System/garrick-settings.json is removed and the update says so in one line. Files a project holds under its
     own Files/ folder, from a copy kept or files moved in, stay where they are, and the projects that have them
     are named."""

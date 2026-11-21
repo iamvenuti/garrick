@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(26, html.count("</script>"))         # (#621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(27, html.count("</script>"))         # (#503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -420,7 +420,7 @@ class TestGraph(StatusCase):
         self.assertIn("host.postMessage({act:{verb:'note-read',path:path}})", js)
         self.assertIn("host.postMessage({act:{verb:'note-open',path:path}})", js)
         # the card is drawn again for each node selected, a linked one included, so Preview reads the note in it
-        self.assertIn("Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')", status.GRAPH_JS)
+        self.assertIn("Panel.card(o,0,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')", status.GRAPH_JS)
         self.assertIn("if(b){var m=N[+b.dataset.i];", status.GRAPH_JS)
         self.assertIn("select(m,true)}});", status.GRAPH_JS)
 
@@ -1087,7 +1087,7 @@ class TestOpensOnTheWork(StatusCase):
         self.assertNotIn("Over 45 days", html)
         self.assertNotIn("15 to 45 days", html)
         self.assertIn("a figure, not a fault", threads)
-        self.assertIn("Last touched ", status.PANEL_JS)              # and the card says it plainly
+        self.assertIn("return'Touched '+ago(o.d)", status.PANEL_JS)       # and the card says it plainly (#620)
         self.assertNotIn("Aging", status.PANEL_JS)
         row = threads[threads.index('data-card="%s' % htmllib.escape('{"n":"Pricing"', quote=True)) - 40:]
         self.assertIn('data-ok="1"', row[:60])                       # not something that needs attention
@@ -1177,8 +1177,8 @@ class TestOpensOnTheWork(StatusCase):
         self.assertLess(listed.index("send the floor"), listed.index("book the call"))       # the late one first
         self.assertIn('<span class="lateby">was due Sun 1 Mar</span>', listed)                 # said in words, not by colour alone
         self.assertIn('data-ok="0"', threads)
-        self.assertRegex(threads, r'<span class="muted subn">\d+ threads? · 1 late')   # the project's row (#233)
-        self.assertRegex(threads, r'<span class="meta mu">\d+ live · 1 late')          # and its zone's meta
+        self.assertRegex(threads, r'<span class="cnt muted subn mu">\d+ threads? · 1 late')   # the project's row (#233)
+        self.assertRegex(threads, r'<span class="meta mu">\d+ live · <span class="late">1 late</span>')          # and its zone's meta
         for gone in (">overdue</span>", ">chase due</span>", "needing a chase"):
             self.assertNotIn(gone, threads)
 
@@ -1188,7 +1188,7 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         self.assertEqual(1, cards(html)[("Acme Review", "Pricing")]["lt"])          # the card says it, not its age
         self.assertNotIn("lt", cards(html)[("Birch Entry", "Market Sizing")])
-        self.assertIn("' · '+a+' late'", status.PARK_JS)                 # and PARK_JS recounts in those words
+        self.assertIn("' · <span class=\"late\">'+a+' late</span>'", status.PARK_JS)    # and PARK_JS recounts in those words
         self.assertIn("' · '+urg+' late'", status.PARK_JS)
         self.assertIn("'.thread:not(.proj) .tchip.todo.late'", status.PARK_JS)    # a red todo, as the build counts
         self.assertNotIn("needing a chase", status.PARK_JS)
@@ -1602,7 +1602,7 @@ class TestThreadCards(StatusCase):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
             # a row's card as itself, the graph's as a panel, with Preview before the rest (#206)
-            self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o(,window\.GarrickNote\?GarrickNote\.button\(notePath\(n\),n\.N\|\|n\.n\):'')?\)")
+            self.assertRegex(js, r"Panel\.card\(o(,[01])?(,window\.GarrickNote\?GarrickNote\.button\(notePath\(n\),n\.N\|\|n\.n\):'')?\)")
             self.assertNotIn("data-copy=", js)
             self.assertNotIn('class="act"', js)
 
@@ -1638,7 +1638,7 @@ class TestProjectRows(StatusCase):
         zone = zone[:zone.index("</details>")]
         self.assertIn('<button type="button" class="pchev" data-sub="sub-work-acme-review" aria-expanded="false" title="Show its 1 thread">', zone)
         self.assertIn('<div class="subthreads tsort" id="sub-work-acme-review" hidden><div class="thread sub"', zone)
-        self.assertIn('<span class="muted subn">1 thread</span>', zone)
+        self.assertIn('<span class="cnt muted subn mu">1 thread</span>', zone)
         self.assertNotIn('data-sub="sub-work-cedar-notes"', zone)           # a project with no thread notes is a row of its own
         project = [c for c in re.findall(r'class="thread proj"[^>]*data-card="([^"]*)"', zone)]
         self.assertEqual({json.loads(htmllib.unescape(c))["kl"] for c in project}, {"project"})
@@ -2129,7 +2129,8 @@ class TestPreviewFeatures(StatusCase):
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
         self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
-        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: Park and Wake sit in the card's menu (#620)
+        self.assertIn("function pflip(o)", status.PANEL_JS)
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 

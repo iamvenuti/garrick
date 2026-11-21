@@ -35,6 +35,7 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
@@ -57,6 +58,7 @@ DEFAULTS = {"tier": "sonnet", "effort": "medium", "autonomy": "act"}
 LEVELS_FOR = {"ask": LEVELS, "telegram": ("read", "act")}
 DEEP_TIER, DEEP_EFFORT = "opus", "high"
 PLAIN_TIER = "haiku"
+NO_BINARY_SAID = "The assistant's command was not found."
 CHECKS = ("resume", "removable_tools", "walls_outside_model")
 CHECK_SAID = {
     "resume": "the assistant cannot continue a session",
@@ -171,8 +173,27 @@ def assistant() -> str:
     return os.environ.get("GARRICK_HARNESS", "claude").strip().lower() or "claude"
 
 
+_HANDOFF = None
+
+
+def claude_path() -> Optional[str]:
+    """The one resolver of the `claude` command for the whole extra (#628): handoff.find_claude(), which takes GARRICK_CLAUDE
+    first, then the documented places and PATH, and passes over a shell wrapper. The Mac app starts with a bare PATH, so
+    PATH alone is not enough. None when it is nowhere."""
+    global _HANDOFF
+    try:
+        if _HANDOFF is None:
+            spec = importlib.util.spec_from_file_location("garrick_channels_handoff", str(Path(__file__).resolve().with_name("handoff.py")))
+            _HANDOFF = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(_HANDOFF)
+        found = _HANDOFF.find_claude()
+    except Exception:
+        found = None
+    return str(found) if found else None
+
+
 def binary(name: str) -> Optional[str]:
-    return shutil.which(name)
+    return claude_path() if name == "claude" else shutil.which(name)
 
 
 def probe_help(name: Optional[str] = None) -> str:
@@ -248,6 +269,10 @@ def capability(ws: Path, force: bool = False, probe: Optional[Callable[[], str]]
         try:
             kept = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(kept, dict) and kept.get("assistant") == name and "ok" in kept:
+                if kept.get("ok") and name == "claude" and probe is None and not binary(name):
+                    # a check made where the command was on PATH is no answer where it cannot be found now (#628)
+                    return dict(kept, ok=False, failed=list(kept.get("failed") or []) + ["binary"],
+                                said=list(kept.get("said") or []) + [NO_BINARY_SAID])
                 return kept
         except (OSError, ValueError):
             pass

@@ -250,7 +250,9 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         self.assertNotIn("place '+f[0]+'", STATUS_SRC)
 
     def test_the_app_treats_a_look_as_reading_and_opens_the_dialog_for_a_choice(self):
-        self.assertIn('request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }', SWIFT_SRC)
+        self.assertIn('request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,', SWIFT_SRC)
+        self.assertIn("CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }", SWIFT_SRC)
+        self.assertNotIn('request["check"] as? Bool', SWIFT_SRC)      # the number 1 would bridge to true; the page's rule is `is True`
         self.assertIn('choice["layout"] as? [String: Any]', SWIFT_SRC)
         self.assertIn("window.GarrickLayout&&window.GarrickLayout(", SWIFT_SRC)
 

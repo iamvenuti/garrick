@@ -211,6 +211,18 @@ class TestReadGuardBlock(SettingsCase):
         self.assertEqual(2, sec.count('data-rg-add='))                                              # an Add on each list
         self.assertRegex(sec, r'data-rg="skip">.*?None\.')                                          # the second list is empty
 
+    def test_a_laptop_copy_shows_one_line_in_place_of_the_controls(self):
+        self.role("roaming", name="laptop", server="mini")
+        self.assistants()
+        sec = self.block()
+        self.assertIn("The read guard is set on the home server.", sec)
+        self.assertNotIn("<input", sec)
+        self.assertNotIn('data-rg="mode"', sec)
+        self.assertNotIn("rg-show", sec)
+        self.role("server", name="mini")
+        self.assertIn('data-rg="mode"', self.block())
+        self.assertNotIn("set on the home server", self.block())
+
     def test_the_mode_is_what_runs_not_what_the_file_says(self):
         self.assistants()
         self.settings_file(**{"read-guard": "enforce"})
@@ -219,6 +231,17 @@ class TestReadGuardBlock(SettingsCase):
         self.assertRegex(self.block(), r'name="rg-mode" value="enforce" checked')
         self.settings_file(**{"read-guard": "warn"})
         self.assertRegex(self.block(), r'name="rg-mode" value="warn" checked')
+
+    def test_settings_that_do_not_read_show_On_with_a_line_that_says_so(self):
+        self.assistants(registered=True)
+        (self.root / "System" / "garrick-settings.json").write_text("{not json")
+        sec = self.block()
+        self.assertRegex(sec, r'name="rg-mode" value="enforce" checked')
+        self.assertIn("Garrick cannot read your settings file.", sec)
+        self.settings_file(**{"read-guard": "warn"})
+        sec = self.block()
+        self.assertRegex(sec, r'name="rg-mode" value="warn" checked')
+        self.assertNotIn("cannot read your settings file", sec)
 
     def test_the_cross_wall_choice_and_the_lists_come_from_the_settings(self):
         self.assistants()
@@ -291,10 +314,12 @@ class TestReadGuardBlock(SettingsCase):
         os.environ["GARRICK_HARNESS"] = "codex"
         sec = self.block()
         self.assertIn(CODEX, sec)
+        self.assertIn("Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here.", sec)
         self.assertNotIn('data-rg-add', sec)
         self.assertNotIn("Mail and calendar tools", sec)
         os.environ["GARRICK_HARNESS"] = "claude"
         self.assertNotIn(CODEX, self.block())
+        self.assertNotIn("rg-trust", self.block())
 
     def test_the_block_texts_are_the_issues_word_for_word(self):
         self.assistants()

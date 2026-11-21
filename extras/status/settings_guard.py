@@ -18,11 +18,13 @@ it writes nothing: the page's two verbs, `machine-role` and `read-guard`, do (pa
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -68,6 +70,9 @@ GUARD_TEXT = {
                "them and does not warn you about them.",
 }
 CODEX_LINE = "Codex cannot have its mail and calendar results checked. Only the instructions keep them apart."
+UNREADABLE = ("Garrick cannot read your settings file. The mail and calendar check treats the read guard as On until it reads "
+              "again.")
+CODEX_TRUST = "Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here."
 MODES = (("off", "Off"), ("warn", "Watch only"), ("enforce", "On"))
 CROSS = (("deny", "Refuse"), ("ask", "Ask me"))
 CANNOT = {
@@ -88,13 +93,80 @@ def esc(text) -> str:
 # ---------------------------------------------------------------------------------------------------- what the guard holds
 
 
-HOOK_NAME = re.compile(r"[^\s\"']*(?:zone_guard|read_guard|waiting_hook)\.py")
+HOOK_NAME = re.compile(r".*(?:zone_guard|read_guard|waiting_hook)\.py", re.S)
+
+# The two files that make a hooks folder Garrick's, with the SHA-256 of each as this release ships it. A folder an assistant's
+# settings name is only trusted when both files read the same as the ones beside this page, or, where this page has none
+# beside it (an installed page), the same as these digests. A planted copy, and a file of an older Garrick, pass neither.
+# `tests/test_settings_actions.py` fails when a release changes a hook file and leaves its digest here behind.
+RELEASE_HOOKS = {
+    "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
+    "read_guard.py": "da3bb1e310c57bbdc98578b35f4cb4522dd6375c15981ef4da6e216ee140734c",
+}
+
+
+def _bytes(path: Path) -> Optional[bytes]:
+    try:
+        return path.read_bytes() if path.is_file() else None
+    except OSError:
+        return None
+
+
+def trusted_hook_folder(folder: Path) -> bool:
+    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. The folder
+    beside the page passes; any other passes only on the same bytes. Reads the files; never imports them."""
+    beside = HERE.parent / "hooks"
+    try:
+        if folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
+            return True
+    except OSError:
+        return False
+    for name, digest in RELEASE_HOOKS.items():
+        have = _bytes(folder / name)
+        if have is None:
+            return False
+        ours = _bytes(beside / name)
+        if ours is not None:
+            if have != ours:
+                return False
+        elif hashlib.sha256(have).hexdigest() != digest:
+            return False
+    return True
+
+
+def hook_scripts(text: str) -> List[str]:
+    """The Garrick hook files an assistant's settings text names: the words of each hook `command`, split as a shell splits
+    them, that end in zone_guard.py, read_guard.py or waiting_hook.py. A path with a space in it stays whole when quoted.
+    A text that is not JSON names none."""
+    out: List[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                try:
+                    words = shlex.split(command)
+                except ValueError:
+                    words = command.split()
+                out.extend(w for w in words if HOOK_NAME.fullmatch(w))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    try:
+        walk(json.loads(text))
+    except ValueError:
+        pass
+    return out
 
 
 def hook_folders(home: Optional[str] = None) -> List[Path]:
     """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
-    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace).
-    The workspace has no copy of its own: the hooks stay where the Garrick download is."""
+    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace). A
+    folder a settings file names is kept only when `trusted_hook_folder` says it holds Garrick's own two files. The
+    workspace has no copy of its own: the hooks stay where the Garrick download is."""
     home = home or str(Path.home())
     folders = [HERE.parent / "hooks"]
     for rel in (".claude/settings.json", ".codex/hooks.json"):
@@ -102,32 +174,42 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
             text = (Path(home) / rel).read_text(encoding="utf-8")
         except OSError:
             continue
-        for found in HOOK_NAME.findall(text):
+        for found in hook_scripts(text):
             there = Path(os.path.expanduser(found))
             if there.is_absolute():
                 folders.append(there.parent)
     out = []
     for f in folders:
-        if f not in out and (f / "read_guard.py").is_file():
+        if f not in out and (f / "read_guard.py").is_file() and trusted_hook_folder(f):
             out.append(f)
     return out
+
+
+def load_hook(folder: Path, name: str):
+    """read_guard.py from a folder `hook_folders()` returned, or an exception. The standard modules it imports are loaded
+    first, so a file beside it cannot stand in for one; the folder goes last on the path, not first."""
+    import hashlib, json, os, re, shlex, sys, tempfile, time, types  # noqa: F401,E401
+    src = folder / "read_guard.py"
+    spec = importlib.util.spec_from_file_location(name, str(src))
+    mod = importlib.util.module_from_spec(spec)
+    added = str(folder) not in sys.path
+    if added:
+        sys.path.append(str(folder))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if added and str(folder) in sys.path:
+            sys.path.remove(str(folder))
+    return mod, src
 
 
 def guard_module():
     """read_guard.py, from the first of `hook_folders()` that loads, or None."""
     for folder in hook_folders():
-        src = folder / "read_guard.py"
-        sys.path.insert(0, str(folder))
         try:
-            spec = importlib.util.spec_from_file_location("garrick_read_guard_settings", str(src))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
+            return load_hook(folder, "garrick_read_guard_settings")[0]
         except Exception:
             continue
-        finally:
-            if sys.path and sys.path[0] == str(folder):
-                sys.path.pop(0)
     return None
 
 
@@ -166,7 +248,7 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     """What Settings shows of the read guard: whether its hook is registered, its mode and cross-wall choice, both lists,
     whether the connector filter can run, and what the log holds. Reads only; never raises."""
     home = Path(home) if home is not None else Path.home()
-    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}}
+    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}, "unreadable": False}
     try:
         state["cross"] = lib.read_guard_cross(ws)
         state["tools"] = list(lib.connector_patterns(ws))
@@ -183,6 +265,8 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     try:
         on = lib.read_guard_mode(ws)
         state["mode"] = "off" if not state["registered"] else ("enforce" if on == "enforce" else "warn")
+        if state["registered"] and not lib.settings_readable(ws):
+            state["mode"], state["unreadable"] = "enforce", True      # the connector filter reads such a file as On
     except Exception:
         pass
     try:
@@ -268,9 +352,16 @@ def title(text: str, button: str) -> str:
     return '<span class="rgtitle">%s%s</span>' % (esc(text), button)
 
 
-def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Callable) -> str:
+ROAMING_LINE = "The read guard is set on the home server."
+
+
+def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Callable, role: str = "solo") -> str:
     """The Read guard block of Settings › Walls: four rows, in the app only. Under Watch only, what the log holds. The two
-    tool lists give way to one line for Codex, which cannot have a result replaced."""
+    tool lists give way to one line for Codex, which cannot have a result replaced. On a laptop copy the rows give way to
+    one line: the read guard's settings are the workspace's, and this computer only receives it."""
+    if role == "roaming":
+        return ('<div class="rgblock apponly" id="readguard-settings" hidden data-roaming="1"><h4 class="nsub">Read guard</h4>'
+                '<p class="hint rgroaming" id="rg-roaming">%s</p></div>' % esc(ROAMING_LINE))
     mode = state["mode"]
     problem = state.get("problem") or ""
     mode_row = ('<div class="rgrow" data-rg="mode" data-was="%s">%s%s</div>%s'
@@ -284,6 +375,8 @@ def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Call
                 % (" ".join(esc(l) for l in lines),
                    ' <button class="act rgsmall" type="button" id="rg-show" aria-expanded="false" aria-controls="rg-list">Show</button>' if state["would"] else "",
                    '<div class="rglist" id="rg-list" hidden>%s</div>' % show_list(state["would"]) if state["would"] else ""))
+    if state.get("unreadable"):
+        seen += '<p class="hint rgcannot" id="rg-unreadable" role="status">%s</p>' % esc(UNREADABLE)
     cannot = ""
     if problem:
         cannot = '<p class="hint rgcannot" id="rg-cannot" role="status">%s%s</p>' % (esc(CANNOT.get(problem, CANNOT["parties"])), esc(CANNOT_NEXT.get(mode, "")))
@@ -291,7 +384,8 @@ def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Call
                  % (esc(state["cross"]), title("Across a wall", help_button("Across a wall: Refuse, Ask me", "rg-cross")),
                     radios("rg-cross", "cross", CROSS, state["cross"], "Across a wall"), help_text("rg-cross", esc(GUARD_TEXT["rg-cross"]))))
     if codex:
-        lists = '<p class="hint rgcodex" id="rg-codex">%s</p>' % esc(CODEX_LINE)
+        lists = ('<p class="hint rgcodex" id="rg-codex">%s</p><p class="hint rgtrust" id="rg-trust">%s</p>'
+                 % (esc(CODEX_LINE), esc(CODEX_TRUST)))
     else:
         lists = ('<div class="rgrow rglist-row" data-rg="tools">%s<div class="rgbody">%s</div></div>%s'
                  '<div class="rgrow rglist-row" data-rg="skip">%s<div class="rgbody">%s</div></div>%s'
@@ -329,7 +423,7 @@ CSS = r"""
 .rglist-row{align-items:flex-start}.rgbody{flex:1 1 260px;min-width:0}.rgitems{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:4px}
 .rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem .rgtool{flex:1;min-width:0;overflow-wrap:anywhere;font-family:var(--mono,monospace)}
 .rgadd{display:flex;gap:6px;align-items:center}#readguard-settings .rgsmall,#readguard-settings .rgrem,#readguard-settings .rgadd .act{padding:2px 9px;min-height:0;line-height:1.5;font-size:var(--fs-meta)}.rgadd input{flex:1;min-width:0;font:inherit;font-size:var(--fs-meta);padding:3px 7px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
-.rgseen,.rgcannot,.rgcodex,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
+.rgseen,.rgcannot,.rgcodex,.rgtrust,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
 .rglist ul{margin:2px 0 8px;padding-left:18px}.rglistzone b{font-weight:560}
 .rgsaid.bad{color:var(--critical)}.rgsaid details{margin-top:4px}.rgsaid pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 0;font-size:var(--fs-meta)}
 """

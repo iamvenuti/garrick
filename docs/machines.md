@@ -53,7 +53,7 @@ If you tick a line by hand and then reopen it by hand before the server applies 
 2. On the laptop, do the same and choose **Laptop copy**. It asks for the home server's name.
 3. Set up the sync, which Garrick does not ship. It needs two rules from the tool you pick.
    - **The main folder syncs one way, from the home server to the laptop.** With Syncthing, make the folder Send Only on the server and Receive Only on the laptop. Do not use iCloud Drive or Dropbox for the workspace: they remove local copies and write conflict copies inside `.git`.
-   - **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run. It leaves the hidden folders `.outbox/` and `.machines/` alone.
+   - **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run.
 4. Keep the workspace at the same absolute path on both computers.
 
 The role is kept in one small file outside the workspace, `~/.config/garrick/machine.json`, which Settings writes for you. In a browser, *This machine* shows the role and says it is changed in Garrick.app.
@@ -67,7 +67,7 @@ python3 System/tools/machine.py set --role roaming --name laptop --server mini -
 python3 System/tools/machine.py
 ```
 
-`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one, and a change in Settings keeps the peers a file already names. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
+`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one. A change in Settings keeps what the file already holds and the change does not set: its peers, its workspace path, and its name when you leave the name empty. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
 
 ## What you cannot do on the laptop
 
@@ -77,7 +77,7 @@ On a laptop copy, each of these is refused, and the refusal says why:
 - **Anything that writes in the workspace outside a drop folder.** The zone guard refuses a file-editing tool's write anywhere but each zone's `Inbox/` and the workspace's own `Inbox/`, and the refusal names the drop folder to use.
 - **Commits.** Every zone's pre-commit check refuses one. The home server commits.
 - **The nightly jobs.** A job does not run: `job.py` says so and stops, and `check.py` reports an error for a Garrick launchd agent that is loaded. Unload it with `launchctl bootout`.
-- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server. A laptop copy can still change its own role.
+- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server. On a laptop copy the *Read guard* block shows one line in place of its controls: “The read guard is set on the home server.” A laptop copy can still change its own role.
 
 On the home server, the jobs run as they do on one computer, and `check.py` warns about sync conflict copies anywhere in the workspace.
 

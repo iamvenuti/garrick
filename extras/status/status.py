@@ -4710,7 +4710,7 @@ def read_guard_block(ws: Path) -> str:
         codex = channels_mod().assistant() == "codex"
     except Exception:
         codex = False
-    return guard.guard_block(guard.read_state(ws, lib), codex, help_button, help_text)
+    return guard.guard_block(guard.read_state(ws, lib), codex, help_button, help_text, machine_record(ws)[0])
 
 
 def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:

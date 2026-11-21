@@ -1883,7 +1883,8 @@ def machine_lib(ws: Path):
 def set_machine_role(ws: Path, req: dict) -> dict:
     """Settings › This machine: write the role of this computer, as `machine.py set` does, no more. `role` is one of
     solo, server, roaming; `name` is this computer's name and `server` the home server's, both optional except that a
-    laptop copy needs the server's. The peers an earlier file named are kept. Nothing leaves this computer, and no file
+    laptop copy needs the server's. What an earlier file named is kept: its peers, its workspace path, and its name when the
+    dialog sends none. Nothing leaves this computer, and no file
     in the workspace changes."""
     mod = machine_lib(ws)
     role, name, server = req.get("role"), req.get("name") or "", req.get("server") or ""
@@ -1900,8 +1901,8 @@ def set_machine_role(ws: Path, req: dict) -> dict:
     if mod is None or not callable(getattr(mod, "write", None)):
         raise fails("role-tool", "System/tools/machine.py is not there, or is older than this page")
     try:
-        peers = mod.read().get("peers") or []
-        where = mod.write(role, name, server, "", peers)
+        kept = mod.read()
+        where = mod.write(role, name or kept.get("name") or "", server, kept.get("workspace") or "", kept.get("peers") or [])
     except OSError as e:
         raise fails("role-write", "%s: %s" % (type(e).__name__, e))
     except ValueError as e:
@@ -1923,30 +1924,23 @@ def guard_hooks():
     except Exception:
         return None, None
     for folder in folders:
-        src = folder / "read_guard.py"
-        spec = importlib.util.spec_from_file_location("garrick_read_guard_register", str(src))
-        mod = importlib.util.module_from_spec(spec)
-        sys.path.insert(0, str(folder))
         try:
-            spec.loader.exec_module(mod)
+            return found.load_hook(folder, "garrick_read_guard_register")
         except Exception:
             continue
-        finally:
-            if sys.path and sys.path[0] == str(folder):
-                sys.path.pop(0)
-        return mod, src
     return None, None
 
 
-def clean_patterns(value, what: str) -> list:
+def clean_patterns(value, what: str, needs_one: bool = False) -> list:
     """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
-    path separator or a space, no repeat, not many. Refused whole when one is not."""
-    if not isinstance(value, list) or len(value) > MAX_PATTERNS:
-        raise fails("guard-value", "%s is a list of at most %d tool names" % (what, MAX_PATTERNS))
+    path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
+    and calendar tools with none would switch the filter off with the guard still On. Refused whole when one is not."""
+    if not isinstance(value, list) or len(value) > MAX_PATTERNS or (needs_one and not value):
+        raise fails("guard-value", "%s is a list of at most %d tool names%s" % (what, MAX_PATTERNS, ", and not empty" if needs_one else ""))
     out = []
     for item in value:
         item = item.strip() if isinstance(item, str) else item
-        if not isinstance(item, str) or not TOOL_PATTERN.fullmatch(item) or ".." in item:
+        if not isinstance(item, str) or not TOOL_PATTERN.fullmatch(item) or ".." in item or not item.strip("*?"):
             raise fails("guard-value", "%r is not a tool name or a pattern for one" % (item,))
         if item.lower() not in [x.lower() for x in out]:
             out.append(item)
@@ -1968,7 +1962,7 @@ def set_read_guard(ws: Path, req: dict) -> dict:
             raise fails("guard-value", "across a wall is refuse or ask me, not %r" % (req["cross"],))
         new["read-guard-cross-zone"] = req["cross"]
     if "tools" in req:
-        new["connector-tools"] = clean_patterns(req["tools"], "the mail and calendar tools")
+        new["connector-tools"] = clean_patterns(req["tools"], "the mail and calendar tools", needs_one=True)
     if "skip" in req:
         new["connector-tools-skip"] = clean_patterns(req["skip"], "the tools with nothing to check")
     if mode is None and not new:

@@ -286,6 +286,45 @@ class SettingsAndStateUnreadable(FilterCase):
         self.assertIsNone(self.after(response(deep, as_text=False)))
 
 
+class GarricksToolsCannotLoad(FilterCase):
+    """S3: a half-applied update leaves garrick_lib broken. Under On the result is still removed, from the settings file
+    read as plain JSON; under Watch only, and with no settings file, it passes as before."""
+
+    def setUp(self):
+        super().setUp()
+        link = self.root / "System" / "tools"
+        link.unlink()
+        link.mkdir()
+        (link / "garrick_lib.py").write_text("def broken(:\n", encoding="utf-8")
+
+    def test_on_removes_the_result_of_a_listed_tool(self):
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after(response({"threads": THREADS}))))
+
+    def test_a_tool_on_no_list_goes_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), tool=OTHER))
+
+    def test_the_default_list_holds_when_the_settings_name_none(self):
+        self.settings(**{"read-guard": "enforce"})
+        self.assertIsNotNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_watch_only_and_no_file_let_it_through(self):
+        self.settings(**{"read-guard": "warn", "connector-tools": ["mcp__fakemail__*"]})
+        self.assertIsNone(self.after(response({"threads": THREADS})))
+        (self.root / "System" / "garrick-settings.json").unlink()
+        self.assertIsNone(self.after(response({"threads": THREADS})))
+
+    def test_a_settings_file_that_does_not_read_counts_as_on(self):
+        (self.root / "System" / "garrick-settings.json").write_text("{not json", encoding="utf-8")
+        self.assertIsNotNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_a_session_at_the_root_and_a_scheduled_job_go_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), home=self.root))
+        self.assertIsNone(self.after(response({"threads": THREADS}), headless=True))
+
+    def test_with_no_workspace_found_the_result_goes_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), home=self.home))
+
+
 class ToolsSeen(FilterCase):
     """A connector tool the session used that is on no list is named by check.py, not filtered silently."""
 

@@ -128,7 +128,16 @@ class TestTheRole(SettingsCase):
         self.assertEqual("This computer is now the home server.", self.go({"verb": "machine-role", "role": "server", "name": "mini", "server": "x"})["say"])
         self.assertEqual({"role": "server", "name": "mini"}, self.role_file())
         self.assertEqual("This computer is now one computer.", self.go({"verb": "machine-role", "role": "solo"})["say"])
-        self.assertEqual({"role": "solo"}, self.role_file())
+        self.assertEqual({"role": "solo", "name": "mini"}, self.role_file())             # the name is kept when none is sent
+
+    def test_the_workspace_path_and_the_name_an_earlier_file_named_are_kept(self):
+        target = self.home / ".config" / "garrick" / "machine.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"role": "roaming", "name": "laptop", "server": "mini", "workspace": "/Users/jo/Garrick"}))
+        self.go({"verb": "machine-role", "role": "roaming", "server": "mini2"})            # no name sent
+        self.assertEqual({"role": "roaming", "name": "laptop", "server": "mini2", "workspace": "/Users/jo/Garrick"}, self.role_file())
+        self.go({"verb": "machine-role", "role": "solo", "name": "desk"})                  # a new name wins; the path stays
+        self.assertEqual({"role": "solo", "name": "desk", "workspace": "/Users/jo/Garrick"}, self.role_file())
 
     def test_the_peers_an_earlier_file_named_are_kept(self):
         target = self.home / ".config" / "garrick" / "machine.json"
@@ -336,6 +345,17 @@ class TestTheReadGuard(SettingsCase):
         self.failed(out, "guard-save")
         self.assertNotEqual("enforce", self.saved().get("read-guard"))
 
+    def test_an_empty_mail_and_calendar_list_and_a_pattern_of_only_wildcards_are_refused(self):
+        self.assistants()
+        self.failed(self.go({"verb": "read-guard", "tools": []}), "guard-value")
+        for bad in ("*", "**", "?*", "*?*"):
+            for key in ("tools", "skip"):
+                with self.subTest(key=key, pattern=bad):
+                    self.failed(self.go({"verb": "read-guard", key: [bad]}), "guard-value")
+        self.assertEqual({}, self.saved())
+        self.assertTrue(self.go({"verb": "read-guard", "skip": []})["ok"])               # nothing to skip is a list that can be empty
+        self.assertTrue(self.go({"verb": "read-guard", "tools": ["mcp__x*"]})["ok"])
+
     def test_a_refused_change_never_shows_as_saved(self):
         self.assistants()
         out = self.go({"verb": "read-guard", "mode": "bogus"})
@@ -349,6 +369,8 @@ class TestTheReadGuard(SettingsCase):
         out = self.go({"verb": "read-guard", "mode": "warn"})
         self.assertFalse(out["ok"], out)
         self.assertIn("only receives", out["say"])
+        self.assertIn("set on the home server", out["say"])
+        self.assertNotIn("waits", out["say"])
         self.assertEqual({}, self.saved())
 
     def test_every_failure_row_has_a_sentence_and_one_next_step_and_no_path_or_key(self):
@@ -360,3 +382,93 @@ class TestTheReadGuard(SettingsCase):
                 self.assertTrue(sentence.endswith("."))
                 for word in (".json", ".py", "--", "/", "System/"):
                     self.assertNotIn(word, sentence)
+
+
+class TestOnlyGarricksOwnHookFolder(SettingsCase):
+    """S1: the page loads `read_guard.py` only from the folder beside it, or from a folder whose two files read the same.
+    A folder an assistant's settings name is never run on its word alone."""
+
+    def planted(self, copy=False):
+        folder = Path(self._tmp.name).resolve() / "planted"
+        folder.mkdir()
+        hooks = REPO / "extras" / "hooks"
+        if copy:
+            for name in ("zone_guard.py", "read_guard.py"):
+                (folder / name).write_bytes((hooks / name).read_bytes())
+        else:
+            (folder / "zone_guard.py").write_text("print('zone')\n")
+            (folder / "read_guard.py").write_text(
+                "import os\nopen(os.path.join(%r, 'ran'), 'w').write('x')\n" % str(folder))
+        return folder
+
+    def name_it(self, folder):
+        (self.home / ".claude").mkdir(exist_ok=True)
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+            {"type": "command", "command": "python3 %s" % (folder / "zone_guard.py")}]}]}}))
+
+    def test_a_planted_folder_is_not_trusted_and_never_imported(self):
+        folder = self.planted()
+        self.name_it(folder)
+        sg = pa_settings_guard()
+        self.assertNotIn(folder, sg.hook_folders(str(self.home)))
+        self.assertIsNone(self.hook_from_planted_only(sg))
+        self.assertFalse((folder / "ran").exists())
+
+    def test_the_button_takes_the_hook_from_beside_the_page_and_runs_nothing_planted(self):
+        folder = self.planted()
+        self.name_it(folder)
+        self.assistants()
+        mod, src = pa.guard_hooks()
+        self.assertEqual(REPO / "extras" / "hooks" / "read_guard.py", src)
+        self.assertFalse((folder / "ran").exists())
+
+    def test_a_copy_with_the_same_bytes_is_trusted(self):
+        folder = self.planted(copy=True)
+        self.name_it(folder)
+        self.assertIn(folder, pa_settings_guard().hook_folders(str(self.home)))
+
+    def test_a_quoted_path_with_a_space_is_read_whole(self):
+        folder = Path(self._tmp.name).resolve() / "my hooks"
+        folder.mkdir()
+        for name in ("zone_guard.py", "read_guard.py"):
+            (folder / name).write_bytes((REPO / "extras" / "hooks" / name).read_bytes())
+        (self.home / ".claude").mkdir(exist_ok=True)
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+            {"type": "command", "command": 'python3 "%s"' % (folder / "zone_guard.py")}]}]}}))
+        self.assertIn(folder, pa_settings_guard().hook_folders(str(self.home)))
+
+    def test_one_changed_byte_in_either_file_is_not(self):
+        for name in ("zone_guard.py", "read_guard.py"):
+            with self.subTest(name=name):
+                folder = Path(self._tmp.name).resolve() / ("p-" + name)
+                folder.mkdir()
+                for n in ("zone_guard.py", "read_guard.py"):
+                    (folder / n).write_bytes((REPO / "extras" / "hooks" / n).read_bytes())
+                (folder / name).write_bytes((folder / name).read_bytes() + b"\n#\n")
+                self.assertFalse(pa_settings_guard().trusted_hook_folder(folder))
+
+    def test_where_no_hooks_sit_beside_the_page_the_release_digests_decide(self):
+        sg = pa_settings_guard()
+        good = self.planted(copy=True)
+        with mock.patch.object(sg, "HERE", Path(self._tmp.name) / "nowhere" / "status"):
+            self.assertTrue(sg.trusted_hook_folder(good))
+            (good / "read_guard.py").write_bytes((good / "read_guard.py").read_bytes() + b"#")
+            self.assertFalse(sg.trusted_hook_folder(good))
+
+    def test_the_digests_are_the_ones_of_the_files_this_release_ships(self):
+        import hashlib
+        for name, digest in pa_settings_guard().RELEASE_HOOKS.items():
+            self.assertEqual(hashlib.sha256((REPO / "extras" / "hooks" / name).read_bytes()).hexdigest(), digest,
+                             "%s changed: put its new SHA-256 in RELEASE_HOOKS in extras/status/settings_guard.py" % name)
+
+    def hook_from_planted_only(self, sg):
+        with mock.patch.object(sg, "HERE", Path(self._tmp.name) / "nowhere" / "status"):
+            return sg.guard_module()
+
+
+def pa_settings_guard():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sg_for_tests", str(REPO / "extras" / "status" / "settings_guard.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod

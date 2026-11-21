@@ -4,6 +4,33 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-11-21
+
+A project no longer has to start with a thread, and you choose whether it is one piece of work or a heading over several. On a `Waiting on` line's chase day, Garrick looks for the reply in that zone and offers the tick or a chase it holds for your yes.
+
+**Upgrading.**
+- A new project no longer needs a thread, and a project is either one piece of work, with its resume point in its hub, or a heading over separate pieces.
+- A hub's resume point is still read while the project has threads, in *Your work*, the briefings and "what's next", until an *Outcome* takes its place. A project you split into threads earlier may still have an old *Resume here* block in its hub: it now shows beside the threads, so close it as an *Outcome* if its main line has ended.
+- On a `Waiting on` line's chase day, *Waiting on you now* says whether the reply came, in a *Follow-ups* row for each zone.
+
+### Added
+
+- **Follow-ups on `Waiting on` lines** (#603). When a line's chase day comes, code looks in that zone's Meetings pages and its `Inbox/` for anything from the person, by any name Garrick knows them by. With nothing found, no assistant is called. With something found, the nightly run asks the assistant once per zone, with read-only tools, whether the person delivered. Nothing on the line changes by itself. The Overview shows a *Follow-ups* row for each zone: *Tick it*, *Still waiting* and *Show me* when a reply was found, and *Chase* and *Give it a week* when there is no sign. *Chase* drafts the message from the line and what was found. When you name a send tool in `chase.tool` in `System/garrick-settings.json`, it holds the send for your yes. The recipient comes from mail in that zone's inbox whose sender is the person's full name, and only when that gives one address. The confirmation shows the recipient, the subject and the body. Without a send tool or an address, it shows the draft to copy. A line that names nobody Garrick knows, or only a first name two people share, is not looked at. The morning digest gains one line, such as "Follow-ups: 1 reply found, 2 to chase". "What am I waiting on" runs the same check at once.
+- **One piece of work or a heading** (#604). `scaffold.py project` no longer needs `--thread`. A project is one piece of work by default: its hub holds the resume point, `Sources/` and `Deliverables/`. `--heading` makes a heading: `layout: thread-first`, no resume point and no papers of its own, and it may start empty. *New project* on the page asks the same question and makes no thread unless you name one.
+- **A thread's own papers** (#604). In a project that is one piece of work, a new thread uses the project's papers unless you ask for its own (`scaffold.py thread --papers own`, or the question in *New thread*). Every thread under a heading has its own.
+- **`scaffold.py layout`** (#604) changes that choice for a project that exists: a thread to its own papers or back, or a project to a heading. It moves only the files that exactly one thread note names, with their ledger rows and links, in one commit through the wall check, and lists the rest for you to place. `--check` shows the plan and writes nothing. The page executor has the same `layout` verb, which only the app may call; the app has no button for it yet. A note that is a link is never rewritten by `layout`, `move` or `rename`.
+
+### Changed
+
+- A hub's resume point stays beside its threads in *Your work*, the briefings, "what's next" and the todo sweep (#604).
+- Naming a project (#604). A piece of work is named by the project alone, and "open" opens its hub. For a heading, "open" asks which thread, naming them, and a question about it says which thread each part of the answer came from. The Ask box and Telegram follow the same rule, and never read outside the project's zone.
+- The Ask box and the page no longer make a thread called *Getting started* when you name none.
+- `Waiting on` lines whose chase day has come leave *Late actions*: they are in *Follow-ups* (#603).
+
+### Fixed
+
+- When items wait in more than one inbox, each place on the Overview's inbox row has its own link. The row used to open the first zone's inbox whichever zones it named.
+
 ## [0.70.0] - 2026-11-17
 
 What needs you is now in one place, and you can act on it there. The Context queue does its small edits itself, with Undo. Telegram setup explains a certificate failure, and the bot understands an answer you type as a new message. The Todo tab can group actions by thread, and a wrap or a filed meeting now reworks a thread's actions instead of only adding to them.

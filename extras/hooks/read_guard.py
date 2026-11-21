@@ -44,6 +44,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 import time
 import types
@@ -1081,12 +1082,17 @@ def register(script, home=None, install=True):
     done = []
     for name, path, data in plans:
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            temporary = "%s.%d.tmp" % (path, os.getpid())
+            target = os.path.realpath(path)             # a settings file linked into a dotfiles folder stays a link
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            temporary = "%s.%d.tmp" % (target, os.getpid())
             with open(temporary, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
                 fh.write("\n")
-            os.replace(temporary, path)
+            try:
+                shutil.copymode(target, temporary)      # and keeps the mode it had
+            except OSError:
+                pass
+            os.replace(temporary, target)
         except OSError as exc:
             raise RegisterError("write", "%s could not be written: %s" % (path, exc))
         done.append(name)

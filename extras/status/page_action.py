@@ -5690,6 +5690,28 @@ def load_todo_skill(ws: Path):
     return None
 
 
+def finding_keep(ws: Path, fq, kind: str, answer: str, rel: str, which: str) -> object:
+    """Leave it as it is (#535), or take that back: one record for the finding's kind and file, in the page's own file, holding
+    while the file is exactly as it is now. A wall finding and a hook of the user's own are not in KEEPABLE, so the table has
+    already refused them. Under one lock, so a double press makes one record."""
+    if kind not in fq.KEEPABLE:
+        raise Refused("not an answer Garrick offers for this finding")
+    key = fq.later_key(kind, rel, which)
+    parts = rel.split("/")
+    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis"):
+        raise Refused("only a page of a zone or a wiki can be left as it is")
+    with held("page-action-keep.lock", busy="another answer to a finding is still being saved"):
+        if answer == fq.UNKEEP:
+            gone = fq.kept_drop(ws, key)
+            return {"say": "Undone. Garrick asks again when the page is built." if gone else "It was not left as it is."}
+        fh = fq.file_hash(ws, rel)
+        if not fh:
+            raise Refused("that file is not there any more; the page rebuilds now")
+        fq.kept_put(ws, key, fh)
+    return {"say": "Left as it is. Garrick asks again if the page changes.",
+            "undo": {"verb": "finding", "kind": kind, "path": rel, "answer": fq.UNKEEP + ("-" + which if which else "")}}
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5698,8 +5720,8 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     if not isinstance(kind, str) or kind not in fq.VERB_ANSWERS:
         raise Refused("not a kind of finding Garrick answers")
     which = ""
-    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"later-[0-9a-f]{6}", answer):
-        answer, which = "later", answer[6:]        # this one finding is put off, not every finding of the file
+    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"(?:later|keep|unkeep)-[0-9a-f]{6}", answer):
+        answer, which = answer[:-7], answer[-6:]   # this one finding is put off or kept, not every finding of the file
     if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
@@ -5713,6 +5735,8 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
         return {"say": "Undone: the page is as it was."}
     if answer in fq.BOUNDED.get(kind, ()):
         return finding_bounded(ws, req, kind, answer, rel)
+    if answer in (fq.KEEP, fq.UNKEEP):
+        return finding_keep(ws, fq, kind, answer, rel, which)
     if answer == "later":
         until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
@@ -5818,6 +5842,15 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
              "chase",
              "layout")
+
+
+# The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
+PAGE_ONLY_ANSWERS = ("keep", "unkeep")
+
+
+def page_only_answer(req) -> bool:
+    return (isinstance(req, dict) and req.get("verb") == "finding" and isinstance(req.get("answer"), str)
+            and re.sub(r"-[0-9a-f]{6}$", "", req["answer"]) in PAGE_ONLY_ANSWERS)
 
 
 def only_looks(req) -> bool:
@@ -5948,6 +5981,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             if isinstance(req, dict) and req.get("verb") in PAGE_ONLY and via != "page":
                 # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
                 # never reach it, and the command line has no verb for it.
+                raise Refused("this is the page's own button; it is not for the ask box or a session")
+            if via != "page" and page_only_answer(req):
+                # Leaving a finding as it is, and taking that back, are the user's own press:
+                # the ask box and a session never send them.
                 raise Refused("this is the page's own button; it is not for the ask box or a session")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:

@@ -376,19 +376,28 @@ def kept_row(r: dict) -> str:
             % (_e(r["id"]), _e(r["path"]), '<small class="cxa-where">%s</small>' % _e(where) if where else "", link, _e(line), _e(tip)))
 
 
-def kept_card(rows: List[dict], title: Callable[[str], str]) -> str:
+def keep_row(r: dict) -> str:
+    """A finding the user left as it is (#535): its plain sentence, where it sits, and Undo. The row names no word of the file."""
+    where = kept_where(r["path"])
+    return ('<li class="cxa-row" data-keep="1" data-kind="%s" data-path="%s" data-which="%s"><div>%s%s</div>'
+            '<div class="muted">You left it as it is \u00b7 Garrick asks again if the page changes.</div>'
+            '<button type="button" class="act" data-unkeep="1" title="Ask about it again from the next page build.">Undo</button></li>'
+            % (_e(r["kind"]), _e(r["path"]), _e(r.get("which") or ""), '<small class="cxa-where">%s</small>' % _e(where) if where else "", _e(r["sentence"])))
+
+
+def kept_card(rows: List[dict], title: Callable[[str], str], keeps=()) -> str:
     """Kept by you (#582), under the Context card's queue: what the user let through the wall check, once, a collapsed line
     for each place with its own count (two places' counts are never added) and, opened, its rows with Remove; "" with none.
     A row names its file and where it sits, and what kind of finding it was in plain words. It never quotes what was kept.
     `title` names a place; a file of no zone or wiki sits in a place of its own with no scope, which shows under All places only and
     never under a chosen zone (the card's Zone menu)."""
     groups: dict = {}
-    for r in rows:
+    for r in list(rows) + list(keeps):
         groups.setdefault(kept_place(r["path"]), []).append(r)
     if not groups:
         return ""
     help_ = ('<p class="hint">You kept these once, each for the file as it was. An allowance comes from <i>The words are mine, keep them</i> '
-             'in the queue, or from the command line. Editing the file ends it.</p>'
+             'in the queue, or from the command line; <i>Leave it as it is</i> in the queue leaves a finding alone. Editing the file ends it.</p>'
              '<details class="kdet"><summary>Details</summary><p class="hint">From the command line, '
              '<code>python3 System/tools/check.py allow</code> adds one.</p></details>')
     out = ""
@@ -396,7 +405,7 @@ def kept_card(rows: List[dict], title: Callable[[str], str]) -> str:
         n = len(groups[place])
         out += ('<details class="kept" data-scope="%s" data-n="%d"><summary><span class="kn">Kept by you \u00b7 %d</span>%s</summary>%s<ul>%s</ul></details>'
                 % (_e(place), n, n, '<span class="muted kz">%s</span>' % _e(title(place)) if place else "", help_,
-                   "".join(kept_row(r) for r in groups[place])))
+                   "".join(keep_row(r) if "kind" in r else kept_row(r) for r in groups[place])))
     return '<div id="kept-by-you">%s</div>' % out
 
 
@@ -435,11 +444,17 @@ CX_JS = r"""
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function say(s){if(window.GarrickSay)GarrickSay(s)}
 /* Kept by you: Remove puts the refusal back, through the page's walls-unallow */
-cx.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-unallow]');if(!b)return;var r=b.closest('.cxa-row');if(!r)return;
+cx.addEventListener('click',function(e){var k=e.target.closest&&e.target.closest('[data-unkeep]');if(k){var kr=k.closest('.cxa-row');if(!kr)return;
+var w=kr.getAttribute('data-which'),kq={verb:'finding',kind:kr.getAttribute('data-kind'),path:kr.getAttribute('data-path'),answer:'unkeep'+(w?'-'+w:'')};
+if(!host){say('A browser cannot change anything. Undo it in the Garrick app.');return}
+if(!(window.GarrickAct&&GarrickAct(kq,'Undoing\u2026')))host.postMessage({act:kq});say('Undoing\u2026');return}
+var b=e.target.closest&&e.target.closest('[data-unallow]');if(!b)return;var r=b.closest('.cxa-row');if(!r)return;
 var q={verb:'walls-unallow',path:r.getAttribute('data-path'),id:r.getAttribute('data-id')};
 if(!host){say('A browser cannot change anything. Remove it in the Garrick app.');return}
 if(!(window.GarrickAct&&GarrickAct(q,'Removing…')))host.postMessage({act:q});say('Removing…')});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
+if(q&&q.verb==='finding'&&/^unkeep/.test(q.answer||'')&&res&&res.ok){[].forEach.call(cx.querySelectorAll('.cxa-row[data-keep]'),function(r){if(r.getAttribute('data-path')===q.path&&r.getAttribute('data-kind')===q.kind&&(q.answer==='unkeep'||q.answer==='unkeep-'+r.getAttribute('data-which'))){var d=r.closest('.kept');r.remove();
+if(d){var n=d.querySelectorAll('.cxa-row').length;d.dataset.n=n;var kn=d.querySelector('.kn');if(kn)kn.textContent='Kept by you \u00b7 '+n;if(!n)d.remove()}}})}
 if(q&&q.verb==='walls-unallow'&&res&&res.ok){[].forEach.call(cx.querySelectorAll('.cxa-row'),function(r){if(r.getAttribute('data-path')===q.path&&r.getAttribute('data-id')===q.id){var d=r.closest('.kept');r.remove();
 if(d){var n=d.querySelectorAll('.cxa-row').length;d.dataset.n=n;var k=d.querySelector('.kn');if(k)k.textContent='Kept by you \u00b7 '+n;if(!n)d.remove()}}})}
 if(prev)return prev(q,res)}})();

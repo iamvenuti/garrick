@@ -4,7 +4,7 @@
 
 Walls already stop your assistant from writing one zone's material into another. The read guard does the same for reading. In a session for one project, it stops the assistant from opening notes, meetings and mail that sit behind another wall. It also checks what a mail or calendar service hands back, and takes out the messages that belong behind another wall.
 
-It is optional, and it starts by only watching. You turn it on in Garrick.app: open Settings, then Walls, then *Read guard*, and choose **Watch only** or **On**. Choosing either adds the read guard to your assistant's settings on this computer, and **Off** takes it out again. Register the zone guard first, because Settings finds the read guard beside it. [The hooks page](../extras/hooks/README.md) says how, and also has the whole registration by hand for a computer without the app. With the zone guard registered, nothing else here needs a terminal.
+It is optional, and it starts by only watching. You turn it on in Garrick.app: open Settings, then Walls, then *Read guard*, and choose **Watch only** or **On**. Choosing either adds the read guard to your assistant's settings on this computer, and **Off** takes it out again. Register the zone guard first, because Settings finds the read guard beside it, and only in a Garrick download of this same version: if the hook files there are from another version, Settings changes nothing and says to replace that download, then choose again. [The hooks page](../extras/hooks/README.md) says how, and also has the whole registration by hand for a computer without the app. With the zone guard registered, nothing else here needs a terminal.
 
 | Choice | What happens |
 |---|---|

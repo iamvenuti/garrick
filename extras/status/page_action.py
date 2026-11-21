@@ -1931,6 +1931,18 @@ def guard_hooks():
     return None, None
 
 
+def guard_version_differs() -> bool:
+    """True when a folder the assistants' settings name holds both hook files, and they are another version's. Fails closed:
+    anything unreadable is False, so the plainer guard-file sentence stands."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        return bool(found.other_version())
+    except Exception:
+        return False
+
+
 def clean_patterns(value, what: str, needs_one: bool = False) -> list:
     """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
     path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
@@ -1972,6 +1984,8 @@ def set_read_guard(ws: Path, req: dict) -> dict:
     if mode is not None:
         guard, src = guard_hooks()
         if guard is None:
+            if guard_version_differs():
+                raise fails("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
             raise fails("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
         home = str(Path.home())
         try:
@@ -6127,6 +6141,8 @@ FAILURES = (
      "Open Settings and choose Show why."),
     ("guard-file", "The read guard was not changed: Garrick could not find its hook file on this computer.", "Show why", "why",
      "Register the zone guard from the Garrick download you keep, as the hooks page says, then choose the read guard again."),
+    ("guard-version", "The read guard was not changed: the hook files in the Garrick download you keep are from another version. Replace that download with this version, then choose again.", "Show why", "why",
+     "Open Settings and choose Show why."),
     ("guard-read", "The read guard was not changed: your assistant's settings could not be read, so they were left as they are.",
      "Show why", "why", "Open Settings and choose Show why."),
     ("guard-write", "The read guard was not changed: your assistant's settings could not be written.", "Try again", "retry",

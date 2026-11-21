@@ -2830,9 +2830,28 @@ def hub_keeps_resume(hub: Path) -> bool:
         text = hub.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    if re.search(r"(?mi)^layout:[ \t]*[\"']?thread-first\b", text):
+    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
+    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
+    src = hub.parent.parent.parent.parent / "System" / "tools" / "garrick_lib.py"
+    if src.is_file():
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_page_lib", str(src))
+            lib = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(lib)
+            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
+        except Exception:
+            pass
+    lines = text.splitlines()
+    front = {}
+    if lines and lines[0].strip() == "---":
+        for l in lines[1:]:
+            if l.strip() == "---":
+                break
+            if l.lower().startswith("layout:"):
+                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
+    if str(front.get("layout") or "").strip().lower() == "thread-first":
         return False
-    return bool(re.search(r"(?mi)^#{1,6}[ \t]+Resume here\b", text))
+    return any(l.strip().lower() == "### resume here" for l in lines)
 
 
 def work_name(zone: Path, parts: tuple) -> str:
@@ -5785,7 +5804,8 @@ CALLERS = ("page", "ask", "session")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
-             "chase")
+             "chase",
+             "layout")
 
 
 def builds_page(req) -> bool:

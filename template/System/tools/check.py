@@ -1947,7 +1947,7 @@ def check_projects(ws: Workspace) -> List[Finding]:
             out.append(Finding(ERROR, "projects", r, problem, "The %s hub note has a date in the wrong form" % project.name))
         threads = visible_dirs(project / "Threads")
         text = read_text(hub) or ""
-        if not threads and not own_resume(text) and fm.get("layout") != "thread-first":
+        if not threads and not own_resume(text) and str(fm.get("layout") or "").strip().lower() != "thread-first":
             out.append(Finding(WARNING, "projects", rel(ws, project),
                                "no threads, and no `### Resume here` block in the hub; a project that is one piece of work "
                                "keeps its resume point in the hub, and a heading says `layout: thread-first`",

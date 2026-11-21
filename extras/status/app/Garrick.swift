@@ -1325,7 +1325,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// it asks from.
 	func reading(_ request: [String: Any]) -> Bool {
 		// A layout dialog's plan (#604) only shows what a change would do: no toast, and no rebuild under the dialog.
-		if request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }
+		// Only the JSON boolean true counts: the number 1 bridges to Bool in Swift, and the page's rule is `is True`.
+		if request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,
+		   CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }
 		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")
 	}
 

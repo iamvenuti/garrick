@@ -241,10 +241,32 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
     def test_a_left_file_goes_to_the_assistant_as_a_request_never_to_a_move_of_its_own(self):
         self.assertIn("Ask my assistant", STATUS_SRC)
         self.assertIn("data-request=", STATUS_SRC)
-        self.assertIn("place '+f[0]+' in the papers of the '+s.value+' thread", STATUS_SRC)
+        self.assertIn("place the file \"'+lbase(f[0])+'\" in the papers of the '+s.value+' thread", STATUS_SRC)
+
+    def test_a_left_file_gets_the_assistant_button_only_for_a_plain_name(self):
+        # the name goes into the text handed to the assistant, so only letters, digits, spaces and ._-()&,' may
+        self.assertIn("function lsafe(name){return /^[\\p{L}\\p{N} ._\\-()&,']+$/u.test(name)}", STATUS_SRC)
+        self.assertIn("z.folder&&lsafe(lbase(f[0]))?' <button", STATUS_SRC)
+        self.assertNotIn("place '+f[0]+'", STATUS_SRC)
+
+    def test_the_zones_folder_is_in_the_page_data_only_for_a_zone_with_an_offer_and_a_page_that_acts(self):
+        one = {"hub": Path("/x/Acme/Acme.md"), "status": "active"}
+        heading = {"hub": Path("/x/Cedar/Cedar.md"), "status": "active", "heading": True}
+        with_offer = {"folder": Path("/x"), "rows": [], "parked": [], "projects": {"Acme": one}}
+        without = {"folder": Path("/y"), "rows": [], "parked": [], "projects": {"Cedar": heading}}
+        empty = {"folder": Path("/z"), "rows": [], "parked": [], "projects": {}}
+        T = {"Work": with_offer, "Personal": without, "Home": empty}
+        zones = status.manage_data(T, {}, True)["zones"]
+        self.assertEqual("/x", zones["Work"]["folder"])
+        self.assertNotIn("folder", zones["Personal"])
+        self.assertNotIn("folder", zones["Home"])
+        for zone in status.manage_data(T, {}, False)["zones"].values():
+            self.assertNotIn("folder", zone)
 
     def test_the_app_treats_a_look_as_reading_and_opens_the_dialog_for_a_choice(self):
-        self.assertIn('request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }', SWIFT_SRC)
+        self.assertIn('request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,', SWIFT_SRC)
+        self.assertIn("CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }", SWIFT_SRC)
+        self.assertNotIn('request["check"] as? Bool', SWIFT_SRC)      # the number 1 would bridge to true; the page's rule is `is True`
         self.assertIn('choice["layout"] as? [String: Any]', SWIFT_SRC)
         self.assertIn("window.GarrickLayout&&window.GarrickLayout(", SWIFT_SRC)
 
@@ -306,6 +328,33 @@ class TestTheAskBoxOffersItAndRunsNothing(ControlCase):
         out = self.asker.ask("make Cedar a heading")
         self.assertEqual([], out["choices"])
         self.assertIn("heading", out["say"])
+
+    def personal_project(self):
+        self.make("project", "--zone", "Personal", "--name", "Maple")
+        self.make("project", "--zone", "Personal", "--name", "Linden", "--heading", "--thread", "Harbour")
+
+    def test_a_project_of_another_zone_is_neither_named_nor_offered_in_this_zones_window(self):
+        self.personal_project()
+        for request in ("make Maple a heading", "make Linden a heading", "give Harbour its own papers"):
+            self.session.answers.append(json.dumps({"say": "Nothing like that here.", "do": []}))
+            out = self.asker.ask(request, zone="Work")
+            self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c], request)
+            for word in ("Maple", "Linden", "Harbour", "heading over", "own papers already", "Review the change"):
+                self.assertNotIn(word, json.dumps(out), request)
+
+    def test_the_same_request_in_its_own_zones_window_offers_it(self):
+        self.personal_project()
+        out = self.asker.ask("make Maple a heading", zone="Personal")
+        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Personal", "project": "Maple", "heading": True}}],
+                         out["choices"])
+        out = self.asker.ask("make Linden a heading", zone="Personal")
+        self.assertIn("heading over separate pieces of work already", out["say"])
+
+    def test_with_no_window_a_name_held_by_two_zones_offers_nothing(self):
+        self.make("project", "--zone", "Personal", "--name", "Acme")
+        self.session.answers.append(json.dumps({"say": "Which one?", "do": []}))
+        out = self.asker.ask("make Acme a heading")
+        self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c])
 
 
 if __name__ == "__main__":

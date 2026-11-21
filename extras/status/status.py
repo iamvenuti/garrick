@@ -2281,6 +2281,22 @@ WORK_CSS = r"""
 #work .wdet{margin-top:4px;font-size:var(--fs-meta)}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
 """
 
+
+def failure_table():
+    """page_action.py's FAILURES, beside this file: the code, the sentence, the button, what it does and the notification
+    line's hint, for every way a request fails. Without it the page has the one row it can always say, "other"."""
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_page_action_failures", str(Path(__file__).with_name("page_action.py")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = [list(r) for r in mod.FAILURES]
+        if rows and rows[-1][0] == "other":
+            return rows
+    except Exception:
+        pass
+    return [["other", "This did not finish.", "Try again", "retry", ""]]
+
+
 # Its own script, after MANAGE_JS, so it wraps every window.GarrickActed set
 # before it. The page's buttons hand it a request through window.GarrickAct,
 # which sends one that commits in a zone and shows it running, and answers
@@ -2289,7 +2305,7 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,FW=@FAILURES@,SEEN=[],OPS={},
 BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
@@ -2341,15 +2357,15 @@ return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
 function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
-/* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
-   The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
-function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
-if(/^A wall holds /.test(t))return{say:t,next:'',raw:'',act:''};
-if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
-if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
-if(k==='refused')return{say:'This was not saved: the check refused it.',next:'Show why',raw:t,act:'why'};
-return{say:'This was not saved: the action stopped before it finished.',next:'Try again',raw:t,act:'retry'}}
+/* A failure in plain words, with one next step the page already has (#511): the sentence and the button come from FW, the table
+   page_action.py keeps (FAILURES), so the page and the Mac app's notification line say the same. The tool's own text is under
+   Details, closed. The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more.
+   A row the table does not have is its last, "other". */
+function fw(c){for(var i=0;i<FW.length;i++)if(FW[i][0]===c)return FW[i];return FW[FW.length-1]}
+function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'',c=o.plain&&o.plain.code||'';
+if(!c)c=/^A wall holds /.test(t)?'wall':e.q.verb==='continue'?'handoff':!k?'noreply':k;
+var r=fw(c);if(r[0]==='wall')return{say:t,next:'',raw:'',act:''};
+return{say:r[1],next:r[2],raw:t,act:r[3]}}
 function shown(e,now){return!!e.out||!e.q.keys||!!e.shown||now-e.t0>=TOAST*1000}
 function render(){var now=Date.now(),html='';if(box){html=W.map(function(e,i){if(!shown(e,now))return'';
 if(e.out&&!e.out.ok&&!e.out.again){var f=plain(e);
@@ -2429,7 +2445,7 @@ keep();render();run();return}
 if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){sentDone(e.q.verb,e.q.zone,e.q.file,e.q.keys,now);W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
-else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
+else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again,plain:out&&out.plain||null};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
@@ -2455,7 +2471,8 @@ sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
     .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@BATCH@", str(ACTION_BATCH)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":"))) \
-    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":")))
+    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":"))) \
+    .replace("@FAILURES@", json.dumps(failure_table(), separators=(",", ":"), ensure_ascii=False))
 
 
 TADD_JS = r"""

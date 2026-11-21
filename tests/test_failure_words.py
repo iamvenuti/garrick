@@ -95,11 +95,13 @@ class TestTheReply(tpa.ActionCase):
         self.assertIn("changed since the page was built", out["say"])          # the tool's text stays, for Details
         self.assertNotIn("changed since", out["plain"]["band"])
 
-    def test_an_action_the_table_does_not_name_is_the_fallback(self):
+    def test_a_reply_with_no_record_of_it_is_left_as_it_was(self):
         out = self.run_main({"verb": "frobnicate"})
-        self.assertFalse(out["ok"])
-        self.assertEqual("other", out["plain"]["code"])
-        self.assertEqual("This did not finish.", out["plain"]["say"])
+        self.assertEqual({"ok": False, "say": "unknown action"}, out)           # the app says "This did not finish." for it
+
+    def test_an_outcome_the_table_does_not_name_is_the_fallback(self):
+        out = pa.with_plain({"ok": False, "say": "x", "outcome": "weird"}, {"verb": "park"}, ops)
+        self.assertEqual(("other", "This did not finish."), (out["plain"]["code"], out["plain"]["say"]))
 
     def test_a_save_is_saved_when_the_record_says_so_and_carries_no_plain_words(self):
         out = self.run_main({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice"), "op": "b19f3c80"})

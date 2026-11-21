@@ -5857,16 +5857,16 @@ def plain_failure(code: str, say: str = "") -> dict:
 
 
 def with_plain(out: dict, req, ops) -> dict:
-    """The reply `main()` prints, with the plain words beside the tool's: a failure gets its row, and a reply that says
-    it worked for an action the record keeps, but holds no outcome, says it could not confirm that. "Saved" is the
+    """The reply `main()` prints, with the plain words beside the tool's: a failure the record ended gets its row, and a
+    reply that says it worked for an action the record keeps, but holds no outcome, says it could not confirm that. "Saved" is the
     record's word (operations.jsonl): the reply of a request the record kept says "outcome": "saved" and nothing else
     does. Left alone where there is no record to hold (no operations.py), so such a reply is what it was."""
     if not isinstance(out, dict):
         return out
     verb = req.get("verb") if isinstance(req, dict) else None
     if not out.get("ok"):
-        if (ops is None and "outcome" not in out) or "again" in out or out.get("state") in ("asked", "running", "queued"):
-            return out              # no record to hold it, or not a failure: the question about a repeat
+        if "outcome" not in out or "again" in out or out.get("state") in ("asked", "running", "queued"):
+            return out              # no record of it, or not a failure: the question about a repeat. The app says its fallback
         return dict(out, plain=plain_failure(failure_code(out, req), str(out.get("say") or "")))
     if ops is not None and verb in ops.OPS and "outcome" not in out and "state" not in out:
         return dict(out, plain=plain_failure("unrecorded"))

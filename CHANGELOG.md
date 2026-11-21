@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **A render helper for look checks** (#622). `tools/render.py` takes screenshots of an HTML page at several widths and in both themes, with one headless-shell process for the whole list and a throwaway profile. It never starts the Chrome app, so no icon bounces in the Dock and no crash dump lands in the user's Chrome folder. With no headless shell installed, it exits with an install hint. The repo's `AGENTS.md` sends look checks through it. It is a development tool and is not shipped to workspaces.
+
 ## [0.73.0] - 2026-11-21
 
 Garrick can now check what an assistant session reads against the walls, the way it already checks what gets written. It starts by watching, not stopping. Check findings on the Context tab are plain questions you answer with a button. And one workspace can now live on a home server and travel on a laptop.

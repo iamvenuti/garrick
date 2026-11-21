@@ -318,9 +318,16 @@ def title(text: str, button: str) -> str:
     return '<span class="rgtitle">%s%s</span>' % (esc(text), button)
 
 
-def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Callable) -> str:
+ROAMING_LINE = "The read guard is set on the home server."
+
+
+def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Callable, role: str = "solo") -> str:
     """The Read guard block of Settings › Walls: four rows, in the app only. Under Watch only, what the log holds. The two
-    tool lists give way to one line for Codex, which cannot have a result replaced."""
+    tool lists give way to one line for Codex, which cannot have a result replaced. On a laptop copy the rows give way to
+    one line: the read guard's settings are the workspace's, and this computer only receives it."""
+    if role == "roaming":
+        return ('<div class="rgblock apponly" id="readguard-settings" hidden data-roaming="1"><h4 class="nsub">Read guard</h4>'
+                '<p class="hint rgroaming" id="rg-roaming">%s</p></div>' % esc(ROAMING_LINE))
     mode = state["mode"]
     problem = state.get("problem") or ""
     mode_row = ('<div class="rgrow" data-rg="mode" data-was="%s">%s%s</div>%s'

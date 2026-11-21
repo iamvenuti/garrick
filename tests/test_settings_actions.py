@@ -358,6 +358,8 @@ class TestTheReadGuard(SettingsCase):
         out = self.go({"verb": "read-guard", "mode": "warn"})
         self.assertFalse(out["ok"], out)
         self.assertIn("only receives", out["say"])
+        self.assertIn("set on the home server", out["say"])
+        self.assertNotIn("waits", out["say"])
         self.assertEqual({}, self.saved())
 
     def test_every_failure_row_has_a_sentence_and_one_next_step_and_no_path_or_key(self):

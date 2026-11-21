@@ -77,7 +77,7 @@ On a laptop copy, each of these is refused, and the refusal says why:
 - **Anything that writes in the workspace outside a drop folder.** The zone guard refuses a file-editing tool's write anywhere but each zone's `Inbox/` and the workspace's own `Inbox/`, and the refusal names the drop folder to use.
 - **Commits.** Every zone's pre-commit check refuses one. The home server commits.
 - **The nightly jobs.** A job does not run: `job.py` says so and stops, and `check.py` reports an error for a Garrick launchd agent that is loaded. Unload it with `launchctl bootout`.
-- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server. A laptop copy can still change its own role.
+- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server: on a laptop copy the *Read guard* block shows one line, “The read guard is set on the home server.”, in place of its controls. A laptop copy can still change its own role.
 
 On the home server, the jobs run as they do on one computer, and `check.py` warns about sync conflict copies anywhere in the workspace.
 

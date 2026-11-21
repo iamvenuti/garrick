@@ -211,6 +211,18 @@ class TestReadGuardBlock(SettingsCase):
         self.assertEqual(2, sec.count('data-rg-add='))                                              # an Add on each list
         self.assertRegex(sec, r'data-rg="skip">.*?None\.')                                          # the second list is empty
 
+    def test_a_laptop_copy_shows_one_line_in_place_of_the_controls(self):
+        self.role("roaming", name="laptop", server="mini")
+        self.assistants()
+        sec = self.block()
+        self.assertIn("The read guard is set on the home server.", sec)
+        self.assertNotIn("<input", sec)
+        self.assertNotIn('data-rg="mode"', sec)
+        self.assertNotIn("rg-show", sec)
+        self.role("server", name="mini")
+        self.assertIn('data-rg="mode"', self.block())
+        self.assertNotIn("set on the home server", self.block())
+
     def test_the_mode_is_what_runs_not_what_the_file_says(self):
         self.assistants()
         self.settings_file(**{"read-guard": "enforce"})

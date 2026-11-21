@@ -198,6 +198,21 @@ class ToolsSeen(FilterCase):
         self.assertEqual({OTHER, TOOL}, set(seen))
         self.assertNotIn("birch", (self.state / "tools-seen.json").read_text())
 
+    def test_the_record_of_tools_is_replaced_whole_and_leaves_no_temporary_file(self):
+        self.after(response({"threads": THREADS}))
+        self.after(response("x", as_text=False), tool=OTHER)
+        self.assertEqual(["tools-seen.json"], [p.name for p in self.state.iterdir() if p.name.startswith("tools-seen")])
+        with mock.patch("os.replace", wraps=os.replace) as replaced:
+            import importlib
+            sys.path.insert(0, str(REPO / "extras" / "hooks"))
+            try:
+                guard = importlib.import_module("read_guard")
+            finally:
+                sys.path.remove(str(REPO / "extras" / "hooks"))
+            guard.note_tool(str(self.state), "mcp__fakemail__other")
+        self.assertTrue(any(str(c.args[1]).endswith("tools-seen.json") for c in replaced.call_args_list))
+        self.assertIn("mcp__fakemail__other", json.loads((self.state / "tools-seen.json").read_text()))
+
     def test_the_root_sessions_tools_are_noted_too(self):
         self.after(response("x", as_text=False), tool=OTHER, home=self.root)
         self.assertIn(OTHER, json.loads((self.state / "tools-seen.json").read_text()))

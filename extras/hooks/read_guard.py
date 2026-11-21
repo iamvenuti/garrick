@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The read guard: a check on what an assistant session reads (#613).
+"""The read guard: a check on what an assistant session reads, and on what a
+mail or calendar connector hands back to it (#613, #614).
 
 The zone guard stops writes outside the session's project. This one covers
 reads. It is a hook for Claude Code and Codex, reading the event on stdin, and
@@ -19,6 +20,12 @@ every other enforcement point asks.
   gets the same decision for the plain path words in it; a command that cannot
   be read that way is allowed and logged as unread, because a shell command
   cannot be parsed completely.
+- PostToolUse, on a connector's tool (Gmail, Calendar, any pattern in the
+  settings): each result is labelled by the addresses on it, matched against
+  the Parties table as the intake skill matches a mail, and decided. A refused
+  result is removed from what the assistant sees, and the output ends with the
+  wall sentence, once and with no count. This works only where the harness lets
+  a hook replace a tool's output, which Claude Code does and Codex does not.
 
 A session opened at the workspace root or in System/ keeps full read. Nothing
 is refused unless System/garrick-settings.json says `"read-guard": "enforce"`:
@@ -57,6 +64,8 @@ ASK_AGAIN = " Ask the user whether to read it; once they agree, read it again."
 READ_TOOLS = ("Read", "Grep", "Glob")
 SHELL_TOOLS = ("Bash", "shell", "exec_command", "local_shell")
 AGENTS_FILES = ("agents.md", "agents.local.md")
+EMAIL = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
+COUNT_KEY = re.compile(r"count|total|estimate|size|num", re.I)
 LOG_BYTES = 1_000_000
 PRUNE_DAYS = 30
 
@@ -389,12 +398,157 @@ def deny_reply(reason, decision):
                                    "permissionDecisionReason": reason}}
 
 
+# ------------------------------------------------------------------ connector results
+
+
+def note_tool(folder, tool):
+    """Remember the name of a connector tool the session used, and nothing else about the call."""
+    path = os.path.join(folder, "tools-seen.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            seen = json.load(fh)
+        seen = seen if isinstance(seen, dict) else {}
+    except (OSError, ValueError):
+        seen = {}
+    today = time.strftime("%Y-%m-%d")
+    if seen.get(tool) == today:
+        return
+    seen[tool] = today
+    os.makedirs(folder, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(seen, fh, sort_keys=True)
+
+
+def blocks_of(response):
+    """A tool's response as a list of content blocks, whatever shape it came in; None when it has none."""
+    if isinstance(response, str):
+        return [{"type": "text", "text": response}]
+    if isinstance(response, dict):
+        if isinstance(response.get("content"), list):
+            return response["content"]
+        return [{"type": "text", "text": json.dumps(response, ensure_ascii=False)}]
+    return response if isinstance(response, list) else None
+
+
+def results_of(data):
+    """(container, key, items): where the list of results is in a parsed JSON text; items None for one object."""
+    if isinstance(data, list):
+        return (None, None, data) if all(isinstance(i, dict) for i in data) else (None, None, False)
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, list) and all(isinstance(i, dict) for i in value):
+                return data, key, value
+        return None, None, None
+    return None, None, False
+
+
+def result_id(item):
+    for key in ("id", "threadId", "messageId", "eventId", "iCalUID"):
+        if isinstance(item.get(key), (str, int)):
+            return item[key]
+    return json.dumps(item, sort_keys=True, ensure_ascii=False)
+
+
+def decide_result(lib, ctx, scope, suggest, text):
+    addresses = EMAIL.findall(text)
+    labels = lib.connector_labels(ctx, addresses, suggest) if addresses else None
+    mine = {scope["zone"]} if scope["kind"] == "zone" and scope["zone"] else set()
+    return lib.decide(mine, labels, "read", ctx) == "permit"
+
+
+def load_suggest(root):
+    import importlib.util
+    path = os.path.join(root, "System", "skills", "intake", "intake.py")
+    spec = importlib.util.spec_from_file_location("garrick_intake_for_read_guard", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.suggest
+
+
+def is_error(event, response):
+    return bool(event.get("is_error") or event.get("error")
+                or (isinstance(response, dict) and (response.get("isError") or response.get("is_error") or response.get("error"))))
+
+
+def post(event, lib, root, ctx, scope, folder):
+    tool = str(event.get("tool_name") or "")
+    if not tool.startswith("mcp__"):
+        return None
+    note_tool(folder, tool)
+    if not lib.tool_matches(lib.connector_patterns(root), tool) or scope["kind"] == "root":
+        return None
+    response = event.get("tool_response")
+    if response is None:
+        return None
+    mode = lib.read_guard_mode(root)
+    zone = scope["zone"] or scope["kind"]
+    suggest = load_suggest(root)
+    blocks = blocks_of(response)
+    if blocks is None:
+        removed, out = [("unparsed", "unparsed")], []
+    else:
+        removed, out = [], []
+        error = is_error(event, response)
+        for block in blocks:
+            text = block.get("text") if isinstance(block, dict) and block.get("type", "text") == "text" else None
+            if not isinstance(text, str):
+                out.append(block)
+                continue
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = None
+            if not isinstance(data, (dict, list)):
+                # Not JSON. An error's text is judged by the addresses it holds, and passes if none label it.
+                if error and not EMAIL.search(text):
+                    out.append(block)
+                elif decide_result(lib, ctx, scope, suggest, text):
+                    out.append(block)
+                else:
+                    removed.append((text, "unparsed"))
+                continue
+            container, key, items = results_of(data)
+            if items is False:
+                removed.append((text, "unparsed"))
+                continue
+            if items is None:
+                items, one = [data], True
+            else:
+                one = False
+            kept = []
+            for item in items:
+                if decide_result(lib, ctx, scope, suggest, json.dumps(item, ensure_ascii=False)):
+                    kept.append(item)
+                else:
+                    removed.append((result_id(item), ""))
+            if len(kept) == len(items):
+                out.append(block)
+                continue
+            if one:
+                continue
+            if container is None:
+                new = kept
+            else:
+                new = {k: v for k, v in container.items() if not (isinstance(v, (int, float)) and COUNT_KEY.search(k))}
+                new[key] = kept
+            out.append(dict(block, text=json.dumps(new, ensure_ascii=False)))
+    if not removed:
+        log(folder, tool, ALLOW, zone, tool)
+        return None
+    for what, kind in removed:
+        log(folder, tool, DENY, zone, what, kind)
+    if mode != "enforce" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    out.append({"type": "text", "text": WALL_REFUSAL})
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedMCPToolOutput": out}}
+
+
 # ------------------------------------------------------------------ the hook
 
 
 def handle(event):
     stage = event.get("hook_event_name")
-    if stage not in ("SessionStart", "PreToolUse"):
+    if stage not in ("SessionStart", "PreToolUse", "PostToolUse"):
         return None
     root, lib = open_workspace(event)
     if root is None:
@@ -406,6 +560,9 @@ def handle(event):
     scope = session_scope(lib, root, event, folder)
     if scope is None:
         return None
+    if stage == "PostToolUse":
+        # The tools seen are noted for every session, the root's too, so the check can name one on no list.
+        return post(event, lib, root, lib.load_context(root), scope, folder)
     if scope["kind"] == "root" and not folder_in(root, folder):
         return None
     return pre(event, lib, root, lib.load_context(root), scope, folder)
@@ -478,7 +635,8 @@ def check_lines(home=None):
     beside its own; they never change its exit code, since the read guard is optional."""
     home = home or os.path.expanduser("~")
     places = (("Claude Code", os.path.join(home, ".claude"), "settings.json",
-               [("SessionStart", ["startup"]), ("PreToolUse", list(READ_TOOLS) + ["Bash"])]),
+               [("SessionStart", ["startup"]), ("PreToolUse", list(READ_TOOLS) + ["Bash"]),
+                ("PostToolUse", ["mcp__claude_ai_Gmail__search_threads"])]),
               ("Codex", os.path.join(home, ".codex"), "hooks.json",
                [("SessionStart", ["startup"]), ("PreToolUse", ["Bash"])]))
     lines, ok = [], True

@@ -94,8 +94,8 @@ TOUCH_MAP = {
     "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],
     "tests/walls/": ["test_walls_cases"],
-    "extras/hooks/read_guard.py": ["test_read_guard", "test_decisions", "test_zone_guard"],
-    "tests/read_guard_case.py": ["test_read_guard", "test_decisions"],
+    "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard"],
+    "tests/read_guard_case.py": ["test_read_guard", "test_connector_guard", "test_decisions"],
 }
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {

@@ -88,12 +88,14 @@ python3 -m unittest discover -s tests -p test_zone_guard.py
 
 ## The read guard
 
-`read_guard.py` is the zone guard's counterpart for reads (#613). It is optional, and it ships warn-only: it decides, logs and lets everything through until `System/garrick-settings.json` says `"read-guard": "enforce"`. [What is enforced](../../docs/enforced.md#the-read-guard) says what it covers, what it cannot, and what it logs. Its settings, all in that file:
+`read_guard.py` is the zone guard's counterpart for reads (#613), and for what a mail or calendar connector hands back (#614). It is optional, and it ships warn-only: it decides, logs and lets everything through until `System/garrick-settings.json` says `"read-guard": "enforce"`. [What is enforced](../../docs/enforced.md#the-read-guard) says what it covers, what it cannot, and what it logs. Its settings, all in that file:
 
 | Key | Values | Default |
 |---|---|---|
 | `read-guard` | `warn`, `enforce` | `warn`; anything else, or an unreadable file, is `warn` |
 | `read-guard-cross-zone` | `deny`, `ask` | `deny`; `ask` raises Claude Code's permission prompt for a read across a wall |
+| `connector-tools` | a list of tool name patterns | the Gmail and Calendar patterns |
+| `connector-tools-skip` | a list of tool name patterns | none: tools you use that return nothing a party can label, so `check.py` stops naming them |
 
 It needs `python3` and the workspace's own `System/tools`. Point both assistants at `extras/hooks/read_guard.py` in the Garrick download you keep, as for the zone guard.
 
@@ -110,14 +112,22 @@ It needs `python3` and the workspace's own `System/tools`. Point both assistants
         "matcher": "Read|Grep|Glob|Bash",
         "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/read_guard.py", "timeout": 5 }]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/read_guard.py", "timeout": 5 }]
+      }
     ]
   }
 }
 ```
 
-**Codex** (0.124 or later; trust it in `/hooks`): add `SessionStart` and a `PreToolUse` with the matcher `Bash` to `~/.codex/hooks.json`, with the same command.
+The `PostToolUse` entry is the connector filter. It is registered for every connector tool, so the guard can note which ones the session used; only the tools on the `connector-tools` list are filtered.
 
-`python3 read_guard.py --check` says whether it is registered, and `python3 zone_guard.py --check` reports it beside its own line, without changing its exit code. Its tests: `python3 -m unittest discover -s tests -p "test_read_guard.py"`.
+**Codex** (0.124 or later; trust it in `/hooks`): add `SessionStart` and a `PreToolUse` with the matcher `Bash` to `~/.codex/hooks.json`, with the same command. Codex gets no connector hook: it cannot replace a tool's output.
+
+`python3 read_guard.py --check` says whether it is registered, and `python3 zone_guard.py --check` reports it beside its own line, without changing its exit code. Its tests: `python3 -m unittest discover -s tests -p "test_read_guard.py"`, and `test_connector_guard.py` for the filter.
 
 ## The waiting hook
 

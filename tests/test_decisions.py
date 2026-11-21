@@ -504,3 +504,42 @@ class TestReadDecisions(GuardCase):
             scope = guard.derive(lib, str(self.root), str(self.acme))
             guard.judge(lib, str(self.root), ctx, scope, str(self.birch / "Birch.md"), False)
         self.assertEqual([({"Work"}, {"Personal"}, "read")], calls)
+
+
+class TestConnectorDecisions(GuardCase):
+    """A connector result labelled by its addresses, decided as a read: the same rows, from the scope's side.
+    `-` is a result no party labels (an unknown domain, personal webmail, only your own address)."""
+
+    ROWS = [
+        ("Work", "dana@acme.example", True),
+        ("Work", "theo@birch.example", False),
+        ("Work", "pat@cedar.example", True),
+        ("Work", "x@stranger.example", False),
+        ("Work", "friend@gmail.com", False),
+        ("Work", "jo@home.example", False),
+        ("Work", "dana@acme.example theo@birch.example", False),
+        ("Work", "dana@acme.example pat@cedar.example", True),
+        ("Work", "a@maple.example", False),
+        ("Personal", "theo@birch.example", True),
+        ("Personal", "dana@acme.example", False),
+        ("Ventures", "pat@cedar.example", True),
+        ("Ventures", "dana@acme.example", False),
+        ("Ventures", "x@stranger.example", False),
+    ]
+
+    def test_every_row(self):
+        import garrick_lib as lib
+        guard = load_read_guard()
+        ctx = lib.load_context(self.root)
+        suggest = guard.load_suggest(str(self.root))
+        homes = {"Work": self.acme, "Personal": self.birch, "Ventures": self.cedar}
+        for scope_name, addresses, expect in self.ROWS:
+            with self.subTest(scope=scope_name, addresses=addresses):
+                scope = guard.derive(lib, str(self.root), str(homes[scope_name]))
+                self.assertEqual(expect, guard.decide_result(lib, ctx, scope, suggest, addresses))
+
+    def test_the_root_is_not_asked(self):
+        import garrick_lib as lib
+        guard = load_read_guard()
+        scope = guard.derive(lib, str(self.root), str(self.root))
+        self.assertEqual("root", scope["kind"])

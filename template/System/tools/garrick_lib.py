@@ -198,9 +198,16 @@ __all__ = [
     "simple_home",
     "READ_GUARD",
     "READ_GUARD_CROSS",
+    "CONNECTOR_TOOLS",
+    "CONNECTOR_SKIP",
+    "DEFAULT_CONNECTOR_TOOLS",
     "read_guard_mode",
     "read_guard_cross",
+    "connector_patterns",
+    "connector_skips",
+    "tool_matches",
     "read_guard_dir",
+    "connector_labels",
     "INSTRUCTION_FILES",
     "LOCAL_RULES",
     "LOCAL_HEADER",
@@ -3339,10 +3346,13 @@ def simple_home(root: PathLike) -> bool:
     return read_settings(root).get("home") == "simple"
 
 
-# The read guard (#613): a hook in extras/hooks/ that decides, with decide(), what an assistant session may read.
-# Two settings, each with a safe default when it is missing or does not read.
+# The read guard (#613) and the connector filter (#614): hooks in extras/hooks/ that decide, with decide(), what an
+# assistant session may read. Three settings, each with a safe default when it is missing or does not read.
 READ_GUARD = "read-guard"                   # "warn" (default): decide and log, refuse nothing; "enforce": refuse
 READ_GUARD_CROSS = "read-guard-cross-zone"  # "deny" (default), or "ask": a read across a wall raises a permission prompt
+CONNECTOR_TOOLS = "connector-tools"         # tool name patterns whose results the connector filter checks
+CONNECTOR_SKIP = "connector-tools-skip"     # patterns of tools that return nothing a party can label: no warning for them
+DEFAULT_CONNECTOR_TOOLS = ("mcp__*Gmail*", "mcp__*Calendar*")
 
 
 def read_guard_mode(root: PathLike) -> str:
@@ -3354,8 +3364,29 @@ def read_guard_cross(root: PathLike) -> str:
     return "ask" if read_settings(root).get(READ_GUARD_CROSS) == "ask" else "deny"
 
 
+def _patterns(value, default: Tuple[str, ...]) -> List[str]:
+    if isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value):
+        return [v.strip() for v in value]
+    return list(default)
+
+
+def connector_patterns(root: PathLike) -> List[str]:
+    """The tool name patterns the connector filter checks: the list in the settings, else Gmail and Calendar."""
+    return _patterns(read_settings(root).get(CONNECTOR_TOOLS), DEFAULT_CONNECTOR_TOOLS)
+
+
+def connector_skips(root: PathLike) -> List[str]:
+    return _patterns(read_settings(root).get(CONNECTOR_SKIP), ())
+
+
+def tool_matches(patterns: Iterable[str], tool: str) -> bool:
+    """Whether a tool name is on a list of shell-style patterns, matched without regard to case."""
+    import fnmatch
+    return any(fnmatch.fnmatchcase(tool.lower(), p.lower()) for p in patterns)
+
+
 def read_guard_dir() -> Path:
-    """Where the read guard keeps its log and the scope of each session: next to
+    """Where the read guard keeps its log, the scope of each session and the connector tools it has seen: next to
     the jobs' folder, outside every workspace, so nothing here is committed and no session reads it by default."""
     jobs = os.environ.get("GARRICK_JOBS_DIR")
     if jobs:
@@ -3363,6 +3394,22 @@ def read_guard_dir() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "garrick-read-guard"
     return Path.home() / ".local" / "state" / "garrick-read-guard"
+
+
+def connector_labels(context: dict, addresses: Iterable[str], suggest) -> Optional[set]:
+    """The zones a connector result belongs to, from the addresses on it: the parties the intake skill's `suggest`
+    finds (the same match as for a forwarded mail), each in its party's zone. A party with two hats brings every zone
+    its name has. Your own addresses and personal webmail decide nothing. None when no party is found: no label."""
+    mail = {"from": [], "to": [("", a) for a in addresses]}
+    hint = suggest(context, "", mail)
+    tags = [t for t in hint.get("parties", []) if t not in (hint.get("own") or {}).get("added", [])]
+    zones = set()
+    for tag in tags:
+        for other in (context.get("parties") or {}):
+            if other == tag or (always_asked(context, tag) and _name(context, other) == _name(context, tag)):
+                zone = ((context["parties"].get(other) or {}).get("zone") or "").strip()
+                zones.add(zone or UNZONED)
+    return zones or None
 
 
 # The status page's builder, where the installer or the status extra put it.

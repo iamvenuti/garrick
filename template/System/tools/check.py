@@ -154,6 +154,10 @@ from garrick_lib import (  # noqa: E402
 )
 from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
+    connector_patterns,
+    connector_skips,
+    read_guard_dir,
+    tool_matches,
 )
 from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
@@ -198,6 +202,7 @@ CHECKS = [
     ("preferences", "Kept choices"),
     ("review", "Review record"),
     ("updates", "Updates to merge"),
+    ("connectors", "Connector tools"),
 ]
 
 # How a group of findings is said aloud when there is more than one.
@@ -234,6 +239,7 @@ EAR_GROUP = {
     "recall": "{n} search index or session files could end up in the workspace history",
     "preferences": "{n} of the choices you keep are not in the workspace history",
     "review": "the review record has {n} entries outside its fixed form",
+    "connectors": "{n} connector tools the assistant used are on no list of the read guard",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -6678,6 +6684,26 @@ def check_updates(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_connector_tools(ws: Workspace) -> List[Finding]:
+    """A connector tool the session used that is on no list is not filtered, and says so here (#614). The read
+    guard notes the name of each such tool it sees, and nothing else about the call, in its own folder; a name on
+    `connector-tools` or `connector-tools-skip` in System/garrick-settings.json is not named. Where the guard has
+    seen no tool, there is nothing to say."""
+    try:
+        seen = json.loads((read_guard_dir() / "tools-seen.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(seen, dict):
+        return []
+    listed = connector_patterns(ws.root) + connector_skips(ws.root)
+    return [Finding(WARNING, "connectors", "System/garrick-settings.json",
+                    "the assistant used the connector tool %s, which is on no list of the read guard, so its results are "
+                    "not checked against the walls; add a pattern for it to `connector-tools`, or to "
+                    "`connector-tools-skip` if it returns nothing a party can label" % name,
+                    "a connector tool the assistant used is not checked against the walls", token=name)
+            for name in sorted(seen) if isinstance(name, str) and not tool_matches(listed, name)]
+
+
 # The checks a run over named paths makes whole, because each reads a handful of
 # fixed files and walks no notes (run_path_checks).
 PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
@@ -6688,7 +6714,7 @@ ALL_CHECKS = [
     check_hooks, check_cmux,
     check_skills, check_names, check_projects, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
-    check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,
+    check_raw, check_generated, check_recall, check_preferences, check_review, check_updates, check_connector_tools,
 ]
 
 

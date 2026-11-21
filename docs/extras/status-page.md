@@ -514,7 +514,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | A save stopped on an error | The record says `crashed` | This was not saved: the action stopped before it finished. | *Try again*, which sends the same request once more |
 | A save ended without saying how | The record says `unknown`: the worker died and left nothing | We cannot tell whether this went through. | *Refresh*, which rebuilds the page |
 | A save the page heard nothing of | No reply for sixteen minutes, or the record has no entry for it | This page did not hear back, so we cannot tell whether this went through. | *Refresh* |
-| A change that was made but not recorded | The reply says it worked, but the record holds no outcome for an action it keeps | The change was made, but Garrick could not confirm it from its record. | *Refresh* |
+| A change that was made but not recorded | The reply says it worked, but the record holds no outcome for an action it keeps | Garrick could not confirm this from its record. | *Refresh* |
 | A reply that failed with no outcome | The app could not run `page_action.py` (on the page), or the action has no record (on the notification line) | This was not saved: the action stopped before it finished. On the notification line: This did not finish. | *Try again* |
 | *Continue* did not open Claude | `handoff.py` and the app's bridge | Claude did not open. | *Try again* |
 | *Open in Claude*, *Codex* or *cmux* from the menu or a card did not open | The Mac app's own launcher, before any request is sent | The app's name, then "did not open", then the thread's name | Say the phrase that resumes it, which the sentence names |

@@ -5812,6 +5812,67 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "layout")
 
 
+# ---- A failure in plain words (#511) ----------------------------------------------------
+# One table: each way a request can end other than saved, with the sentence, the button that is its one next step, what
+# that button does, and the hint the Mac app's notification line adds, which has no button. The status page reads it when
+# it is built (status.py), and a failed reply carries the row it matches as "plain", so the notification line and the card
+# say the same. The tool's own text is never in the table: it stays in the reply's "say", and the page keeps it under
+# Details. "wall" has no sentence of its own: the rules' sentence stands alone, as the reply has it. A new row goes at the
+# end, before "other", which the table ends on.
+FAILURES = (
+    ("wall", "", "", "", ""),
+    ("refused", "This was not saved: the check refused it.", "Show why", "why", "Open the page and choose Show why."),
+    ("crashed", "This was not saved: the action stopped before it finished.", "Try again", "retry", "Open the page and choose Try again."),
+    ("unknown", "We cannot tell whether this went through.", "Refresh", "refresh", "Open the page and choose Refresh."),
+    ("lost", "This page did not hear back, so we cannot tell whether this went through.", "Refresh", "refresh",
+     "Open the page and choose Refresh."),
+    ("unrecorded", "Garrick could not confirm this from its record.", "Refresh", "refresh",
+     "Open the page and choose Refresh."),
+    ("noreply", "This was not saved: the action stopped before it finished.", "Try again", "retry", "Open the page and choose Try again."),
+    ("handoff", "Claude did not open.", "Try again", "retry", "Choose Try again on the page."),
+    ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
+)
+FAILURE_CODES = tuple(row[0] for row in FAILURES)
+
+
+def failure_code(out: dict, req) -> str:
+    """The row of FAILURES a failed reply is. The rules' sentence for a wall first, then a hand-off that did not open,
+    then the record's own outcome; anything else is "other"."""
+    say = str(out.get("say") or "")
+    if say.startswith("A wall holds "):
+        return "wall"
+    if isinstance(req, dict) and req.get("verb") == "continue":
+        return "handoff"
+    outcome = out.get("outcome")
+    return outcome if outcome in ("refused", "crashed", "unknown", "lost") else "other"
+
+
+def plain_failure(code: str, say: str = "") -> dict:
+    """The row for `code` as the reply carries it: {"code", "say", "next", "band"}. The wall's row is the reply's own
+    sentence; a code the table has not got is "other"."""
+    row = next((r for r in FAILURES if r[0] == code), FAILURES[-1])
+    if row[0] == "wall":
+        return {"code": "wall", "say": say, "next": "", "band": say}
+    return {"code": row[0], "say": row[1], "next": row[2], "band": (row[1] + " " + row[4]).strip()}
+
+
+def with_plain(out: dict, req, ops) -> dict:
+    """The reply `main()` prints, with the plain words beside the tool's: a failure gets its row, and a reply that says
+    it worked for an action the record keeps, but holds no outcome, says it could not confirm that. "Saved" is the
+    record's word (operations.jsonl): the reply of a request the record kept says "outcome": "saved" and nothing else
+    does. Left alone where there is no record to hold (no operations.py), so such a reply is what it was."""
+    if not isinstance(out, dict):
+        return out
+    verb = req.get("verb") if isinstance(req, dict) else None
+    if not out.get("ok"):
+        if (ops is None and "outcome" not in out) or "again" in out or out.get("state") in ("asked", "running", "queued"):
+            return out              # no record to hold it, or not a failure: the question about a repeat
+        return dict(out, plain=plain_failure(failure_code(out, req), str(out.get("say") or "")))
+    if ops is not None and verb in ops.OPS and "outcome" not in out and "state" not in out:
+        return dict(out, plain=plain_failure("unrecorded"))
+    return out
+
+
 def builds_page(req) -> bool:
     if not isinstance(req, dict) or req.get("verb") not in PAGE_BUILDS:
         return False
@@ -6001,7 +6062,7 @@ def main(argv=None) -> int:
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
     cli = args.verb is not None
     via = args.via or ("session" if cli else "page")
-    req, logged = None, None
+    req, logged, ops = None, None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
             raise Refused("not a Garrick workspace")
@@ -6021,6 +6082,7 @@ def main(argv=None) -> int:
         out = {"ok": False, "say": str(e)}
     except Exception as e:              # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
+    out = with_plain(out, req, ops)
     audit(req if req is not None else {}, out["ok"], logged or out["say"], via=via)
     if cli:                             # a session reads the sentence, not JSON
         undo = ("\nTo undo: python3 System/status/page_action.py undo --zone %s --commit %s" % (args.zone, out["commit"])

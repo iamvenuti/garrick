@@ -798,6 +798,11 @@ class FollowUpJobTest(unittest.TestCase):
             got = self.job.followup_answers("1: delivered %s\n%s\n" % (said, self.job.FOLLOW_SENTINEL), items)
             self.assertEqual("Zones/Work/Inbox/Re Price sheet.eml", got[0]["source"], said)
 
+    def test_an_answer_naming_a_longer_path_is_not_taken_for_a_listed_one(self):
+        items = [{"key": "k1", "line": "x", "person": "Dana", "evidence": [{"path": "Zones/Work/Inbox/a.eml", "kind": "inbox", "date": "2026-10-14"}]}]
+        got = self.job.followup_answers("1: delivered Zones/Work/Inbox/a.eml2\n%s\n" % self.job.FOLLOW_SENTINEL, items)
+        self.assertNotEqual("Zones/Work/Inbox/a.eml", got[0]["source"] if got else None)
+
     def test_a_failed_follow_up_does_not_mark_the_sweep_failed(self):
         zone = self.work
         sent, items = [], []

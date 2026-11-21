@@ -1083,6 +1083,25 @@ class TestTheBinaryIsFound(EngineCase):
         self.assertIn("binary", cap["failed"])
         self.assertEqual("read", self.channels.effective(self.root, "ask", cap)["autonomy"])
 
+    def test_a_kept_no_from_before_the_command_was_found_is_asked_again(self):
+        path = self.channels.jobs_dir() / "channels-capability.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"ok": False, "failed": ["resume"], "said": ["x"], "assistant": "claude"}), encoding="utf-8")
+        with mock.patch.object(self.channels, "probe_help", lambda *a: HELP_OK), mock.patch.object(self.channels, "guard_works", lambda ws: True):
+            cap = self.channels.capability(self.root)
+        self.assertTrue(cap["ok"])
+        self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["ok"])
+
+    def test_a_check_with_no_command_to_ask_is_not_kept(self):
+        self.nowhere()
+        path = self.channels.jobs_dir() / "channels-capability.json"
+        if path.exists():
+            path.unlink()
+        with mock.patch.object(self.channels, "guard_works", lambda ws: True):
+            cap = self.channels.capability(self.root)
+        self.assertFalse(cap["ok"])
+        self.assertFalse(path.exists())
+
     def test_a_command_that_exits_126_or_127_is_the_plain_sentence_and_nothing_is_kept(self):
         for code in (126, 127):
             before = git(self.work, "rev-parse", "HEAD").strip()

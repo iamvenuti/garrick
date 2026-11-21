@@ -67,7 +67,7 @@ python3 System/tools/machine.py set --role roaming --name laptop --server mini -
 python3 System/tools/machine.py
 ```
 
-`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one, and a change in Settings keeps what a file already names that the change does not set: its peers, its workspace path, and its name when you leave the name empty. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
+`--role` takes the names in brackets in the table above. The second command says the role. `name` is this computer's name, `server` is the server's, and `workspace` is where the workspace sits on this computer. `peers` may list the names of other computers that sync with this one. A change in Settings keeps what the file already holds and the change does not set: its peers, its workspace path, and its name when you leave the name empty. The zone guard refuses a file-editing tool's write to that one file, and to the temporary file beside it, on every role. The rest of `~/.config/garrick/` (the mail, bridge certificate and Telegram files) is as before. The guard covers the file-editing tools only: a shell command can still change the role file. It stops a mistaken edit. It is not a lock.
 
 ## What you cannot do on the laptop
 
@@ -77,7 +77,7 @@ On a laptop copy, each of these is refused, and the refusal says why:
 - **Anything that writes in the workspace outside a drop folder.** The zone guard refuses a file-editing tool's write anywhere but each zone's `Inbox/` and the workspace's own `Inbox/`, and the refusal names the drop folder to use.
 - **Commits.** Every zone's pre-commit check refuses one. The home server commits.
 - **The nightly jobs.** A job does not run: `job.py` says so and stops, and `check.py` reports an error for a Garrick launchd agent that is loaded. Unload it with `launchctl bootout`.
-- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server: on a laptop copy the *Read guard* block shows one line, “The read guard is set on the home server.”, in place of its controls. A laptop copy can still change its own role.
+- **The read guard's settings.** They live in the workspace, so Settings leaves them to the home server. On a laptop copy the *Read guard* block shows one line in place of its controls: “The read guard is set on the home server.” A laptop copy can still change its own role.
 
 On the home server, the jobs run as they do on one computer, and `check.py` warns about sync conflict copies anywhere in the workspace.
 

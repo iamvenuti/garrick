@@ -1741,6 +1741,19 @@ class TestKeepOnThePage(QueueCase):
             done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True, timeout=30)
             self.assertEqual(0, done.returncode, done.stderr)
 
+    def test_a_kept_error_finding_is_listed_once_and_counted_once(self):
+        """Fix round C7: the forecast pass drops it, quick_needs must not add it back as an extra, and the second pass must not record it again."""
+        page_md = "Zones/Work/Orphan.md"
+        write(self.root / page_md, "# Orphan\n\nA page.\n")
+        finding = {"kind": "judgment", "check": "orphans", "path": page_md, "line": "%s: an orphan page" % page_md}
+        self.record([finding])
+        self.quick({"check": "orphans", "severity": "error", "path": page_md, "message": "an orphan page"})
+        key = fq.later_key("other", page_md, fq.which_other({"check": "orphans", "message": "an orphan page"}))
+        fq.kept_put(self.root, key, fq.file_hash(self.root, page_md))
+        card = self.card(self.page())
+        self.assertEqual(1, card.count('data-keep="1"'))
+        self.assertIn("Kept by you · 1", card)
+
     def test_the_script_undoes_a_keep_from_the_queue_and_from_the_card(self):
         self.assertIn("/^keep/.test(q.answer||'')", fq.QUEUE_JS)
         self.assertIn("/^unkeep/.test(q.answer||'')", fq.QUEUE_JS)

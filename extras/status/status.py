@@ -1390,8 +1390,12 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
         hidden = fq.later_hidden(ws, today)
         planner = fq.Planner(ws)           # one plan budget for the whole build
         kept = fq.kept_hashes(ws)
+        if kept_out is None:
+            kept_out = []
         queues = fq.forecast_questions(items, hidden, ws, planner, kept, kept_out)
         extra = quick_needs(ws, C, queues)
+        kept_paths = {str(r.get("path")) for r in kept_out}
+        extra = [it for it in extra if str(it.get("path")) not in kept_paths]       # a kept finding is never added back as an extra
         for it in extra:
             it["ask"] = said(it["scope"])[1]
         for scope, qs in fq.forecast_questions(extra, hidden, ws, planner, kept, kept_out).items():

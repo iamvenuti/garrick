@@ -869,7 +869,7 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, ke
                 key = later_key(ident, str(item["path"]), which_other(item) if ident == OTHER else "")
                 now = file_hash(ws, str(item["path"]))
                 if now and kept.get(key) == now:
-                    if kept_out is not None:
+                    if kept_out is not None and not any(r.get("key") == key for r in kept_out):
                         kept_out.append(keep_record(ident, item, key, ws))
                     continue            # left as it is by the user, and the file is as it was
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None

@@ -76,6 +76,8 @@ GIT = ("add", "commit", "status", "diff", "log")
 JOB = "ask"                 # the ledger's name for an interactive call: both channels count against Ask's own caps
 TURN_TIMEOUT = 240
 MOST_REQUEST = 4000
+NOT_STARTED = (126, 127)       # the exit codes of a command that was found but not runnable, or not found
+NOT_STARTED_SAY = "The background assistant could not be started, so this goes to a visible one."
 
 
 def agent_lib():
@@ -149,7 +151,7 @@ def build(ws: Path, channel: str, zone: str, planned: dict, level: str, exchange
           commit: bool = True, only: Optional[List[str]] = None) -> Tuple[List[str], dict]:
     """The command and its environment for one turn. Pure: it starts nothing."""
     a = agent_lib()
-    claude = shutil.which("claude") or "claude"
+    claude = channels.claude_path() or "claude"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "settings.json").write_text(json.dumps(session_settings(ws, level)), encoding="utf-8")
     (folder / "mcp.json").write_text(json.dumps(mcp_config(ws, zone, channel, exchange["id"], folder / "read")), encoding="utf-8")
@@ -176,7 +178,10 @@ def build(ws: Path, channel: str, zone: str, planned: dict, level: str, exchange
 
 
 def default_runner(cmd, tier, cwd, env):
-    return agent_lib().run_prepared(cmd, tier, cwd=cwd, job=JOB, timeout=TURN_TIMEOUT, env=env)
+    try:
+        return agent_lib().run_prepared(cmd, tier, cwd=cwd, job=JOB, timeout=TURN_TIMEOUT, env=env)
+    except FileNotFoundError:
+        return 127, {}
 
 
 def folder_for(exchange_id: str) -> Path:
@@ -217,6 +222,9 @@ def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] =
     if got.get("refused"):
         return {"ok": False, "say": "Not run: %s." % str(got["refused"]).rstrip("."), "held": held, "session": exchange.get("session"),
                 "tier": planned["tier"], "autonomy": level}
+    if code in NOT_STARTED:       # `env` or the shell could not start the command (#628): a plain sentence, never a bare exit code
+        return {"ok": False, "unavailable": True, "say": NOT_STARTED_SAY, "held": [], "session": exchange.get("session"),
+                "tier": planned["tier"], "autonomy": level}
     ok = code == 0
     say = (got.get("text") or "").strip() if ok else "That did not work (exit %s). Nothing more was done." % code
     if level == "full" and held:
@@ -246,7 +254,7 @@ def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[
         return False, "the action names no tool"
     if not hold.TOOL_RE.match(tool) or hold.kind_of({"tool": tool}) not in hold.HELD_KINDS:
         return False, "the action names a tool that is not a connector tool that sends, shares or deletes"
-    claude = shutil.which("claude") or "claude"
+    claude = channels.claude_path() or "claude"
     prompt = ("The owner has approved this one action. Do exactly it, with the tool %s and these arguments, and "
               "nothing else; then say in one sentence what happened.\n<arguments>\n%s\n</arguments>" % (tool, json.dumps(args)[:8000]))
     cmd = [claude, "-p", prompt, "--model", "haiku", "--output-format", "json", "--permission-mode", "default",
@@ -520,7 +528,8 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
         return _fail(why)
     cap = cap if cap is not None else channels.capability(ws)
     now = channels.effective(ws, "ask", cap)
-    if request and (channels.assistant() != "claude" or not cap.get("ok") or now["autonomy"] == "read"):
+    if request and (channels.assistant() != "claude" or not cap.get("ok") or now["autonomy"] == "read"
+                    or (runner is None and not channels.claude_path())):
         return unavailable
     pa = _pa()
     repo_rel = str(folder.relative_to(ws))
@@ -552,6 +561,9 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
                     hold.cancel(e["id"])
                 stray = [p for p in _moved(before, after) if p not in inner]
                 far = _others(ws, repo) != elsewhere
+                if got.get("unavailable") and not got.get("ok"):        # the assistant could not be started: nothing was edited
+                    _put_back(pa.git, repo, before, after, inner)
+                    return dict(unavailable, say=str(got.get("say") or unavailable["say"]))
                 if got.get("held") or not got.get("ok") or _head(pa.git, repo) != head:
                     left = _put_back(pa.git, repo, before, after, inner)
                     if got.get("held"):

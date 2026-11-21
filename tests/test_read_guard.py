@@ -1,0 +1,353 @@
+"""The read guard (#613): what a session may read, from its own zone, across a wall, from the root; warn-only
+first, the log, the harnesses, the cost.
+
+    cd tests && python3 -m unittest test_read_guard
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import unittest
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+from read_guard_case import GUARD, REPO, SENTENCE, GuardCase, put  # noqa: E402
+
+ZONE_GUARD = REPO / "extras" / "hooks" / "zone_guard.py"
+POINTER = "recall.py search"
+
+
+class Enforced(GuardCase):
+    def setUp(self):
+        super().setUp()
+        self.settings(**{"read-guard": "enforce"})
+
+    def refused(self, reply):
+        decision, reason = self.decision(reply)
+        self.assertEqual("deny", decision)
+        self.assertTrue(reason.startswith(SENTENCE), reason)
+        return reason
+
+    def test_a_meeting_page_of_another_walled_zone_is_refused_and_names_nothing(self):
+        reason = self.refused(self.read(self.root / "Wikis/Meetings/wiki/birch-pricing.md"))
+        self.assertEqual(SENTENCE, reason)
+        for word in ("birch", "Birch", "pricing", "Personal", "wiki", str(self.root)):
+            self.assertNotIn(word, reason)
+
+    def test_a_file_in_another_walled_zone_is_refused(self):
+        self.assertEqual(SENTENCE, self.refused(self.read(self.birch / "Notes/secret.md")))
+
+    def test_the_sessions_own_zone_open_zones_and_knowledge_are_read(self):
+        for path in (self.acme / "Acme.md", self.root / "Zones/Work/Todo.md", self.root / "Wikis/Meetings/wiki/acme-kickoff.md",
+                     self.root / "Wikis/Meetings/wiki/cedar-garden.md", self.cedar / "Cedar.md",
+                     self.root / "Wikis/Knowledge/wiki/standard.md", self.root / "System/notes.md",
+                     self.acme / "Threads/Kickoff/Kickoff.md"):
+            with self.subTest(path=path.name):
+                self.assertIsNone(self.read(path))
+
+    def test_a_page_with_no_zone_and_a_knowledge_page_that_names_one_are_refused(self):
+        self.refused(self.read(self.root / "Wikis/Meetings/wiki/loose.md"))
+        self.refused(self.read(self.root / "Wikis/Knowledge/wiki/owned.md"))
+
+    def test_a_session_in_an_open_zone_reads_open_material_and_no_walled_page(self):
+        self.assertIsNone(self.read(self.root / "Wikis/Meetings/wiki/cedar-garden.md", home=self.cedar))
+        self.refused(self.read(self.root / "Wikis/Meetings/wiki/acme-kickoff.md", home=self.cedar))
+        self.refused(self.read(self.acme / "Acme.md", home=self.cedar))
+
+    def test_the_other_side_of_the_wall_is_refused_too(self):
+        self.refused(self.read(self.acme / "Acme.md", home=self.birch))
+        self.assertIsNone(self.read(self.birch / "Birch.md", home=self.birch))
+
+    def test_the_agents_files_are_read_from_anywhere(self):
+        self.assertIsNone(self.read(self.root / "Zones/Work/AGENTS.md", home=self.birch))
+        self.assertIsNone(self.read(self.root / "Wikis/Meetings/AGENTS.md"))
+
+    def test_a_session_at_the_root_or_in_system_reads_everything(self):
+        for home in (self.root, self.root / "System"):
+            for path in (self.birch / "Notes/secret.md", self.root / "Wikis/Meetings/wiki/birch-pricing.md",
+                         self.root / "Wikis/Meetings/wiki/loose.md"):
+                with self.subTest(home=home.name, path=path.name):
+                    self.assertIsNone(self.read(path, home=home))
+            self.assertIsNone(self.call("Grep", {"pattern": "x", "path": str(self.root / "Wikis")}, home=home))
+            self.assertIsNone(self.call("Bash", {"command": "cat Wikis/Meetings/wiki/birch-pricing.md"}, home=home))
+
+    def test_a_session_outside_any_workspace_is_never_stopped(self):
+        outside = self.root.parent / "elsewhere"
+        outside.mkdir()
+        self.assertIsNone(self.run_hook({"session_id": "x", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(outside),
+                                         "tool_input": {"file_path": str(self.birch / "Notes/secret.md")}}, project_dir=outside))
+
+    def test_a_path_outside_the_workspace_is_read(self):
+        scratch = put(self.root.parent / "scratch" / "a.txt", "x")
+        self.assertIsNone(self.read(scratch))
+
+    def test_a_link_is_judged_where_it_leads(self):
+        link = self.acme / "elsewhere"
+        link.symlink_to(self.birch)
+        self.refused(self.read(link / "Notes/secret.md"))
+
+    def test_raw_grep_over_the_wikis_is_refused_with_the_pointer(self):
+        for path in ("Wikis", "Wikis/Meetings", "Wikis/Meetings/wiki"):
+            with self.subTest(path=path):
+                reason = self.refused(self.call("Grep", {"pattern": "price", "path": str(self.root / path)}))
+                self.assertIn(POINTER, reason)
+                self.assertNotIn("Birch", reason)
+
+    def test_glob_over_the_wikis_is_refused_with_the_pointer(self):
+        reason = self.refused(self.call("Glob", {"pattern": "Wikis/Meetings/**/*.md", "path": str(self.root)}))
+        self.assertIn(POINTER, reason)
+        self.refused(self.call("Glob", {"pattern": str(self.root / "Wikis/**/*.md")}))
+
+    def test_grep_from_the_root_of_the_workspace_over_several_zones_is_refused(self):
+        self.refused(self.call("Grep", {"pattern": "x", "path": str(self.root)}))
+        self.refused(self.call("Grep", {"pattern": "x", "path": str(self.root / "Zones")}))
+
+    def test_grep_and_glob_inside_the_sessions_own_zone_go_ahead(self):
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "path": str(self.acme)}))
+        self.assertIsNone(self.call("Grep", {"pattern": "x"}))                       # the session's own folder
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "path": str(self.root / "Zones/Work")}))
+        self.assertIsNone(self.call("Glob", {"pattern": "**/*.md"}))
+        self.assertIsNone(self.call("Glob", {"pattern": str(self.acme / "Threads/**/*.md")}))
+
+    def test_grep_in_another_walled_zone_is_refused(self):
+        self.refused(self.call("Grep", {"pattern": "x", "path": str(self.birch)}))
+        self.refused(self.call("Glob", {"pattern": "**/*.md", "path": str(self.birch)}))
+
+    def test_grep_over_the_knowledge_wiki_goes_ahead(self):
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "path": str(self.root / "Wikis/Knowledge")}))
+
+    def test_shell_commands_naming_walled_paths_are_decided_like_reads(self):
+        self.refused(self.call("Bash", {"command": "cat '%s'" % (self.root / "Wikis/Meetings/wiki/birch-pricing.md")}))
+        self.refused(self.call("Bash", {"command": "grep -r price ../../../Wikis/", }, cwd=self.acme))
+        self.refused(self.call("Bash", {"command": "ls %s | head" % (self.birch)}))
+        self.refused(self.call("Bash", {"command": "cat Zones/Personal/Birch/Birch.md && echo done"}, cwd=self.root))
+        self.refused(self.call("Bash", {"command": "rg x --glob '*.md' Wikis/Meetings/wiki/*"}, cwd=self.root))
+
+    def test_shell_commands_in_the_sessions_own_places_go_ahead(self):
+        self.assertIsNone(self.call("Bash", {"command": "cat Acme.md | wc -l"}))
+        self.assertIsNone(self.call("Bash", {"command": "git status && ls Threads/"}))
+        self.assertIsNone(self.call("Bash", {"command": "python3 %s/System/tools/check.py" % self.root}))
+
+    def test_a_shell_command_that_cannot_be_read_goes_ahead_and_is_logged_as_unread(self):
+        self.assertIsNone(self.call("Bash", {"command": "cat $(echo Wikis/Meetings/wiki/birch-pricing.md)"}))
+        self.assertIsNone(self.call("Bash", {"command": "cat \"unbalanced"}))
+        kinds = [l.get("kind") for l in self.log_lines()]
+        self.assertEqual(["unread", "unread"], kinds)
+        self.assertEqual({"allow"}, {l["decision"] for l in self.log_lines()})
+
+    def test_any_other_tool_is_left_alone(self):
+        self.assertIsNone(self.call("WebFetch", {"url": "https://example.invalid"}))
+        self.assertEqual([], self.log_lines())
+
+    def test_a_broken_event_lets_the_call_through_and_logs_the_error(self):
+        self.assertIsNone(self.run_hook(None, project_dir=self.acme, raw="not json"))
+        self.assertIsNone(self.run_hook({"hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(self.acme),
+                                         "tool_input": "oops"}, project_dir=self.acme))
+        self.assertEqual("error", self.log_lines()[-1]["decision"])
+
+    def test_a_scheduled_job_is_logged_and_never_refused(self):
+        reply = self.run_hook({"session_id": "j", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(self.acme),
+                               "tool_input": {"file_path": str(self.birch / "Notes/secret.md")}}, project_dir=self.acme, headless=True)
+        self.assertIsNone(reply)
+        self.assertEqual("deny", self.log_lines()[-1]["decision"])
+
+    def test_the_guards_folder_inside_the_workspace_is_never_read_by_a_session(self):
+        inner = self.root / "System" / "inner-state"
+        env_jobs = self.root / "System" / "inner-jobs"
+        home = self.acme
+        event = {"session_id": "z", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(home),
+                 "tool_input": {"file_path": str(self.root / "System" / "garrick-read-guard" / "read-guard.log")}}
+        # GARRICK_JOBS_DIR inside System/ puts the guard's folder at System/garrick-read-guard
+        done = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True,
+                              env=dict(self.env(home), GARRICK_JOBS_DIR=str(self.root / "System" / "jobs")), timeout=60)
+        self.assertEqual(0, done.returncode)
+        reply = json.loads(done.stdout)
+        self.assertEqual(SENTENCE, reply["hookSpecificOutput"]["permissionDecisionReason"])
+        del inner, env_jobs
+
+    # the recorded scope
+
+    def test_the_scope_recorded_at_session_start_decides_wherever_the_call_is_made_from(self):
+        self.start(self.acme)
+        record = json.loads((self.state / "sessions" / "s1.json").read_text())
+        self.assertEqual({"kind": "zone", "zone": "Work", "project": "Acme", "parties": ["acme"]},
+                         {k: record[k] for k in ("kind", "zone", "project", "parties")})
+        event = {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(self.root),
+                 "tool_input": {"file_path": str(self.birch / "Notes/secret.md")}}
+        reply = self.run_hook(event)                                  # no CLAUDE_PROJECT_DIR, working folder is the root
+        self.assertEqual("deny", self.decision(reply)[0])
+
+    def test_without_a_record_the_working_folder_decides(self):
+        event = {"session_id": "none", "hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": str(self.acme),
+                 "tool_input": {"file_path": str(self.birch / "Notes/secret.md")}}
+        self.assertEqual("deny", self.decision(self.run_hook(event))[0])
+        event["cwd"] = str(self.root)
+        self.assertIsNone(self.run_hook(event))                       # a session at the root keeps full read
+
+    def test_the_record_is_outside_the_workspace_and_names_no_walled_material(self):
+        self.start(self.acme)
+        self.assertFalse(str(self.state).startswith(str(self.root)))
+        text = (self.state / "sessions" / "s1.json").read_text()
+        for word in ("Birch", "birch", "Personal"):
+            self.assertNotIn(word, text)
+
+    # asking
+
+    def test_across_a_wall_the_user_asked_for_raises_one_permission_prompt(self):
+        self.settings(**{"read-guard": "enforce", "read-guard-cross-zone": "ask"})
+        decision, reason = self.decision(self.read(self.birch / "Notes/secret.md"))
+        self.assertEqual("ask", decision)
+        self.assertEqual(SENTENCE, reason)
+
+    def test_asking_does_not_cover_a_page_with_no_zone(self):
+        self.settings(**{"read-guard": "enforce", "read-guard-cross-zone": "ask"})
+        self.assertEqual("deny", self.decision(self.read(self.root / "Wikis/Meetings/wiki/loose.md"))[0])
+
+    def test_codex_cannot_ask_so_it_refuses_once_and_lets_the_same_path_through_the_second_time(self):
+        self.settings(**{"read-guard": "enforce", "read-guard-cross-zone": "ask"})
+        event = {"session_id": "cx", "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": str(self.acme),
+                 "tool_input": {"command": "cat %s" % (self.birch / "Notes/secret.md")}}
+        first = self.run_hook(event)                                  # no CLAUDE_PROJECT_DIR: Codex
+        decision, reason = self.decision(first)
+        self.assertEqual("deny", decision)
+        self.assertTrue(reason.startswith(SENTENCE))
+        self.assertIsNone(self.run_hook(event))
+        other = dict(event, tool_input={"command": "cat %s" % (self.birch / "Birch.md")})
+        self.assertEqual("deny", self.decision(self.run_hook(other))[0])
+
+    # switch
+
+    def test_anything_but_enforce_is_warn(self):
+        for value in ("warn", "ENFORCE", True, 1, None, ["enforce"]):
+            with self.subTest(value=value):
+                self.settings(**{"read-guard": value})
+                self.assertIsNone(self.read(self.birch / "Notes/secret.md"))
+        (self.root / "System" / "garrick-settings.json").write_text("{not json")
+        self.assertIsNone(self.read(self.birch / "Notes/secret.md"))
+        (self.root / "System" / "garrick-settings.json").unlink()
+        self.assertIsNone(self.read(self.birch / "Notes/secret.md"))
+
+
+class WarnOnly(GuardCase):
+    """The template's default: nothing is refused, every would-be refusal is logged."""
+
+    def test_nothing_is_refused_and_each_would_be_refusal_is_logged(self):
+        reads = [self.birch / "Notes/secret.md", self.root / "Wikis/Meetings/wiki/birch-pricing.md", self.acme / "Acme.md"]
+        for path in reads:
+            self.assertIsNone(self.read(path))
+        self.assertIsNone(self.call("Grep", {"pattern": "x", "path": str(self.root / "Wikis")}))
+        self.assertIsNone(self.call("Bash", {"command": "cat Zones/Personal/Birch/Birch.md"}, cwd=self.root))
+        got = self.log_lines()
+        self.assertEqual(["deny", "deny", "allow", "deny", "deny"], [l["decision"] for l in got])
+        self.assertEqual(["Read", "Read", "Read", "Grep", "Bash"], [l["tool"] for l in got])
+        self.assertEqual({"Work"}, {l["zone"] for l in got})
+
+    def test_the_log_holds_no_path_party_title_or_count(self):
+        self.read(self.birch / "Notes/secret.md")
+        self.read(self.root / "Wikis/Meetings/wiki/birch-pricing.md")
+        self.call("Grep", {"pattern": "birch", "path": str(self.root / "Wikis")})
+        text = self.log_text()
+        self.assertTrue(text)
+        for word in ("Birch", "birch", "secret", "pricing", "Personal", str(self.root), "Notes", "Wikis", "Meetings"):
+            self.assertNotIn(word, text)
+        for line in self.log_lines():
+            self.assertEqual({"t", "tool", "decision", "zone", "id", "kind"} - {"kind"} | ({"kind"} & set(line)), set(line))
+            self.assertRegex(line["id"], r"^[0-9a-f]{12}$")
+
+    def test_a_root_session_is_not_logged(self):
+        self.read(self.birch / "Notes/secret.md", home=self.root)
+        self.assertEqual([], self.log_lines())
+
+    def test_the_log_stays_out_of_the_workspace(self):
+        self.read(self.birch / "Notes/secret.md")
+        self.assertTrue((self.state / "read-guard.log").is_file())
+        self.assertFalse(str(self.state).startswith(str(self.root)))
+
+    def test_a_guard_folder_inside_the_workspace_is_refused_even_in_warn(self):
+        event = {"session_id": "z", "hook_event_name": "PreToolUse", "tool_name": "Grep", "cwd": str(self.acme),
+                 "tool_input": {"pattern": "x", "path": str(self.root / "System" / "garrick-read-guard")}}
+        done = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(event), capture_output=True, text=True,
+                              env=dict(self.env(self.acme), GARRICK_JOBS_DIR=str(self.root / "System" / "jobs")), timeout=60)
+        self.assertEqual("deny", json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"])
+
+
+class Cost(GuardCase):
+    def test_the_time_one_call_takes(self):
+        self.settings(**{"read-guard": "enforce"})
+        path = self.acme / "Acme.md"
+        self.read(path)
+        start = time.perf_counter()
+        for _ in range(10):
+            self.read(path)
+        each = (time.perf_counter() - start) / 10
+        sys.stderr.write("\nread guard: %.0f ms per read call (Python start included)\n" % (each * 1000))
+        self.assertLess(each, 1.0)
+
+
+class Registration(GuardCase):
+    def hooks(self, assistant, hooks):
+        folder = self.home / assistant
+        folder.mkdir(exist_ok=True)
+        name = "settings.json" if assistant == ".claude" else "hooks.json"
+        (folder / name).write_text(json.dumps({"hooks": hooks}))
+
+    def command(self):
+        return [{"type": "command", "command": "python3 %s" % GUARD}]
+
+    def run_check(self, script):
+        done = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True,
+                              env=self.env(), timeout=30)
+        return done.returncode, done.stdout
+
+    def full_claude(self):
+        return {"SessionStart": [{"hooks": self.command()}],
+                "PreToolUse": [{"matcher": "Read|Grep|Glob|Bash", "hooks": self.command()}],
+                "PostToolUse": [{"matcher": "mcp__.*", "hooks": self.command()}]}
+
+    def test_check_names_what_is_missing(self):
+        self.hooks(".claude", {"PreToolUse": [{"matcher": "Read|Grep", "hooks": self.command()}]})
+        code, out = self.run_check(GUARD)
+        self.assertEqual(1, code)
+        self.assertIn("Glob", out)
+        self.assertIn("SessionStart", out)
+
+    def test_check_passes_for_a_full_registration(self):
+        self.hooks(".claude", self.full_claude())
+        code, out = self.run_check(GUARD)
+        self.assertEqual(0, code, out)
+        self.assertIn("the read guard is registered", out)
+
+    def test_codex_needs_the_session_start_and_the_shell_hooks_and_no_connector_hook(self):
+        self.hooks(".codex", {"SessionStart": [{"hooks": self.command()}],
+                              "PreToolUse": [{"matcher": "Bash", "hooks": self.command()}]})
+        code, out = self.run_check(GUARD)
+        self.assertEqual(0, code, out)
+
+    def test_the_zone_guards_check_reports_the_read_guard_too(self):
+        zone = [{"type": "command", "command": "python3 %s" % ZONE_GUARD}]
+        tools = "Edit|Write|MultiEdit|NotebookEdit"
+        hooks = self.full_claude()
+        hooks["PreToolUse"].append({"matcher": tools, "hooks": zone})
+        hooks["PostToolUse"].append({"matcher": tools, "hooks": zone})
+        self.hooks(".claude", hooks)
+        code, out = self.run_check(ZONE_GUARD)
+        self.assertEqual(0, code, out)
+        self.assertIn("zone guard is registered", out)
+        self.assertIn("read guard is registered", out)
+
+    def test_the_zone_guards_check_says_so_when_the_read_guard_is_not_there_and_keeps_its_exit_code(self):
+        zone = [{"type": "command", "command": "python3 %s" % ZONE_GUARD}]
+        tools = "Edit|Write|MultiEdit|NotebookEdit"
+        self.hooks(".claude", {"PreToolUse": [{"matcher": tools, "hooks": zone}], "PostToolUse": [{"matcher": tools, "hooks": zone}]})
+        code, out = self.run_check(ZONE_GUARD)
+        self.assertEqual(0, code, out)
+        self.assertIn("read guard is not registered", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

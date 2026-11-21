@@ -1444,6 +1444,14 @@ def outside_copies(root):
         there = Path(os.path.expanduser(path))
         if there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
             found.append(("the zone guard", str(there)))
+    reader = REPO / "extras" / "hooks" / "read_guard.py"
+    paths = set()
+    for text in texts:
+        paths |= set(re.findall(r"[^\s\"']*read_guard\.py", text))
+    for path in sorted(paths):
+        there = Path(os.path.expanduser(path))
+        if there.is_file() and reader.is_file() and read(there) != read(reader) and not same_place(there, reader):
+            found.append(("the read guard", str(there)))
     dirs = set()
     for text in texts:
         try:

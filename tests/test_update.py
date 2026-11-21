@@ -2113,6 +2113,19 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         guard.write_bytes((REPO / "extras/hooks/zone_guard.py").read_bytes())
         self.assertNotIn("zone guard", self.report_of(self.plan()))
 
+    def test_a_read_guard_run_from_an_older_copy_is_named(self):
+        guard = self.base / "kept" / "read_guard.py"
+        guard.parent.mkdir(parents=True)
+        guard.write_text("# an older guard\n")
+        settings = self.base / "home" / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [
+            {"type": "command", "command": "python3 %s" % guard}]}]}}))
+        self.assertIn("The read guard runs from %s, which differs from this Garrick's" % guard,
+                      self.report_of(self.plan()))
+        guard.write_bytes((REPO / "extras/hooks/read_guard.py").read_bytes())
+        self.assertNotIn("read guard", self.report_of(self.plan()))
+
 
 class TestBandKeptOutside(ExtrasCase):
     """The Garrick band runs from a Garrick kept outside the workspace. Two fake

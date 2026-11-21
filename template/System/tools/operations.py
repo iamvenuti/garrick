@@ -330,6 +330,10 @@ DECLARED: Dict[str, Op] = {
     "operations": _op((), (), "none", retry="safe"),
     # A request held in a zone's outbox, taken out of it unapplied (#612): only the app's bridge.
     "outbox-drop": _op(("zone", "id"), ("zone", "id"), "zone", retry="safe"),
+    # Settings (#621): this computer's role, written outside the workspace; and the read guard, whose hook is registered in
+    # the assistants' own settings and whose four choices are kept in the workspace's settings file. Only the app's bridge.
+    "machine-role": _op(("role", "name", "server"), (), "machine", retry="safe"),
+    "read-guard": _op(("mode", "cross", "tools", "skip"), (), "workspace", retry="safe"),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since

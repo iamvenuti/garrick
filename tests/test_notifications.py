@@ -617,11 +617,11 @@ class TestPageAndSettings(Case):
             html = self.status.build(self.ws, folder=self.base / "jobs")
         sec = html[html.index('id="notify-settings"'):]
         sec = sec[:sec.index("</section>")]
-        todo = sec[sec.index('<label class="nsown"'):]
+        todo = sec[sec.index('<label class="nsown nsitem"'):]
         todo = todo[:todo.index("</label>") + 8]
         self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", todo)
         self.assertIn('data-nt="todo-summary" disabled aria-disabled="true" checked', todo)    # not in use, and what is saved is kept
-        self.assertEqual(1, sec.count('class="nsown"'))                                       # the Context row has no job that does it
+        self.assertEqual(1, sec.count('class="nsown nsitem"'))                                       # the Context row has no job that does it
         self.assertIn("nsown input{visibility:hidden", self.status.SETTINGS_CSS)
         self.assertNotIn("desk", re.sub(r"<[^>]+>", " ", sec).lower())                       # the card holds no word desk
 

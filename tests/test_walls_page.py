@@ -72,7 +72,9 @@ class WallsPageCase(unittest.TestCase):
         The app's bridge says `--via page`; `via=None` sends no `--via` at all, as a stray process would."""
         argv = ["--workspace", str(self.root)] + (["--via", via] if via else [])
         out = io.StringIO()
-        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(req))), mock.patch.object(sys, "stdout", out):
+        # The app's bridge is Garrick.app's own process: the test stands in for it by replacing the one check, in this process.
+        with mock.patch.object(pa, "page_route", return_value=via == "page"), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(req))), mock.patch.object(sys, "stdout", out):
             pa.main(argv)
         return json.loads(out.getvalue())
 

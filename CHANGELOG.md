@@ -4,6 +4,33 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-11-21
+
+The Garrick App now tells you in plain words when something did not work, and what to do next. A project's layout can be changed from the app, after you see the plan.
+
+**Upgrading.**
+- The Garrick App now says what failed in plain words, with one button for the next step, and keeps the tool's own text under *Details*.
+- A project can be turned into a heading, and a thread given its own papers or the project's, from the app.
+
+### Added
+
+- **Failures in plain words** (part of #511). Each failure the app can show now has one plain sentence and one action: "This was not saved: the check refused it." with *Show why*, "Claude did not open." with *Try again*, and so on. The whole list is in the status page docs, under *When something fails*. The tool's text, the command and the count stay under *Details*, closed until you open it. The Mac app's toast and notification line say the same sentence as the page, and a failure with no sentence of its own says "This did not finish." The page says *saved* only when the operation record has the commit. An action the record could not confirm says so instead of *Done*. Recall's index age is not shown in the app yet, so it has no sentence.
+- **The layout control** (#604). A thread's card offers *Own papers…* or *Project's papers…*, and a project's card offers *Make a heading…*, only where the change applies. The dialog shows the plan first and writes nothing. *Move them* then moves the files in one commit through the wall check, and *Undo* takes it back. Files that no thread names, or that two threads name, are listed with the project's threads, and *Ask my assistant* hands a file with a plain name to your assistant. The control never places one itself.
+- **The Ask box offers the same change** (#604). "Make Acme a heading" or "give Pricing its own papers" gets a *Review the change* button that opens the plan, for a project in the zone the Ask window is on. Ask never makes the change itself.
+- `scaffold.py layout --check --json` gives the plan as data.
+
+### Changed
+
+- A layout change made from the page no longer shows a command in its reply.
+- A screen reader now hears the *Waiting on you now* card's sentence when the count changes, also while the card is one line.
+
+### Fixed
+
+- A to-do plan for a thread finds the thread's lines whether it names the thread short (`[[Pricing]]`) or in full, provided only one project in the zone has a thread of that name.
+- The page's action script treats a request that does not say who sent it as a session's request. Only the app's own buttons, which now pass `--via page`, can press the page-only actions. A script of yours that pipes JSON into `page_action.py` for a page-only action must now pass `--via page` itself.
+- A bounded run for the Ask box reads each changed file once, not up to three times.
+- The *Waiting on you now* card's live region is no longer inside the part of the card that is hidden while nothing waits.
+
 ## [0.71.0] - 2026-11-21
 
 A project no longer has to start with a thread, and you choose whether it is one piece of work or a heading over several. On a `Waiting on` line's chase day, Garrick looks for the reply in that zone and offers the tick or a chase it holds for your yes.

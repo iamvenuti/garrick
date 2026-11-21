@@ -249,6 +249,20 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         self.assertIn("z.folder&&lsafe(lbase(f[0]))?' <button", STATUS_SRC)
         self.assertNotIn("place '+f[0]+'", STATUS_SRC)
 
+    def test_the_zones_folder_is_in_the_page_data_only_for_a_zone_with_an_offer_and_a_page_that_acts(self):
+        one = {"hub": Path("/x/Acme/Acme.md"), "status": "active"}
+        heading = {"hub": Path("/x/Cedar/Cedar.md"), "status": "active", "heading": True}
+        with_offer = {"folder": Path("/x"), "rows": [], "parked": [], "projects": {"Acme": one}}
+        without = {"folder": Path("/y"), "rows": [], "parked": [], "projects": {"Cedar": heading}}
+        empty = {"folder": Path("/z"), "rows": [], "parked": [], "projects": {}}
+        T = {"Work": with_offer, "Personal": without, "Home": empty}
+        zones = status.manage_data(T, {}, True)["zones"]
+        self.assertEqual("/x", zones["Work"]["folder"])
+        self.assertNotIn("folder", zones["Personal"])
+        self.assertNotIn("folder", zones["Home"])
+        for zone in status.manage_data(T, {}, False)["zones"].values():
+            self.assertNotIn("folder", zone)
+
     def test_the_app_treats_a_look_as_reading_and_opens_the_dialog_for_a_choice(self):
         self.assertIn('request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,', SWIFT_SRC)
         self.assertIn("CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }", SWIFT_SRC)

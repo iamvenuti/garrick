@@ -4408,9 +4408,12 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
         headings = sorted((n for n in projects if P.get(n, {}).get("heading")), key=str.casefold)
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
-        # `folder`: the zone's folder, where a request the layout dialog hands to the assistant starts (#604).
-        zones[zone] = {"projects": projects, "parties": parties, "headings": headings,
-                       "folder": str(data["folder"]) if data.get("folder") else ""}
+        zones[zone] = {"projects": projects, "parties": parties, "headings": headings}
+        # `folder`: the zone's folder, where a request the layout dialog hands to the assistant starts (#604). Only a
+        # page that acts carries it, and only for a zone with a layout offer: a project with a hub that is not a
+        # heading offers its change to one (layout_offers()). No other page data holds a zone's absolute folder.
+        if acting and data.get("folder") and any(v.get("hub") and not v.get("heading") for v in P.values()):
+            zones[zone]["folder"] = str(data["folder"])
     return {"zones": zones, "acting": acting}
 
 

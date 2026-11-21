@@ -69,6 +69,7 @@ GUARD_TEXT = {
                "them and does not warn you about them.",
 }
 CODEX_LINE = "Codex cannot have its mail and calendar results checked. Only the instructions keep them apart."
+CODEX_TRUST = "Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here."
 MODES = (("off", "Off"), ("warn", "Watch only"), ("enforce", "On"))
 CROSS = (("deny", "Refuse"), ("ask", "Ask me"))
 CANNOT = {
@@ -348,7 +349,8 @@ def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Call
                  % (esc(state["cross"]), title("Across a wall", help_button("Across a wall: Refuse, Ask me", "rg-cross")),
                     radios("rg-cross", "cross", CROSS, state["cross"], "Across a wall"), help_text("rg-cross", esc(GUARD_TEXT["rg-cross"]))))
     if codex:
-        lists = '<p class="hint rgcodex" id="rg-codex">%s</p>' % esc(CODEX_LINE)
+        lists = ('<p class="hint rgcodex" id="rg-codex">%s</p><p class="hint rgtrust" id="rg-trust">%s</p>'
+                 % (esc(CODEX_LINE), esc(CODEX_TRUST)))
     else:
         lists = ('<div class="rgrow rglist-row" data-rg="tools">%s<div class="rgbody">%s</div></div>%s'
                  '<div class="rgrow rglist-row" data-rg="skip">%s<div class="rgbody">%s</div></div>%s'
@@ -386,7 +388,7 @@ CSS = r"""
 .rglist-row{align-items:flex-start}.rgbody{flex:1 1 260px;min-width:0}.rgitems{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:4px}
 .rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem .rgtool{flex:1;min-width:0;overflow-wrap:anywhere;font-family:var(--mono,monospace)}
 .rgadd{display:flex;gap:6px;align-items:center}#readguard-settings .rgsmall,#readguard-settings .rgrem,#readguard-settings .rgadd .act{padding:2px 9px;min-height:0;line-height:1.5;font-size:var(--fs-meta)}.rgadd input{flex:1;min-width:0;font:inherit;font-size:var(--fs-meta);padding:3px 7px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
-.rgseen,.rgcannot,.rgcodex,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
+.rgseen,.rgcannot,.rgcodex,.rgtrust,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
 .rglist ul{margin:2px 0 8px;padding-left:18px}.rglistzone b{font-weight:560}
 .rgsaid.bad{color:var(--critical)}.rgsaid details{margin-top:4px}.rgsaid pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 0;font-size:var(--fs-meta)}
 """

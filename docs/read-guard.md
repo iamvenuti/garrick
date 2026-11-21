@@ -46,14 +46,14 @@ The list shows, for each read, when it happened, which tool made it and what the
 
 - **The list holds nothing you needed.** Choose **On**. Those reads are stopped from then on.
 - **The list holds reads you needed, because you asked for work across zones.** Choose **On** with **Ask me**. It asks you each time, so you can allow one read for one session.
-- **The list is empty.** Either nothing crossed a wall, or the guard was not running: check that the choice shows Watch only, and that you opened a new session after choosing it.
+- **The list is empty.** Either nothing crossed a wall, or the guard was not running: check that the choice shows Watch only, and that you opened a new session after choosing it. In Codex, a hook does not run until you trust it: run `/hooks` and trust the read guard, and do it again after each change you make in Settings.
 
 ## What it does not cover
 
 The read guard narrows a gap. It does not close it, so do not rely on it for more than it does.
 
 - **Shell commands it cannot follow.** It reads the plain path words in a command. A command with a variable, a substitution or an unbalanced quote is allowed and noted as unread. A command that changes folder first is read as best it can be.
-- **Codex.** It is checked on its shell commands only, not on mail and calendar results, and it cannot ask you: it refuses once.
+- **Codex.** It is checked on its shell commands only, not on mail and calendar results, and it cannot ask you: it refuses once. It also skips a hook until you trust it in `/hooks`, and again after any change to it.
 - **Tools that are not on the list.** Only the tools on *Mail and calendar tools* are filtered.
 - **What a name says.** A client's name typed into a note of another zone is not caught. The guard decides by where a file is, not by what it says.
 - **A broken guard.** An error while it checks a read lets that read through, and the log says so. An error while it filters a mail result removes the result when the guard is On, even when Garrick's own tools cannot be loaded: it then reads the setting from the settings file itself. Two limits remain. A hook that runs past its time limit is stopped by the assistant, and then the result goes through. And when no workspace is found from the folder the session was opened in, the guard cannot tell what to protect, so the result goes through.

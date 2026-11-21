@@ -129,7 +129,7 @@ It needs `python3` and the workspace's own `System/tools`. Point both assistants
 
 The `PostToolUse` entry is the connector filter. It is registered for every connector tool, so the guard can note which ones the session used; only the tools on the `connector-tools` list are filtered.
 
-**Codex** (0.124 or later; trust it in `/hooks`): add `SessionStart` and a `PreToolUse` with the matcher `Bash` to `~/.codex/hooks.json`, with the same command. Codex gets no connector hook: it cannot replace a tool's output.
+**Codex** (0.124 or later; trust it in `/hooks`, since Codex skips a hook until you do, and again after any change to it, as when Settings changes the registration): add `SessionStart` and a `PreToolUse` with the matcher `Bash` to `~/.codex/hooks.json`, with the same command. Codex gets no connector hook: it cannot replace a tool's output.
 
 `python3 read_guard.py --check` says whether it is registered, and `python3 zone_guard.py --check` reports it beside its own line, without changing its exit code. Its tests: `python3 -m unittest discover -s tests -p "test_read_guard.py"`, and `test_connector_guard.py` for the filter.
 

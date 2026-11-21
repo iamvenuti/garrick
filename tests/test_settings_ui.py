@@ -303,10 +303,12 @@ class TestReadGuardBlock(SettingsCase):
         os.environ["GARRICK_HARNESS"] = "codex"
         sec = self.block()
         self.assertIn(CODEX, sec)
+        self.assertIn("Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here.", sec)
         self.assertNotIn('data-rg-add', sec)
         self.assertNotIn("Mail and calendar tools", sec)
         os.environ["GARRICK_HARNESS"] = "claude"
         self.assertNotIn(CODEX, self.block())
+        self.assertNotIn("rg-trust", self.block())
 
     def test_the_block_texts_are_the_issues_word_for_word(self):
         self.assistants()

@@ -222,6 +222,81 @@ class HandTicks(OutboxCase):
         self.assertFalse(list(self.root.rglob("outbox-base")))
 
 
+    # C5, C6: what a hand tick does when it is taken back, and what counts as a new tick
+
+    def ticked(self, line, date="2026-10-05"):
+        return line.replace("- [ ]", "- [x]") + " ✅ " + date
+
+    def test_a_hand_tick_taken_back_before_the_server_applies_it_ends_open(self):
+        self.role("roaming", name="laptop")
+        outbox.hand_ticks(self.root)
+        start = self.todo()
+        (self.work / "Todo.md").write_text(start.replace(LINE_B, self.ticked(LINE_B)))
+        now = dt.datetime(2026, 10, 5, 10, 0, 0)
+        self.assertEqual(1, outbox.hand_ticks(self.root, now))
+        (self.work / "Todo.md").write_text(start)                                # the user unticks it again
+        self.assertEqual(1, outbox.hand_ticks(self.root, now))                   # an untick, after the tick
+        self.assertEqual(0, outbox.hand_ticks(self.root, now))                   # and only one
+        reqs = [json.loads(p.read_text()) for p in self.outbox()]
+        self.assertEqual(["todo-done", "todo-undo"], [r["request"]["verb"] for r in sorted(reqs, key=lambda r: r["made"])])
+        self.assertTrue(all(r["request"]["key"] == self.key(LINE_B) for r in reqs))
+        self.role("server", name="mini")
+        self.assertEqual({"applied": 2, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertIn(LINE_B, self.todo())
+        self.assertNotIn("- [x] Acme Corp", self.todo())
+
+    def test_the_untick_is_ordered_after_the_tick_even_when_the_clock_is_behind(self):
+        self.role("roaming", name="laptop")
+        outbox.hand_ticks(self.root)
+        start = self.todo()
+        (self.work / "Todo.md").write_text(start.replace(LINE_B, self.ticked(LINE_B)))
+        outbox.hand_ticks(self.root, dt.datetime(2026, 10, 5, 10, 0, 30))
+        (self.work / "Todo.md").write_text(start)
+        outbox.hand_ticks(self.root, dt.datetime(2026, 10, 5, 10, 0, 0))
+        made = sorted(json.loads(p.read_text())["made"] for p in self.outbox())
+        self.assertLess(made[0], made[1])
+
+    def test_a_tick_again_after_the_untick_is_a_new_request(self):
+        self.role("roaming", name="laptop")
+        outbox.hand_ticks(self.root)
+        start = self.todo()
+        now = dt.datetime(2026, 10, 5, 10, 0, 0)
+        for text in (start.replace(LINE_B, self.ticked(LINE_B)), start, start.replace(LINE_B, self.ticked(LINE_B))):
+            (self.work / "Todo.md").write_text(text)
+            outbox.hand_ticks(self.root, now)
+        verbs = [json.loads(p.read_text()) for p in self.outbox()]
+        self.assertEqual(["todo-done", "todo-undo", "todo-done"], [r["request"]["verb"] for r in sorted(verbs, key=lambda r: r["made"])])
+        self.role("server", name="mini")
+        outbox.replay(self.root)
+        self.assertIn("- [x] Acme Corp: Invoice for September", self.todo())
+
+    def test_a_line_with_trailing_space_in_the_base_is_still_a_tick(self):
+        self.role("roaming", name="laptop")
+        write(self.work / "Todo.md", self.todo().replace(LINE_B, LINE_B + "  "))        # the delivered copy has it
+        outbox.hand_ticks(self.root)
+        (self.work / "Todo.md").write_text(self.todo().replace(LINE_B + "  ", self.ticked(LINE_B)))
+        self.assertEqual(1, outbox.hand_ticks(self.root))
+        (self.work / "Todo.md").write_text(self.todo().replace(self.ticked(LINE_B), self.ticked(LINE_B) + "   "))
+        self.assertEqual(0, outbox.hand_ticks(self.root))
+
+    def test_a_line_the_server_added_after_the_snapshot_and_ticked_here_is_a_tick(self):
+        self.role("roaming", name="laptop")
+        outbox.hand_ticks(self.root)
+        added = "- [ ] Birch & Co: Send the contract"
+        (self.work / "Todo.md").write_text(self.todo().replace(LINE_B, LINE_B + "\n" + self.ticked(added)))
+        self.assertEqual(1, outbox.hand_ticks(self.root))
+        [req] = self.outbox()
+        self.assertEqual(self.key(added), json.loads(req.read_text())["request"]["key"])
+
+    def test_a_line_ticked_in_the_delivered_copy_is_not_a_tick(self):
+        self.role("roaming", name="laptop")
+        done = self.todo().replace(LINE_B, self.ticked(LINE_B))
+        write(self.work / "Todo.md", done)
+        outbox.hand_ticks(self.root)
+        (self.work / "Todo.md").write_text(done.replace("2026-10-05", "2026-10-06"))     # the server's own re-delivery
+        self.assertEqual(0, outbox.hand_ticks(self.root))
+
+
 class Replay(OutboxCase):
     def queue(self, line=LINE_A, verb="todo-done", **more):
         self.role("roaming", name="laptop")
@@ -352,6 +427,55 @@ class Replay(OutboxCase):
         self.assertEqual(1, outbox.replay(self.root)["applied"])
         self.assertEqual(1, self.todo().count("Call the carrier"))
         self.assertEqual(0, outbox.replay(self.root)["applied"])
+
+    def made_request(self, rid, made, verb, line=LINE_A, folder=None):
+        folder = folder or self.work
+        env = {"id": rid, "made": made, "machine": "laptop", "line": line[6:],
+               "request": {"verb": verb, "zone": folder.name, "file": "Todo.md", "key": self.key(line)}}
+        write(folder / "Inbox" / ".outbox" / (rid + ".json"), json.dumps(env))
+
+    def test_requests_apply_in_the_order_they_were_made_not_the_order_of_their_names(self):
+        self.role("server", name="mini")
+        self.made_request("b1b1b1b1b1b1b1b1", "2026-10-05T10:00:00", "todo-done")       # the tick, made first, named last
+        self.made_request("a1a1a1a1a1a1a1a1", "2026-10-05T10:05:00", "todo-undo")
+        self.assertEqual({"applied": 2, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertIn(LINE_A, self.todo())
+        self.assertEqual(3, self.commits(self.work))
+
+    def test_the_same_second_falls_back_to_the_id(self):
+        self.role("server", name="mini")
+        self.made_request("c1c1c1c1c1c1c1c1", "2026-10-05T10:00:00", "todo-done")
+        self.made_request("b1b1b1b1b1b1b1b1", "2026-10-05T10:00:00", "todo-undo", line=LINE_B)
+        self.assertEqual([("b1b1b1b1b1b1b1b1", False), ("c1c1c1c1c1c1c1c1", False)],
+                         [(p.stem, h) for p, _, h in outbox._envelopes(self.work)])
+
+    def test_a_busy_lock_a_timeout_or_a_missing_git_leaves_the_file_for_the_next_run(self):
+        self.role("server", name="mini")
+        self.made_request("a1a1a1a1a1a1a1a1", "2026-10-05T10:00:00", "todo-done")
+        self.made_request("b1b1b1b1b1b1b1b1", "2026-10-05T10:01:00", "todo-undo")
+        for say in ("another action in Work is still running; try again in a moment", "git took longer than 30 s and was stopped",
+                    "not committed, so nothing changed: git did not run: No such file or directory",
+                    "cannot take the lock in /x: Permission denied"):
+            calls = []
+
+            def busy(ws, req, ops, via, say=say):
+                calls.append(req["verb"])
+                return {"ok": False, "say": say}, None, say
+            done = outbox.replay(self.root, perform=busy)
+            self.assertEqual({"applied": 0, "held": 0, "skipped": 0, "retry": 1}, done, say)
+            self.assertEqual(["todo-done"], calls)                              # the untick waits behind the tick
+            self.assertEqual(["a1a1a1a1a1a1a1a1.json", "b1b1b1b1b1b1b1b1.json"], [p.name for p in self.outbox()])
+        self.assertEqual({"applied": 2, "held": 0, "skipped": 0}, outbox.replay(self.root))      # the next run applies both
+        self.assertIn(LINE_A, self.todo())
+
+    def test_a_stale_key_and_a_wall_refusal_are_held_not_retried(self):
+        self.role("server", name="mini")
+        self.made_request("a1a1a1a1a1a1a1a1", "2026-10-05T10:00:00", "todo-done", line="- [ ] A line nobody has")
+        self.assertEqual(1, outbox.replay(self.root)["held"])
+        self.made_request("b1b1b1b1b1b1b1b1", "2026-10-05T10:01:00", "todo-done")
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
+        self.assertEqual(1, outbox.replay(self.root)["held"])
 
     def test_a_roaming_machine_does_not_apply(self):
         self.queue()

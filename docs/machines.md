@@ -66,9 +66,11 @@ A roaming machine never edits `Todo.md`. On its status page, the four Todo actio
 
 A tick made by hand in Obsidian counts too. When the page refreshes, the status app compares the `Todo.md` the sync last delivered, which it keeps in the jobs folder outside the workspace, with the file, and turns each new `[x]` into a request. No launchd agent does this.
 
-On the server, a page build applies each request through `page_action.py`, with the same lock, commit and wall check as a tick made there, and takes the file out. An id is applied once. You can also run `python3 System/status/outbox.py replay`.
+On the server, a page build applies each request through `page_action.py`, with the same lock, commit and wall check as a tick made there, and takes the file out. Requests are applied in the order they were made, not the order of their file names. An id is applied once. You can also run `python3 System/status/outbox.py replay`.
 
-If the line changed on the server in the meantime, its key no longer matches. The server holds the request and the Todo tab asks: *Show me the line*, or *Drop it*. Nothing is applied until you decide, and *Drop it* applies nothing. Park, wake, rename and delete change folders, so they wait until the roaming machine can reach the server.
+If the line changed on the server in the meantime, its key no longer matches. The server holds the request and the Todo tab asks: *Show me the line*, or *Drop it*. Nothing is applied until you decide, and *Drop it* applies nothing. Only a refusal that is about the line holds a request: a changed line, a refusal by the wall check, a duplicate add, a request that does not pass its checks. A busy lock, a timeout or a git that did not run says nothing about the line, so the request stays in the outbox and the next run tries it again. Later requests of that zone wait behind it, so that a tick and a later untick never swap.
+
+If you tick a line by hand and then reopen it by hand before the server applies the tick, the roaming machine writes an untick request after the tick. The tick stays: the server applies both, in order, and the line ends open. Park, wake, rename and delete change folders, so they wait until the roaming machine can reach the server.
 
 ## What this does not cover
 

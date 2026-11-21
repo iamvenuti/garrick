@@ -55,6 +55,8 @@ KEEP_APPLIED = 5000
 LINE_MAX = 300
 WAITS = "waits for the server"
 ONLY_RECEIVES = ("this machine only receives the workspace, so %s waits until you are on the server")
+TRANSIENT = ("try again in a moment", "cannot take the lock in", "git took longer than", "git did not run",
+             "wall check was still running")      # page_action.py's words for a busy lock, a timeout and a missing git
 HOLD_REASONS = {
     "stale": "the line has changed on the server since it was ticked here, so nothing was applied",
 }
@@ -234,12 +236,19 @@ def gate(ws: Path, req, via: str) -> Optional[dict]:
 
 
 def _envelopes(zone: Path):
-    """(path, envelope or None, held) for each request file in a zone's outbox, in name order."""
+    """(path, envelope or None, held) for each request file in a zone's outbox, in the order the requests were made:
+    by `made`, then by id. A file name is a random id, so the name says nothing about which request came first."""
     folder = folder_of(zone)
-    for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+    found = []
+    for path in folder.iterdir() if folder.is_dir() else []:
         held = HELD_FILE.fullmatch(path.name)
         if path.is_file() and (held or PENDING_FILE.fullmatch(path.name)):
-            yield path, _read_json(path), bool(held)
+            env = _read_json(path)
+            made = env.get("made") if env else None
+            found.append((made if isinstance(made, str) else "", (held or PENDING_FILE.fullmatch(path.name)).group(1),
+                          path, env, bool(held)))
+    for _, _, path, env, held in sorted(found, key=lambda f: (f[0], f[1])):
+        yield path, env, held
 
 
 def pending_marks(ws: Path, zone_name: str) -> Dict[str, str]:
@@ -340,6 +349,13 @@ def read_request(zone: Path, path: Path, env: Optional[dict]) -> dict:
     return req
 
 
+def transient(say: str) -> bool:
+    """A refusal that says nothing about the line: a busy lock, a timeout, a git that did not run. The request is not
+    held for it; it stays in the outbox for the next run."""
+    low = str(say or "").casefold()
+    return any(t in low for t in TRANSIENT)
+
+
 def hold(zone: Path, path: Path, env: Optional[dict], reason: str, now: dt.datetime) -> None:
     """Keep a request that was not applied, as `<id>.held.json` with its reason, for the page to ask about."""
     m = PENDING_FILE.fullmatch(path.name)
@@ -384,6 +400,9 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
                 remember(rid, now)                    # first: a crash after the commit never applies it twice
                 path.unlink(missing_ok=True)
                 count["applied"] += 1
+            elif transient(out.get("say")):
+                count["retry"] = count.get("retry", 0) + 1       # left in place, and the zone's later requests wait behind it
+                break
             else:
                 hold(zone, path, env, str(out.get("say") or "refused"), now)
                 count["held"] += 1
@@ -395,6 +414,43 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
 
 def _base_dir() -> Path:
     return state_dir() / "outbox-base"
+
+
+def last_request(zone: Path, key: str):
+    """(made, verb, line) of the latest tick or untick waiting in the zone's outbox for a line, or None."""
+    last = None
+    for path, env, held in _envelopes(zone):
+        req = env.get("request") if env else None
+        if held or not isinstance(req, dict) or req.get("key") != key or req.get("verb") not in ("todo-done", "todo-undo"):
+            continue
+        last = (str(env.get("made") or ""), req["verb"], str(env.get("line") or ""))
+    return last
+
+
+def after_last(zone: Path, key: str, now: Optional[dt.datetime] = None) -> dt.datetime:
+    """The time a new request for a line is made at: now, or a second after the line's latest request waiting, so that
+    `made` orders them as the user chose, whatever the clock says."""
+    stamp = now or dt.datetime.now()
+    last = last_request(zone, key)
+    if last:
+        try:
+            stamp = max(stamp, dt.datetime.fromisoformat(last[0]) + dt.timedelta(seconds=1))
+        except ValueError:
+            pass
+    return stamp
+
+
+def untick_for(ws: Path, zone: Path, key: str, now: Optional[dt.datetime] = None) -> int:
+    """A line ticked by hand and reopened by hand: if its tick request is still in the outbox, write an untick request
+    after it, and return 1. The tick may already be on its way to the server, or applied there, and a file taken out here
+    would not stop it; an untick, ordered after the tick by `made`, ends with the line open whichever happened. The tick
+    stays: nothing is removed. No tick waiting, or an untick already last for the line, makes none."""
+    last = last_request(zone, key)
+    if last is None or last[1] != "todo-done":
+        return 0
+    stamp = after_last(zone, key, now)
+    make(zone, {"verb": "todo-undo", "zone": zone.name, "file": "Todo.md", "key": key}, last[2], machine_name(ws), stamp)
+    return 1
 
 
 def hand_ticks(ws: Path, now: Optional[dt.datetime] = None) -> int:
@@ -421,18 +477,27 @@ def hand_ticks(ws: Path, now: Optional[dt.datetime] = None) -> int:
             base_file.write_text("\n".join(current), encoding="utf-8")       # the first sight is what was delivered
             continue
         open_before = {l.rstrip() for l in base if l.startswith("- [ ] ")}
+        ticked_before = {tl._reopened(l.rstrip()).rstrip() for l in base if l.startswith("- [x] ")}
         open_now = {l.rstrip() for l in current if l.startswith("- [ ] ")}
         ticks = {}
         for line in current:
             if line.startswith("- [x] "):
-                before = tl._reopened(line)
-                if before in open_before and before not in open_now:
+                before = tl._reopened(line.rstrip()).rstrip()
+                if before in open_now:
+                    continue
+                # open in the delivered copy and ticked now; or a line the server added after it, ticked here
+                if before in open_before or before not in ticked_before:
                     ticks[tl.key(before)] = before
         handled = set((_read_json(seen_file) or {}).get("keys") or [])
+        for key in sorted(handled - set(ticks)):
+            handled.discard(key)
+            taken = untick_for(ws, zone, key, now)           # ticked here, then reopened by hand before the server applied it
+            made += taken
         for key, before in sorted(ticks.items()):
             if key in handled:
                 continue
-            make(zone, {"verb": "todo-done", "zone": zone.name, "file": "Todo.md", "key": key}, before[6:].strip(), machine_name(ws), now)
+            make(zone, {"verb": "todo-done", "zone": zone.name, "file": "Todo.md", "key": key}, before[6:].strip(), machine_name(ws),
+                 after_last(zone, key, now))
             handled.add(key)
             made += 1
         waiting = {k for k in ticks if k in pending_marks(ws, zone.name)}
@@ -463,7 +528,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("This machine only receives the workspace; the server applies the outbox.", file=sys.stderr)
         return 1
     done = replay(ws)
-    print("Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done)
+    print("Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done
+          + (" %d wait for the next run." % done["retry"] if done.get("retry") else ""))
     return 0
 
 

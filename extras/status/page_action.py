@@ -5880,8 +5880,15 @@ def with_plain(out: dict, req, ops) -> dict:
         return out
     verb = req.get("verb") if isinstance(req, dict) else None
     if not out.get("ok"):
-        if "outcome" not in out or "again" in out or out.get("state") in ("asked", "running", "queued"):
-            return out              # no record of it, or not a failure: the question about a repeat. The app says its fallback
+        if "again" in out or out.get("state") in ("asked", "running", "queued"):
+            return out              # not a failure: the question about a repeat
+        if "outcome" not in out:
+            # No record of it (a verb outside operations.OPS): the app says its fallback, except for the two codes the
+            # reply itself settles: the rules' wall sentence, which stands alone, and a hand-off that did not open.
+            code = failure_code(out, req)
+            if code in ("wall", "handoff"):
+                return dict(out, plain=plain_failure(code, str(out.get("say") or "")))
+            return out
         return dict(out, plain=plain_failure(failure_code(out, req), str(out.get("say") or "")))
     if ops is not None and verb in ops.OPS and "outcome" not in out and "state" not in out and not only_looks(req):
         return dict(out, plain=plain_failure("unrecorded"))

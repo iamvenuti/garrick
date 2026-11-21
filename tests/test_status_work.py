@@ -681,6 +681,12 @@ class TestWorkOnThePage(StatusCase):
         self.assertEqual(6, status.MANAGE_JS.count("if(busy(d,q.zone))return;"))   # new thread, new project, rename, move, park, delete
 
 
+class TestUnrecordedBeforeTheFirstPoll(unittest.TestCase):
+    def test_an_unrecorded_reply_is_honoured_before_the_verbs_have_loaded(self):
+        """The success branch tests the reply's own plain code, not only OPS.verbs, which is empty until the first poll."""
+        self.assertIn("(OPS.verbs||[]).indexOf(q.verb)>=0||out.plain&&out.plain.code==='unrecorded')", status.WORK_JS)
+
+
 class TestWorkHosts(unittest.TestCase):
     def test_the_app_says_it_can_answer_a_request_that_reads(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")

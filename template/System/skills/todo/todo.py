@@ -518,16 +518,55 @@ def words(line: str) -> str:
     return re.sub(r"\s+", " ", text).strip().rstrip(".!").casefold()
 
 
-def thread_of(line: str) -> str:
-    """The full link target a line opens with, case-folded (`acme/threads/pricing/pricing`, or `pricing` where
-    the link is short), or "" for a line that opens with none. Two projects' threads of one name never share it."""
+def thread_index(zone: Optional[Path]) -> Dict[str, List[str]]:
+    """The zone's thread names: each folder name under `<Project>/Threads/`, case-folded, with the projects
+    that have a thread of it. Reads this zone's own folder only; `{}` for none."""
+    found: Dict[str, List[str]] = {}
+    if zone is None:
+        return found
+    try:
+        projects = sorted(p for p in Path(zone).iterdir() if p.is_dir() and not p.name.startswith("."))
+    except OSError:
+        return found
+    for project in projects:
+        try:
+            threads = [t for t in (project / "Threads").iterdir() if t.is_dir()]
+        except OSError:
+            continue
+        for thread in threads:
+            found.setdefault(thread.name.casefold(), []).append(project.name.casefold())
+    return found
+
+
+def thread_key(target: str, index: Optional[Dict[str, List[str]]] = None) -> str:
+    """The one name of a thread, from a link target in either form, case-folded: `project/threads/name` for a
+    long link (`Acme/Threads/Pricing/Pricing`, or the note's path without the file name), and for a short
+    one (`Pricing`) when exactly one project of the zone has a thread of that name. A short name that two
+    projects share stays short, so it matches no long form: it fails closed."""
+    target = target.strip().casefold()
+    parts = [p for p in target.split("/") if p]
+    if "threads" in parts[:-1]:
+        at = parts.index("threads")
+        if at >= 1:
+            return "%s/threads/%s" % ("/".join(parts[:at]), parts[at + 1])
+        return target
+    if len(parts) == 1 and index:
+        owners = index.get(parts[0], [])
+        if len(owners) == 1:
+            return "%s/threads/%s" % (owners[0], parts[0])
+    return target
+
+
+def thread_of(line: str, index: Optional[Dict[str, List[str]]] = None) -> str:
+    """The name of the thread a line opens with (see `thread_key`), or "" for a line that opens with none.
+    Two projects' threads of one name never share it."""
     m = TASK_LINK.match(line)
-    return m.group(1).strip().casefold() if m else ""
+    return thread_key(m.group(1), index) if m else ""
 
 
-def target_of(label: str) -> str:
-    """The same target, from the link label a plan gives (`Pricing`, `[[Acme/Threads/Pricing/Pricing|Pricing]]`)."""
-    return label.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip().casefold()
+def target_of(label: str, index: Optional[Dict[str, List[str]]] = None) -> str:
+    """The same name, from the link label a plan gives (`Pricing`, `[[Acme/Threads/Pricing/Pricing|Pricing]]`)."""
+    return thread_key(label.strip().strip("[]").split("|", 1)[0].split("#", 1)[0], index)
 
 
 def spoken(n: int) -> str:
@@ -626,10 +665,11 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
     thread = plan.get("thread") if isinstance(plan.get("thread"), str) and plan.get("thread").strip() else None
     party = plan.get("party") if isinstance(plan.get("party"), str) and plan.get("party").strip() else None
     source = plan.get("source") if isinstance(plan.get("source"), str) and plan.get("source").strip() else ""
+    names = thread_index(zone)
     label = None
     if thread:
         label = thread.strip().strip("[]")
-        mine = target_of(label)
+        mine = target_of(label, names)
     else:
         mine = ""
     headless = os.environ.get("GARRICK_HEADLESS") == "1" or os.environ.get("GARRICK_BACKGROUND") == "1"
@@ -644,7 +684,7 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
     gone: set = set()
 
     def pool() -> List[int]:
-        return [i for i, l in enumerate(lines) if l.startswith("- [ ] ") and i not in gone and mine and thread_of(l) == mine]
+        return [i for i, l in enumerate(lines) if l.startswith("- [ ] ") and i not in gone and mine and thread_of(l, names) == mine]
 
     def propose(kind: str, i: int, **more) -> None:
         item = dict(more, kind=kind, thread=label or party or "", line=lines[i], key=key(lines[i]),
@@ -664,7 +704,7 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
         if mine:
             return pool()
         return [i for i, l in enumerate(lines) if l.startswith("- [ ] ") and i not in gone and said_party
-                and not thread_of(l) and l[6:].casefold().startswith(said_party + ":")]
+                and not thread_of(l, names) and l[6:].casefold().startswith(said_party + ":")]
 
     for said in plan.get("done") or []:                  # 1. what is now done
         if not isinstance(said, str):
@@ -690,7 +730,7 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
             notes.append("changed: %s: already says that" % str(item.get("line"))[:40])
         elif not direct(i):
             propose("edit", i, text=item["text"], merge=bool(item.get("merge")))
-        elif any(j != i and l.startswith("- [ ] ") and j not in gone and thread_of(l) == mine and words(l) == words(new)
+        elif any(j != i and l.startswith("- [ ] ") and j not in gone and thread_of(l, names) == mine and words(l) == words(new)
                  for j, l in enumerate(lines)):
             notes.append("changed: %s: another line says that" % str(item.get("line"))[:40])
         else:

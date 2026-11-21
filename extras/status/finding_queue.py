@@ -1273,6 +1273,8 @@ var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');ski
 var un=t.closest('#queue [data-qundo]');if(un){var lu=hand().last;if(!lu||!lu.undo||!host)return;un.disabled=true;host.postMessage({act:lu.undo});return}
 var sh=t.closest('#queue [data-qshow]');if(sh){var ls=hand().last;if(ls&&ls.show&&host)host.postMessage({act:{verb:'note-open',path:ls.show}});return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
+/* a second press while the first answer is still out sends nothing: one answer, one request (#535) */
+if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;
 if(d.a==='handoff'){if(d.req&&boundedOK()){out(q,'Working on it\u2026');pend={key:q.dataset.gk,id:d.id,phrase:d.phrase,bounded:1};save();host.postMessage({act:d.req});return}
 handoff(d.phrase);finish(q,'handed');return}
 if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}

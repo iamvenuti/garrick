@@ -1729,6 +1729,18 @@ class TestKeepOnThePage(QueueCase):
         fq.kept_put(self.root, fq.later_key("wall", wall["path"]), fq.file_hash(self.root, wall["path"]))
         self.assertEqual(1, self.view(self.page()).count('data-kind="wall"'))
 
+    def test_a_double_press_sends_one_request(self):
+        """While an answer is out (pend holds the question's key) a second press of any answer of that question sends nothing."""
+        js = fq.QUEUE_JS
+        guard = "if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;"
+        self.assertIn(guard, js)
+        self.assertLess(js.index(guard), js.index("host.postMessage({act:d.req})"))                 # before the first send
+        self.assertLess(js.index(guard), js.index("pend={key:q.dataset.gk,id:d.id};save();host.postMessage"))
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+
     def test_the_script_undoes_a_keep_from_the_queue_and_from_the_card(self):
         self.assertIn("/^keep/.test(q.answer||'')", fq.QUEUE_JS)
         self.assertIn("/^unkeep/.test(q.answer||'')", fq.QUEUE_JS)

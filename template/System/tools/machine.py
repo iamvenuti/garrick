@@ -17,9 +17,9 @@ copy) says which machine is which in one small file outside the workspace,
 names after a machine is known (`Plan-laptop.docx`). `workspace` is where the workspace sits on this machine.
 
 The file is outside the workspace on purpose: the workspace is what a sync tool
-copies to the other machine, and the role belongs to the machine. An assistant
-session never writes it (the zone guard refuses), so a session cannot change its
-own role; the person runs `set` themselves.
+copies to the other machine, and the role belongs to the machine. The
+zone guard refuses a file-editing tool's write to it, a guard against a mistaken edit and no lock (a shell
+command can still change the file); the person runs `set` themselves.
 
 A missing file, one that cannot be read, or a role this file does not know all
 mean `solo`. Everything else calls `role()`, which reads HOME when it is called,

@@ -375,7 +375,7 @@ class TestTheReadGuard(SettingsCase):
 
     def test_every_failure_row_has_a_sentence_and_one_next_step_and_no_path_or_key(self):
         rows = [r for r in pa.FAILURES if r[0].startswith(("role-", "guard-"))]
-        self.assertEqual(11, len(rows))
+        self.assertEqual(12, len(rows))
         for code, sentence, button, act, band in rows:
             with self.subTest(code=code):
                 self.assertIn(act, ("why", "retry", "refresh"))
@@ -421,6 +421,38 @@ class TestOnlyGarricksOwnHookFolder(SettingsCase):
         mod, src = pa.guard_hooks()
         self.assertEqual(REPO / "extras" / "hooks" / "read_guard.py", src)
         self.assertFalse((folder / "ran").exists())
+
+    def installed_page(self):
+        """A page with no hooks folder beside it, as an installed workspace has: only the release digests decide."""
+        status = Path(self._tmp.name).resolve() / "installed" / "status"
+        status.mkdir(parents=True)
+        (status / "settings_guard.py").write_bytes((REPO / "extras" / "status" / "settings_guard.py").read_bytes())
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(pa, "HERE", status))
+        stack.enter_context(mock.patch.object(pa, "_OUTBOX", pa._OUTBOX))       # the page's own cache, put back after
+        return stack
+
+    def test_a_download_of_another_version_has_its_own_failure_and_is_never_imported(self):
+        folder = self.planted(copy=True)
+        (folder / "read_guard.py").write_bytes((folder / "read_guard.py").read_bytes() + b"\nopen('ran','w')\n")
+        self.name_it(folder)
+        self.assistants()
+        with self.installed_page():
+            out = self.go({"verb": "read-guard", "mode": "warn"})
+        self.failed(out, "guard-version")
+        self.assertFalse((folder / "ran").exists())
+        self.assertEqual({}, self.saved())
+
+    def test_a_folder_with_no_hook_files_still_gives_guard_file(self):
+        folder = Path(self._tmp.name).resolve() / "empty"
+        folder.mkdir()
+        (folder / "zone_guard.py").write_text("x\n")
+        (folder / "zone_guard.py").unlink()
+        self.name_it(folder)
+        self.assistants()
+        with self.installed_page():
+            out = self.go({"verb": "read-guard", "mode": "warn"})
+        self.failed(out, "guard-file")
 
     def test_a_copy_with_the_same_bytes_is_trusted(self):
         folder = self.planted(copy=True)

@@ -162,11 +162,8 @@ def hook_scripts(text: str) -> List[str]:
     return out
 
 
-def hook_folders(home: Optional[str] = None) -> List[Path]:
-    """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
-    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace). A
-    folder a settings file names is kept only when `trusted_hook_folder` says it holds Garrick's own two files. The
-    workspace has no copy of its own: the hooks stay where the Garrick download is."""
+def named_folders(home: Optional[str] = None) -> List[Path]:
+    """The folders of the Garrick hooks the assistants' settings name, and the one beside this page, trusted or not."""
     home = home or str(Path.home())
     folders = [HERE.parent / "hooks"]
     for rel in (".claude/settings.json", ".codex/hooks.json"):
@@ -178,11 +175,26 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
             there = Path(os.path.expanduser(found))
             if there.is_absolute():
                 folders.append(there.parent)
-    out = []
+    out: List[Path] = []
     for f in folders:
-        if f not in out and (f / "read_guard.py").is_file() and trusted_hook_folder(f):
+        if f not in out:
             out.append(f)
     return out
+
+
+def hook_folders(home: Optional[str] = None) -> List[Path]:
+    """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
+    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace). A
+    folder a settings file names is kept only when `trusted_hook_folder` says it holds Garrick's own two files. The
+    workspace has no copy of its own: the hooks stay where the Garrick download is."""
+    return [f for f in named_folders(home) if (f / "read_guard.py").is_file() and trusted_hook_folder(f)]
+
+
+def other_version(home: Optional[str] = None) -> bool:
+    """Whether a folder the settings name holds both hook files but they are not this release's: the Garrick download the
+    user keeps is another version. Reads the files; never imports them."""
+    return any((f / "zone_guard.py").is_file() and (f / "read_guard.py").is_file() and not trusted_hook_folder(f)
+               for f in named_folders(home))
 
 
 def load_hook(folder: Path, name: str):

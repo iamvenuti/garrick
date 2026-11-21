@@ -1575,6 +1575,17 @@ class TestLeaveItAsItIs(unittest.TestCase):
         req = next(a for a in other["answers"] if a["id"] == "keep")["req"]
         self.assertRegex(req["answer"], r"^keep-[0-9a-f]{6}$")                           # one finding of the file, as Not now's mark
 
+    def test_other_has_the_keep_answer_only_for_a_page_the_verb_accepts(self):
+        """Fix round C8: one function decides for the offer and for the verb."""
+        under = fq.question(item("judgment", "orphans", "System/tools/x.py", "%(p)s: odd"), "System")
+        self.assertNotIn("keep", [a["id"] for a in under["answers"]])
+        self.assertNotEqual("keep", under["recommended"])
+        page = fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: odd"), "Zones/Work")
+        self.assertIn("keep", [a["id"] for a in page["answers"]])
+        self.assertTrue(fq.keepable_path("Wikis/Meetings/wiki/a.md"))
+        self.assertFalse(fq.keepable_path("System/tools/x.py"))
+        self.assertFalse(fq.keepable_path("Zones/Work"))
+
     def test_the_store_keeps_hashes_only_and_not_now_and_keep_do_not_disturb_each_other(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)

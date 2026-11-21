@@ -5697,8 +5697,7 @@ def finding_keep(ws: Path, fq, kind: str, answer: str, rel: str, which: str) -> 
     if kind not in fq.KEEPABLE:
         raise Refused("not an answer Garrick offers for this finding")
     key = fq.later_key(kind, rel, which)
-    parts = rel.split("/")
-    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis"):
+    if not fq.keepable_path(rel):
         raise Refused("only a page of a zone or a wiki can be left as it is")
     with held("page-action-keep.lock", busy="another answer to a finding is still being saved"):
         if answer == fq.UNKEEP:

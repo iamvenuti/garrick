@@ -235,7 +235,8 @@ class ToolsSeen(FilterCase):
         check = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = check
         spec.loader.exec_module(check)
-        self.assertIs(check.ALL_CHECKS[-1], check.check_connector_tools)
+        self.assertEqual(1, sum(1 for c in check.ALL_CHECKS if c is check.check_connector_tools))
+        self.assertIn(check.check_connector_tools, check.ALL_CHECKS)
         self.assertIn("connectors", dict(check.CHECKS))
         self.assertIn("connectors", check.EAR_GROUP)
 

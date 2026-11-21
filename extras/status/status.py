@@ -2442,7 +2442,7 @@ keep();render();run();return}
 /* Saved means saved (#511): a reply with no outcome for an action the record keeps is not worded as saved. The record is asked
    for, and says it; until then the action stays running. The other wrappers get the reply as they always did, so
    a row's follow-ups (the list, the undo record) are made as for a plain ok reply */
-if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
+if(out&&out.ok&&!out.outcome&&!out.again&&((OPS.verbs||[]).indexOf(q.verb)>=0||out.plain&&out.plain.code==='unrecorded')){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){sentDone(e.q.verb,e.q.zone,e.q.file,e.q.keys,now);W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
 else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again,plain:out&&out.plain||null};e.done=now;

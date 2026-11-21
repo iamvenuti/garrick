@@ -327,7 +327,7 @@ CSS = r"""
 .rgblock[hidden]{display:none}.rgchoices{display:inline-flex;gap:12px;flex-wrap:wrap;align-items:center}.rgchoice{display:inline-flex;gap:5px;align-items:center;font-size:var(--fs-body)}
 .rgrow{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:4px 0}.rgtitle{flex:0 0 190px;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body)}
 .rglist-row{align-items:flex-start}.rgbody{flex:1 1 260px;min-width:0}.rgitems{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:4px}
-.rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem .rgtool{flex:1;min-width:0;overflow-wrap:anywhere;font-family:var(--mono,ui-monospace,monospace)}
+.rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem .rgtool{flex:1;min-width:0;overflow-wrap:anywhere;font-family:var(--mono,monospace)}
 .rgadd{display:flex;gap:6px;align-items:center}#readguard-settings .rgsmall,#readguard-settings .rgrem,#readguard-settings .rgadd .act{padding:2px 9px;min-height:0;line-height:1.5;font-size:var(--fs-meta)}.rgadd input{flex:1;min-width:0;font:inherit;font-size:var(--fs-meta);padding:3px 7px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
 .rgseen,.rgcannot,.rgcodex,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
 .rglist ul{margin:2px 0 8px;padding-left:18px}.rglistzone b{font-weight:560}

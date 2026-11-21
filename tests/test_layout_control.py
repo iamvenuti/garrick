@@ -307,6 +307,33 @@ class TestTheAskBoxOffersItAndRunsNothing(ControlCase):
         self.assertEqual([], out["choices"])
         self.assertIn("heading", out["say"])
 
+    def personal_project(self):
+        self.make("project", "--zone", "Personal", "--name", "Maple")
+        self.make("project", "--zone", "Personal", "--name", "Linden", "--heading", "--thread", "Harbour")
+
+    def test_a_project_of_another_zone_is_neither_named_nor_offered_in_this_zones_window(self):
+        self.personal_project()
+        for request in ("make Maple a heading", "make Linden a heading", "give Harbour its own papers"):
+            self.session.answers.append(json.dumps({"say": "Nothing like that here.", "do": []}))
+            out = self.asker.ask(request, zone="Work")
+            self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c], request)
+            for word in ("Maple", "Linden", "Harbour", "heading over", "own papers already", "Review the change"):
+                self.assertNotIn(word, json.dumps(out), request)
+
+    def test_the_same_request_in_its_own_zones_window_offers_it(self):
+        self.personal_project()
+        out = self.asker.ask("make Maple a heading", zone="Personal")
+        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Personal", "project": "Maple", "heading": True}}],
+                         out["choices"])
+        out = self.asker.ask("make Linden a heading", zone="Personal")
+        self.assertIn("heading over separate pieces of work already", out["say"])
+
+    def test_with_no_window_a_name_held_by_two_zones_offers_nothing(self):
+        self.make("project", "--zone", "Personal", "--name", "Acme")
+        self.session.answers.append(json.dumps({"say": "Which one?", "do": []}))
+        out = self.asker.ask("make Acme a heading")
+        self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1519,7 +1519,7 @@ class Asker:
                 self.question = self.unclear
             return clarify(named.question)
         self.unclear = None
-        offered = self.layout_offer(request, named, names)
+        offered = self.layout_offer(request, named, names, window)
         if offered is not None:                     # a change of layout (#604): the dialog is offered, nothing is run
             return offered
         # A wall between what the request names and what either session
@@ -1626,12 +1626,14 @@ class Asker:
             out["reset"] = reset
         return out
 
-    def layout_offer(self, request: str, named, names) -> Optional[dict]:
+    def layout_offer(self, request: str, named, names, window: Optional[str] = None) -> Optional[dict]:
         """A request to change how a project or a thread keeps its papers (#604): "make Acme a heading", "give
         Pricing its own papers", "let Pricing use the project's papers". Code reads it, never a model, and the answer
         offers the page's dialog with the plan (a button that carries the change, for the app to open). It never runs
         `layout`: that verb is the page's own button, and the box has nothing that calls it. None for any other request,
-        or one that does not settle to one place, which goes on as before."""
+        or one that does not settle to one place, which goes on as before. Only a place in the window's zone (the zone
+        the user picked, or the window's) is named or offered; with no window, only when one zone holds every place the
+        request names. A place in another zone is left to the normal path, which holds the wall logic."""
         say = " ".join(request.split())
         verb = re.search(r"\b(make|turn|change|convert|set|give|let|keep|move|put)\b", say, re.I)
         heading = re.search(r"\bheading\b", say, re.I)
@@ -1649,6 +1651,10 @@ class Asker:
                 for tname in rec["threads"]:
                     if re.search(r"(?<![\w])%s(?![\w])" % re.escape(tname), say, re.I) and (z, pname, tname) not in places:
                         places.append((z, pname, tname))
+        if window is not None:
+            places = [p for p in places if p[0] == window]
+        elif len({p[0] for p in places}) > 1:
+            return None
         threads = [p for p in places if p[2] is not None]
         if heading:
             whole = [p for p in places if p[2] is None]

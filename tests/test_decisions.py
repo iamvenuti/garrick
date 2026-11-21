@@ -415,12 +415,12 @@ class TestWhatThePanelLists(DecisionCase):
         self.assertNotIn("Acme: which", json.dumps(got["buckets"]["Work"]["decisions"]))
         self.assertIn("Birch: which volume floor holds?", self.titles(got["buckets"]["Work"]))
 
-    def test_the_queue_asks_a_decision_to_review_and_never_confirms_one(self):
+    def test_the_queue_asks_a_decision_to_review_with_it_still_holds(self):
         from test_finding_queue import fq
         d = self.data()
         qs = fq.asked_questions(d, set())["Zones/Work"]
         rev = [q for q in qs if q["id"] == "decision-review"]
-        self.assertEqual(["Open the decision", "Not now"], [a["label"] for a in rev[0]["answers"]])
+        self.assertEqual(["Open the decision", "It still holds", "Not now"], [a["label"] for a in rev[0]["answers"]])
         self.assertNotIn("not built yet", fq.QUEUE_JS)
         self.assertEqual("Decision to review", rev[0]["tag"])
 

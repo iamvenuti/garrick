@@ -241,6 +241,94 @@ class ToolsSeen(FilterCase):
         self.assertIn("connectors", check.EAR_GROUP)
 
 
+class Containers(FilterCase):
+    """Fix round: the filter reads every list and every field of a result, and fails closed (W1, S4, C3)."""
+
+    def shown(self, data, **more):
+        blocks = self.replaced(self.after(response(data), **more))
+        return blocks, "\n".join(b.get("text", "") for b in blocks)
+
+    def test_an_empty_list_is_never_the_results_list(self):
+        blocks, text = self.shown({"labels": [], "threads": [THREADS[0], THREADS[1]]})
+        data = json.loads(blocks[0]["text"])
+        self.assertEqual(["t1"], [t["id"] for t in data["threads"]])
+        self.assertEqual([], data["labels"])
+        self.assertNotIn("birch", text)
+
+    def test_every_list_of_results_is_filtered(self):
+        blocks, text = self.shown({"threads": [THREADS[0]], "messages": [THREADS[1], THREADS[2]]})
+        data = json.loads(blocks[0]["text"])
+        self.assertEqual(["t1"], [t["id"] for t in data["threads"]])
+        self.assertEqual(["t3"], [t["id"] for t in data["messages"]])
+        self.assertNotIn("birch", text)
+
+    def test_a_list_nested_in_a_dict_is_filtered(self):
+        blocks, text = self.shown({"page": {"threads": [THREADS[0], THREADS[1]]}, "nextPageToken": "p2"})
+        data = json.loads(blocks[0]["text"])
+        self.assertEqual(["t1"], [t["id"] for t in data["page"]["threads"]])
+        self.assertEqual("p2", data["nextPageToken"])
+        self.assertNotIn("birch", text)
+
+    def test_a_single_event_is_judged_whole_so_its_title_goes_with_its_attendees(self):
+        event = {"summary": "Birch pricing review", "attendees": [{"email": "theo@birch.example"}, {"email": "jo@home.example"}]}
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after(response(event))))
+        own = {"summary": "Kickoff", "attendees": [{"email": "dana@acme.example"}]}
+        self.assertIsNone(self.after(response(own)))
+
+    def test_a_body_beside_a_headers_list_is_judged_with_it(self):
+        message = {"headers": [{"name": "From", "value": "theo@birch.example"}], "body": "Price list for the quarter"}
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after(response(message))))
+
+    def test_the_fields_beside_the_results_are_judged_by_their_own_addresses(self):
+        blocks, text = self.shown({"threads": [THREADS[0]], "owner": "theo@birch.example", "title": "Birch inbox"})
+        data = json.loads(blocks[0]["text"])
+        self.assertEqual({"threads"}, set(data))
+        self.assertNotIn("Birch", text)
+
+    def test_a_count_of_any_kind_goes_when_anything_is_removed(self):
+        data = {"threads": [THREADS[0], THREADS[1]], "total": "9", "hits": 9, "messagesUnread": 3, "threadsUnread": 2,
+                "resultSizeEstimate": 9, "remaining": 4, "hasMore": True, "nextPageToken": "p2",
+                "meta": {"total": 9, "size": "9"}}
+        blocks, text = self.shown(data)
+        kept = json.loads(blocks[0]["text"])
+        self.assertEqual({"threads", "nextPageToken", "meta"}, set(kept))
+        self.assertEqual({}, kept["meta"])
+        self.assertEqual(["t1"], [t["id"] for t in kept["threads"]])
+
+    def test_a_count_stays_when_nothing_is_removed(self):
+        self.assertIsNone(self.after(response({"threads": [THREADS[0]], "total": 1})))
+
+    def test_a_resource_block_is_judged_like_text(self):
+        resource = {"type": "resource", "resource": {"uri": "mail://x", "mimeType": "application/json",
+                                                     "text": json.dumps({"threads": THREADS[:2]})}}
+        blocks = self.replaced(self.after([resource]))
+        self.assertEqual(SENTENCE, blocks[-1]["text"])
+        self.assertEqual(["t1"], [t["id"] for t in json.loads(blocks[0]["resource"]["text"])["threads"]])
+        blob = {"type": "resource", "resource": {"uri": "mail://y", "blob": "AAAA"}}
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after([blob])))
+
+    def test_structured_content_is_judged_too(self):
+        reply = {"content": response({"threads": [THREADS[0]]}), "structuredContent": {"threads": THREADS[:2]}}
+        blocks = self.replaced(self.after(reply))
+        self.assertEqual(SENTENCE, blocks[-1]["text"])
+        own = {"content": response({"threads": [THREADS[0]]}), "structuredContent": {"threads": [THREADS[0]]}}
+        self.assertIsNone(self.after(own))
+
+    def test_an_error_naming_another_zones_party_or_person_is_replaced(self):
+        for text in ("Not found: Birch & Co pricing thread", "No thread from birch about prices", "Cannot open Dana Whitlock's calendar"):
+            with self.subTest(text=text):
+                home = self.birch if "Dana" in text else self.acme
+                self.assertEqual([{"type": "text", "text": SENTENCE}],
+                                 self.replaced(self.after(response(text, as_text=False), is_error=True, home=home)))
+        self.assertIsNone(self.after(response("Not found: Acme Corp pricing thread", as_text=False), is_error=True))
+        self.assertIsNone(self.after(response("Error 500: try again later", as_text=False), is_error=True))
+
+    def test_in_warn_only_nothing_changes(self):
+        self.settings(**{"connector-tools": ["mcp__fakemail__*"]})
+        self.assertIsNone(self.after(response({"labels": [], "threads": THREADS[:2], "total": 2})))
+        self.assertTrue([l for l in self.log_lines() if l["decision"] == "deny"])
+
+
 class Docs(unittest.TestCase):
     def test_the_docs_say_which_harness_gets_no_connector_hook(self):
         text = (REPO / "docs" / "enforced.md").read_text(encoding="utf-8")

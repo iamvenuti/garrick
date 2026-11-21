@@ -65,7 +65,6 @@ READ_TOOLS = ("Read", "Grep", "Glob")
 SHELL_TOOLS = ("Bash", "shell", "exec_command", "local_shell")
 AGENTS_FILES = ("agents.md", "agents.local.md")
 EMAIL = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
-COUNT_KEY = re.compile(r"count|total|estimate|size|num", re.I)
 LOG_BYTES = 1_000_000
 PRUNE_DAYS = 30
 
@@ -430,16 +429,139 @@ def blocks_of(response):
     return response if isinstance(response, list) else None
 
 
-def results_of(data):
-    """(container, key, items): where the list of results is in a parsed JSON text; items None for one object."""
-    if isinstance(data, list):
-        return (None, None, data) if all(isinstance(i, dict) for i in data) else (None, None, False)
-    if isinstance(data, dict):
+ID_KEYS = ("id", "threadId", "messageId", "eventId", "iCalUID")
+TOKEN_KEY = re.compile(r"token|cursor|page", re.I)
+NUMERIC = re.compile(r"\s*[-+]?[\d.,]+\s*")
+
+
+def is_results(value):
+    """A list of results: not empty, and every item an object with an id of its own. An empty list is never one."""
+    return (isinstance(value, list) and bool(value) and all(isinstance(i, dict) for i in value)
+            and all(any(isinstance(i.get(k), (str, int)) for k in ID_KEYS) for i in value))
+
+
+def has_results(value):
+    """Whether a results list sits anywhere inside `value`."""
+    if is_results(value):
+        return True
+    if isinstance(value, dict):
+        return any(has_results(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_results(v) for v in value)
+    return False
+
+
+class Filter:
+    """Judges a parsed connector result, failing closed. Every item of every list of objects is judged by its own
+    addresses. What is left outside the kept items (the scalar fields of a container) is judged by its own
+    addresses too, and a field that holds an address no zone permits is dropped. An object with no list of
+    results is one result, judged whole. When anything is removed, no count stays outside the kept items."""
+
+    def __init__(self, lib, ctx, scope, suggest, strip):
+        self.lib, self.ctx, self.scope, self.suggest, self.strip = lib, ctx, scope, suggest, strip
+        self.removed = []
+
+    def permitted(self, value):
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        return decide_result(self.lib, self.ctx, self.scope, self.suggest, text)
+
+    def harmless(self, value):
+        """A part with no address passes; one with addresses passes only when decide() permits them."""
+        text = json.dumps(value, ensure_ascii=False)
+        return not EMAIL.search(text) or self.permitted(text)
+
+    def top(self, data):
+        """The filtered tree, or None for a result removed whole."""
+        if isinstance(data, list):
+            return self.items(data, True)
+        if is_results_free(data):
+            if self.permitted(data):
+                return data
+            self.removed.append((result_id(data), ""))
+            return None
+        return self.container(data)
+
+    def items(self, items, strict):
+        kept = []
+        for item in items:
+            ok = self.permitted(item) if strict else self.harmless(item)
+            if ok:
+                kept.append(item)
+            else:
+                self.removed.append((result_id(item) if isinstance(item, dict) else item, ""))
+        return kept
+
+    def container(self, data):
+        """A dict that holds lists of results. Each list is judged item by item. What is left over, taken as one
+        more result, is judged by its own addresses: when they are not permitted, all of it goes."""
+        leftover = {k: v for k, v in data.items() if not is_results(v) and not (isinstance(v, dict) and has_results(v))}
+        gone = bool(leftover) and not self.harmless(leftover)
+        if gone:
+            self.removed.append(("fields", ""))
+        new = {}
         for key, value in data.items():
-            if isinstance(value, list) and all(isinstance(i, dict) for i in value):
-                return data, key, value
-        return None, None, None
-    return None, None, False
+            if is_results(value):
+                new[key] = self.items(value, True)
+            elif isinstance(value, dict) and has_results(value):
+                new[key] = self.container(value)
+            elif not gone:
+                part = self.residue(key, value)
+                if part is not DROP:
+                    new[key] = part
+        return new
+
+    def residue(self, key, value):
+        if isinstance(value, bool) or isinstance(value, (int, float)):
+            return DROP if self.strip else value
+        if isinstance(value, str):
+            if self.strip and NUMERIC.fullmatch(value) and not TOKEN_KEY.search(key):
+                return DROP
+            if not self.harmless(value):
+                self.removed.append((key, ""))
+                return DROP
+            return value
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                part = self.residue(k, v)
+                if part is not DROP:
+                    out[k] = part
+            return out
+        if isinstance(value, list):
+            if not value:
+                return value
+            out = []
+            for item in value:
+                part = self.residue(key, item) if not isinstance(item, (dict, list)) else self.residue_item(key, item)
+                if part is not DROP:
+                    out.append(part)
+            return out
+        return value
+
+    def residue_item(self, key, item):
+        if not self.harmless(item):
+            self.removed.append((key, ""))
+            return DROP
+        return self.residue(key, item)
+
+
+DROP = object()
+
+
+def is_results_free(data):
+    """A dict with no list of results anywhere in it: one object, one result."""
+    return isinstance(data, dict) and not has_results(data)
+
+
+def filter_tree(lib, ctx, scope, suggest, data):
+    """(tree or None, removed): the data with what no zone permits taken out; None when the whole result goes."""
+    first = Filter(lib, ctx, scope, suggest, False)
+    tree = first.top(data)
+    if not first.removed:
+        return data, []
+    second = Filter(lib, ctx, scope, suggest, True)
+    tree = second.top(data)
+    return tree, second.removed
 
 
 def result_id(item):
@@ -470,6 +592,83 @@ def is_error(event, response):
                 or (isinstance(response, dict) and (response.get("isError") or response.get("is_error") or response.get("error"))))
 
 
+def named_elsewhere(lib, ctx, scope, text):
+    """Whether `text` holds a name the Parties or People table gives to another walled zone: the full name, or the
+    first word of a party's name when it is four letters or more."""
+    mine = {scope["zone"]} if scope["kind"] == "zone" and scope["zone"] else set()
+    walled = ctx.get("zone_walled") or {}
+    zones = {}
+    tags = {}
+    for tag, row in (ctx.get("parties") or {}).items():
+        zone = (row.get("zone") or "").strip()
+        tags[tag] = zone
+        name = (row.get("party") or "").strip()
+        if name:
+            zones.setdefault(name.casefold(), set()).add(zone)
+            first = re.split(r"[\s&,]+", name)[0]
+            if len(first) >= 4:
+                zones.setdefault(first.casefold(), set()).add(zone)
+    for person in ctx.get("people") or []:
+        name = (person.get("name") or "").strip()
+        if name:
+            zones.setdefault(name.casefold(), set()).add(tags.get(str(person.get("party") or "").strip("`").lower(), ""))
+    low = text.casefold()
+    for name, where in zones.items():
+        if re.search(r"(?<!\w)%s(?!\w)" % re.escape(name), low) and any(z not in mine and walled.get(z, True) for z in where):
+            return True
+    return False
+
+
+def judge_text(lib, ctx, scope, suggest, text, error):
+    """(text kept or None, removed) for one piece of text from a connector."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if not isinstance(data, (dict, list)):
+        # Not JSON. An error's text with no address passes unless it names another walled zone's party or person.
+        if error and not EMAIL.search(text):
+            if named_elsewhere(lib, ctx, scope, text):
+                return None, [(text, "error")]
+            return text, []
+        if decide_result(lib, ctx, scope, suggest, text):
+            return text, []
+        return None, [(text, "unparsed")]
+    if isinstance(data, list) and not all(isinstance(i, dict) for i in data):
+        return None, [(text, "unparsed")]
+    tree, gone = filter_tree(lib, ctx, scope, suggest, data)
+    if not gone:
+        return text, []
+    if tree is None:
+        return None, gone
+    return json.dumps(tree, ensure_ascii=False), gone
+
+
+def judge_block(lib, ctx, scope, suggest, block, error):
+    """([blocks to show], removed) for one content block. A text block, and the text of a resource block, are
+    judged; a block of any other type has no text to read and passes."""
+    if not isinstance(block, dict):
+        return [block], []
+    kind = block.get("type", "text")
+    if kind == "resource" and isinstance(block.get("resource"), dict):
+        res = block["resource"]
+        if isinstance(res.get("text"), str):
+            text, gone = judge_text(lib, ctx, scope, suggest, res["text"], error)
+            if not gone:
+                return [block], []
+            return ([] if text is None else [dict(block, resource=dict(res, text=text))]), gone
+        if res.get("blob"):
+            return [], [("resource", "unparsed")]       # bytes the filter cannot read
+        return [block], []
+    text = block.get("text") if kind == "text" else None
+    if not isinstance(text, str):
+        return [block], []
+    text, gone = judge_text(lib, ctx, scope, suggest, text, error)
+    if not gone:
+        return [block], []
+    return ([] if text is None else [dict(block, text=text)]), gone
+
+
 def post(event, lib, root, ctx, scope, folder):
     tool = str(event.get("tool_name") or "")
     if not tool.startswith("mcp__"):
@@ -484,54 +683,19 @@ def post(event, lib, root, ctx, scope, folder):
     zone = scope["zone"] or scope["kind"]
     suggest = load_suggest(root)
     blocks = blocks_of(response)
+    error = is_error(event, response)
+    extra = response.get("structuredContent") if isinstance(response, dict) else None
     if blocks is None:
         removed, out = [("unparsed", "unparsed")], []
     else:
         removed, out = [], []
-        error = is_error(event, response)
         for block in blocks:
-            text = block.get("text") if isinstance(block, dict) and block.get("type", "text") == "text" else None
-            if not isinstance(text, str):
-                out.append(block)
-                continue
-            try:
-                data = json.loads(text)
-            except ValueError:
-                data = None
-            if not isinstance(data, (dict, list)):
-                # Not JSON. An error's text is judged by the addresses it holds, and passes if none label it.
-                if error and not EMAIL.search(text):
-                    out.append(block)
-                elif decide_result(lib, ctx, scope, suggest, text):
-                    out.append(block)
-                else:
-                    removed.append((text, "unparsed"))
-                continue
-            container, key, items = results_of(data)
-            if items is False:
-                removed.append((text, "unparsed"))
-                continue
-            if items is None:
-                items, one = [data], True
-            else:
-                one = False
-            kept = []
-            for item in items:
-                if decide_result(lib, ctx, scope, suggest, json.dumps(item, ensure_ascii=False)):
-                    kept.append(item)
-                else:
-                    removed.append((result_id(item), ""))
-            if len(kept) == len(items):
-                out.append(block)
-                continue
-            if one:
-                continue
-            if container is None:
-                new = kept
-            else:
-                new = {k: v for k, v in container.items() if not (isinstance(v, (int, float)) and COUNT_KEY.search(k))}
-                new[key] = kept
-            out.append(dict(block, text=json.dumps(new, ensure_ascii=False)))
+            got, gone = judge_block(lib, ctx, scope, suggest, block, error)
+            out.extend(got)
+            removed.extend(gone)
+        if extra is not None and isinstance(response.get("content"), list):
+            text = extra if isinstance(extra, str) else json.dumps(extra, ensure_ascii=False)
+            removed.extend(judge_block(lib, ctx, scope, suggest, {"type": "text", "text": text}, error)[1])
     if not removed:
         log(folder, tool, ALLOW, zone, tool)
         return None

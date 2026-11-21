@@ -299,6 +299,7 @@ SHAPES = {
     "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
     "onclick: 'delete'": {"delete": ()},
+    "layout: 'layout'": {"layout": ("thread", "papers", "heading", "check", "plan")},     # the layout dialog's base (#604), added to by Object.assign
     "onclick: 'undo'": {"undo": ()},                     # offer(): the undo bar
     "poll: 'operations'": {"operations": ()},            # WORK_JS: the one verb that reads
     # TODO_JS send(verb,r,more,said); `more` is {date:v} from the date menu,
@@ -345,7 +346,7 @@ PY_SHAPES = {'"run"': ("run",),
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'new-project-party'", "onclick: 'rename'", "onclick: 'move'",
-                         "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
+                         "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'", "layout: 'layout'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},

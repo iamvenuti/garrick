@@ -30,6 +30,7 @@
   "test_jobs": 39.2,
   "test_knowledge_skill": 11.5,
   "test_layout": 40.0,
+  "test_layout_control": 50.0,
   "test_lib": 0.3,
   "test_meetings": 1.6,
   "test_memory_canary": 28.8,

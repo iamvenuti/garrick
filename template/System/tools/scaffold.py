@@ -90,7 +90,7 @@ moves the project's `Sources/` and `Deliverables/` files that only that thread's
 names it and sets `layout: thread-first`. A file moves only when exactly one thread note names it (and no other
 note of the project does): any other is listed for the owner to place, and Garrick never guesses. The ledger rows
 of a moved file follow it, with their share destination unchanged, and the links to it are pointed at the new
-place. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and
+place. `--check` says the plan and writes nothing (`--check --json` gives it as data for the status page); a real run makes one commit through the zone's wall check, and
 a refused commit leaves every file and row where it was. Nothing leaves the project. It is not run on an update:
 an existing project keeps its layout until the owner asks.
 
@@ -1815,6 +1815,13 @@ def cmd_layout(root, args, today):
     if heading and hub_keeps_resume_block(hub):
         lines.append("The hub still holds a Resume here block, and a heading holds none: move it into a thread, or close it as an Outcome.")
     if getattr(args, "check", False):
+        if getattr(args, "json", False):                              # the plan as data, for the page's dialog: still writes nothing
+            return json.dumps({"what": what, "heading": heading, "thread": args.thread or "", "papers": papers or "",
+                               "moves": [[a[len(prefix):], b[len(prefix):]] for a, b in moves],
+                               "left": [[n[len(prefix):], why] for n, why in left],
+                               "resume_block": bool(heading and hub_keeps_resume_block(hub)),
+                               "threads": [t for t in children(project_dir / "Threads")
+                                           if (project_dir / "Threads" / t / f"{t}.md").is_file()]}, ensure_ascii=False)
         return "\n".join(lines + ["Nothing was changed."])
     if not moves and not heading and not needs_folders:
         return "\n".join(lines + ["Nothing was changed."])
@@ -2537,6 +2544,7 @@ def main(argv=None):
     ly.add_argument("--papers", choices=("own", "project"),
                     help="own: the files only this thread's note names move into it; project: its files move up")
     ly.add_argument("--heading", action="store_true", help="make the project a heading: each file goes to the one thread that names it")
+    ly.add_argument("--json", action="store_true", help="with --check: the plan as JSON, for the status page's dialog")
     d = sub.add_parser("delete", help="delete a project or a thread; without --confirm, only say what would go")
     d.add_argument("--zone", required=True)
     d.add_argument("--project", required=True)

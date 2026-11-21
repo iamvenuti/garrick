@@ -2265,9 +2265,17 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
         papers, heading = papers_of(req), wants_heading(req)
         want_plan = check or req.get("check") is True
-        said = scaffold(ws, "layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else []),
-                        *(["--check"] if want_plan else []))
-        return said_all(said)
+        args = ["layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else [])]
+        if req.get("plan") is True:
+            # The plan as data, for the page's dialog (#604): the same check, which writes nothing, and the same
+            # words beside it. Only with `check`; a plan of a real run is no such thing.
+            if not want_plan:
+                raise Refused("plan is for check: the plan of a change that is not made does not exist")
+            plan = json.loads(scaffold(ws, *args, "--check", "--json"))
+            return {"say": said_all(scaffold(ws, *args, "--check")), "plan": plan}
+        said = said_all(scaffold(ws, *args, *(["--check"] if want_plan else [])))
+        # The way back on the page is Undo, not a command: the reply carries the commit, as a rename's does.
+        return re.sub(r" To take it back: scaffold\.py undo [^\n]*?\.$", " Undo takes it back.", said, flags=re.M)
     if verb == "move":
         project, to = field(req, "project"), field(req, "to")
         if not thread:
@@ -5812,8 +5820,17 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "layout")
 
 
+def only_looks(req) -> bool:
+    """A request that only shows what a change would do and writes nothing: the layout dialog's plan (#604). It is
+    not an action to keep a record of, nor one a page is rebuilt for, and a repeat of it is never answered with the
+    last answer, which would lack the plan."""
+    return isinstance(req, dict) and req.get("verb") == "layout" and req.get("check") is True
+
+
 def builds_page(req) -> bool:
     if not isinstance(req, dict) or req.get("verb") not in PAGE_BUILDS:
+        return False
+    if only_looks(req):
         return False
     return not (req["verb"] == "delete" and not req.get("confirm"))       # the first form only says what would go
 
@@ -5864,7 +5881,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
                 # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
                 # never reach it, and the command line has no verb for it.
                 raise Refused("this is the page's own button; it is not for the ask box or a session")
-            if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
+            if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
                     run, joined = start_record(ops, req, via)
                 except ops.BadOp as e:

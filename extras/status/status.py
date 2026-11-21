@@ -7939,8 +7939,12 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     total = len(rows) + len(needs)
     # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
     html = card("waiting-now", lead_said(total), "",
-                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
+                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows">%s</div>'
                 % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
+    # The region a screen reader listens to sits in the card but outside its body, which the calm rule hides: it says the
+    # lead sentence again whenever the count changes, calm or not (#600). Visually hidden, never display:none.
+    html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
+                                              % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
     html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
     return html
@@ -7951,8 +7955,9 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:var(--fs-meta)}
 .wrow .act{margin-left:auto}
-/* nothing waits: the card is its one line, the sentence (#595); its aria-live region stays in the tree, for the first row */
+/* nothing waits: the card is its one line, the sentence (#595); the live region (#wlive) sits outside the hidden body, for the first row */
 #waiting-now.calm>.body{display:none}#waiting-now.calm>summary .chev{visibility:hidden}
+.srsay{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 #waiting-now>summary h2{font:700 var(--fs-h2)/1.25 var(--sans);letter-spacing:-.01em}
 .wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
 .wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;padding:4px 2px}
@@ -7977,7 +7982,10 @@ else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app
 return d}
 /* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
 function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
-if(h)h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';c.classList.toggle('calm',t<1)}
+var s=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
+if(h)h.textContent=s;c.classList.toggle('calm',t<1);
+/* the live region says it only when it changes, so the build's own sentence is not read out again (#600) */
+var w=document.getElementById('wlive');if(w&&w.textContent!==s)w.textContent=s}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});

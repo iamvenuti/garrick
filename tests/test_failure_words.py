@@ -103,6 +103,16 @@ class TestTheReply(tpa.ActionCase):
         out = pa.with_plain({"ok": False, "say": "x", "outcome": "weird"}, {"verb": "park"}, ops)
         self.assertEqual(("other", "This did not finish."), (out["plain"]["code"], out["plain"]["say"]))
 
+    def test_a_layout_look_keeps_no_record_and_is_not_called_unconfirmed(self):
+        # The layout dialog's plan (#604) writes nothing and keeps no record on purpose: it is not "could not confirm".
+        look = {"verb": "layout", "zone": "Work", "project": "Acme", "check": True, "plan": True}
+        self.assertTrue(pa.only_looks(look))
+        out = pa.with_plain({"ok": True, "say": "The plan.", "plan": {"moves": []}}, look, ops)
+        self.assertNotIn("plain", out)
+        real = pa.with_plain({"ok": True, "say": "Moved."}, dict(look, check=False), ops)
+        if "layout" in ops.OPS:                                            # the real run is one the record keeps
+            self.assertEqual("unrecorded", real["plain"]["code"])
+
     def test_a_save_is_saved_when_the_record_says_so_and_carries_no_plain_words(self):
         out = self.run_main({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice"), "op": "b19f3c80"})
         self.assertTrue(out["ok"])

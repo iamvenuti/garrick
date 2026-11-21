@@ -49,6 +49,7 @@
   "test_nurture": 53.8,
   "test_onboarding": 0.0,
   "test_operations": 0.8,
+  "test_outbox": 40.0,
   "test_page_action": 46.7,
   "test_pathspec_commit": 5.8,
   "test_reading": 1.5,

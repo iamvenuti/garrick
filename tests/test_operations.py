@@ -338,6 +338,8 @@ SHAPES = {
     # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
     "read: 'note-read'": {"note-read": ()},
     "openIn: 'note-open'": {"note-open": ()},
+    # TODO_JS (#612): a request the server held, dropped from its question on the Todo tab
+    "named: 'outbox-drop'": {"outbox-drop": ("id",)},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"run"': ("run",),
@@ -349,7 +351,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'", "layout: 'layout'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
-           "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
+           "TODO_JS": {"send: verb", "held: verb", "onTick: verb", "named: 'outbox-drop'"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "MENU_SETTINGS_JS": {"tell: 'settings'"},

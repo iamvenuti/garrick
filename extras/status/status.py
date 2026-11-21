@@ -925,11 +925,13 @@ def held_block(held: List[dict]) -> str:
     for h in held:
         who = h["machine"] or "another machine"
         now = "".join("<li>%s</li>" % md_inline(x) for x in h["now"]) or "<li>No line reads like it.</li>"
-        out += ('<div class="tqi" data-z="%s" data-id="%s"><div class="tqt">A line %s on %s was not changed here, because the line is not as it was. '
+        where = "on the server" if h.get("role") == "roaming" else "here"
+        out += ('<div class="tqi" data-z="%s" data-id="%s"><div class="tqt">A line %s on %s was not changed %s, because the line is not as it was. '
                 'Nothing was applied.</div><div class="tqa"><button type="button" class="act" data-outbox="show">Show me the line</button>'
                 '<button type="button" class="act" data-outbox="drop">Drop it</button></div>'
                 '<div class="tqmore" hidden><div class="tql">As it was: %s</div><div>Now in Todo.md, nearest first:</div><ul>%s</ul></div></div>'
-                % (E(h["zone"]), E(h["id"]), HELD_WORD.get(h["verb"], "changed"), E(who), md_inline(h["line"] or h["text"] or "(no text)"), now))
+                % (E(h["zone"]), E(h["id"]), HELD_WORD.get(h["verb"], "changed"), E(who), where,
+                   md_inline(h["line"] or h["text"] or "(no text)"), now))
     return '<div class="tq">%s</div>' % out if out else ""
 
 
@@ -947,7 +949,7 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     for zone in visible_dirs(ws / "Zones"):
         todo_md = zone / "Todo.md"
         waits = outbox_mod().pending_marks(ws, zone.name) if role == "roaming" else {}
-        held = outbox_mod().held_requests(ws, zone.name) if role == "server" else []
+        held = [dict(h, role=role) for h in outbox_mod().held_requests(ws, zone.name)] if role in ("server", "roaming") else []
         notes = {}
         for n in tl.notes(str(zone)):
             rel = Path(n).relative_to(zone).with_suffix("").as_posix()

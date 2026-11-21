@@ -44,6 +44,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 
 FOLDER = (("Inbox", ".outbox"))
+DROP_VERB = "outbox-drop"          # the page's *Drop it*: allowed on every role, since it only removes a file from the drop folder
 VERBS = ("todo-done", "todo-undo", "todo-edit", "todo-add")       # operations.OUTBOX_VERBS, which page_action.py checks it against
 ENVELOPE = ("id", "made", "machine", "line", "request")
 HELD_ENVELOPE = ENVELOPE + ("held", "held_at")
@@ -188,6 +189,8 @@ def queue(ws: Path, req: dict) -> dict:
     ops = pa.ops_lib(ws)
     verb = req.get("verb")
     spec = ops.DECLARED.get(verb) if ops is not None else None
+    if verb == DROP_VERB:
+        return None         # Drop it takes a held file out of the drop folder, the one place a laptop copy may write (#621)
     if verb not in VERBS:
         if spec is not None and spec.scope in ("zone", "workspace"):
             raise Refused(ONLY_RECEIVES % "this")

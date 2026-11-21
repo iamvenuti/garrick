@@ -69,7 +69,7 @@ SENTINEL = "END OF SWEEP"
 FOLLOW_SENTINEL = "END OF FOLLOW-UP"
 FOLLOW_TIER = "haiku"
 FOLLOW_ALLOW = ["Read", "Grep"]
-ANSWER = re.compile(r"^\s*(\d+)\s*[:.)-]\s*(delivered|in part|no sign)\b[ \t]*(\S*)\s*$", re.I)
+ANSWER = re.compile(r"^\s*(\d+)\s*[:.)-]\s*(delivered|in part|no sign)\b[ \t]*(.*?)\s*$", re.I)
 EXIT_INCOMPLETE = 3
 COUNTS = re.compile(r"^ADDED (\d+) FOLDED (\d+)\s*$", re.M)
 
@@ -221,7 +221,11 @@ def followup_answers(text: str, items: List[dict]) -> Optional[List[dict]]:
     for line in lines[:-1]:
         m = ANSWER.match(line)
         if m and 1 <= int(m.group(1)) <= len(items):
-            out.append({"key": items[int(m.group(1)) - 1]["key"], "result": m.group(2).lower(), "source": m.group(3)})
+            item = items[int(m.group(1)) - 1]
+            said = m.group(3).strip().strip("`'\"\u2018\u2019\u201c\u201d ").strip()
+            listed = [e["path"] for e in item["evidence"]]
+            source = max((p for p in listed if said.startswith(p)), key=len, default=said)
+            out.append({"key": item["key"], "result": m.group(2).lower(), "source": source})
     return out
 
 
@@ -274,8 +278,9 @@ def skill(workspace: Path):
     return mod
 
 
-def send_digest(workspace: Path, zone: Path, failed: bool) -> None:
-    """The zone's morning summary, the "Todo summary" notice."""
+def send_digest(workspace: Path, zone: Path, failed: bool, follow_failed: bool = False) -> None:
+    """The zone's morning summary, the "Todo summary" notice. `failed` is the sweep's own result; `follow_failed` the
+    Follow up step's, which never says the sweep failed."""
     import job
     script = workspace / "System" / "skills" / "todo" / "todo.py"
     r = subprocess.run([sys.executable, str(script), "digest", "--zone", zone.name, "--root", str(workspace)],
@@ -283,6 +288,8 @@ def send_digest(workspace: Path, zone: Path, failed: bool) -> None:
     text = r.stdout.strip() if r.returncode == 0 else "The digest could not be built: %s" % (r.stderr.strip()[-200:])
     if failed:
         text = "The sweep did not finish this morning; this is the list as it stood.\n\n" + text
+    elif follow_failed:
+        text = "The sweep finished this morning. The follow-up did not.\n\n" + text
     job.notify("digest", "Todo", text, zone=zone, event="todo-summary")
 
 
@@ -356,7 +363,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return agent.EXIT_USAGE
         zones.append(zone)
     today = datetime.date.today().isoformat()
-    worst, total = 0, 0
+    worst, sweep_worst, total = 0, 0, 0
     for zone in zones:
         code, changed, said = sweep_zone(workspace, zone, args.tier, today)
         print(said)
@@ -367,12 +374,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as e:           # a follow-up that fails never stops the digest or the next zone
             follow_code, follow_said = 1, "%s: follow-up failed: %s" % (zone.name, e)
         print(follow_said)
-        code = code or follow_code
         if args.digest:
-            send_digest(workspace, zone, failed=code != 0)
+            send_digest(workspace, zone, failed=code != 0, follow_failed=follow_code != 0)
         total += changed
-        worst = worst or code
-    if worst == 0:
+        sweep_worst = sweep_worst or code
+        worst = worst or code or follow_code     # the job still exits non-zero when a Follow up failed, so it is seen
+    if sweep_worst == 0:
         agent.report_items(total)
     return worst
 

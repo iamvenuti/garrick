@@ -899,9 +899,24 @@ def name_hits(text: str, forms: List[Tuple[str, bool, str]]) -> List[Tuple[int, 
 
 
 def person_of(line: str, forms: List[Tuple[str, bool, str]]) -> str:
-    """The person a Waiting on line is about: the first one its words name, "" when none."""
+    """The person a Waiting on line is about: the first one its words name, "" when none. A first name that two or more
+    people share names nobody, unless the line also holds a full name; then the first unshared name is the person."""
     hits = name_hits(plain(line), forms)
-    return hits[0][2] if hits else ""
+    spans: Dict[Tuple[int, int], set] = {}
+    for start, end, name in hits:
+        spans.setdefault((start, end), set()).add(name)
+    ordered = sorted(spans.items())
+    if not ordered:
+        return ""
+    if len(ordered[0][1]) > 1:
+        text = plain(line)
+        full = any(" " in _norm(text[x:y]) for x, y in spans)
+        if not full:
+            return ""
+    for _, names in ordered:
+        if len(names) == 1:
+            return next(iter(names))
+    return ""
 
 
 def _day_text(value) -> Optional[datetime.date]:
@@ -918,7 +933,7 @@ def _title_of(fm: dict, path: Path) -> str:
 
 def meeting_evidence(root: Path, zone: str, person: str, since: datetime.date, ctx: dict, lib,
                      forms: List[Tuple[str, bool, str]]) -> List[dict]:
-    """The Meetings pages of this zone filed on or after `since` that name `person`. A page is looked at only when its
+    """The Meetings pages of this zone filed after `since` that name `person`. A page is looked at only when its
     own `zone:` is this zone and the wall's decide() permits this zone to read it: a page of another zone, or of none,
     is never opened. Newest first."""
     folder = root.joinpath(*MEETING_PAGES)
@@ -933,7 +948,7 @@ def meeting_evidence(root: Path, zone: str, person: str, since: datetime.date, c
                 continue
             fm = lib.parse_frontmatter(page)
             day = _day_text(fm.get("created")) or _day_text(fm.get("date"))
-            if day is None or day < since:
+            if day is None or day <= since:      # a page filed the day the line was first seen may be its own source
                 continue
             if page.stat().st_size > MOST_READ:
                 continue
@@ -1000,20 +1015,33 @@ def inbox_evidence(root: Path, zone: Path, person: str, since: datetime.date, ct
 
 
 def sender_address(root: Path, zone: Path, person: str) -> str:
-    """The address `person` last wrote from, read from the From line of the newest item in this zone's own Inbox/ whose
-    sender names them, or "" when no item does. Code builds a chase's recipient from this and from nothing the
-    assistant wrote."""
+    """The address `person` wrote from, read from the From line of the items in this zone's own Inbox/ whose display name
+    is their full name as People writes it (case aside; never a first name or an alias alone), or "" when none does or
+    when two or more different addresses do. Code builds a chase's recipient from this and from nothing the assistant
+    wrote."""
     import email.utils
     lib = tools_lib(root)
     if not lib or not person:
         return ""
     ctx = lib.load_context(root)
+    found: Dict[str, str] = {}
     for _, _, top in inbox_items(root, zone, person, datetime.date.min, ctx, lib, person_forms(ctx)):
         sender = FROM.search(top)
-        address = email.utils.parseaddr(sender.group(1))[1] if sender else ""
+        shown, address = email.utils.parseaddr(sender.group(1)) if sender else ("", "")
+        if _norm(shown) != _norm(person):
+            continue
         if re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", address):
-            return address
-    return ""
+            found[address.casefold()] = address
+    return next(iter(found.values())) if len(found) == 1 else ""
+
+
+WAITING_TAG = re.compile(r"(?:^|\s)#waiting")
+
+
+def due_waiting(lines: List[str], today: datetime.date) -> List[str]:
+    """The lines a follow-up is about: open, tagged `#waiting`, chase day today or past. The status page's Follow-ups row
+    reads the same test (todo_lines.py's `waiting`), so a digest and the page count the same lines."""
+    return [l for l in classify(lines, today)["chase"] if WAITING_TAG.search(l)]
 
 
 def followup(root: Path, zone: Path, today: datetime.date) -> dict:
@@ -1025,7 +1053,7 @@ def followup(root: Path, zone: Path, today: datetime.date) -> dict:
     Nothing in Todo.md changes. Returns followup_counts() and {"zone", "pending": [{"key", "line", "person",
     "evidence"}], "unseen"}."""
     lines = read(zone)
-    due = classify(lines, today)["chase"]
+    due = due_waiting(lines, today)
     seen = read_seen(zone)
     records = read_followups(zone)
     live = {key(l) for l in due}
@@ -1049,6 +1077,8 @@ def followup(root: Path, zone: Path, today: datetime.date) -> dict:
             unseen += 1
             continue
         person = person_of(line, forms)
+        if not person:
+            continue                                       # a line that names nobody is not looked at, and says so
         evidence = []
         if person and lib:
             evidence = meeting_evidence(root, zone.name, person, first, ctx, lib, forms) + inbox_evidence(root, zone, person, first, ctx, lib, forms)
@@ -1069,7 +1099,7 @@ def followup_counts(zone: Path, today: datetime.date) -> dict:
     """The follow-up records of the zone's due lines, counted, with nothing looked at: {"due", "delivered", "in_part",
     "no_sign", "waiting", "unlooked"}: `waiting` is a due line with evidence that no judgement has answered, `unlooked` one
     no follow-up has looked at."""
-    due = classify(read(zone), today)["chase"] if (zone / "Todo.md").is_file() else []
+    due = due_waiting(read(zone), today) if (zone / "Todo.md").is_file() else []
     records = read_followups(zone)
     out = {"due": len(due), "delivered": 0, "in_part": 0, "no_sign": 0, "waiting": 0, "unlooked": 0}
     for line in due:

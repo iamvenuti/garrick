@@ -304,6 +304,18 @@ focus, as under *No name given*). Then:
    `python3 System/tools/drift.py` compares them from then on. In a
    thread-first project the ledger is the thread's own,
    `Threads/<Thread>/Deliverables/published.md`.
+   **When this machine cannot reach the share.** `python3
+   System/tools/machine.py` says the machine's role. When it says `server`
+   and the link the hub's `shared:` names, under `Zones/<Zone>/.shared/`,
+   does not lead anywhere here, the copy cannot be made from this machine,
+   and nothing here reads through the link. Record the `published.md` row
+   as above, then add one line to the zone's `Todo.md` for the machine that
+   does reach the share, usually the laptop: `[[<Thread>]]: copy `<file>` to
+   `<link>/<destination>`, from the machine that reaches the share 📅 <today>`.
+   A copy to a share is a send, so it asks first when it is made. Say in
+   the Live artifact row that the copy waits. `drift.py` reports the link as
+   not reachable here until the machine that does reach it has handed in its
+   result. On any other role this paragraph does not apply.
    **A copy that stopped counting** in this session is never deleted from the
    ledger: the row is the record of what left. Change its date cell to
    `withdrawn YYYY-MM-DD` when the copy came off the share, or `replaced

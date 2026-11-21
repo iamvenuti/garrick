@@ -334,6 +334,14 @@ class _Snapshot(dict):
     """{path: bytes or None} as `_dirty` returns it, with `stats`: what each path's file looked like when its bytes were
     read, so a later snapshot can keep the bytes of a file that has not been touched since."""
     stats: Dict[str, tuple]
+    read_at: Dict[str, int]
+
+
+RACY_NS = 2_000_000_000                 # a file touched within this long of being read may be rewritten unseen (as git treats it)
+
+
+def _now_ns() -> int:
+    return time.time_ns()
 
 
 def _stamp(path: Path):
@@ -348,7 +356,9 @@ def _stamp(path: Path):
 def _dirty(git, repo: Path, known: Optional[Dict[str, Optional[bytes]]] = None) -> Optional[Dict[str, Optional[bytes]]]:
     """{path from the repository: its bytes now (None when gone)} for every path git reports changed or new, or None
     when there are too many to keep. Each file's bytes are read once: a file that `known` (an earlier snapshot of this
-    repository) holds, and whose stamp has not changed since, keeps the bytes it was read with."""
+    repository) holds, and whose stamp has not changed since, keeps the bytes it was read with, but only when its change and
+    modification times were at least two seconds older than that read: a file touched closer to the read may be rewritten
+    within one clock tick without the stamp moving (racy-clean, as git guards), so it is read again."""
     code, said = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if code != 0:
         return None
@@ -366,17 +376,21 @@ def _dirty(git, repo: Path, known: Optional[Dict[str, Optional[bytes]]] = None) 
         return None
     out = _Snapshot()
     out.stats = {}
+    out.read_at = {}
     seen = getattr(known, "stats", {})
+    seen_at = getattr(known, "read_at", {})
     for rel in paths:
+        at = _now_ns()
         stamp = _stamp(repo / rel)
         if stamp is None:
             out[rel] = None
-        elif rel in seen and seen[rel] == stamp and rel in known:
-            out[rel], out.stats[rel] = known[rel], stamp
+        elif (rel in seen and seen[rel] == stamp and rel in known and rel in seen_at
+              and stamp[1] <= seen_at[rel] - RACY_NS and stamp[2] <= seen_at[rel] - RACY_NS):
+            out[rel], out.stats[rel], out.read_at[rel] = known[rel], stamp, seen_at[rel]
         else:
             try:
                 out[rel] = (repo / rel).read_bytes()
-                out.stats[rel] = stamp
+                out.stats[rel], out.read_at[rel] = stamp, at
             except OSError:
                 out[rel] = None
     return out

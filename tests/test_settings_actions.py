@@ -150,6 +150,17 @@ class TestTheRole(SettingsCase):
         self.assertTrue(out["ok"], out)
         self.assertEqual("solo", self.role_file()["role"])
 
+    def test_with_no_role_file_nothing_changes_for_one_computer(self):
+        """The default, solo with no machine.json (#621 changes nothing there): a Todo action is done, not queued, and no role file or
+        outbox appears."""
+        self.assertIsNone(self.role_file())
+        out = self.go({"verb": "todo-add", "zone": "Work", "text": "Book the room"})
+        self.assertTrue(out["ok"], out)
+        self.assertIn("Book the room", (self.work / "Todo.md").read_text(encoding="utf-8"))
+        self.assertIsNone(self.role_file())
+        self.assertFalse((self.work / "Inbox" / ".outbox").exists())
+        self.assertEqual({}, self.saved())
+
     # one test for each failure it can show
     def test_failure_a_laptop_copy_without_the_servers_name(self):
         out = self.go({"verb": "machine-role", "role": "roaming", "name": "laptop"})

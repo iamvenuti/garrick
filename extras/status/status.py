@@ -4654,6 +4654,62 @@ def set_head(name: str, key: str, lede: str = "") -> str:
     return '<h3>%s%s</h3>%s' % (E(name), help_button(name, key), '<p class="setlede">%s</p>' % lede if lede else "")
 
 
+_SETTINGS_MODS: Dict[str, object] = {}
+
+
+def settings_mod(name: str):
+    """settings_help.py or settings_guard.py, beside this file (#621): the "?" on each setting row, and Settings › This
+    machine with the read guard's block. Loaded once; a Garrick without them builds Settings as it was."""
+    if name not in _SETTINGS_MODS:
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_status_" + name, str(Path(__file__).with_name(name + ".py")))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _SETTINGS_MODS[name] = mod
+        except Exception:
+            _SETTINGS_MODS[name] = None
+    return _SETTINGS_MODS[name]
+
+
+def machine_record(ws: Path) -> Tuple[str, str, str]:
+    """(role, this computer's name, the home server's name) of this computer, as machine.py reads them: one computer with
+    no name where there is no role file."""
+    box = outbox_mod()
+    try:
+        mod = box._machine(ws) if box else None
+        rec = mod.read() if mod else {}
+        return str(rec.get("role") or "solo"), str(rec.get("name") or ""), str(rec.get("server") or "")
+    except Exception:
+        return "solo", "", ""
+
+
+SETGUARD_JS = getattr(settings_mod("settings_guard"), "JS", "")
+SETGUARD_CSS = getattr(settings_mod("settings_guard"), "CSS", "")
+
+
+def machine_settings(ws: Path) -> str:
+    """Settings › This machine (#621): the role of this computer in words, and *Change…* in the app."""
+    guard = settings_mod("settings_guard")
+    if guard is None:
+        return ""
+    role, name, server = machine_record(ws)
+    return guard.machine_section(role, name, server, help_button, help_text)
+
+
+def read_guard_block(ws: Path) -> str:
+    """The Read guard block of Settings › Walls: Off, Watch only or On, Refuse or Ask me, and the two tool lists (#621). In the
+    app only. Empty where settings_guard.py is not there."""
+    guard = settings_mod("settings_guard")
+    lib = prefs().lib(ws)
+    if guard is None or lib is None:
+        return ""
+    try:
+        codex = channels_mod().assistant() == "codex"
+    except Exception:
+        codex = False
+    return guard.guard_block(guard.read_state(ws, lib), codex, help_button, help_text)
+
+
 def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
     """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
     "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
@@ -4661,8 +4717,11 @@ def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
     zones. The note about flags read from the Parties and Zones tables moves here with the rows."""
     ctx = workspace_context(ws)
     flags = ctx.get("zone_walled") or {}
+    guard = read_guard_block(ws)
     if not flags:
-        return ""
+        return ('<section class="setsec" id="walls-settings">%s%s%s</section>'
+                % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
+                   help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), guard)) if guard else ""
     where = str(folder or ws)
     rows = ""
     for z, walled in sorted(flags.items()):
@@ -4673,9 +4732,9 @@ def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
                     E("Hand \u201c%s\u201d to your assistant, which asks you before it changes anything" % ask), E("Change %s: ask my assistant to %s" % (z, ask[0].lower() + ask[1:]))))
     note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
             'accepted.</p>' if ctx.get("pending") else "")
-    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s</section>'
+    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s%s</section>'
             % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
-               help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note))
+               help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note, guard))
 
 
 def menu_settings() -> str:
@@ -5047,9 +5106,8 @@ def preview_section(flags: Dict[str, bool]) -> str:
                    % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
             % (set_head("Preview features", "preview", "Off until you switch them on in a file."), rows,
-               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
-               '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
-               'Point at a feature for what it does.')))
+               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Ask your assistant '
+               'to switch one on, then rebuild the page. Point at a feature for what it does.')))
 
 
 # The foot of Settings, under the last section: the cards hidden in this
@@ -5068,7 +5126,7 @@ VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="
 # brings a section into view, and the one being read is marked as the column
 # scrolls (JS). Each section is filed under a group's key in settings().
 SET_GROUPS = (("look", "How Garrick looks and opens things"), ("tell", "What it tells you"),
-              ("keep", "How it keeps older material"), ("walls", "Walls"), ("about", "About Garrick"))
+              ("keep", "How it keeps older material"), ("walls", "Walls"), ("machine", "This computer"), ("about", "About Garrick"))
 SET_SECTION = re.compile(r'<section class="setsec[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
 
 
@@ -5107,7 +5165,11 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
              "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
              "keep": [memory_settings(ws, link)],
              "walls": [walls_settings(ws)],
+             "machine": [machine_settings(ws)],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
+    helper = settings_mod("settings_help")          # a "?" on each setting row, beside its section's (#621)
+    if helper is not None:
+        filed = {key: [helper.with_row_help(h, help_button, help_text) for h in secs] for key, secs in filed.items()}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
                    % (key, key, E(title), "".join(secs)) for key, title, secs in groups if secs)
@@ -5299,8 +5361,8 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
             % (set_head("Zones", "zones", "A colour and an icon for each zone, so you can tell them apart at a glance."),
                help_text("zones", 'A colour and an icon for each zone, '
                'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
-               'Saved for every viewer when you close Settings, in <code>%s</code>, which is committed with your '
-               'workspace.' % E(prefs().FILE)), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+               'Saved for every viewer when you close Settings, and kept with your '
+               'workspace.'), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
 
 
 # Settings › Graph colours (#291): a colour for each kind of note Explore
@@ -5353,7 +5415,7 @@ def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, s
                help_text("graphcol", 'Each kind of note in Explore&#39;s legend takes the colour chosen here, in its legend dot '
                'and on the graph, with a shade for the light theme and one for the dark. <em>Default</em> keeps the colour Garrick '
                'ships. Red, Crimson and Amber are not offered, since the rings for a late next action use them. Saved for every '
-               'viewer when you close Settings, in <code>%s</code>, which is committed with your workspace.' % E(prefs().FILE)),
+               'viewer when you close Settings, and kept with your workspace.'),
                rows))
 
 
@@ -5408,9 +5470,9 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     def row(e, label):
         said = own.get(e)
         if said:         # a job sends this its own way: the box keeps what is saved, and shows as not in use
-            return ('<label class="nsown" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
+            return ('<label class="nsown nsitem" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
                     % (E(said), box('data-nt="%s" disabled aria-disabled="true"' % e, cfg["tell"][e]), E(label), E(said)))
-        return '<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
+        return '<label class="nsitem">%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
     tell = "".join(row(e, label) for e, label in lib.TELL)
     q = cfg["quiet"]
     rule = ("At night only &#8220;a session needs me&#8221; gets through%s."
@@ -8902,13 +8964,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
-                + (NOTE_CSS if show_graph else "") + LOOK_CSS,
+                + (NOTE_CSS if show_graph else "") + LOOK_CSS + SETGUARD_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 

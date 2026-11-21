@@ -94,7 +94,8 @@
   "v0.68.0",
   "v0.69.0",
   "v0.69.1",
-  "v0.70.0"
+  "v0.70.0",
+  "v0.71.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -231,7 +232,8 @@
    "ec24da7b7b81f9391f77b5dc9f86b7d2a479dfaff3f245d0f37521831a47a001",
    "665028ba3dea8d31d98f492f7eaf41af9a732a78dd9de431088cd2432b14958c",
    "3bf31d50ceeaba4f2b326e47f30a4346cb0271a8125d25de41b8c941701f4b93",
-   "5a00e5dd1f8823a98faa6351a2343eeb9e2e19aaa8624ff798b86884d73431ce"
+   "5a00e5dd1f8823a98faa6351a2343eeb9e2e19aaa8624ff798b86884d73431ce",
+   "abf2fc6caf1042a12552d6273a07b7889e70047e96789d5688e159b9e3bbe74a"
   ],
   "System/garrick-docs/architecture.md": [
    "fbec3ef6f66414a9e94772f1c9566372cee280794b87c70a7a66c80d0f7704aa",
@@ -304,7 +306,8 @@
    "46f4ccb2603a23b66983d2897289f4713b3b67c0433cf61dd54a6a44292a555e",
    "09b0ea648201f1cb3cb2694311230468d6513c46b0130eb29070b34823a666dd",
    "9ef9cd288501f668f9cea87500be3a15720af7e2c74df80ba45ae966bb388861",
-   "e724132488ed0f402bfac8f5e748ceb1bdee296626507a35094d738fc2b3ce45"
+   "e724132488ed0f402bfac8f5e748ceb1bdee296626507a35094d738fc2b3ce45",
+   "61d24dfda7e46f8f124f009157e8f4e15b8638b4261460824c967fa54bcc8d9a"
   ],
   "System/garrick-docs/concepts.md": [
    "31c4fdfaedf64d3f1c749aeb5085a65a06bc9f8f2cd2cb315aae81668efd62a1",
@@ -326,7 +329,8 @@
    "dd259ab0a3d0f40a260eea66e2d43c57d56ddf6f4d323200c665c10341daee58",
    "7106ceade5bd2e904e73b83d51bca24ebbd72eab5e4e878a09f6cc4bcee71e59",
    "05b61cab53ecb23572a44068e72a99cbe1cfddcf3388bf7e20c2547de6c27c29",
-   "0c423ebd2f05287ad6010364ffb25a14e95f67134c6e1f96e3e4c0626d4797a8"
+   "0c423ebd2f05287ad6010364ffb25a14e95f67134c6e1f96e3e4c0626d4797a8",
+   "8b8094457645cf4f4df1e8ea52a2ab23e5ac047e222da7ade70aaf1181055018"
   ],
   "System/garrick-docs/context.md": [
    "823acaa34fa576bab05151a6c0ec0755dd588d670b3ba6efdf98cd922c489a40",
@@ -338,7 +342,8 @@
    "b8b4321d6b4f6826508e48cca1cd08a9f7949ada0af516e4541516e0c337d13a",
    "0c2b3455c2d11216eb075c0dd860813cbe9f0c5f421535095c3e5a760b4298d5",
    "5cd9d6746d6c3ce5f6b157d3e9b5e17abb7d316c108af43e37286e1904ca5d2e",
-   "91630b2bbc085717ac9a97c868b42e77e85de624c9338019a9c5f51c700800d1"
+   "91630b2bbc085717ac9a97c868b42e77e85de624c9338019a9c5f51c700800d1",
+   "ae07d6f14e1be0ef74494365ed8e908f8758b395b26ec3be9a287f13d406c13d"
   ],
   "System/garrick-docs/enforced.md": [
    "1e118e3f84c950f40bc5e946fe3386e274fb2d41c3519232bb377f7be8b18e1b",
@@ -477,7 +482,8 @@
    "dab16b0dc99be1e8238eaa65c94f0d58481bb288b96edb78f6ac7a7c161ba6fc",
    "71ca76fb9483d58d0c1b2290354ae0eddd50be24dfab31470831a5e08bb5a49e",
    "5c7a4ebdc5b1f51a8f489dfa5119654d15a4b6af83f868e50e45a44d252aac7c",
-   "6c9f064fe6ad48643f22066245e6b2aec106f9bddafbd388f5a2ac543c36b2d1"
+   "6c9f064fe6ad48643f22066245e6b2aec106f9bddafbd388f5a2ac543c36b2d1",
+   "8de82217744bf753e13bbf0627d572ad51f1dc140e25fc09e3dc65bd1efcc992"
   ],
   "System/garrick-docs/extras/simple-home.md": [
    "f29f3cad2d8794c24455852b210df09d12a5a68dfab1dfda025ae5118ac78ee0",
@@ -563,7 +569,8 @@
    "e3ec26a634cc69283a88e341ef1827c0920d8431ac6cdb1cc8d934286b8365e6",
    "798ecc19f95c7db43194a88a8c0c7e547143c2b69300f6d5fe5b26878c985c24",
    "44b655f2c568634b0310566b1b9a768eeaee0332c5cc5b0d78a1f9d037c3b86b",
-   "6307b2a79c7a42971e9ee0d11263599ac1f1acb939ecee8f85316dd237eb368a"
+   "6307b2a79c7a42971e9ee0d11263599ac1f1acb939ecee8f85316dd237eb368a",
+   "7d098c4d10aca4c2998e3552c8cb135b142447126bc736de1a3a8fed20c39949"
   ],
   "System/garrick-docs/extras/telegram.md": [
    "2da243cbae1ccf13e568ad4173d6b0e4e5e0092867a56efa282365a0d4cc178a",
@@ -813,7 +820,8 @@
    "36e41e0f3ab8690a4b29e21a43006a48af6fb9a62b7521fc6cd5d3a72cd4d031",
    "222f4275706befb34e25c0694b15f2f3ce5ab3f1a63a450f93c407aa18baead5",
    "15805e598b164dd77490988e2506b39a7167a4089b983601fa794b84853565a2",
-   "455b5de24f49f5acda368c8ee36659afc26e9b58dfca979b0ff1239736a2cddf"
+   "455b5de24f49f5acda368c8ee36659afc26e9b58dfca979b0ff1239736a2cddf",
+   "15419b04dadce87c27b8e607883b106534ff5d5ca93934f6a144803c8e824bfa"
   ],
   "System/jobs/whats_open.py": [
    "cdd40c24f39dd107690118b607f6a9f78f07405eefc94963c838a97ef50a9165",
@@ -848,7 +856,8 @@
    "c9f6b90a5785fe7077a4cad6a6338780c79db430291ae898c59ccf6ea453e259",
    "8cb8390e6d4bdfb6740e87eaaed2938327545d331a23d10ac98d693440a94a3f",
    "d4a2152db8b76ec5f6b8576e4acaf5d18e20fa0e4123420107246c7532ae0af2",
-   "273b830ebcbc2eefe5c55d8057b1bfe2b2dc53dce87a07bd10079b914128a8d4"
+   "273b830ebcbc2eefe5c55d8057b1bfe2b2dc53dce87a07bd10079b914128a8d4",
+   "5d52b4e0f918c9233ea93ba15ff5e17a6b33ce3d2e6ef5436fba3c6362c0818c"
   ],
   "System/skills/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -890,7 +899,8 @@
    "0b780ebd705996f1e663db031eeeba6b8ba267700c6ed25bb18d845b12a2e094",
    "7d35c9274d30310d12da92809b89cd6a350cbe6b33c1cff512d62af9c837404c",
    "31d24e2814b600eaff3585eb22985b2821816272f30cd5055b6aebfc1b34b206",
-   "0c747bb1461867e435a75950bb3ffa459a51ce1a98b35a0c398b40ca73756b33"
+   "0c747bb1461867e435a75950bb3ffa459a51ce1a98b35a0c398b40ca73756b33",
+   "d217ebffd2bcee9f546c36620be203482851bcf3049a98912279a43b4775a5f8"
   ],
   "System/skills/intake/process_notes.py": [
    "f9da6b4948d1ccfca09974f5416440dff62e3f72c9646c60fa8bd377b84108f3",
@@ -1035,7 +1045,8 @@
    "6cc35d0d5aa0e62ed7b2bec1f234a534fd01f2438a15ff28dc2271e43da6e446",
    "0942b165e70d6af22a645565fb3ca248d676a8e5002af05b6d995719b0deb2e0",
    "d2764ea72376a3252e4dad09c4131d6e211546a98c08f86f8a6ab1136f49175f",
-   "3aa6b9070c2aa5df32c2c806dc53efa1df32b113eefbd9f19a4ec252517cded6"
+   "3aa6b9070c2aa5df32c2c806dc53efa1df32b113eefbd9f19a4ec252517cded6",
+   "ba42794181268415f962cf013f2708b608f9de2618d1b8a46632b6f2058350aa"
   ],
   "System/skills/threads/reference/catch-up.md": [
    "236cb157961612928c328a77d542804ed8d1d91c5f194ea5430d09993a5d8fd2",
@@ -1045,11 +1056,13 @@
    "c50783a84d13e6f70cef00980810728eaf56519d26b12f84afda869e35d566cb"
   ],
   "System/skills/threads/reference/lifecycle.md": [
-   "956abb9deaf48d7a03ff964b7c0b122d69bdde7a2301beb7224048efa4259986"
+   "956abb9deaf48d7a03ff964b7c0b122d69bdde7a2301beb7224048efa4259986",
+   "9bcd87a69cc02486a1d25eff74a3aa813e484310bf313983419b6632fada90b9"
   ],
   "System/skills/threads/reference/open.md": [
    "da0ebe903899498042c25f772e884ba3895aa86eefb1f23307b22748146c5250",
-   "ebfc28ba053c16aba68627c34e082781ed861bf93cff3d14d4c93d588be3b80b"
+   "ebfc28ba053c16aba68627c34e082781ed861bf93cff3d14d4c93d588be3b80b",
+   "992701962827736575b5fa1bfc9141c4d9d8bdbf6c1729b3f2832212db186ebd"
   ],
   "System/skills/threads/reference/wall-check.md": [
    "bf1dc58db010f4677b40e7a1ee9b3b3ed7a42fca61e38b247d1ba7332ef62299"
@@ -1071,7 +1084,8 @@
    "5c57b12382728ce1668bda717dcc5489d5cccd8f31cf9f9c87b06ec38e083411",
    "d4a582dc2757ad4edfc4aa563d38b6a4d3d4fd6bdc636b99cd1e84738d61242b",
    "982d7669a52af7ddefe00695aaba9e40fc4d3f825c91dd58896ccb11c3ed5a7f",
-   "1aef4e47471f0d6e446d7a0b9de98844e86cf8958b8d80e6c9103904957baa56"
+   "1aef4e47471f0d6e446d7a0b9de98844e86cf8958b8d80e6c9103904957baa56",
+   "4608ac1d39ecdbb31a81ed071ca5bd857bdce4aef74515eae75d94fcc528756b"
   ],
   "System/skills/todo/todo.py": [
    "89adefbdc7dfb9015ead89cca66ab1599f6df9d9cb5f807dc047b88ef3993337",
@@ -1080,7 +1094,8 @@
    "147116b72d64de7a3f3af4c19b07e812344b4a283b4606718fe08e5f6302cc8a",
    "1dad1e3005e99c09f217e2cfb7bc9e3a436dcf29b7ec45742d1f5cc03b199bde",
    "69a12e97eddbeaea6b7005469851562eff12d6a7966f2a06ca889dc4f3eb658c",
-   "28425309631876da9068858fbde36f59a61389d739941093d11bd65948db6015"
+   "28425309631876da9068858fbde36f59a61389d739941093d11bd65948db6015",
+   "d26b79cf084499c93cb49c34797151245126771795b0b7775acf7fe941d55db0"
   ],
   "System/skills/update/SKILL.md": [
    "1317adddf3b50dba53acfb409b0b73ef968c57e862daf0ebcc9b98e2b22e6f93",
@@ -1169,7 +1184,8 @@
   "System/status/ask-answer-brief.md": [
    "e372be82fb9c51344580b2935e26b54ac0d0ef3814504c26b6aa8cf67da571d5",
    "20c9321f345fd109ae31141ae43e37b66ad406265ec37ae98ca1eca05e037e17",
-   "38cdd9b1412b331c10dd73f7d0b7df3cf0325a065d1623679eae95c9d8962c00"
+   "38cdd9b1412b331c10dd73f7d0b7df3cf0325a065d1623679eae95c9d8962c00",
+   "aeb33597a625c988cccf8d1c16b906b14062fe88a7fd9ce81381c2fe614658bc"
   ],
   "System/status/ask-brief.md": [
    "3eed5cc6e026b716c1fb84364758d7cbec4efa574896b229330a1ab508ed6f7f",
@@ -1192,7 +1208,8 @@
    "137eb04de90a2dfc3a4ee9372914522c7c549bfe5487ee35e42403ef3d90af1b",
    "cdf5ddc8f750db74f37f5d18fb3b3258adc97f237203e4c68fd2dfda8fdbf1ea",
    "ae5f8e07c02520793dcc7967d77f14b3c5e8ce4b77a5f1829a0344de254885ca",
-   "d8c2dfc61c271cf9860821f0bdeabcc081f2c91ad2460684b13db495d033f68a"
+   "d8c2dfc61c271cf9860821f0bdeabcc081f2c91ad2460684b13db495d033f68a",
+   "ae91e23ff748c1e26c77e4d6c8007548598e7b0ff598eac0daee9fe087c5bcd2"
   ],
   "System/status/ask.py": [
    "435df657187ff4f18b2019abcf418cf1de8974e50aa0a35d966dc2d5d523824a",
@@ -1217,7 +1234,8 @@
    "d7eb5da2cf9229f1a309e1ede6571246bc024c8918e9078f61cd295fab3b7d43",
    "11796b6b8d34dfb5d7c02a54476a8b438567281fc3aa91c61781567f2bd8bf28",
    "7d0bf5b8b2c72f4a56b1970cc9667e68fae5fc5f158b72ba6b8ec5aee778b399",
-   "5bf899f8a4152314580618284b1a7af24255c078158c23d285c84fc8bbadbe1d"
+   "5bf899f8a4152314580618284b1a7af24255c078158c23d285c84fc8bbadbe1d",
+   "73aab92ede9c0e400cd0bbb62aa31bad0d0bab125a50bda35c1eb8f83c6991a4"
   ],
   "System/status/ask_scope.py": [
    "0869cd23b8e0febcc47daef6291d782eb7161727bd89215df1b31040477c37dd",
@@ -1233,7 +1251,8 @@
    "cce50e01de45ca0c181435a7efabd414acfbf2dd30d6972cafe0625b77f007f2",
    "25d2838d5fefc6826e158975a3ae591ed11bc7e0ce7e339474c3f5d80bce80f9",
    "af59063274734c749304dcafd4989b21f7dccbae8991c75bfd354a30a9a5b691",
-   "cbe40f86edd05d44cf3286c35158a708dd580eab701a90996f99b80d39511b7e"
+   "cbe40f86edd05d44cf3286c35158a708dd580eab701a90996f99b80d39511b7e",
+   "96230ef1ee51c42d0eb64f0db33ea3180fd87a0d290a443be6ddefcaf7509204"
   ],
   "System/status/ask_tools.py": [
    "22182504365314be07d236eacb36cddbf33ad29ad2370d372c6cb718ec79dbfc",
@@ -1321,7 +1340,8 @@
   ],
   "System/status/hold.py": [
    "693e2c86282974e43af9c136f710997621603d2eff3d034c55cb979eeac7633a",
-   "708315be88589c9567b56a6496dcaae172ab2b0a6d389746fd0d17119bfc008c"
+   "708315be88589c9567b56a6496dcaae172ab2b0a6d389746fd0d17119bfc008c",
+   "41eb8da7da1b59529065902e09bf6a163a444aa0a50b8f40acd5e8c8a002216f"
   ],
   "System/status/hold_tools.py": [
    "250057e8d3d3fa80a8be07052da22233b8bed4f6d7cbffeab8e1c6ee44faf64f"
@@ -1399,7 +1419,8 @@
    "f86c5de03e4603ec5c06970dde69d3883f9b8734f06963f9ce742c19f08152c4",
    "e2d0cff2fa468b1efe2c0f1dde9abf66cea68158ad8bdaec1f580129cb66a744",
    "272a092a37ac08739a8eeb1bbf161da2359402eb435e0e7d0dd9cfc2d3f4ce3b",
-   "529964a59d59bbe4d419dad7f0ca29ec422dc161968734bd90f91a8fd25e2d32"
+   "529964a59d59bbe4d419dad7f0ca29ec422dc161968734bd90f91a8fd25e2d32",
+   "f020913effc14aba30b7ed33e6f9afa8d07b868b6608150c32b75a92ed15b83b"
   ],
   "System/status/parties_panel.py": [
    "6ed8253f652ddd87fc0b630978609f72b60cbce9cf827e440cc01e4ae446bdd9",
@@ -1497,7 +1518,8 @@
    "9b2a5247d0f7452feb357fa16e9c20131f1ba5d12923f44f73b3e7f5416b2d9f",
    "eef4cd04d7f7ee5f894b956e70c1c4481713a858e64a203070a1a6c2749fc33a",
    "20f9f855eaa2bcdd73a5ad3664b2e07b27e6fd3112de5f80c3e47aefe96ab3a4",
-   "b1f5df7344de77f05dff04c2ce3c3d45a00a9da1bf63077b9574d1002c887d43"
+   "b1f5df7344de77f05dff04c2ce3c3d45a00a9da1bf63077b9574d1002c887d43",
+   "49ea5e90f1342c8b8db1139f46cca939831b23cdb240c4ac828dd58da76c65fa"
   ],
   "System/status/telegram_delivery.py": [
    "878a0f94c90727485db4af11969ca77566db072f0b3a0f9e916093c819c450a0",
@@ -1541,7 +1563,8 @@
    "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b",
    "4044d3d115cc0f88da989acb49eeeab02530819c9a45b9d22f829154181f03ca",
    "dce961fa6d3500a58cbdc3bce72e85cf43a8885c2ca5d16ebcd886717d9364d8",
-   "617a5fde2d2a63ff8f790e1b6bdef50eff50511920766628a029e57d63cc5477"
+   "617a5fde2d2a63ff8f790e1b6bdef50eff50511920766628a029e57d63cc5477",
+   "f36d2f8d4c9f6568c547b86e67a0b67bce41d1b933bd654d677e44c1b87a7328"
   ],
   "System/templates/zone/Inbox/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -1558,7 +1581,8 @@
    "c358d57918575cca971821e921e56472b8d12cbc939c7f16049af58136fcad74",
    "1be5bc45780cf03d51340b4d09ae8180d9d377a17aa055e9d696b7d0bdb46701",
    "688c891164398d3fac5e7ed23c8ad7884160da617e7b1a83484f06d0d02419fa",
-   "44a487cebf56fbe8cdeb2aea50c5b6759a0117cff021bb2758db64b23130c10c"
+   "44a487cebf56fbe8cdeb2aea50c5b6759a0117cff021bb2758db64b23130c10c",
+   "2081b351f4fafe9fa150e1d3becc8e0aedc261f95077ee8721dbee6e06f781c9"
   ],
   "System/tools/check.py": [
    "a037b1d3cd47f416e4ca99fd3e5dc00462c33cee225cfd79f1437791e4bb5081",
@@ -1617,7 +1641,8 @@
    "5083b39bb4e6942f45e01dc3c1a45bfc30dc0c242100854ac861713ccb05ca88",
    "91d77c9e19c7ea6d7c74a278c786236f9f6e19c7043479dce566993644b8e9d8",
    "a18bcf2cf9acc3b65f2dcd1fe9f9de984c6836c58460f15e92886816a49bc1f9",
-   "788bb0275b28875a9b2533760c70870a997696fc0594472a196a8f468d9ae6cd"
+   "788bb0275b28875a9b2533760c70870a997696fc0594472a196a8f468d9ae6cd",
+   "a94ee4105c0118b3367d9a6a2a55f6161961d47a8374af712a8f4c2daf4b1859"
   ],
   "System/tools/correct.py": [
    "feef9c10f81fb8fb765b6fbf0f55f8cbb4881f6f9f439e97fa3b8897561766ad",
@@ -1704,7 +1729,8 @@
    "1db39bb1e09ac60c0eb7b24b8e5538e180680756af027cc99bba4d49c9d10ee5",
    "252dab28f384adf069878f1f62ef2598f9ca014811a6f598402639facfb49638",
    "34bf3106a307995a96aebe5fc41816ff0714a2491c62bad0455c3cb35044c3c4",
-   "2f2b38d6d75af4369c01d0d2f0cbbc4b3d981cede98de26dcff33c9ee5b085f8"
+   "2f2b38d6d75af4369c01d0d2f0cbbc4b3d981cede98de26dcff33c9ee5b085f8",
+   "9dbd25d0024dd4c6cbd50fc7d7db313c4438bb2f2ca9411ba251a49f5e9d035b"
   ],
   "System/tools/history.py": [
    "9134b6de0990e33a97f28035f2b404a93310350fccf78ead0595fd9715c4d016",
@@ -1717,7 +1743,8 @@
   "System/tools/next_up.py": [
    "f4858e9edf6f67942be6f6d4f459e5fec5a57ceb759054f3636200213da49a92",
    "9e65cbca0450d0d6216b5874854de12520451dccf9f72a173ecb493e5e1820c2",
-   "58a7757794061f7045ad6f34575cbe208a6c1d86a1dd46a112d3a100bc7a4c54"
+   "58a7757794061f7045ad6f34575cbe208a6c1d86a1dd46a112d3a100bc7a4c54",
+   "af500c8a34c46b29a394d49626aaa5ec6f275b70712853052cea2c85cca6dd47"
   ],
   "System/tools/notifications.py": [
    "a7d1d6dd1e1e8116835e8d815d7af0f0c8a5e2825cf11b25d8f7f64e5f5c0fcc",
@@ -1777,7 +1804,8 @@
    "edb09d3595f03412466fc1932714daf32d7aee56ef5ceffea813ed53a4002f37",
    "03ad4964d0474136105276edd37a54092050c9afd421fe677625a5eb9850547f",
    "fc8e48760e70fc10a5fee1ebd80300e89b132975c0542184ce1983a1c84e2a35",
-   "3ea982c7e1567071b5c156de7af0f63fe9f3814f57fb0a7521458bad825d72e2"
+   "3ea982c7e1567071b5c156de7af0f63fe9f3814f57fb0a7521458bad825d72e2",
+   "29271c67c6afd5480cc7ddc7eaeb41a37bc5de4f595d65e58354d759425135be"
   ],
   "System/tools/probe.py": [
    "cf81236b20c6a525676de9e0f547412c83cbc094fa9a4831fa97c1746beafdbb",
@@ -1826,7 +1854,8 @@
    "e899e183c082cc407d75fb72265933e7352327e07c5958c2fa2bdc57acc7e3da",
    "377d988d6245ab411a7e670bda77f56027a97a42b6c3a8fca8ea8e9ecb8e5a11",
    "d164a1b55ed6cd00d0b525607499ebcdf6ec02e4b7e681706dc6a5014ace89a1",
-   "53e23e19ebc7606fe01c0c16497a240a8c357a81a42481c1ba42822c356df67f"
+   "53e23e19ebc7606fe01c0c16497a240a8c357a81a42481c1ba42822c356df67f",
+   "691e014c28b7fa41ef2d450701821e968713a78fe3f074c4011af6002a5fab33"
   ],
   "System/tools/walls-cases.md": [
    "83cddd3a0cffb244e16f7fa78cf995d29d17f28e83d03e749e4b8e113d715d69",
@@ -1921,7 +1950,8 @@
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
-   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> [--party <tag>] --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub may name its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. It is an index, so that \"what did X say\" finds the project; no check reads it as a wall. The wall is this zone's: walled or open, as the Zones table says.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> [--party <tag>] --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub may name its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. It is an index, so that \"what did X say\" finds the project; no check reads it as a wall. The wall is this zone's: walled or open, as the Zones table says.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> [--party <tag>] --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nA project is one of two kinds. One piece of work keeps its resume point in its hub, beside any threads, and a thread either uses the project's `Sources/` and `Deliverables/` or keeps its own. A heading over separate pieces of work (`layout: thread-first` in its hub) has no resume point and no papers of its own: each thread under it is a piece of work with its own. Every thread keeps its resume point in its note.\n\n## Parties\n\nA project hub may name its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. It is an index, so that \"what did X say\" finds the project; no check reads it as a wall. The wall is this zone's: walled or open, as the Zones table says.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
   ],
   "Inbox/.gitkeep": [
    ""

@@ -278,6 +278,39 @@ class WarnOnly(GuardCase):
         self.assertEqual("folder", json.loads(lines[-1])["kind"])
 
 
+class Links(GuardCase):
+    """Fix round S3: a link in a walled zone that leads outside the workspace is judged by where it sits too."""
+
+    def setUp(self):
+        super().setUp()
+        self.settings(**{"read-guard": "enforce"})
+        self.shared = Path(os.path.realpath(self.tmp.name)) / "shared-library"
+        put(self.shared / "plan.txt", "Plan\n")
+        (self.root / "Zones/Personal/.shared").mkdir()
+        (self.root / "Zones/Personal/.shared/lib").symlink_to(self.shared)
+        (self.root / "Zones/Work/Acme/shared").symlink_to(self.shared)
+
+    def test_a_link_in_another_walled_zone_is_refused_though_it_leads_outside(self):
+        for tool, given in (("Read", {"file_path": str(self.root / "Zones/Personal/.shared/lib/plan.txt")}),
+                            ("Grep", {"pattern": "x", "path": str(self.root / "Zones/Personal/.shared/lib")}),
+                            ("Glob", {"pattern": "Zones/Personal/.shared/lib/*.txt", "path": str(self.root)}),
+                            ("Bash", {"command": "cat '%s'" % (self.root / "Zones/Personal/.shared/lib/plan.txt")})):
+            with self.subTest(tool=tool):
+                self.assertEqual("deny", self.decision(self.call(tool, given))[0])
+
+    def test_a_link_in_the_sessions_own_zone_leading_outside_is_read(self):
+        self.assertIsNone(self.read(self.acme / "shared" / "plan.txt"))
+        self.assertIsNone(self.read(self.shared / "plan.txt"))             # the real place, outside the workspace
+
+    def test_the_other_zone_reads_its_own_link(self):
+        self.assertIsNone(self.read(self.root / "Zones/Personal/.shared/lib/plan.txt", home=self.birch))
+
+    def test_in_warn_only_the_link_is_logged_and_read(self):
+        self.settings(**{"read-guard": "warn"})
+        self.assertIsNone(self.read(self.root / "Zones/Personal/.shared/lib/plan.txt"))
+        self.assertEqual("deny", self.log_lines()[-1]["decision"])
+
+
 class Globs(GuardCase):
     """Fix round S2: a brace group or a wildcard before the first slash is judged by each literal prefix."""
 

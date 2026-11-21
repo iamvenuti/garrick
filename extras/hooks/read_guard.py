@@ -276,6 +276,13 @@ def judge(lib, root, ctx, scope, path, searching):
 # ------------------------------------------------------------------ the tool calls
 
 
+def both(joined, searching):
+    """[(path, searching)] for a path as written and as it really leads. A link in the workspace to a place outside it
+    is judged by where it sits as well as where it leads, and the stricter verdict stands."""
+    real, written = os.path.realpath(joined), os.path.abspath(joined)
+    return [(real, searching)] + ([(written, searching)] if written != real else [])
+
+
 BRACE_LIMIT = 64
 
 
@@ -315,8 +322,8 @@ def glob_paths(cwd, given_base, pattern):
         cut = re.search(r"[*?\[{]", one)
         prefix = one[:cut.start()] if cut else one
         prefix = prefix if not cut else prefix.rsplit("/", 1)[0] if "/" in prefix else ""
-        base = os.path.realpath(os.path.join(cwd, given_base, prefix))
-        out.append((base, bool(cut) or os.path.isdir(base)))
+        joined = os.path.join(cwd, given_base, prefix)
+        out.extend(both(joined, bool(cut) or os.path.isdir(joined)))
     return out
 
 
@@ -325,10 +332,10 @@ def tool_paths(event, lib):
     tool, given = event.get("tool_name"), event.get("tool_input") or {}
     cwd = event.get("cwd") or os.getcwd()
     if tool == "Read":
-        return [(os.path.realpath(os.path.join(cwd, os.path.expanduser(given.get("file_path") or ""))), False)], False
+        return both(os.path.join(cwd, os.path.expanduser(given.get("file_path") or "")), False), False
     if tool == "Grep":
-        base = os.path.realpath(os.path.join(cwd, os.path.expanduser(given.get("path") or "")))
-        found = [(base, os.path.isdir(base))]
+        joined = os.path.join(cwd, os.path.expanduser(given.get("path") or ""))
+        found = both(joined, os.path.isdir(joined))
         if isinstance(given.get("glob"), str) and given["glob"]:
             found += glob_paths(cwd, os.path.expanduser(given.get("path") or ""), given["glob"])
         return found, False
@@ -366,8 +373,8 @@ def shell_paths(command, cwd):
             glob = bool(cut)
             if cut:
                 cand = cand[:cut.start()].rsplit("/", 1)[0] if "/" in cand[:cut.start()] else ""
-            real = os.path.realpath(os.path.join(cwd, os.path.expanduser(cand or ".")))
-            out.append((real, glob or os.path.isdir(real)))
+            joined = os.path.join(cwd, os.path.expanduser(cand or "."))
+            out.extend(both(joined, glob or os.path.isdir(joined)))
     return out, unread
 
 

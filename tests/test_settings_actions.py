@@ -360,3 +360,83 @@ class TestTheReadGuard(SettingsCase):
                 self.assertTrue(sentence.endswith("."))
                 for word in (".json", ".py", "--", "/", "System/"):
                     self.assertNotIn(word, sentence)
+
+
+class TestOnlyGarricksOwnHookFolder(SettingsCase):
+    """S1: the page loads `read_guard.py` only from the folder beside it, or from a folder whose two files read the same.
+    A folder an assistant's settings name is never run on its word alone."""
+
+    def planted(self, copy=False):
+        folder = Path(self._tmp.name).resolve() / "planted"
+        folder.mkdir()
+        hooks = REPO / "extras" / "hooks"
+        if copy:
+            for name in ("zone_guard.py", "read_guard.py"):
+                (folder / name).write_bytes((hooks / name).read_bytes())
+        else:
+            (folder / "zone_guard.py").write_text("print('zone')\n")
+            (folder / "read_guard.py").write_text(
+                "import os\nopen(os.path.join(%r, 'ran'), 'w').write('x')\n" % str(folder))
+        return folder
+
+    def name_it(self, folder):
+        (self.home / ".claude").mkdir(exist_ok=True)
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+            {"type": "command", "command": "python3 %s" % (folder / "zone_guard.py")}]}]}}))
+
+    def test_a_planted_folder_is_not_trusted_and_never_imported(self):
+        folder = self.planted()
+        self.name_it(folder)
+        sg = pa_settings_guard()
+        self.assertNotIn(folder, sg.hook_folders(str(self.home)))
+        self.assertIsNone(self.hook_from_planted_only(sg))
+        self.assertFalse((folder / "ran").exists())
+
+    def test_the_button_takes_the_hook_from_beside_the_page_and_runs_nothing_planted(self):
+        folder = self.planted()
+        self.name_it(folder)
+        self.assistants()
+        mod, src = pa.guard_hooks()
+        self.assertEqual(REPO / "extras" / "hooks" / "read_guard.py", src)
+        self.assertFalse((folder / "ran").exists())
+
+    def test_a_copy_with_the_same_bytes_is_trusted(self):
+        folder = self.planted(copy=True)
+        self.name_it(folder)
+        self.assertIn(folder, pa_settings_guard().hook_folders(str(self.home)))
+
+    def test_one_changed_byte_in_either_file_is_not(self):
+        for name in ("zone_guard.py", "read_guard.py"):
+            with self.subTest(name=name):
+                folder = Path(self._tmp.name).resolve() / ("p-" + name)
+                folder.mkdir()
+                for n in ("zone_guard.py", "read_guard.py"):
+                    (folder / n).write_bytes((REPO / "extras" / "hooks" / n).read_bytes())
+                (folder / name).write_bytes((folder / name).read_bytes() + b"\n#\n")
+                self.assertFalse(pa_settings_guard().trusted_hook_folder(folder))
+
+    def test_where_no_hooks_sit_beside_the_page_the_release_digests_decide(self):
+        sg = pa_settings_guard()
+        good = self.planted(copy=True)
+        with mock.patch.object(sg, "HERE", Path(self._tmp.name) / "nowhere" / "status"):
+            self.assertTrue(sg.trusted_hook_folder(good))
+            (good / "read_guard.py").write_bytes((good / "read_guard.py").read_bytes() + b"#")
+            self.assertFalse(sg.trusted_hook_folder(good))
+
+    def test_the_digests_are_the_ones_of_the_files_this_release_ships(self):
+        import hashlib
+        for name, digest in pa_settings_guard().RELEASE_HOOKS.items():
+            self.assertEqual(hashlib.sha256((REPO / "extras" / "hooks" / name).read_bytes()).hexdigest(), digest,
+                             "%s changed: put its new SHA-256 in RELEASE_HOOKS in extras/status/settings_guard.py" % name)
+
+    def hook_from_planted_only(self, sg):
+        with mock.patch.object(sg, "HERE", Path(self._tmp.name) / "nowhere" / "status"):
+            return sg.guard_module()
+
+
+def pa_settings_guard():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sg_for_tests", str(REPO / "extras" / "status" / "settings_guard.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod

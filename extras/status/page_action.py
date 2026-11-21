@@ -1924,18 +1924,10 @@ def guard_hooks():
     except Exception:
         return None, None
     for folder in folders:
-        src = folder / "read_guard.py"
-        spec = importlib.util.spec_from_file_location("garrick_read_guard_register", str(src))
-        mod = importlib.util.module_from_spec(spec)
-        sys.path.insert(0, str(folder))
         try:
-            spec.loader.exec_module(mod)
+            return found.load_hook(folder, "garrick_read_guard_register")
         except Exception:
             continue
-        finally:
-            if sys.path and sys.path[0] == str(folder):
-                sys.path.pop(0)
-        return mod, src
     return None, None
 
 

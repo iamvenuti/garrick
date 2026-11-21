@@ -18,6 +18,7 @@ it writes nothing: the page's two verbs, `machine-role` and `read-guard`, do (pa
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import importlib.util
 import json
@@ -90,11 +91,50 @@ def esc(text) -> str:
 
 HOOK_NAME = re.compile(r"[^\s\"']*(?:zone_guard|read_guard|waiting_hook)\.py")
 
+# The two files that make a hooks folder Garrick's, with the SHA-256 of each as this release ships it. A folder an assistant's
+# settings name is only trusted when both files read the same as the ones beside this page, or, where this page has none
+# beside it (an installed page), the same as these digests. A planted copy, and a file of an older Garrick, pass neither.
+# `tests/test_settings_actions.py` fails when a release changes a hook file and leaves its digest here behind.
+RELEASE_HOOKS = {
+    "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
+    "read_guard.py": "cdfb968d3d355ddbc7913e6e5a4947d6902b9dfee337d37e7c51fdea404386aa",
+}
+
+
+def _bytes(path: Path) -> Optional[bytes]:
+    try:
+        return path.read_bytes() if path.is_file() else None
+    except OSError:
+        return None
+
+
+def trusted_hook_folder(folder: Path) -> bool:
+    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. The folder
+    beside the page passes; any other passes only on the same bytes. Reads the files; never imports them."""
+    beside = HERE.parent / "hooks"
+    try:
+        if folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
+            return True
+    except OSError:
+        return False
+    for name, digest in RELEASE_HOOKS.items():
+        have = _bytes(folder / name)
+        if have is None:
+            return False
+        ours = _bytes(beside / name)
+        if ours is not None:
+            if have != ours:
+                return False
+        elif hashlib.sha256(have).hexdigest() != digest:
+            return False
+    return True
+
 
 def hook_folders(home: Optional[str] = None) -> List[Path]:
     """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
-    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace).
-    The workspace has no copy of its own: the hooks stay where the Garrick download is."""
+    the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace). A
+    folder a settings file names is kept only when `trusted_hook_folder` says it holds Garrick's own two files. The
+    workspace has no copy of its own: the hooks stay where the Garrick download is."""
     home = home or str(Path.home())
     folders = [HERE.parent / "hooks"]
     for rel in (".claude/settings.json", ".codex/hooks.json"):
@@ -108,26 +148,36 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
                 folders.append(there.parent)
     out = []
     for f in folders:
-        if f not in out and (f / "read_guard.py").is_file():
+        if f not in out and (f / "read_guard.py").is_file() and trusted_hook_folder(f):
             out.append(f)
     return out
+
+
+def load_hook(folder: Path, name: str):
+    """read_guard.py from a folder `hook_folders()` returned, or an exception. The standard modules it imports are loaded
+    first, so a file beside it cannot stand in for one; the folder goes last on the path, not first."""
+    import hashlib, json, os, re, shlex, sys, tempfile, time, types  # noqa: F401,E401
+    src = folder / "read_guard.py"
+    spec = importlib.util.spec_from_file_location(name, str(src))
+    mod = importlib.util.module_from_spec(spec)
+    added = str(folder) not in sys.path
+    if added:
+        sys.path.append(str(folder))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if added and str(folder) in sys.path:
+            sys.path.remove(str(folder))
+    return mod, src
 
 
 def guard_module():
     """read_guard.py, from the first of `hook_folders()` that loads, or None."""
     for folder in hook_folders():
-        src = folder / "read_guard.py"
-        sys.path.insert(0, str(folder))
         try:
-            spec = importlib.util.spec_from_file_location("garrick_read_guard_settings", str(src))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
+            return load_hook(folder, "garrick_read_guard_settings")[0]
         except Exception:
             continue
-        finally:
-            if sys.path and sys.path[0] == str(folder):
-                sys.path.pop(0)
     return None
 
 

@@ -49,7 +49,7 @@ On `roaming`:
 Garrick ships no sync tool. It needs two rules from the one you pick.
 
 1. **The main folder syncs one way, from server to roaming.** With Syncthing, make the folder Send Only on the server and Receive Only on the laptop. Do not use iCloud Drive or Dropbox for the workspace: they remove local copies and write conflict copies inside `.git`.
-2. **The drop folders sync both ways.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run. It leaves the hidden folders `.outbox/` and `.machines/` alone.
+2. **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run. It leaves the hidden folders `.outbox/` and `.machines/` alone.
 
 Both machines must hold the workspace at the same absolute path, because hooks, memory folders and links keep absolute paths. On the server, `check.py` records its path in `System/generated/server-path.json`, which the sync carries, and on the roaming machine it warns when the local path differs.
 

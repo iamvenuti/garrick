@@ -23,7 +23,7 @@ class MachineDocs(unittest.TestCase):
     def test_the_page_names_the_roles_the_file_and_the_sync_rules(self):
         page = text("docs/machines.md")
         for word in ("`solo`", "`server`", "`roaming`", "~/.config/garrick/machine.json", "Send Only", "Receive Only", "iCloud Drive",
-                     "Dropbox", "both ways", "same absolute path", ".outbox", "Drop it", "Show me the line",
+                     "Dropbox", "in both directions", "same absolute path", ".outbox", "Drop it", "Show me the line",
                      "sync-conflict", "conflicted copy", "not reachable here"):
             self.assertIn(word, page, word)
 

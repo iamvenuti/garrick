@@ -275,6 +275,7 @@ TRAILER = "Garrick-Bounded"
 BOUNDED_MESSAGE = 72            # characters of a commit's first line
 MOST_FILES = 8                  # files one bounded edit may name
 MOST_COMMIT = 50                # files one commit-only call may name: the page's COMMIT_MOST
+MOST_NEW = 8                    # new notes one bounded edit may create in its `new_in` folder (a split, #626)
 NO_WIKI_REPO = "no repository for this wiki"
 MOST_DIRTY = 400                # files the repository may already hold changed, for the check that nothing else moved
 _page_action = None
@@ -501,7 +502,7 @@ def _left_say(say: str, left) -> str:
     return "%s A file the assistant was not given also changed; it was left as it is." % say.rstrip(".") + "." if left else say
 
 
-def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> dict:
+def run_bounded(ws, zone, files, request, message="", runner=None, cap=None, new_in=None) -> dict:
     """One bounded edit or commit: only `files` (workspace-relative paths, all inside `zone`'s folder, or one wiki's
     folder when zone names a wiki), at Act, no send, share or delete, committed in that repository through its own
     hook (never --no-verify). Returns {"ok": bool, "say": one plain sentence, "commit": sha or "", "files": [...],
@@ -515,7 +516,11 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
     have changed, in this repository and in every other under Zones/ and Wikis/: anything else fails the run. Only the
     named files and paths the run created are put back; a file the run did not name is never reverted or deleted. A
     file that already held changes that are not committed is refused, so no one's own edit is committed under the
-    assistant's name."""
+    assistant's name.
+
+    `new_in` (a split, #626) is one folder, from the workspace, inside the zone's: the run may also create new `.md` notes
+    there, at most MOST_NEW, and nowhere else. A tracked file of that folder that the run changes, or any file that is not a
+    new note, fails the run as any other stray change does."""
     ws = Path(ws).resolve()
     request = " ".join(str(request or "").split())[:MOST_REQUEST]
     unavailable = {"ok": False, "unavailable": True, "say": "The background assistant is not available, so this goes to a visible one.",
@@ -526,6 +531,19 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
     rels, why = _inside(ws, folder, files, MOST_FILES if request else MOST_COMMIT, gone_ok=not request)
     if rels is None:
         return _fail(why)
+    grow_in = ""
+    if new_in is not None:
+        if not request or not isinstance(new_in, str) or not new_in or new_in.startswith(("/", "~")) or "\\" in new_in or "\0" in new_in \
+                or ".." in new_in.split("/") or (ws / new_in).is_symlink():
+            return _fail("That is not a folder this can add notes to.")
+        gfull = (ws / new_in).resolve()
+        inside = gfull.relative_to(folder).parts if (gfull == folder or folder in gfull.parents) else None
+        if inside is None or not gfull.is_dir() or any(x in (".git", ".shared") or x.startswith(".") for x in inside) \
+                or (folder.parent.name == "Wikis" and inside[:1] == ("raw",)):
+            return _fail("That is not a folder this can add notes to.")
+        grow_in = str(gfull.relative_to(repo))
+        if grow_in == ".":
+            return _fail("That is not a folder this can add notes to.")
     cap = cap if cap is not None else channels.capability(ws)
     now = channels.effective(ws, "ask", cap)
     if request and (channels.assistant() != "claude" or not cap.get("ok") or now["autonomy"] == "read"
@@ -548,31 +566,46 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
             if not request and not any(i in before for i in inner):
                 return _fail("There is nothing to commit in that file.")
             staged = _staged(pa.git, repo)
+            named = list(inner)
             if request:
-                text = ("%s\nChange only these files, in %s: %s. Do not commit. Do not send, share or delete anything." % (
-                    request, folder.name, ", ".join(rels)))
+                text = ("%s\nChange only these files, in %s: %s.%s Do not commit. Do not send, share or delete anything." % (
+                    request, folder.name, ", ".join(rels),
+                    " You may also create new .md notes in %s, and nowhere else." % new_in if grow_in else ""))
                 elsewhere = _others(ws, repo)
                 got = run(ws, "ask", text, folder.name, {"id": "bounded-%s" % secrets.token_hex(4)}, runner, cap, level="act",
-                          commit=False, only=rels)
+                          commit=False, only=rels + ([new_in.rstrip("/") + "/"] if grow_in else []))
                 after = _dirty(pa.git, repo, before)
                 if after is None:
                     after = {}
                 for e in got.get("held") or []:
                     hold.cancel(e["id"])
-                stray = [p for p in _moved(before, after) if p not in inner]
+                grown, restored = [], []
+                if grow_in:
+                    for p in _moved(before, after):
+                        if p in inner or not p.startswith(grow_in + "/") or p in before:
+                            continue
+                        if pa.git(repo, "ls-files", "--error-unmatch", "--", p)[0] == 0:
+                            pa.git(repo, "checkout", "-q", "HEAD", "--", p)       # a tracked note of that folder: put back, and the run fails
+                            restored.append(p)
+                        elif p.endswith(".md") and after.get(p) is not None and not (repo / p).is_symlink():
+                            grown.append(p)
+                    if len(grown) > MOST_NEW:
+                        grown = []
+                named = inner + grown
+                stray = [p for p in _moved(before, after) if p not in named]
                 far = _others(ws, repo) != elsewhere
                 if got.get("unavailable") and not got.get("ok"):        # the assistant could not be started: nothing was edited
-                    _put_back(pa.git, repo, before, after, inner)
+                    _put_back(pa.git, repo, before, after, named)
                     return dict(unavailable, say=str(got.get("say") or unavailable["say"]))
                 if got.get("held") or not got.get("ok") or _head(pa.git, repo) != head:
-                    left = _put_back(pa.git, repo, before, after, inner)
+                    left = [x for x in _put_back(pa.git, repo, before, after, named) if x not in restored]
                     if got.get("held"):
                         return _fail(_left_say("The assistant wanted to send or delete something, which this does not allow. Nothing was kept.", left or far))
                     if _head(pa.git, repo) != head:
                         return _fail("The assistant made a commit of its own, so the change needs a look.")
                     return _fail(_left_say(str(got.get("say") or "The assistant could not make the change.").strip()[:200], left or far))
                 if stray or far:
-                    left = _put_back(pa.git, repo, before, after, inner)
+                    left = [x for x in _put_back(pa.git, repo, before, after, named) if x not in restored]
                     if left or far:
                         return _fail("The assistant changed a file it was not given, so nothing was kept. "
                                      "The file it was given was put back; the other was left as it is.")
@@ -582,19 +615,20 @@ def run_bounded(ws, zone, files, request, message="", runner=None, cap=None) -> 
             line = _message(ws, folder, repo, rels, request, message, runner, cap)
             trailer = "%s: %s" % (TRAILER, secrets.token_hex(4))
             problem = pa.commit_refusal(repo)
-            code, said = (1, "%s, so nothing was committed" % problem) if problem else pa.git(repo, "add", "--", *inner)
+            code, said = (1, "%s, so nothing was committed" % problem) if problem else pa.git(repo, "add", "--", *named)
             if code == 0:
-                code, said = pa.git(repo, "commit", "-q", "-m", "%s\n\n%s" % (line, trailer), "--", *inner, timeout=pa.COMMIT_TIMEOUT)
+                code, said = pa.git(repo, "commit", "-q", "-m", "%s\n\n%s" % (line, trailer), "--", *named, timeout=pa.COMMIT_TIMEOUT)
             if code != 0:
                 after = _dirty(pa.git, repo, after if request else before) or {}
-                fresh = [i for i in inner if i not in staged]               # what was staged before is still staged
+                fresh = [i for i in named if i not in staged]               # what was staged before is still staged
                 if fresh:
                     pa.git(repo, "reset", "-q", "--", *fresh)
                 if request:
-                    _put_back(pa.git, repo, before, after, inner)
+                    _put_back(pa.git, repo, before, after, named)
                 why = said if code is None else ((said or "git refused").strip().splitlines() or ["git refused"])[-1]
                 return _fail("The commit was refused, so no change was kept: %s" % why[:160])
-            return {"ok": True, "say": "Made the change and committed it.", "commit": _head(pa.git, repo), "files": rels, "repo": repo_rel,
+            return {"ok": True, "say": "Made the change and committed it.", "commit": _head(pa.git, repo),
+                    "files": rels + [str((repo / g).relative_to(ws)) for g in named[len(inner):]], "repo": repo_rel,
                     "trailer": trailer}
     except pa.Refused as e:
         return _fail(str(e))

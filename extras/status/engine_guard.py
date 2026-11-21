@@ -125,7 +125,8 @@ def only_files(raw, root: str) -> list:
     found = json.loads(raw)
     if not isinstance(found, list) or not found or not all(isinstance(x, str) and x for x in found):
         raise ValueError("no files")
-    return [os.path.realpath(os.path.join(root, x)) for x in found]
+    # a name ending in "/" is a folder: new notes may be written anywhere inside it (a split, #626)
+    return [os.path.realpath(os.path.join(root, x)) + (os.sep if x.endswith("/") else "") for x in found]
 
 
 def decide(event: dict, ws: str, zone: str, only=None):
@@ -155,7 +156,9 @@ def decide(event: dict, ws: str, zone: str, only=None):
                      "never by an exchange.")
     if only is not None:
         keep = {p.casefold() if blind else p for p in only}
-        if any((p.casefold() if blind else p) not in keep for p in targets(event)):
+        folders = [k for k in keep if k.endswith(os.sep)]
+        if any((p.casefold() if blind else p) not in keep and not any((p.casefold() if blind else p).startswith(k) for k in folders)
+               for p in targets(event)):
             return _deny("Refused: this is one bounded change, and a write goes only in the file or files it names.")
     if not bad:
         return None

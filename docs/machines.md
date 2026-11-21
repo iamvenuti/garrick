@@ -53,7 +53,7 @@ If you tick a line by hand and then reopen it by hand before the server applies 
 2. On the laptop, do the same and choose **Laptop copy**. It asks for the home server's name.
 3. Set up the sync, which Garrick does not ship. It needs two rules from the tool you pick.
    - **The main folder syncs one way, from the home server to the laptop.** With Syncthing, make the folder Send Only on the server and Receive Only on the laptop. Do not use iCloud Drive or Dropbox for the workspace: they remove local copies and write conflict copies inside `.git`.
-   - **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run. It leaves the hidden folders `.outbox/` and `.machines/` alone.
+   - **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run.
 4. Keep the workspace at the same absolute path on both computers.
 
 The role is kept in one small file outside the workspace, `~/.config/garrick/machine.json`, which Settings writes for you. In a browser, *This machine* shows the role and says it is changed in Garrick.app.

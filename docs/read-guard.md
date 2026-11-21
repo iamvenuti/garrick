@@ -4,7 +4,7 @@
 
 Walls already stop your assistant from writing one zone's material into another. The read guard does the same for reading. In a session for one project, it stops the assistant from opening notes, meetings and mail that sit behind another wall. It also checks what a mail or calendar service hands back, and takes out the messages that belong behind another wall.
 
-It is optional, and it starts by only watching. You turn it on in Garrick.app: open Settings, then Walls, then *Read guard*, and choose **Watch only** or **On**. Choosing either adds the read guard to your assistant's settings on this computer, and **Off** takes it out again. Nothing in this page needs a terminal. [The hooks page](../extras/hooks/README.md) has the registration by hand, for a computer without the app.
+It is optional, and it starts by only watching. You turn it on in Garrick.app: open Settings, then Walls, then *Read guard*, and choose **Watch only** or **On**. Choosing either adds the read guard to your assistant's settings on this computer, and **Off** takes it out again. Register the zone guard first, as [the hooks page](../extras/hooks/README.md) says: Settings finds the read guard beside it. With that done, nothing else in this page needs a terminal. [The hooks page](../extras/hooks/README.md) has the registration by hand, for a computer without the app.
 
 | Choice | What happens |
 |---|---|
@@ -34,13 +34,13 @@ A search over a whole wiki, or over a folder that holds several zones, is stoppe
 
 A mail or calendar search can return messages from every part of your life in one list. Before your assistant sees the list, Garrick matches each message's addresses against your list of parties, as the `intake` skill matches a mail, and takes out what belongs behind another wall. The assistant sees the rest, and the wall sentence once if anything was taken out, with no count. Your own addresses and personal webmail decide nothing. A message that no party claims has no zone, so the guard treats it as behind a wall.
 
-This works in Claude Code. Codex cannot have a tool's result replaced, so the mail and calendar rows do not apply to it: Settings says so, and only the instructions keep its mail results apart. Add a tool to *Mail and calendar tools* when you connect a new mail or calendar service. Garrick names a tool your sessions used that is on neither list, so you can place it.
+This works in Claude Code. Codex cannot have a tool's result replaced, so the mail and calendar rows do not apply to it: Settings says so, and only the instructions keep its mail results apart. Add a tool to *Mail and calendar tools* when you connect a new mail or calendar service. The weekly check, not Settings, names a tool your sessions used that is on neither list, so you can place it.
 
 If Garrick cannot read the list of parties, or the part of Garrick that matches addresses is missing, the filter cannot tell which message belongs where. Settings says so on the *Read guard* row. While the guard is **On**, every result from a listed tool is taken out and the wall sentence stands alone. Under **Watch only**, nothing is taken out and the log notes that it could not decide.
 
 ## The first week
 
-Start with **Watch only** and use Garrick as you always do. Under the choice, Settings says what the log holds for the last seven days: "In the last 7 days it would have stopped N reads". If sessions of more than one zone are in the log, it says it once for each zone, never as one sum. *Show* opens the list.
+Start with **Watch only** and use Garrick as you always do. Under the choice, Settings says what the log holds for the last seven days: "In the last 7 days it would have stopped N reads". The log keeps one line for each result a mail or calendar search would have lost, so one search can count more than one. If sessions of more than one zone are in the log, it says it once for each zone, never as one sum. *Show* opens the list.
 
 The list shows, for each read, when it happened, which tool made it and what the guard would have done. It shows nothing about what was read: the log keeps a hash, never a path, a party or a title, on purpose. So read it against your own week. A read at a time you were asking the assistant to work across zones is a read you needed.
 

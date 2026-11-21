@@ -24,6 +24,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -92,7 +93,7 @@ def esc(text) -> str:
 # ---------------------------------------------------------------------------------------------------- what the guard holds
 
 
-HOOK_NAME = re.compile(r"[^\s\"']*(?:zone_guard|read_guard|waiting_hook)\.py")
+HOOK_NAME = re.compile(r".*(?:zone_guard|read_guard|waiting_hook)\.py", re.S)
 
 # The two files that make a hooks folder Garrick's, with the SHA-256 of each as this release ships it. A folder an assistant's
 # settings name is only trusted when both files read the same as the ones beside this page, or, where this page has none
@@ -133,6 +134,34 @@ def trusted_hook_folder(folder: Path) -> bool:
     return True
 
 
+def hook_scripts(text: str) -> List[str]:
+    """The Garrick hook files an assistant's settings text names: the words of each hook `command`, split as a shell splits
+    them, that end in zone_guard.py, read_guard.py or waiting_hook.py. A path with a space in it stays whole when quoted.
+    A text that is not JSON names none."""
+    out: List[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                try:
+                    words = shlex.split(command)
+                except ValueError:
+                    words = command.split()
+                out.extend(w for w in words if HOOK_NAME.fullmatch(w))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    try:
+        walk(json.loads(text))
+    except ValueError:
+        pass
+    return out
+
+
 def hook_folders(home: Optional[str] = None) -> List[Path]:
     """Where read_guard.py can be: `extras/hooks/` beside the status page in a clone, then the folder of any Garrick hook
     the assistants' settings already point at (the zone guard runs from the Garrick you keep outside the workspace). A
@@ -145,7 +174,7 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
             text = (Path(home) / rel).read_text(encoding="utf-8")
         except OSError:
             continue
-        for found in HOOK_NAME.findall(text):
+        for found in hook_scripts(text):
             there = Path(os.path.expanduser(found))
             if there.is_absolute():
                 folders.append(there.parent)

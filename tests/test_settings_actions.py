@@ -427,6 +427,16 @@ class TestOnlyGarricksOwnHookFolder(SettingsCase):
         self.name_it(folder)
         self.assertIn(folder, pa_settings_guard().hook_folders(str(self.home)))
 
+    def test_a_quoted_path_with_a_space_is_read_whole(self):
+        folder = Path(self._tmp.name).resolve() / "my hooks"
+        folder.mkdir()
+        for name in ("zone_guard.py", "read_guard.py"):
+            (folder / name).write_bytes((REPO / "extras" / "hooks" / name).read_bytes())
+        (self.home / ".claude").mkdir(exist_ok=True)
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+            {"type": "command", "command": 'python3 "%s"' % (folder / "zone_guard.py")}]}]}}))
+        self.assertIn(folder, pa_settings_guard().hook_folders(str(self.home)))
+
     def test_one_changed_byte_in_either_file_is_not(self):
         for name in ("zone_guard.py", "read_guard.py"):
             with self.subTest(name=name):

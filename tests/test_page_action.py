@@ -1112,7 +1112,7 @@ class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""
 
     def run_script(self, request):
-        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], input=request,
+        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root), "--via", "page"], input=request,
                               capture_output=True, text=True)
 
     def lines(self):
@@ -1176,7 +1176,7 @@ class TestJournal(ActionCase):
         return json.loads(out)
 
     def run_script(self, request, **kw):
-        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(kw.get("ws", self.root))],
+        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(kw.get("ws", self.root)), "--via", "page"],
                               input=json.dumps(request) if not isinstance(request, str) else request,
                               capture_output=True, text=True, env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
         return json.loads(done.stdout)
@@ -1976,7 +1976,7 @@ class TestScript(ActionCase):
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                code = pa.main(["--workspace", str(self.root)])
+                code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)
@@ -1999,7 +1999,7 @@ class TestScript(ActionCase):
         buf = io.StringIO()
         try:
             with mock.patch.object(pa, "ops_lib", return_value=None), contextlib.redirect_stdout(buf):
-                code = pa.main(["--workspace", str(self.root)])
+                code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)

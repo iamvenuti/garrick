@@ -1320,7 +1320,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// #410, which show their reply in the section), or the wall question's look at a finding ("walls-look", #548), only reads: the reply goes to
 	// the page, with no toast and no rebuild, or asking would rebuild the page
 	// it asks from.
-	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "") }
+	func reading(_ request: [String: Any]) -> Bool {
+		// A layout dialog's plan (#604) only shows what a change would do: no toast, and no rebuild under the dialog.
+		if request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }
+		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")
+	}
 
 	// What changes nothing the page shows is not followed by a rebuild, which
 	// would reload the page under the preview: a request that only reads, and

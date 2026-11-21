@@ -213,11 +213,11 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("add-check", "handoff")], ids["hooks-blocked"])                    # no Not now: hidden, the walls go unchecked
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
-        self.assertEqual({"note-long": ("move-older", "preview", "keep", "later", "unkeep", "split", "undo-bounded"), "resume-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"),
+        self.assertEqual({"note-long": ("move-older", "preview", "keep", "later", "unkeep"), "resume-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"),
                           "todo-long": ("keep", "later", "unkeep"),
                           "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
-                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep", "fix-now", "undo-bounded"),
+                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep"),
                           "attribution": ("later",), "correction": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
@@ -1141,160 +1141,6 @@ class TestFindingVerb(ActionCase):
                 self.assertIsNone(ops.validate("finding", {"verb": "finding", "kind": kind, "path": "x", "answer": answer}))
 
 
-class TestEveryBoundedAnswer(ActionCase):
-    """#626: a split and a fix of kind other are bounded edits too: the engine runs them in the background, in the finding's own
-    folder and repository, committed through the hook, with Undo. The assistant is a stub; the engine's guard is checked apart."""
-
-    def setUp(self):
-        super().setUp()
-        self.hub = self.work / "Acme Review" / "Acme Review.md"
-        write(self.hub, "---\ntitle: Acme Review\ntype: project\nparty: acme\nstatus: active\ncreated: 2026-01-05\nupdated: 2026-11-10\n---\n\n"
-                        "# Acme Review\n\n## State of play\n\n### Resume here\n\n**Where it stands.** Under way.\n\n## Long section\n\n" + "word " * 50 + "\n")
-        write(self.work / "Acme Review" / "Sibling.md", "A sibling note.\n")
-        git(self.work, "add", "-A")
-        git(self.work, "commit", "-q", "-m", "add a hub")
-        self.rel = "Zones/Work/Acme Review/Acme Review.md"
-        self.eng = pa.engine_module()
-        self.cap = self.eng.channels.evaluate(self.root, "--resume --allowedTools --strict-mcp-config Bash(git *)", True)
-        env = mock.patch.dict(os.environ, {"GARRICK_HARNESS": "claude"})
-        env.start()
-        self.addCleanup(env.stop)
-
-    def ask(self, **req):
-        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
-
-    def with_assistant(self, act):
-        def assistant(cmd, tier, cwd, env):
-            act(cmd, env)
-            return 0, {"text": "done", "session_id": "s", "usage": {}, "cost_usd": 0}
-        patches = [mock.patch.object(self.eng.channels, "capability", return_value=self.cap), mock.patch.object(self.eng, "default_runner", assistant),
-                   mock.patch.object(self.eng.channels, "claude_path", return_value="/x/claude")]
-        for pt in patches:
-            pt.start()
-            self.addCleanup(pt.stop)
-
-    def split(self, cmd, env):
-        self.hub.write_text(self.hub.read_text().replace("## Long section", "See [[Acme Review Long section]].\n\n## Moved"))
-        write(self.work / "Acme Review" / "Acme Review Long section.md", "# Long section\n\nwords\n")
-
-    def test_a_split_is_made_in_the_background_with_its_new_note_in_one_commit_and_undone_with_it(self):
-        self.with_assistant(self.split)
-        before = git(self.work, "rev-parse", "HEAD").strip()
-        got = self.ask(kind="note-long", answer="split", path=self.rel)
-        self.assertTrue(got["ok"], got)
-        self.assertEqual(sorted([self.rel, "Zones/Work/Acme Review/Acme Review Long section.md"]), sorted(got["files"]))
-        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
-        self.assertEqual(1, len(git(self.work, "log", "--format=%H", before + "..HEAD").split()))
-        self.assertTrue((self.work / "Acme Review" / "Acme Review Long section.md").exists())
-        undone = self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})
-        self.assertTrue(undone["ok"], undone)
-        self.assertFalse((self.work / "Acme Review" / "Acme Review Long section.md").exists())
-        self.assertNotIn("Moved", self.hub.read_text())
-
-    def refused_split(self, extra):
-        def act(cmd, env):
-            self.split(cmd, env)
-            extra()
-        self.with_assistant(act)
-        before, hub_before = git(self.work, "rev-parse", "HEAD").strip(), self.hub.read_text()
-        got = self.ask(kind="note-long", answer="split", path=self.rel)
-        self.assertFalse(got["ok"], got)
-        self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())          # no commit
-        self.assertEqual(hub_before, self.hub.read_text())                              # the page is as it was
-        self.assertFalse((self.work / "Acme Review" / "Acme Review Long section.md").exists())   # and the new note is gone
-        self.assertTrue(got["say"])
-
-    def test_a_split_that_also_writes_outside_its_folder_keeps_nothing(self):
-        self.refused_split(lambda: write(self.work / "Elsewhere.md", "x\n"))
-        self.assertEqual("A sibling note.\n", (self.work / "Acme Review" / "Sibling.md").read_text())
-
-    def test_a_split_that_changes_a_tracked_note_of_its_folder_keeps_nothing_and_puts_it_back(self):
-        self.refused_split(lambda: (self.work / "Acme Review" / "Sibling.md").write_text("changed\n"))
-        self.assertEqual("A sibling note.\n", (self.work / "Acme Review" / "Sibling.md").read_text())
-
-    def test_a_fix_of_kind_other_is_one_page_one_commit_with_undo(self):
-        self.with_assistant(lambda cmd, env: self.hub.write_text(self.hub.read_text() + "Fixed.\n"))
-        got = self.ask(kind="other", answer="fix-now", path=self.rel)
-        self.assertTrue(got["ok"], got)
-        self.assertEqual([self.rel], got["files"])
-        self.assertEqual("Made the change to “Acme Review”.", got["say"])
-        self.assertTrue(self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})["ok"])
-        self.assertNotIn("Fixed.", self.hub.read_text())
-
-    def test_a_page_outside_a_zone_or_wiki_is_refused_by_the_verb_and_never_offered(self):
-        write(self.root / "System" / "Setup Notes" / "Setup Notes.md", "---\ntitle: Setup Notes\n---\n\n# Setup Notes\n")
-        for kind, answer in (("note-long", "split"), ("other", "fix-now"), ("resume-long", "shorten")):
-            with mock.patch.object(self.eng, "run_bounded") as run:
-                got = self.ask(kind=kind, answer=answer, path="System/Setup Notes/Setup Notes.md")
-            self.assertFalse(got["ok"], kind)
-            run.assert_not_called()
-
-    def test_the_engine_request_finishes_and_the_visible_phrase_keeps_its_review_words(self):
-        item = dict(KINDS["note-long"], path=self.rel)
-        q = fq.question(item, "Zones/Work", {"moves": 0, "case": "sections", "skipped": "", "before": 900, "after": 900, "still_over": False})
-        split = next(a for a in q["answers"] if a["id"] == "split")
-        self.assertIn("show me the change", split["phrase"].lower())
-        for kind, answer in [(k, a) for k, ids in fq.BOUNDED.items() for a in ids]:
-            text = fq.bounded_request(kind, answer, self.rel).lower()
-            self.assertNotIn("show me", text, (kind, answer))
-            self.assertNotIn("until i say", text, (kind, answer))
-        self.assertEqual("Zones/Work/Acme Review", fq.bounded_new_in("note-long", "split", self.rel))
-        self.assertEqual("", fq.bounded_new_in("resume-long", "shorten", self.rel))
-
-    def test_kind_other_offers_the_background_fix_only_for_one_page_of_a_zone_or_wiki(self):
-        unknown = item("judgment", "zz", self.rel, "%(p)s: something odd")
-        for path, wanted in ((self.rel, True), ("System/Setup Notes/Setup Notes.md", False), ("Zones/Work", False), ("Zones/Work/Acme Review/data.csv", False)):
-            q = fq.question(dict(unknown, path=path), "Zones/Work")
-            fix = next(a for a in q["answers"] if a["id"] == "fix-now")
-            self.assertEqual(wanted, "req" in fix, path)
-            self.assertTrue(fix["phrase"], path)
-
-    def test_what_stays_a_visible_handoff(self):
-        for kind in ("todo-long", "attribution", "hooks-blocked", "correction"):
-            self.assertNotIn(kind, fq.BOUNDED)
-            for a in fq.ANSWERS[kind]:
-                if a["action"] == "handoff":
-                    self.assertTrue(a["id"] not in fq.BOUNDED.get(kind, ()))
-        for kind, answer in (("todo-long", "shorten"), ("attribution", "sort-it"), ("hooks-blocked", "add-check"), ("correction", "finish")):
-            got = self.ask(kind=kind, answer=answer, path=self.rel)
-            self.assertFalse(got["ok"], kind)
-
-    def test_with_ask_at_read_or_another_assistant_a_split_is_unavailable_so_a_visible_session_opens(self):
-        for env, cap in (({"GARRICK_HARNESS": "other"}, self.cap), ({}, self.eng.channels.evaluate(self.root, "", True))):
-            with mock.patch.dict(os.environ, env), mock.patch.object(self.eng.channels, "capability", return_value=cap), \
-                    mock.patch.object(self.eng.channels, "claude_path", return_value="/x/claude"):
-                before = git(self.work, "rev-parse", "HEAD").strip()
-                got = self.ask(kind="note-long", answer="split", path=self.rel)
-            self.assertEqual((True, True), (got["ok"], got.get("unavailable")), env)
-            self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
-
-    def test_the_guard_lets_a_new_note_into_the_one_folder_and_nothing_else(self):
-        guard = self.eng.engine_guard if hasattr(self.eng, "engine_guard") else __import__("engine_guard")
-        ws = str(self.root.resolve())
-        only = guard.only_files(json.dumps([self.rel, "Zones/Work/Acme Review/"]), ws)
-        def ev(rel):
-            return {"tool_name": "Write", "tool_input": {"file_path": os.path.join(ws, rel)}}
-        self.assertIsNone(guard.decide(ev("Zones/Work/Acme Review/New note.md"), ws, "Work", only))
-        self.assertIsNone(guard.decide(ev(self.rel), ws, "Work", only))
-        self.assertIsNotNone(guard.decide(ev("Zones/Work/Other/New note.md"), ws, "Work", only))
-        self.assertIsNotNone(guard.decide(ev("Zones/Work/Acme Review/../Other/x.md"), ws, "Work", only))
-        self.assertIsNotNone(guard.decide(ev("Zones/Work/Acme Review/.git/hooks/pre-commit"), ws, "Work", only))
-        self.assertIsNotNone(guard.decide(ev("Zones/Work/Acme Review2/x.md"), ws, "Work", only))
-
-    def test_the_engine_queue_script_runs_one_request_at_a_time_and_offers_a_way_out_of_a_failure(self):
-        js = fq.QUEUE_JS
-        self.assertIn("function pump(sc){var c=chain[sc];if(!c||c.on||!c.list.length||!host)return;c.on=c.list.shift();host.postMessage({act:c.on.req})}", js)
-        self.assertIn("pump(jsc);if(same)show()", js)                                   # the next waits for the reply of the one before
-        self.assertIn("working in the background", js)
-        self.assertIn("Try with my assistant", js)
-        self.assertIn("data-qtry", js)
-        self.assertIn("handoff(ty.dataset.phrase)", js)
-        node = shutil.which("node")
-        if node:
-            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True, timeout=30)
-            self.assertEqual(0, done.returncode, done.stderr)
-
-
 def old_days(n):
     return dt.date.today() - dt.timedelta(days=n)
 
@@ -1552,7 +1398,7 @@ class TestHandoffMemoryAndBoundedAnswers(unittest.TestCase):
 
     def test_a_handed_question_leaves_the_queue_and_the_progress_still_counts_it(self):
         js = fq.QUEUE_JS
-        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!busy[q.dataset.gk]&&!isHanded(q)", js)
+        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!isHanded(q)", js)
         self.assertIn("k=n-left.length+1", js)
         fin = js[js.index("function finish("):js.index("function handoff(")]
         self.assertIn("remember(q)", fin)
@@ -1567,25 +1413,23 @@ class TestHandoffMemoryAndBoundedAnswers(unittest.TestCase):
 
     def test_the_bounded_answers_carry_a_request_and_keep_the_phrase_for_a_browser(self):
         for plain, ids in fq.BOUNDED.items():
-            it = (KINDS[plain] if plain in KINDS else item("judgment", "zz", "Zones/Work/Acme Review/One.md", "%(p)s: something odd") if plain == "other"
-                  else item("mechanical", "x", "Zones/Work/Acme Review/One.md", "%(p)s: fixed (held: refused by the wall check)"))
-            q = fq.question(it, "Zones/Work", {"moves": 0, "case": "sections", "skipped": "", "before": 900, "after": 900, "still_over": False} if plain == "note-long" else None)
+            it = KINDS[plain] if plain in KINDS else item("mechanical", "x", "Zones/Work/Acme Review/One.md", "%(p)s: fixed (held: refused by the wall check)")
+            q = fq.question(it, "Zones/Work")
             for a in q["answers"]:
                 if a["id"] in ids:
                     self.assertEqual({"verb": "finding", "kind": plain, "path": q["path"], "answer": a["id"]}, a["req"], plain)
                     self.assertTrue(a["phrase"], plain)
                     data = json.loads(htmllib.unescape(re.search(r'data-id="%s" data-fa="([^"]+)"' % a["id"], fq.question_html(q)).group(1)))
                     self.assertEqual((a["req"], a["phrase"]), (data["req"], data["phrase"]))
-        self.assertTrue(set(fq.BOUNDED) - {fq.OTHER} <= set(fq.PLAIN_KINDS))
-        for plain in ("todo-long", "hooks-blocked", "attribution", "correction"):
-            self.assertNotIn(plain, fq.BOUNDED)                                    # a second file, a hook of the user's, or judgment (#626)
+        self.assertTrue(set(fq.BOUNDED) <= set(fq.PLAIN_KINDS))
+        for plain in ("todo-long", "hooks-blocked", "note-long"):
+            self.assertNotIn(plain, fq.BOUNDED)                                    # two files, a hook of the user's, or a move with its own verb
 
     def test_the_script_runs_a_bounded_answer_through_the_engine_and_falls_back_to_a_tab_when_it_cannot(self):
         js = fq.QUEUE_JS
         click = js[js.index("if(d.a==='handoff'){"):][:330]
         self.assertIn("d.req&&boundedOK()", click)
-        self.assertIn("(chain[sc]=chain[sc]||{on:null,list:[]}).list.push({req:d.req", click)     # queued, one at a time for each zone (#626)
-        self.assertIn("pump(sc);pend=null;clearLast();show()", click)                         # the question leaves the queue at once
+        self.assertIn("host.postMessage({act:d.req})", click)
         self.assertIn("handoff(d.phrase);finish(q,'handed')", click)               # a browser, or Ask switched off
         self.assertIn("function boundedOK(){var a=window.GarrickApp||{};return!!host&&a.ask!==false}", js)
         self.assertIn("res.unavailable){handoff(p.phrase);finish(el,'handed')}", js)  # the engine said it is not there: a visible assistant
@@ -1738,7 +1582,7 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
             self.assertEqual(0, done.returncode, done.stderr)
 
     def test_an_answer_the_queue_script_can_send_still_goes_through_the_verb(self):
-        self.assertEqual(("move-older", "preview", "keep", "later", "unkeep", "split", "undo-bounded"), fq.VERB_ANSWERS["note-long"])
+        self.assertEqual(("move-older", "preview", "keep", "later", "unkeep"), fq.VERB_ANSWERS["note-long"])
 
 
 
@@ -1942,7 +1786,7 @@ class TestKeepOnThePage(QueueCase):
         js = fq.QUEUE_JS
         guard = "if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;"
         self.assertIn(guard, js)
-        self.assertLess(js.index(guard), js.index("pump(sc);pend=null"))                           # before the first send
+        self.assertLess(js.index(guard), js.index("host.postMessage({act:d.req})"))                 # before the first send
         self.assertLess(js.index(guard), js.index("pend={key:q.dataset.gk,id:d.id};save();host.postMessage"))
         node = shutil.which("node")
         if node:

@@ -5436,19 +5436,13 @@ BOUNDED_COMMIT = {("wall", "take-out"): "Take private material out of a page", (
 def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> object:
     """A handoff answer that is one bounded edit of the finding's own file (finding_queue.BOUNDED), run by the engine in the
     background, in that file's zone or wiki, committed through its wall check. With the engine unavailable the reply says so
-    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence. A split
-    may also create new notes in its own folder, and nowhere else (#626)."""
+    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence."""
     fq = finding_queue()
     parts = rel.split("/")
     if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or not rel.endswith(".md"):
         raise Refused("only a page of a zone or a wiki can be changed here")
-    if kind == "note-long":
-        finding_note(ws, rel)                 # a hub or a thread note of a zone, the only notes a split is about
-    new_in = fq.bounded_new_in(kind, answer, rel)
-    said = BOUNDED_COMMIT.get((kind, answer)) or fq.BOUNDED_MESSAGE.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
-    run = engine_module().run_bounded
-    got = run(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said, new_in=new_in) if new_in else \
-        run(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said)
+    said = BOUNDED_COMMIT.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
+    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said)
     if got.get("unavailable"):
         return {"say": got["say"], "unavailable": True}
     if not got.get("ok"):

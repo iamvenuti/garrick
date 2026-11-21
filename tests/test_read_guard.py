@@ -278,6 +278,43 @@ class WarnOnly(GuardCase):
         self.assertEqual("folder", json.loads(lines[-1])["kind"])
 
 
+class Knowledge(GuardCase):
+    """Fix round W3, C9: the Knowledge wiki crosses every wall, folders and missing paths included; a file that is no
+    readable page is no one's."""
+
+    def setUp(self):
+        super().setUp()
+        self.settings(**{"read-guard": "enforce"})
+        (self.root / "Wikis/Knowledge/raw").mkdir()
+        (self.root / "Wikis/Knowledge/wiki/binary.pdf").write_bytes(b"%PDF\0\1\2 not text")
+        (self.root / "Wikis/Knowledge/wiki/huge.md").write_text("x" * 1_600_000)
+
+    def test_a_knowledge_folder_is_read_by_every_scope(self):
+        for home in (self.acme, self.birch, self.cedar):
+            for tool, given in (("Glob", {"pattern": "*.md", "path": str(self.root / "Wikis/Knowledge/wiki")}),
+                                ("Grep", {"pattern": "x", "path": str(self.root / "Wikis/Knowledge/raw")}),
+                                ("Grep", {"pattern": "x", "path": str(self.root / "Wikis/Knowledge")}),
+                                ("Bash", {"command": "ls " + str(self.root / "Wikis/Knowledge/wiki")}),
+                                ("Read", {"file_path": str(self.root / "Wikis/Knowledge/wiki/not-yet.md")})):
+                with self.subTest(home=home.name, tool=tool, given=given):
+                    self.assertIsNone(self.call(tool, given, home))
+
+    def test_a_file_that_cannot_be_read_as_text_or_is_over_the_cap_is_refused(self):
+        for name in ("binary.pdf", "huge.md"):
+            with self.subTest(name=name):
+                self.assertEqual("deny", self.decision(self.read(self.root / "Wikis/Knowledge/wiki" / name))[0])
+        self.assertEqual("deny", self.decision(self.call("Bash", {"command": "cat " + str(self.root / "Wikis/Knowledge/wiki/huge.md")}))[0])
+
+    def test_a_knowledge_page_that_names_a_zone_stays_refused_and_a_plain_one_is_read(self):
+        self.assertEqual("deny", self.decision(self.read(self.root / "Wikis/Knowledge/wiki/owned.md"))[0])
+        self.assertIsNone(self.read(self.root / "Wikis/Knowledge/wiki/standard.md"))
+
+    def test_in_warn_only_a_refused_file_is_logged_and_read(self):
+        self.settings(**{"read-guard": "warn"})
+        self.assertIsNone(self.read(self.root / "Wikis/Knowledge/wiki/binary.pdf"))
+        self.assertEqual("deny", self.log_lines()[-1]["decision"])
+
+
 class Links(GuardCase):
     """Fix round S3: a link in a walled zone that leads outside the workspace is judged by where it sits too."""
 

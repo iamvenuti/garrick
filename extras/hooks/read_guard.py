@@ -211,6 +211,18 @@ def open_workspace(event):
 # ------------------------------------------------------------------ what a path is
 
 
+def text_file(path):
+    """Whether a Knowledge file can be read as a page: a regular file under the size cap, with no NUL byte in it."""
+    try:
+        import recall
+        if os.path.islink(path) or not os.path.isfile(path) or os.path.getsize(path) > recall.MAX_FILE_BYTES:
+            return False
+        with open(path, "rb") as fh:
+            return b"\0" not in fh.read(8192)
+    except Exception:
+        return False
+
+
 def label_of(lib, root, ctx, names, path, searching):
     """(zones the path is labelled with or None, kind), kind one of ok, span, wall-less. `span` is a search over
     several zones' material: refused whole, whatever each file holds."""
@@ -233,6 +245,10 @@ def label_of(lib, root, ctx, names, path, searching):
         if wiki == "Knowledge":
             if len(names) == 2:
                 return {lib.KNOWLEDGE}, "ok"
+            if os.path.isdir(path) or not os.path.exists(path):
+                return {lib.KNOWLEDGE}, "ok"      # a folder, or nothing there: Knowledge's own, readable from any scope
+            if not text_file(path):
+                return {lib.UNZONED}, "ok"        # a file that cannot be read as text, or is over the size cap
             try:
                 import recall
                 zone = recall.Refresher.page_zone(types.SimpleNamespace(root=__import__("pathlib").Path(root)), rel,
@@ -471,8 +487,10 @@ def note_tool(folder, tool):
         return
     seen[tool] = today
     os.makedirs(folder, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
+    temporary = "%s.%d.tmp" % (path, os.getpid())
+    with open(temporary, "w", encoding="utf-8") as fh:
         json.dump(seen, fh, sort_keys=True)
+    os.replace(temporary, path)
 
 
 def blocks_of(response):

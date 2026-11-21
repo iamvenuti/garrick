@@ -97,7 +97,7 @@ HOOK_NAME = re.compile(r"[^\s\"']*(?:zone_guard|read_guard|waiting_hook)\.py")
 # `tests/test_settings_actions.py` fails when a release changes a hook file and leaves its digest here behind.
 RELEASE_HOOKS = {
     "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
-    "read_guard.py": "cdfb968d3d355ddbc7913e6e5a4947d6902b9dfee337d37e7c51fdea404386aa",
+    "read_guard.py": "e7b540858d6cd2cb9878d2c74ebe8422d4f650eb134bb400cedea83a6d989e2a",
 }
 
 

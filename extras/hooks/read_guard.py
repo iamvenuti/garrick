@@ -806,6 +806,42 @@ def failed_closed(event):
     return removal_reply()
 
 
+def failed_closed_plain(event):
+    """The same answer as `failed_closed`, for when Garrick's own tools cannot be loaded (`garrick_lib` fails to import, say,
+    after a half-applied update). It needs only the standard library: the settings file read as plain JSON from the
+    workspace root `zone_guard` finds. A file that is there and does not read counts as On. A session opened at the root and
+    a tool on neither the settings' list nor the default one go through. With no workspace root found, nothing can be known
+    and the result goes through."""
+    import fnmatch
+    if event.get("hook_event_name") != "PostToolUse" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    tool = str(event.get("tool_name") or "")
+    if not tool.startswith("mcp__") or event.get("tool_response") is None:
+        return None
+    home = home_of(event)
+    root = zg.workspace_root(home) if home else None
+    if root is None or os.path.realpath(root) == home:
+        return None
+    patterns = ["mcp__*Gmail*", "mcp__*Calendar*"]
+    try:
+        with open(os.path.join(root, "System", "garrick-settings.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        if data.get("read-guard") != "enforce":
+            return None
+        listed = data.get("connector-tools")
+        if isinstance(listed, list) and listed and all(isinstance(p, str) and p.strip() for p in listed):
+            patterns = [p.strip() for p in listed]
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        pass                                                  # there and unreadable: On, with the default list
+    if any(fnmatch.fnmatchcase(tool.lower(), p.lower()) for p in patterns):
+        return removal_reply()
+    return None
+
+
 def post(event, lib, root, ctx, scope, folder):
     tool = str(event.get("tool_name") or "")
     if not tool.startswith("mcp__"):
@@ -897,7 +933,10 @@ def main():
         try:
             reply = failed_closed(event)
         except Exception:
-            reply = None
+            try:
+                reply = failed_closed_plain(event)
+            except Exception:
+                reply = None
         if reply:
             print(json.dumps(reply, ensure_ascii=False))
         return 0

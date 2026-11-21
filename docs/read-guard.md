@@ -56,7 +56,7 @@ The read guard narrows a gap. It does not close it, so do not rely on it for mor
 - **Codex.** It is checked on its shell commands only, not on mail and calendar results, and it cannot ask you: it refuses once.
 - **Tools that are not on the list.** Only the tools on *Mail and calendar tools* are filtered.
 - **What a name says.** A client's name typed into a note of another zone is not caught. The guard decides by where a file is, not by what it says.
-- **A broken guard.** An error while it checks a read lets that read through, and the log says so. An error while it filters a mail result removes the result when the guard is On.
+- **A broken guard.** An error while it checks a read lets that read through, and the log says so. An error while it filters a mail result removes the result when the guard is On, even when Garrick's own tools cannot be loaded: it then reads the setting from the settings file itself. Two limits remain. A hook that runs past its time limit is stopped by the assistant, and then the result goes through. And when no workspace is found from the folder the session was opened in, the guard cannot tell what to protect, so the result goes through.
 - **Scheduled jobs.** They are logged and never refused, since nobody is there to ask.
 
 [What is enforced](enforced.md#the-read-guard) has the technical detail.

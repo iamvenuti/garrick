@@ -53,11 +53,16 @@ def docx(text="Pallet terms, version two.", provider=False, swap=False, saved_by
     return buf.getvalue()
 
 
-class DriftTest(unittest.TestCase):
+class DriftBase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         base = Path(self._tmp.name).resolve()
+        self.home = base / "home"                                  # never this Mac's own machine.json
+        self.home.mkdir()
+        env = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        env.start()
+        self.addCleanup(env.stop)
         self.root = base / "Workspace"
         build_workspace(self.root)
         self.work = self.root / "Zones" / "Work"
@@ -79,6 +84,8 @@ class DriftTest(unittest.TestCase):
         [found] = [f for f in drift.survey(self.root) if f["file"]]
         return found
 
+
+class DriftTest(DriftBase):
     def test_the_providers_stamp_and_a_resave_are_not_drift(self):
         (self.share / "Acme" / "Terms.docx").write_bytes(docx(provider=True, swap=True, saved_by="Dana"))
         self.assertEqual("same", self.one()["state"])
@@ -323,6 +330,152 @@ class DriftTest(unittest.TestCase):
                          "after the shared copy (7 Oct)", found[1]["text"])
         self.assertEqual(("", "Pricing", "Freight"), (found[0]["thread"], found[1]["thread"], found[2]["thread"]))
         self.assertEqual((True, True, False), tuple(f["both"] for f in found))      # Show both only with both copies named
+
+
+class MachineTest(DriftBase):
+    """A workspace on more than one machine (#612): a link that does not resolve here is one line, and a roaming
+    machine hands what it found to the server through each zone's drop folder."""
+
+    def role(self, role, **more):
+        target = self.home / ".config" / "garrick" / "machine.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(dict(role=role, **more)))
+
+    def cut_the_link(self):
+        (self.work / ".shared" / "team").unlink()
+
+    def run_drift(self, *args):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            code = drift.main(["--root", str(self.root)] + list(args))
+        return code, out.getvalue()
+
+    def drops(self):
+        return sorted((self.work / "Inbox" / ".machines").glob("drift-*.json"))
+
+    # solo is v0.72.0
+
+    def test_solo_still_fails_every_row_of_a_link_that_does_not_resolve(self):
+        self.cut_the_link()
+        [found] = [f for f in drift.survey(self.root) if f["file"]]
+        self.assertEqual("unchecked", found["state"])
+        self.assertNotIn("link", found)
+        self.assertEqual(["unchecked"], [f["state"] for f in drift.survey(self.root)])
+        self.role("solo")
+        self.assertEqual(["unchecked"], [f["state"] for f in drift.survey(self.root)])
+
+    # server
+
+    def test_a_server_reports_a_link_that_does_not_resolve_once_and_no_row_fails(self):
+        self.role("server", name="mini")
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text() + "| 2026-10-02 | `260930 - Terms.docx` | `Rates.docx` | Dana | share |\n")
+        self.cut_the_link()
+        code, said = self.run_drift()
+        self.assertEqual(0, code)
+        self.assertEqual("Work: team: not reachable here\n", said)
+        states = [f["state"] for f in drift.survey(self.root, spread=True)]
+        self.assertEqual(["unreachable"], states)
+
+    def test_a_server_that_reaches_its_share_compares_as_before(self):
+        self.role("server", name="mini")
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx("Pallet terms, version three.", provider=True))
+        code, said = self.run_drift()
+        self.assertEqual("behind", self.one_spread()["state"])
+        self.assertEqual(0, code)
+        self.assertNotIn("not reachable", said)
+
+    def one_spread(self):
+        [found] = [f for f in drift.survey(self.root, spread=True) if f["file"]]
+        return found
+
+    # roaming
+
+    def test_roaming_hands_what_it_found_to_the_server_through_the_drop_folder(self):
+        self.role("roaming", name="laptop")
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx("Dana's wording."))
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("| Dana | share |", "| Dana | here |"))
+        code, _ = self.run_drift("--save")
+        self.assertEqual(1, code)
+        [drop] = self.drops()
+        self.assertEqual("drift-laptop.json", drop.name)
+        data = json.loads(drop.read_text())
+        self.assertEqual(("Work", "laptop"), (data["zone"], data["machine"]))
+        self.assertEqual(["drifted"], [f["state"] for f in data["files"]])
+        self.assertFalse((self.root / "System" / "generated" / "drift.json").exists())      # the copy only receives
+
+    def test_each_zone_gets_only_its_own_rows(self):
+        self.role("roaming", name="laptop")
+        personal = self.root / "Zones" / "Personal"
+        write(personal / "Trip" / "Trip.md", "---\ntitle: Trip\ntype: project\nzone: Personal\nstatus: active\nshared: home/Trip\n---\n\n# Trip\n")
+        write(personal / "Trip" / "Deliverables" / "260901 - Plan.docx", "x")
+        write(personal / "Trip" / "Deliverables" / "published.md",
+              "| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+              "| 2026-09-01 | `260901 - Plan.docx` | `Plan.docx` | Jo | here |\n")
+        (personal / ".shared").mkdir()
+        os.symlink(self.share, personal / ".shared" / "home")
+        self.run_drift("--save")
+        mine = {p.parent.parent.parent.name: json.loads(p.read_text()) for p in
+                self.root.glob("Zones/*/Inbox/.machines/drift-laptop.json")}
+        self.assertEqual({"Work", "Personal"}, set(mine))
+        for zone, data in mine.items():
+            self.assertEqual({zone}, {f["zone"] for f in data["files"]})
+
+    def test_roaming_does_not_hand_over_what_it_cannot_reach(self):
+        self.role("roaming", name="laptop")
+        self.cut_the_link()
+        code, said = self.run_drift("--save")
+        self.assertEqual((0, "Work: team: not reachable here\n"), (code, said))
+        self.assertEqual([], self.drops())
+
+    # server, reading the drop
+
+    def hand_over(self, when=None, zone="Work", files=None):
+        rows = files if files is not None else [{"zone": "Work", "project": "Acme Review", "file": "260930 - Terms.docx",
+                                                 "destination": "Terms.docx", "state": "drifted", "link": "team",
+                                                 "say": "the bytes differ"}]
+        stamp = (when or drift.datetime.datetime.now()).isoformat(timespec="seconds")
+        write(self.work / "Inbox" / ".machines" / "drift-laptop.json",
+              json.dumps({"checked": stamp, "machine": "laptop", "zone": zone, "files": rows}))
+
+    def test_the_server_puts_the_roaming_rows_in_drift_json_for_the_page(self):
+        self.role("server", name="mini")
+        self.cut_the_link()
+        self.hand_over()
+        code, said = self.run_drift("--save")
+        self.assertEqual(1, code)                                                     # a drifted row is a fault, wherever it was found
+        self.assertNotIn("not reachable", said)                                       # the roaming machine reached the link
+        saved = json.loads((self.root / "System" / "generated" / "drift.json").read_text())["files"]
+        self.assertEqual([("drifted", "laptop")], [(f["state"], f["machine"]) for f in saved])
+        sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
+        import status
+        self.assertEqual(["Acme Review: 260930 - Terms.docx has drifted from its shared copy"],
+                         [f["text"] for f in status.drifted(self.root)])
+
+    def test_a_link_the_roaming_machine_did_not_cover_stays_unreachable(self):
+        self.role("server", name="mini")
+        self.cut_the_link()
+        self.hand_over(files=[{"zone": "Work", "project": "Acme Review", "file": "x", "destination": "x", "state": "same", "link": "other"}])
+        code, said = self.run_drift()
+        self.assertIn("Work: team: not reachable here", said)
+
+    def test_an_old_or_foreign_or_broken_drop_is_not_read(self):
+        self.role("server", name="mini")
+        self.cut_the_link()
+        old = drift.datetime.datetime.now() - drift.datetime.timedelta(days=20)
+        self.hand_over(when=old)
+        self.assertIn("not reachable here", self.run_drift()[1])
+        self.hand_over(zone="Personal")                                              # a file that names another zone
+        self.assertIn("not reachable here", self.run_drift()[1])
+        (self.work / "Inbox" / ".machines" / "drift-laptop.json").write_text("{not json")
+        self.assertIn("not reachable here", self.run_drift()[1])
+
+    def test_a_solo_machine_never_reads_a_drop(self):
+        self.hand_over()
+        self.cut_the_link()
+        saved = drift.survey(self.root)
+        self.assertEqual(["unchecked"], [f["state"] for f in saved])
 
 
 if __name__ == "__main__":

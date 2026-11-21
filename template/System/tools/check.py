@@ -203,6 +203,7 @@ CHECKS = [
     ("review", "Review record"),
     ("updates", "Updates to merge"),
     ("connectors", "Connector tools"),
+    ("machines", "Machines"),
 ]
 
 # How a group of findings is said aloud when there is more than one.
@@ -240,6 +241,7 @@ EAR_GROUP = {
     "preferences": "{n} of the choices you keep are not in the workspace history",
     "review": "the review record has {n} entries outside its fixed form",
     "connectors": "{n} connector tools the assistant used are on no list of the read guard",
+    "machines": "{n} things need fixing for the machines the workspace lives on",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -6704,6 +6706,129 @@ def check_connector_tools(ws: Workspace) -> List[Finding]:
             for name in sorted(seen) if isinstance(name, str) and not tool_matches(listed, name)]
 
 
+# --------------------------------------------------------------------------- machines (#612)
+
+# What a sync tool leaves beside a file both machines changed.
+SYNCTHING_CONFLICT_RE = re.compile(r"\.sync-conflict-")
+DROPBOX_CONFLICT_RE = re.compile(r" \([^()]*conflicted copy[^()]*\)", re.I)
+SERVER_PATH_FILE = ("System", "generated", "server-path.json")     # the server's path, for the roaming copy to compare: a file the sync carries
+CONFLICT_SHOWN = 5                                              # file names a finding lists, per place
+
+
+def _machine():
+    """tools/machine.py, or None when it is not beside this file."""
+    try:
+        import machine
+        return machine
+    except Exception:
+        return None
+
+
+def conflict_copy(name: str, machines: set) -> bool:
+    """Whether a file's name is a sync conflict copy: Syncthing's `*.sync-conflict-*`, Dropbox's `* (… conflicted
+    copy …)*`, OneDrive's `<name>-<machine>.<ext>` where <machine> is a machine name machine.json knows."""
+    if SYNCTHING_CONFLICT_RE.search(name) or DROPBOX_CONFLICT_RE.search(name):
+        return True
+    stem = name.rsplit(".", 1)[0] if "." in name.strip(".") else name
+    return any(stem.casefold().endswith("-" + m) and len(stem) > len(m) + 1 for m in machines)
+
+
+def conflict_copies(root: Path, machines: set) -> Dict[str, List[str]]:
+    """{place: [workspace-relative names]} of every conflict copy under `root`, by the zone, the wiki or the workspace
+    it is in. Links are not followed: a share is somebody else's folder. .git is read for its names, but not objects/."""
+    found: Dict[str, List[str]] = {}
+    for top, dirs, files in os.walk(str(root)):
+        here = Path(top)
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS - {".git"} and not (here.name == ".git" and d == "objects")
+                         and not (here / d).is_symlink())
+        for f in sorted(files):
+            if not conflict_copy(f, machines):
+                continue
+            path = (here / f).relative_to(root)
+            parts = path.parts
+            place = "/".join(parts[:2]) if len(parts) > 2 and parts[0] in ("Zones", "Wikis") else "the workspace"
+            found.setdefault(place, []).append(path.as_posix())
+    return found
+
+
+def launchd_labels() -> List[str]:
+    """The launchd agents loaded for this user that are Garrick's: a label that starts `garrick.`, or the label of a
+    plist in ~/Library/LaunchAgents that runs job.py. [] where there is no launchctl."""
+    import plistlib
+    import subprocess as sp
+    try:
+        done = sp.run(["launchctl", "list"], capture_output=True, text=True, timeout=20)
+    except (OSError, sp.SubprocessError):
+        return []
+    if done.returncode != 0:
+        return []
+    loaded = [line.split("\t")[-1].strip() for line in done.stdout.splitlines()[1:] if line.strip()]
+    ours = set()
+    folder = Path(os.environ.get("HOME") or os.path.expanduser("~")) / "Library" / "LaunchAgents"
+    for plist in sorted(folder.glob("*.plist")) if folder.is_dir() else []:
+        try:
+            data = plistlib.loads(plist.read_bytes())
+            if any(str(a).endswith("job.py") for a in data.get("ProgramArguments", [])) and isinstance(data.get("Label"), str):
+                ours.add(data["Label"])
+        except Exception:
+            continue
+    return sorted(l for l in loaded if l.startswith("garrick.") or l in ours)
+
+
+def check_machines(ws: Workspace) -> List[Finding]:
+    """What the machine's role asks of the workspace (#612). On `solo`, the default, nothing: no file is read but
+    machine.json, and no finding is made."""
+    mach = _machine()
+    if mach is None:
+        return []
+    record = mach.read()
+    role = record["role"]
+    if role == "solo":
+        return []
+    out: List[Finding] = []
+    local = str(ws.root.resolve())
+    if role == "server":
+        for place, names in sorted(conflict_copies(ws.root, mach.known_names()).items()):
+            shown = ", ".join(names[:CONFLICT_SHOWN]) + (" and %d more" % (len(names) - CONFLICT_SHOWN) if len(names) > CONFLICT_SHOWN else "")
+            out.append(Finding(WARNING, "machines", place,
+                               "holds %d sync conflict cop%s: %s. Both machines changed one file; keep the right one and delete the other"
+                               % (len(names), "y" if len(names) == 1 else "ies", shown),
+                               "the sync left conflict copies in the workspace"))
+        recorded = ws.root.joinpath(*SERVER_PATH_FILE)
+        try:
+            same = json.loads(recorded.read_text(encoding="utf-8")).get("path") == local
+        except (OSError, ValueError, AttributeError):
+            same = False
+        if not same:
+            try:
+                recorded.parent.mkdir(parents=True, exist_ok=True)
+                recorded.write_text(json.dumps({"path": local, "machine": record["name"]}) + "\n", encoding="utf-8")
+            except OSError:
+                pass
+    if role == "roaming":
+        try:
+            theirs = json.loads(ws.root.joinpath(*SERVER_PATH_FILE).read_text(encoding="utf-8")).get("path")
+        except (OSError, ValueError, AttributeError):
+            theirs = None
+        if isinstance(theirs, str) and theirs and theirs != local:
+            out.append(Finding(WARNING, "machines", "System/generated/server-path.json",
+                               "says the server's workspace is at %s, and this copy is at %s. Hooks, memory folders and links "
+                               "hold absolute paths, so the copy must sit at the same path" % (theirs, local),
+                               "the workspace is at another path on this machine than on the server"))
+        for label in launchd_labels():
+            out.append(Finding(ERROR, "machines", "this machine",
+                               "has the launchd agent %s loaded. A roaming machine runs no jobs: the server does, and two "
+                               "machines running one job commit twice into a folder a sync is writing. Unload it with "
+                               "`launchctl bootout gui/$(id -u)/%s`" % (label, label),
+                               "a scheduled job is loaded on a roaming machine"))
+    recorded_here = record["workspace"]
+    if recorded_here and os.path.realpath(recorded_here) != local:
+        out.append(Finding(WARNING, "machines", "~/.config/garrick/machine.json",
+                           "records the workspace at %s, and this one is at %s" % (recorded_here, local),
+                           "the workspace is at another path than machine.json records"))
+    return out
+
+
 # The checks a run over named paths makes whole, because each reads a handful of
 # fixed files and walks no notes (run_path_checks).
 PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
@@ -6715,6 +6840,7 @@ ALL_CHECKS = [
     check_skills, check_names, check_projects, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates, check_connector_tools,
+    check_machines,
 ]
 
 
@@ -7364,6 +7490,19 @@ def refusals_report(root: Path) -> str:
     return text
 
 
+ROAMING_COMMIT_SAID = ("Commit refused: this machine holds a copy of the workspace that only receives (its role is roaming), "
+                       "and the server commits. Put what you want kept in a drop folder (Inbox/), and the server files it.")
+
+
+def machine_role() -> str:
+    """This machine's role (machine.py), solo when machine.py is not beside this file or cannot be read."""
+    try:
+        import machine
+        return machine.role()
+    except Exception:
+        return "solo"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["allow"]:
@@ -7439,6 +7578,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         for line in stale_bands(root):         # the band's own copy, read as the settings name it
             print(line)
         return 0
+    if args.staged and machine_role() == "roaming":
+        print(ROAMING_COMMIT_SAID, file=sys.stderr)       # the hook runs this: a roaming copy never commits (#612)
+        return 1
     if args.paths:
         findings = run_path_checks(root, args.paths)
     else:

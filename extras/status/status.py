@@ -867,6 +867,72 @@ def line_place(note: Path, zone: Path) -> Tuple[str, str]:
     return "", ""
 
 
+_OUTBOX = None
+
+
+def outbox_mod():
+    """outbox.py, beside this file: the roaming machine's queue of Todo actions (#612). None where it does not load."""
+    global _OUTBOX
+    if _OUTBOX is None:
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_status_outbox", str(Path(__file__).with_name("outbox.py")))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _OUTBOX = mod
+        except Exception:
+            _OUTBOX = False
+    return _OUTBOX or None
+
+
+def machine_role(ws: Path) -> str:
+    """This machine's role, solo where there is no machine.json (#612)."""
+    box = outbox_mod()
+    try:
+        return box.role(ws) if box else "solo"
+    except Exception:
+        return "solo"
+
+
+def machine_said(ws: Path) -> str:
+    """The header's words for a machine that is not solo: its role and its name. "" for solo, which shows nothing."""
+    role = machine_role(ws)
+    if role == "solo":
+        return ""
+    name = outbox_mod().machine_name(ws)
+    return "%s%s" % (role.capitalize(), " · " + name if name else "")
+
+
+def settle_outbox(ws: Path) -> None:
+    """What a build does about the outbox (#612): the server applies what has reached it, and a roaming machine turns a
+    tick made by hand into a request. Never stops a build."""
+    try:
+        role = machine_role(ws)
+        if role == "server":
+            outbox_mod().replay(ws)
+        elif role == "roaming":
+            outbox_mod().hand_ticks(ws)
+    except Exception:
+        pass
+
+
+HELD_WORD = {"todo-done": "ticked", "todo-undo": "reopened", "todo-edit": "reworded", "todo-add": "added"}
+
+
+def held_block(held: List[dict]) -> str:
+    """The question a zone asks about the requests the server did not apply (#612): what was asked, the line as it was,
+    and two answers, *Show me the line* and *Drop it*. Applying it anyway is not one."""
+    out = ""
+    for h in held:
+        who = h["machine"] or "another machine"
+        now = "".join("<li>%s</li>" % md_inline(x) for x in h["now"]) or "<li>No line reads like it.</li>"
+        out += ('<div class="tqi" data-z="%s" data-id="%s"><div class="tqt">A line %s on %s was not changed here, because the line is not as it was. '
+                'Nothing was applied.</div><div class="tqa"><button type="button" class="act" data-outbox="show">Show me the line</button>'
+                '<button type="button" class="act" data-outbox="drop">Drop it</button></div>'
+                '<div class="tqmore" hidden><div class="tql">As it was: %s</div><div>Now in Todo.md, nearest first:</div><ul>%s</ul></div></div>'
+                % (E(h["zone"]), E(h["id"]), HELD_WORD.get(h["verb"], "changed"), E(who), md_inline(h["line"] or h["text"] or "(no text)"), now))
+    return '<div class="tq">%s</div>' % out if out else ""
+
+
 def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     """Preview: each zone's open actions, read from the notes, never written.
     Per zone: the lines of Todo.md grouped under its `## ` headings in their
@@ -877,8 +943,11 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     tl = todo_lines()
     out = []
     system = system_notes(ws)
+    role = machine_role(ws)
     for zone in visible_dirs(ws / "Zones"):
         todo_md = zone / "Todo.md"
+        waits = outbox_mod().pending_marks(ws, zone.name) if role == "roaming" else {}
+        held = outbox_mod().held_requests(ws, zone.name) if role == "server" else []
         notes = {}
         for n in tl.notes(str(zone)):
             rel = Path(n).relative_to(zone).with_suffix("").as_posix()
@@ -901,7 +970,7 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
             else:
                 thread, note = None, None
             project, tname = line_place(note, zone) if note and not t["unsure"] else ("", "")
-            return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread,
+            return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread, waits=waits.get(t["key"], ""),
                         project=project, tname=tname,
                         link=link.attrs(note) if note else "", zone=zone.name,
                         alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
@@ -926,9 +995,10 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
         if elsewhere:
             groups.append(("In thread notes", sorted(elsewhere, key=lambda r: (r["file"].lower(), r["alpha"]))))
         done = [row(t, done=True) for t in tl.done_on(str(zone), today) if t["text"] and "<action>" not in t["text"]]
-        out.append({"zone": zone.name, "file": todo_md if todo_md.is_file() else None, "groups": groups,
-                    "done": sorted(done, key=lambda r: r["alpha"]), "open": len(rows),
-                    "late": sum(1 for r in rows if r["late"]), "undated": sum(1 for r in rows if r["when"] is None)})
+        out.append(dict({"zone": zone.name, "file": todo_md if todo_md.is_file() else None, "groups": groups,
+                         "done": sorted(done, key=lambda r: r["alpha"]), "open": len(rows),
+                         "late": sum(1 for r in rows if r["late"]), "undated": sum(1 for r in rows if r["when"] is None)},
+                        **({"held": held} if held else {})))
     return out
 
 
@@ -963,13 +1033,17 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False, ta
         meta.append("<span>in the thread note</span>")
     if said_late and r["late"] and when is not None:
         meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
+    waits = r.get("waits") or ""
+    if waits:                      # a tick or an untick this machine made, waiting for the server to apply it (#612)
+        meta.append("<span>%s, waits for the server</span>" % ("reopened" if waits == "todo-undo" else "ticked"))
     tick = ('<button class="tick" type="button" title="%s" aria-label="%s: %s"></button>'
             % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(plain_text(r["text"])[:80])) if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
             else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
+    shown = (r["done"] or waits == "todo-done") and waits != "todo-undo"
     return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
             '%s<div class="tmain"><div class="ttext">%s%s</div>%s</div>%s</div>'
-            % (" done" if r["done"] else "", " late" if r["late"] else "", " undated" if when is None else "",
+            % (" done" if shown else "", " late" if r["late"] else "", " undated" if when is None else "",
                E(r["zone"]), E(r["file"]), E(r["key"]), E(r["section"] or ""), 1 if r["waiting"] else 0, E(r["field"]),
                E(r["alpha"]), tick, thr, md_inline(r["text"]),
                '<div class="tmeta">%s</div>' % "".join(meta) if meta else "", date))
@@ -1634,8 +1708,9 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
         summ = ('<b>%d</b> open · <span class="%s"><b>%d</b> late</span> · <b>%d</b> without a date'
                 % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
-        panes += ('<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s</span></div>'
-                  '<div class="tflat">%s</div><div class="tthr">%s</div></div>' % (E(z["zone"]), summ, add, body, threaded_body(z, today, actions)))
+        panes += ('<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s</span></div>%s'
+                  '<div class="tflat">%s</div><div class="tthr">%s</div></div>'
+                  % (E(z["zone"]), summ, add, held_block(z["held"]) if z.get("held") else "", body, threaded_body(z, today, actions)))
     # each zone's open count beside its name (#594); a zone with nothing open shows none
     zones = "".join('<button type="button" data-tz="%s"%s>%s%s</button>'
                     % (E(z["zone"]), zone_attr(z["zone"], styles), zone_name(z["zone"], styles),
@@ -2596,6 +2671,9 @@ button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:va
 .tdate.today{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .trow.done .tdate{visibility:hidden}
 .tempty{color:var(--muted);font-size:var(--fs-meta);margin:2px 8px 10px}
+.tq{margin:0 0 12px}.tqi{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--critical);border-radius:10px;padding:10px 14px;margin-bottom:8px}
+.tqi.pending{opacity:.6;pointer-events:none}.tqt{font-size:var(--fs-body);line-height:1.45}.tqa{display:flex;gap:8px;margin-top:8px}
+.tqmore{margin-top:8px;font-size:var(--fs-meta);color:var(--ink2)}.tqmore ul{margin:4px 0 0;padding-left:18px}.tql{margin-bottom:6px}
 .todotab:not([data-view="threaded"]) .tthr,.todotab[data-view="threaded"] .tflat{display:none}
 .tproject>summary{font-size:var(--fs-h3)}.tthread{margin:0 8px 8px;box-shadow:none;border-color:var(--grid)}.tthread>summary{font-size:var(--fs-body);padding:9px 12px}
 .tproject>.trows{padding-bottom:8px}.tlate{color:var(--critical);font-size:var(--fs-meta);font-weight:560}
@@ -2710,6 +2788,11 @@ if(!ng){ng=document.createElement('details');ng.className='tgroup tthread';ng.in
 var dg=tt.querySelector('.donegroup');tt.insertBefore(ng,dg||null)}
 ng.open=true;var nr=ng.querySelector('.trows'),ne=nr.querySelector('.tempty');if(ne)ne.remove();nr.insertBefore(r.cloneNode(true),nr.firstChild);
 var nc=ng.querySelector('summary .n');if(nc)nc.textContent=String((+nc.textContent||0)+1)};
+/* a request the server held because its line is not as it was: show the line, or drop the request (the outbox) */
+todo.addEventListener('click',function(e){var b=e.target.closest('[data-outbox]');if(!b)return;var q=b.closest('.tqi');if(!q)return;
+if(b.dataset.outbox==='show'){var m=q.querySelector('.tqmore');m.hidden=!m.hidden;return}
+if(!host)return;var outboxReq={verb:'outbox-drop',zone:q.dataset.z,id:q.dataset.id};q.classList.add('pending');
+if(window.GarrickAct&&GarrickAct(outboxReq,'Dropping it…'))return;host.postMessage({act:outboxReq});say('Dropping it…')});
 })();
 """
 
@@ -6094,9 +6177,12 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 # The top row both pages share: the mark and name with how long ago the page was
 # built (the date and time on hover), the tabs, and the controls, pinned while the
 # page scrolls. Each page passes its own tabs and controls.
-def bar(mark_svg: str, name: str, built: str, tabs: str, controls: str) -> str:
-    return ('<header class="bar"><div class="brand">%s<div class="bname"><h1>%s</h1><p title="Built %s">Built <span id="age">just now</span></p></div></div>'
-            '%s%s</header>' % (mark_svg, name, E(built), tabs, controls))
+def bar(mark_svg: str, name: str, built: str, tabs: str, controls: str, role: str = "") -> str:
+    """`role` is the machine's role and name, said in words, on a workspace that lives on more than one machine (#612);
+    "" for a solo machine, whose header is as it has always been."""
+    said = ' <span class="role" title="The role of this machine">%s</span>' % E(role) if role else ""
+    return ('<header class="bar"><div class="brand">%s<div class="bname"><h1>%s</h1><p title="Built %s">Built <span id="age">just now</span>%s</p></div></div>'
+            '%s%s</header>' % (mark_svg, name, E(built), said, tabs, controls))
 
 
 # Auto, light and dark as icons, each named for a screen reader and on hover.
@@ -8769,7 +8855,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                % tab_badge("tabn-late", late, " action is late", " actions are late", True, keep=any(late_by.values())) if todo_tab else "",
                tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", worst == "critical"),
                questions_mod().tab_button() if qdata else ""))
-    header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
+    header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls,
+                 machine_said(ws))
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
         md["questions"] = questions_mod().counts_of(qdata)       # the open count of each zone, for the menu's Questions row
@@ -9006,6 +9093,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         old, new = m.split("=", 1)
         moved[old] = new
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
+    settle_outbox(ws)                         # the server applies the outbox; a roaming machine queues a hand tick (#612)
     page = build(ws, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
                  flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,

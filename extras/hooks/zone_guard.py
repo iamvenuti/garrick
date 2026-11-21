@@ -34,8 +34,11 @@ otherwise the event's cwd. Paths are judged where they really lead, through
 any link, and on a disk that ignores case, as a Mac's does, without it. A scheduled job (GARRICK_HEADLESS=1) has nobody to
 ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
-One place is never let through, in a session of any home and in a scheduled job: the notes ledger,
-System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584).
+Some places are never let through, in a session of any home and in a scheduled job: the notes ledger,
+System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584); and the
+folder ~/.config/garrick/, whose machine.json says this machine's role (#612). On a machine whose role is
+`roaming`, a write anywhere in the workspace outside the drop folders (each zone's Inbox/ and the workspace's
+own) is refused too: the copy only receives, and the sync would put the server's file back.
 
     python3 zone_guard.py --check
 
@@ -260,6 +263,83 @@ def ledger_edits(event):
     return found
 
 
+def machine_home():
+    """The folder HOME names now, as a real path (a test points HOME at a temporary folder)."""
+    return os.path.realpath(os.environ.get("HOME") or os.path.expanduser("~"))
+
+
+def machine_role():
+    """This machine's role from ~/.config/garrick/machine.json: solo, server or roaming. The same reading as
+    System/tools/machine.py, which a hook run from a Garrick kept outside the workspace cannot import: a missing
+    file, one that cannot be read, or an unknown role is solo."""
+    try:
+        with open(os.path.join(machine_home(), ".config", "garrick", "machine.json"), encoding="utf-8") as f:
+            role = json.load(f).get("role")
+    except (OSError, ValueError, AttributeError):
+        return "solo"
+    role = role.strip().lower() if isinstance(role, str) else ""
+    return role if role in ("server", "roaming") else "solo"
+
+
+def config_edits(event):
+    """The files under ~/.config/garrick/ the tool call would write (#612). The machine's role file is there, and a
+    session that could write it could change its own role, so no session writes anything in that folder, whatever
+    its home: through any link, and on a disk that ignores case, without it."""
+    home = machine_home()
+    folder = os.path.realpath(os.path.join(home, ".config", "garrick"))
+    blind = case_blind(home)
+    found = []
+    for path in edits(event):
+        a, b = (folder.casefold(), path.casefold()) if blind else (folder, path)
+        if b == a or b.startswith(a + os.sep):
+            found.append(path)
+    return found
+
+
+def roaming_edits(event):
+    """The files in the workspace, outside the drop folders, the tool call would write on a roaming machine (#612).
+    A roaming machine holds a copy that only receives: the next sync puts the server's files back over a write
+    made here. Its drop folders (each zone's Inbox/ and the workspace's own) sync both ways, so they are open."""
+    if machine_role() != "roaming":
+        return []
+    found = []
+    for path in edits(event):
+        root = workspace_root(os.path.dirname(path))
+        if root is None:
+            continue
+        names = parts(root, path, case_blind(root))
+        if not names:
+            continue
+        low = [n.casefold() for n in names]
+        if len(low) >= 2 and low[0] == "inbox":
+            continue
+        if len(low) >= 4 and low[0] == "zones" and low[2] == "inbox":
+            continue
+        found.append(path)
+    return found
+
+
+def deny(reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+
+
+def machine_refusal(event):
+    """The reply that refuses a write the machine's role forbids (#612), or None. It holds in a session of any home
+    and in a scheduled job."""
+    if event.get("hook_event_name") != "PreToolUse":
+        return None
+    if config_edits(event):
+        return deny("Zone guard: the machine's role file in ~/.config/garrick/ is changed by the user, not by a session, so "
+                    "that a session cannot change its own role. Show the user the command to run: "
+                    "python3 System/tools/machine.py set --role <solo|server|roaming>.")
+    if roaming_edits(event):
+        return deny("Zone guard: this machine holds a copy of the workspace that only receives, and the next sync would put the "
+                    "server's file back over this edit. Write what you need to keep in a drop folder: Inbox/ in the workspace, "
+                    "or the Inbox/ of the zone. The server files it on its next run.")
+    return None
+
+
 def decide(event):
     """The hook's reply as a dict, or None to stay silent and let the edit run."""
     stage = event.get("hook_event_name")
@@ -267,6 +347,9 @@ def decide(event):
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "Zone guard: the notes ledger is written only by the channel that "
                                        "receives a note. An assistant session never writes it."}}
+    refused = machine_refusal(event)
+    if refused:
+        return refused
     home, away = outside(event)
     if not away:
         return None
@@ -408,7 +491,8 @@ def main():
     try:
         event = json.load(sys.stdin)
         if os.environ.get("GARRICK_HEADLESS") == "1":          # nobody to ask, so the zone check stands aside; the ledger never does
-            reply = decide(dict(event, hook_event_name="PreToolUse")) if ledger_edits(event) else None
+            stopped = dict(event, hook_event_name="PreToolUse")
+            reply = decide(stopped) if ledger_edits(event) else machine_refusal(stopped)
         else:
             reply = decide(event)
     except Exception:

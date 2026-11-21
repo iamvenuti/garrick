@@ -48,6 +48,10 @@ The price is that an assistant which stops at a repository's root sees less from
 
 That's why each zone's `AGENTS.md`, from `template/System/templates/zone/AGENTS.md`, opens with an explicit pointer: "Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own." `Wikis/AGENTS.md` carries the same line, pointing one level up. Claude Code reads instruction files in the folders above as well, past the repository boundary. The pointer is there for an assistant that stops at the boundary, and costs the other nothing to follow.
 
+## More than one machine
+
+A workspace can live on a server and travel on a laptop. That setup has its own roles and sync rules: see [One workspace on more than one machine](machines.md).
+
 ## Skill discovery
 
 Claude Code looks for skills in `.claude/skills`, and Codex in `.agents/skills`, walking from the session's folder up to its repository root. Since a Garrick workspace is several repositories, not one, the installer creates both symlinks, pointing at the one real `System/skills` folder, in every repository: the root, `Wikis/`, and each zone. Open a session anywhere in the workspace, in either harness, and it finds the same skills, because it's the same folder, linked in from wherever it needs to be reachable.

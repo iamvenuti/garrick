@@ -32,6 +32,7 @@ class ZoneGuardTest(unittest.TestCase):
     def run_guard(self, event, project_dir=None, headless=False):
         env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "GARRICK_HEADLESS")}
         env["TMPDIR"] = str(self.state)
+        env["HOME"] = str(self.state)      # never this Mac's own ~/.config/garrick/machine.json
         if headless:
             env["GARRICK_HEADLESS"] = "1"
         if project_dir is not None:

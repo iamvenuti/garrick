@@ -354,7 +354,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "commit-files",
          "todo-edit",
          "todo-retire",
-         "chase")
+         "chase",
+         "outbox-drop")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -5842,6 +5843,8 @@ def act(ws: Path, req, today=None, now=None):
         return commit_files(ws, req, now)
     if req["verb"] == "chase":
         return chase(ws, req)
+    if req["verb"] == "outbox-drop":
+        return outbox_lib().drop(ws, req.get("zone"), req.get("id"))
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":
@@ -5874,12 +5877,13 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
                "todo-edit",
                "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
-CALLERS = ("page", "ask", "session")
+CALLERS = ("page", "ask", "session", "outbox")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
              "chase",
-             "layout")
+             "layout",
+             "outbox-drop")
 
 
 # The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
@@ -6012,6 +6016,9 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     try:
         try:
             joined = None
+            queued = outbox_gate(ws, req, via)
+            if queued is not None:
+                return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)
             if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).
@@ -6059,6 +6066,35 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why
+
+
+_OUTBOX = None
+
+
+def outbox_lib():
+    """outbox.py beside this file, loaded once; None when it is not there or does not load."""
+    global _OUTBOX
+    if _OUTBOX is None:
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_outbox", str(HERE / "outbox.py"))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules.setdefault("garrick_outbox", mod)
+            spec.loader.exec_module(mod)
+            _OUTBOX = mod
+        except Exception:
+            _OUTBOX = False
+    return _OUTBOX or None
+
+
+def outbox_gate(ws: Path, req, via: str):
+    """outbox.gate(): `via: outbox` is limited to its four verbs, and on a roaming machine a page action is queued or
+    refused in place of being done (#612). None to carry on, which is every other machine."""
+    box = outbox_lib()
+    if box is None:
+        if via == "outbox":
+            raise Refused("the outbox is not installed here")
+        return None
+    return box.gate(ws, req, via)
 
 
 def start_record(ops, req: dict, via: str):

@@ -36,7 +36,8 @@ ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
 Some places are never let through, in a session of any home and in a scheduled job: the notes ledger,
 System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584); and the
-folder ~/.config/garrick/, whose machine.json says this machine's role (#612). On a machine whose role is
+role file, ~/.config/garrick/machine.json, and a temporary file beside it (#612); the rest of that folder is as before. These
+refusals cover the file-editing tools only: a shell command can still change those files, so the guard stops a mistaken edit and is no lock. On a machine whose role is
 `roaming`, a write anywhere in the workspace outside the drop folders (each zone's Inbox/ and the workspace's
 own) is refused too: the copy only receives, and the sync would put the server's file back.
 
@@ -283,16 +284,18 @@ def machine_role():
 
 
 def config_edits(event):
-    """The files under ~/.config/garrick/ the tool call would write (#612). The machine's role file is there, and a
-    session that could write it could change its own role, so no session writes anything in that folder, whatever
-    its home: through any link, and on a disk that ignores case, without it."""
+    """The role file the tool call would write (#612): ~/.config/garrick/machine.json and a temporary file that
+    machine.py writes beside it (machine.json.tmp), on every role. Any other file in that folder (the mail, bridge
+    certificate and Telegram configs) is written as before. Through any link, and on a disk that ignores case,
+    without it. A guard against a mistaken edit by a file-editing tool: a shell command can still write the file."""
     home = machine_home()
     folder = os.path.realpath(os.path.join(home, ".config", "garrick"))
     blind = case_blind(home)
+    names = ("machine.json", "machine.json.tmp")
     found = []
     for path in edits(event):
         a, b = (folder.casefold(), path.casefold()) if blind else (folder, path)
-        if b == a or b.startswith(a + os.sep):
+        if os.path.dirname(b) == a and os.path.basename(b) in names:
             found.append(path)
     return found
 
@@ -331,8 +334,8 @@ def machine_refusal(event):
     if event.get("hook_event_name") != "PreToolUse":
         return None
     if config_edits(event):
-        return deny("Zone guard: the machine's role file in ~/.config/garrick/ is changed by the user, not by a session, so "
-                    "that a session cannot change its own role. Show the user the command to run: "
+        return deny("Zone guard: the machine's role file in ~/.config/garrick/ is changed by the user, not by a session. "
+                    "This guard stops a mistaken edit; it is not a lock. Show the user the command to run: "
                     "python3 System/tools/machine.py set --role <solo|server|roaming>.")
     if roaming_edits(event):
         return deny("Zone guard: this machine holds a copy of the workspace that only receives, and the next sync would put the "

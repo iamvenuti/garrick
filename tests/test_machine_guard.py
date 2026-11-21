@@ -1,5 +1,5 @@
 """The zone guard on a machine with a role (#612): a roaming copy refuses writes outside the drop folders, and no
-session writes ~/.config/garrick/, whatever its home or role.
+edit tool writes the role file, ~/.config/garrick/machine.json, whatever its home or role. The rest of that folder is as before.
 
     python3 -m unittest test_machine_guard
 """
@@ -119,9 +119,18 @@ class MachineGuardTest(unittest.TestCase):
                 self.assertIn("role", reason)
             self.denied(self.run_guard(target, headless=True))
 
-    def test_nothing_in_the_folder_is_written(self):
-        self.denied(self.run_guard(self.home / ".config" / "garrick" / "telegram.json"))
-        self.denied(self.run_guard(self.home / ".config" / "garrick" / "new" / "x.json"))
+    def test_the_temporary_sibling_of_the_role_file_is_refused(self):
+        for role in (None, "solo", "roaming"):
+            if role:
+                self.role(role)
+            self.denied(self.run_guard(self.home / ".config" / "garrick" / "machine.json.tmp"))
+
+    def test_the_rest_of_the_folder_is_written_as_before(self):
+        for role in (None, "solo", "server"):
+            if role:
+                self.role(role)
+            for name in ("telegram.json", "work-mail.json", "bridge-cert.pem", "new/x.json", "machine.json.bak"):
+                self.assertIsNone(self.run_guard(self.home / ".config" / "garrick" / name), (role, name))
 
     def test_the_folder_is_refused_through_a_link_and_in_another_case(self):
         link = self.root / "Inbox" / "cfg"

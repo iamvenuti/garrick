@@ -232,6 +232,17 @@ class TestReadGuardBlock(SettingsCase):
         self.settings_file(**{"read-guard": "warn"})
         self.assertRegex(self.block(), r'name="rg-mode" value="warn" checked')
 
+    def test_settings_that_do_not_read_show_On_with_a_line_that_says_so(self):
+        self.assistants(registered=True)
+        (self.root / "System" / "garrick-settings.json").write_text("{not json")
+        sec = self.block()
+        self.assertRegex(sec, r'name="rg-mode" value="enforce" checked')
+        self.assertIn("Garrick cannot read your settings file.", sec)
+        self.settings_file(**{"read-guard": "warn"})
+        sec = self.block()
+        self.assertRegex(sec, r'name="rg-mode" value="warn" checked')
+        self.assertNotIn("cannot read your settings file", sec)
+
     def test_the_cross_wall_choice_and_the_lists_come_from_the_settings(self):
         self.assistants()
         self.settings_file(**{"read-guard-cross-zone": "ask", "connector-tools": ["mcp__*Mail*"], "connector-tools-skip": ["mcp__weather__*"]})

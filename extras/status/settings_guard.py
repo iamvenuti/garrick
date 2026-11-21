@@ -69,6 +69,8 @@ GUARD_TEXT = {
                "them and does not warn you about them.",
 }
 CODEX_LINE = "Codex cannot have its mail and calendar results checked. Only the instructions keep them apart."
+UNREADABLE = ("Garrick cannot read your settings file. The mail and calendar check treats the read guard as On until it reads "
+              "again.")
 CODEX_TRUST = "Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here."
 MODES = (("off", "Off"), ("warn", "Watch only"), ("enforce", "On"))
 CROSS = (("deny", "Refuse"), ("ask", "Ask me"))
@@ -217,7 +219,7 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     """What Settings shows of the read guard: whether its hook is registered, its mode and cross-wall choice, both lists,
     whether the connector filter can run, and what the log holds. Reads only; never raises."""
     home = Path(home) if home is not None else Path.home()
-    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}}
+    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}, "unreadable": False}
     try:
         state["cross"] = lib.read_guard_cross(ws)
         state["tools"] = list(lib.connector_patterns(ws))
@@ -234,6 +236,8 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     try:
         on = lib.read_guard_mode(ws)
         state["mode"] = "off" if not state["registered"] else ("enforce" if on == "enforce" else "warn")
+        if state["registered"] and not lib.settings_readable(ws):
+            state["mode"], state["unreadable"] = "enforce", True      # the connector filter reads such a file as On
     except Exception:
         pass
     try:
@@ -342,6 +346,8 @@ def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Call
                 % (" ".join(esc(l) for l in lines),
                    ' <button class="act rgsmall" type="button" id="rg-show" aria-expanded="false" aria-controls="rg-list">Show</button>' if state["would"] else "",
                    '<div class="rglist" id="rg-list" hidden>%s</div>' % show_list(state["would"]) if state["would"] else ""))
+    if state.get("unreadable"):
+        seen += '<p class="hint rgcannot" id="rg-unreadable" role="status">%s</p>' % esc(UNREADABLE)
     cannot = ""
     if problem:
         cannot = '<p class="hint rgcannot" id="rg-cannot" role="status">%s%s</p>' % (esc(CANNOT.get(problem, CANNOT["parties"])), esc(CANNOT_NEXT.get(mode, "")))

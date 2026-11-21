@@ -2659,6 +2659,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if let request = choice["act"] as? [String: Any] {
 			act(request)
 			askRender()
+		} else if let change = choice["layout"] as? [String: Any],
+				  let data = try? JSONSerialization.data(withJSONObject: change),
+				  let text = String(data: data, encoding: .utf8) {
+			// A change of layout the box offered (#604): the page's own dialog opens, with the plan. Nothing is run here.
+			showWindow()
+			web.evaluateJavaScript("window.GarrickLayout&&window.GarrickLayout(\(text))")
+			askRender()
 		} else if let request = choice["request"] as? String, !request.isEmpty {
 			askSend(request)
 		}

@@ -1,7 +1,8 @@
-"""#604, the rest: the layout control on the page.
+"""#604, the rest: the layout control on the page and in the Ask box.
 
 The page's cards offer each change of layout only where it applies. A dialog asks for the plan (nothing is written),
-and Move them makes the change, once, in one commit; a file no thread names is never placed by the control.
+and Move them makes the change, once, in one commit; a file no thread names is never placed by the control. The Ask
+box offers the same dialog and runs nothing.
 
     cd tests && python3 -m unittest test_layout_control
 """
@@ -14,11 +15,13 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
 import test_layout as tl  # noqa: E402  (its cases are not imported: they would run twice)
 from fixtures import write  # noqa: E402
+from test_ask import FakeSession, ask  # noqa: E402
 
 REPO = tl.REPO
 STATUS_SRC = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
@@ -244,6 +247,65 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         self.assertIn('request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }', SWIFT_SRC)
         self.assertIn('choice["layout"] as? [String: Any]', SWIFT_SRC)
         self.assertIn("window.GarrickLayout&&window.GarrickLayout(", SWIFT_SRC)
+
+
+class TestTheAskBoxOffersItAndRunsNothing(ControlCase):
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        patcher = mock.patch.object(ask, "agent_on", lambda ws: False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.session = FakeSession()                     # an answer the box would ask for is a failure: none is given
+        self.asker = ask.Asker(self.root, self.session)
+
+    def assert_nothing_ran(self, before, count):
+        self.assertEqual([], self.session.seen)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(count, self.commits())
+        self.assertTrue(self.clean())
+
+    def test_a_heading_request_offers_the_dialog(self):
+        before, count = self.snapshot(), self.commits()
+        out = self.asker.ask("make Acme a heading")
+        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Work", "project": "Acme", "heading": True}}], out["choices"])
+        self.assertEqual([], out["acted"])
+        self.assertEqual([], out["launch"])
+        self.assertIn("Nothing moves until you say so", out["say"])
+        self.assert_nothing_ran(before, count)
+
+    def test_an_own_papers_request_offers_the_dialog(self):
+        before, count = self.snapshot(), self.commits()
+        out = self.asker.ask("give Pricing its own papers")
+        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Work", "project": "Acme", "thread": "Pricing",
+                                                                      "papers": "own"}}], out["choices"])
+        self.assert_nothing_ran(before, count)
+
+    def test_a_request_to_go_back_offers_it_only_where_it_applies(self):
+        before, count = self.snapshot(), self.commits()
+        out = self.asker.ask("let Pricing use the project's papers")
+        self.assertEqual([], out["choices"])                      # it uses them already
+        self.assertIn("already", out["say"])
+        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Side Deal", "--papers", "own")
+        self.commit("Side Deal")
+        before, count = self.snapshot(), self.commits()
+        out = self.asker.ask("let Side Deal use the project's papers")
+        self.assertEqual("project", out["choices"][0]["layout"]["papers"])
+        self.assert_nothing_ran(before, count)
+
+    def test_the_box_cannot_run_the_verb(self):
+        out, _, _ = pa.perform(self.root, self.request(), pa.ops_lib(self.root), via="ask")
+        self.assertFalse(out["ok"])
+        self.assertTrue(self.clean())
+        out, _, _ = pa.perform(self.root, self.request(check=True, plan=True), pa.ops_lib(self.root), via="session")
+        self.assertFalse(out["ok"])
+
+    def test_a_heading_is_offered_nothing(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--heading", "--thread", "Harbour")
+        self.commit("Cedar")
+        out = self.asker.ask("make Cedar a heading")
+        self.assertEqual([], out["choices"])
+        self.assertIn("heading", out["say"])
 
 
 if __name__ == "__main__":

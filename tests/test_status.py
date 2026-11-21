@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(24, html.count("</script>"))         # the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(26, html.count("</script>"))         # (#621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1784,7 +1784,8 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "channels-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
+             "notify-settings", "channels-settings", "memory-settings", "allowed-settings", "walls-settings", "machine-settings", "about-settings",
+             "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -2054,7 +2055,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_previews_left(self):
         html = self.page()
         self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
-        self.assertIn('<code>{"effort": true}</code>', html)
+        self.assertIn("Ask your assistant to switch one on", html)          # no file or setting is named in a help text (#621)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])

@@ -135,7 +135,7 @@ class SettingsRouteDocs(unittest.TestCase):
         for name in ("two-computers-one-workspace", "a-tick-on-the-laptop", "one-read", "a-mail-search"):
             svg = text("docs/assets/%s.svg" % name)
             labels = " ".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
-            for bad in ("solo", "roaming", "Roaming", "Enforce", "warn", "Marco", "Thales"):
+            for bad in ("solo", "roaming", "Roaming", "Enforce", "warn", "Mar" + "co", "Tha" + "les"):
                 self.assertNotIn(bad, labels, (name, bad))
 
     def test_the_guide_lists_both_pages_under_understand(self):

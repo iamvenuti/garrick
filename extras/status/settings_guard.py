@@ -185,17 +185,17 @@ def machine_section(role: str, name: str, server: str, help_button: Callable, he
            '<button class="act apponly" type="button" id="role-change" data-rolechange="1">Change…</button>%s</div>%s'
            % (esc(role), esc(name), esc(server), esc(shown), esc(ROLE_TEXT[role]), help_button("This computer's role", "machine-role"),
               help_text("machine-role", esc(ROLE_TEXT[role]))))
-    dialog = ('<dialog id="role-dialog" class="rolebox" aria-labelledby="role-title"><form method="dialog" id="role-form">'
+    dialog = ('<div id="role-dialog" class="rolebox" role="dialog" aria-modal="true" aria-labelledby="role-title" hidden><div class="rolepanel" id="role-form">'
               '<h3 id="role-title" tabindex="-1">This machine</h3><fieldset class="rolepick"><legend>This computer is</legend>%s</fieldset>'
               '<div class="rolefields"><label id="role-name-row">This computer\'s name (optional)'
               '<input type="text" id="role-name" maxlength="40" autocomplete="off" placeholder="laptop"></label>'
               '<label id="role-server-row" hidden>The home server\'s name'
               '<input type="text" id="role-server" maxlength="40" autocomplete="off" placeholder="mini"></label></div>'
-              '<p class="rolesays" id="role-says" aria-live="polite"></p><p class="hint">%s</p>'
+              '<p class="rolesays" id="role-says" aria-live="polite"></p><p class="hint rolefoot">%s</p>'
               '<p class="roleerr" id="role-err" role="alert" hidden></p>'
               '<div class="roleacts"><button class="act" type="button" id="role-yes">Change the role</button>'
-              '<button class="act" type="button" id="role-no">Cancel</button></div></form>'
-              '<script type="application/json" id="role-changes">%s</script></dialog>'
+              '<button class="act" type="button" id="role-no">Cancel</button></div></div>'
+              '<script type="application/json" id="role-changes">%s</script></div>'
               % (choices, esc(ROLE_FOOT), json.dumps(ROLE_CHANGES).replace("<", "\\u003c")))
     return ('<section class="setsec" id="machine-settings"><h3>This machine%s</h3><p class="setlede">%s</p>%s%s'
             '<p class="hint nohost-only">The role is changed in Garrick.app.</p>%s</section>'
@@ -210,7 +210,7 @@ def radios(name: str, group: str, choices, current: str, label: str, help_btn: s
 
 
 def item_list(key: str, items: List[str], label: str) -> str:
-    rows = "".join('<li class="rgitem" data-item="%s"><code>%s</code>'
+    rows = "".join('<li class="rgitem" data-item="%s"><span class="rgtool">%s</span>'
                    '<button class="act rgrem" type="button" data-rg-remove="%s" data-list="%s" aria-label="Remove %s">Remove</button></li>'
                    % (esc(i), esc(i), esc(i), key, esc(i)) for i in items) or '<li class="rgnone hint">None.</li>'
     return ('<ul class="rgitems" data-list="%s">%s</ul><span class="rgadd"><input type="text" class="rgnew" data-list="%s" '
@@ -256,7 +256,7 @@ def guard_block(state: dict, codex: bool, help_button: Callable, help_text: Call
     seen = ""
     if mode == "warn":
         lines = would_lines(state["would"])
-        seen = ('<div class="rgseen" id="rg-seen"><p class="hint">%s%s</p>%s</div>'
+        seen = ('<div class="rgseen" id="rg-seen"><p class="hint rgline">%s%s</p>%s</div>'
                 % (" ".join(esc(l) for l in lines),
                    ' <button class="act rgsmall" type="button" id="rg-show" aria-expanded="false" aria-controls="rg-list">Show</button>' if state["would"] else "",
                    '<div class="rglist" id="rg-list" hidden>%s</div>' % show_list(state["would"]) if state["would"] else ""))
@@ -289,8 +289,8 @@ CSS = r"""
 .nohost-only{display:none}.nohost .nohost-only{display:block}
 .launcher-row .qhelp{margin-left:8px;align-self:center}.rgtitle .qhelp{margin-left:0}
 #machine-settings .mrole{align-items:center}
-.rolebox{max-width:min(520px,calc(100vw - 32px));width:100%;padding:18px 20px;border:1px solid var(--line);border-radius:12px;color:var(--ink);background:var(--surface)}
-.rolebox::backdrop{background:rgba(0,0,0,.35)}
+.rolebox{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.35)}.rolebox[hidden]{display:none}
+.rolepanel{max-width:min(520px,100%);width:100%;max-height:100%;overflow:auto;box-sizing:border-box;padding:18px 20px;border:1px solid var(--line);border-radius:12px;color:var(--ink);background:var(--surface)}
 .rolebox h3{margin:0 0 10px}.rolepick{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}.rolepick legend{font-size:var(--fs-meta);color:var(--muted);padding:0;margin-bottom:6px}
 .rolechoice{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
 .rolechoice:has(input:checked){border-color:var(--accent);background:var(--wash)}
@@ -303,7 +303,7 @@ CSS = r"""
 .rgblock[hidden]{display:none}.rgchoices{display:inline-flex;gap:12px;flex-wrap:wrap;align-items:center}.rgchoice{display:inline-flex;gap:5px;align-items:center;font-size:var(--fs-body)}
 .rgrow{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:4px 0}.rgtitle{flex:0 0 190px;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body)}
 .rglist-row{align-items:flex-start}.rgbody{flex:1 1 260px;min-width:0}.rgitems{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:4px}
-.rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem code{flex:1;min-width:0;overflow-wrap:anywhere}
+.rgitem{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta)}.rgitem .rgtool{flex:1;min-width:0;overflow-wrap:anywhere;font-family:var(--mono,ui-monospace,monospace)}
 .rgadd{display:flex;gap:6px;align-items:center}#readguard-settings .rgsmall,#readguard-settings .rgrem,#readguard-settings .rgadd .act{padding:2px 9px;min-height:0;line-height:1.5;font-size:var(--fs-meta)}.rgadd input{flex:1;min-width:0;font:inherit;font-size:var(--fs-meta);padding:3px 7px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
 .rgseen,.rgcannot,.rgcodex,.rgfoot,.rgsaid{margin:4px 0}.rgcannot{color:var(--critical)}.rglist{margin:6px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;max-height:200px;overflow:auto;font-size:var(--fs-meta)}
 .rglist ul{margin:2px 0 8px;padding-left:18px}.rglistzone b{font-weight:560}
@@ -332,12 +332,12 @@ document.getElementById('role-says').textContent=changes[r]||'';err.hidden=true}
 dlg.querySelectorAll('input[name="role-pick"]').forEach(function(i){i.onchange=show});srv.oninput=function(){err.hidden=true};
 document.getElementById('role-change').onclick=function(){var cur=row.dataset.role||'solo';
 dlg.querySelectorAll('input[name="role-pick"]').forEach(function(i){i.checked=i.value===cur});srv.value=row.dataset.server||'';nm.value=row.dataset.name||'';show();
-if(dlg.showModal)dlg.showModal();else dlg.setAttribute('open','')};
-document.getElementById('role-no').onclick=function(){if(dlg.close)dlg.close();else dlg.removeAttribute('open')};
+dlg.hidden=false;nm.focus()};
+document.getElementById('role-no').onclick=function(){dlg.hidden=true};dlg.addEventListener('keydown',function(e){if(e.key==='Escape'){e.stopPropagation();e.preventDefault();dlg.hidden=true}});
 document.getElementById('role-yes').onclick=function(){var r=pick(),s=srv.value.trim(),n=nm.value.trim();
 if(r==='roaming'&&!s){err.textContent='A laptop copy needs the name of the home server.';err.hidden=false;srv.focus();return}
 var q={verb:'machine-role',role:r};if(r!=='solo'&&n)q.name=n;if(r==='roaming')q.server=s;
-if(send(q)){if(dlg.close)dlg.close();else dlg.removeAttribute('open')}}}
+if(send(q))dlg.hidden=true}}
 /* ---- the read guard ---- */
 function was(el){return el.dataset.was}
 if(rg){

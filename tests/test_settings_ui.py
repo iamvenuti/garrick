@@ -205,8 +205,8 @@ class TestReadGuardBlock(SettingsCase):
         self.assertRegex(sec, r'<input type="radio" name="rg-cross" value="deny" checked>')          # Refuse
         for label in ("Off", "Watch only", "On", "Refuse", "Ask me"):
             self.assertIn("> %s</label>" % label, sec)
-        self.assertIn("<code>mcp__*Gmail*</code>", sec)
-        self.assertIn("<code>mcp__*Calendar*</code>", sec)
+        self.assertIn('<span class="rgtool">mcp__*Gmail*</span>', sec)
+        self.assertIn('<span class="rgtool">mcp__*Calendar*</span>', sec)
         self.assertEqual(2, sec.count('data-rg-remove='))                                           # a remove button on each item
         self.assertEqual(2, sec.count('data-rg-add='))                                              # an Add on each list
         self.assertRegex(sec, r'data-rg="skip">.*?None\.')                                          # the second list is empty
@@ -225,9 +225,9 @@ class TestReadGuardBlock(SettingsCase):
         self.settings_file(**{"read-guard-cross-zone": "ask", "connector-tools": ["mcp__*Mail*"], "connector-tools-skip": ["mcp__weather__*"]})
         sec = self.block()
         self.assertRegex(sec, r'name="rg-cross" value="ask" checked')
-        self.assertIn("<code>mcp__*Mail*</code>", sec)
+        self.assertIn('<span class="rgtool">mcp__*Mail*</span>', sec)
         self.assertNotIn("mcp__*Gmail*", sec)
-        self.assertIn("<code>mcp__weather__*</code>", sec)
+        self.assertIn('<span class="rgtool">mcp__weather__*</span>', sec)
 
     def test_under_watch_only_it_says_what_it_would_have_stopped_in_the_last_seven_days_with_show(self):
         self.assistants(registered=True)
@@ -270,7 +270,7 @@ class TestReadGuardBlock(SettingsCase):
 
     def test_when_the_filter_cannot_run_the_row_says_so_in_plain_words(self):
         self.assistants(registered=True)
-        (self.root / "System" / "context.md").write_text("# Context\n")
+        (self.root / "System" / "context.md").write_text("# Context\n\n## Zones\n\n| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | yes |\n")
         for mode, tail in (("warn", "Watch only lets every result through"), ("enforce", "every result from those tools is held back")):
             with self.subTest(mode=mode):
                 self.settings_file(**{"read-guard": mode})
@@ -279,7 +279,7 @@ class TestReadGuardBlock(SettingsCase):
                 self.assertIn("the mail and calendar check cannot run", sec)
                 self.assertIn(tail, sec)
         self.settings_file(**{"read-guard": "warn"})
-        (self.root / "System" / "context.md").unlink()
+        (self.root / "System" / "context.md").write_text("# Context\n\n## Zones\n\n| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | yes |\n\n## Parties\n")
         self.assertIn("cannot run", self.block())
 
     def test_with_the_filter_able_to_run_the_row_is_not_there(self):

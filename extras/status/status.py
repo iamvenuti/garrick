@@ -4717,11 +4717,9 @@ def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
     zones. The note about flags read from the Parties and Zones tables moves here with the rows."""
     ctx = workspace_context(ws)
     flags = ctx.get("zone_walled") or {}
-    guard = read_guard_block(ws)
     if not flags:
-        return ('<section class="setsec" id="walls-settings">%s%s%s</section>'
-                % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
-                   help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), guard)) if guard else ""
+        return ""
+    guard = read_guard_block(ws)
     where = str(folder or ws)
     rows = ""
     for z, walled in sorted(flags.items()):

@@ -2888,7 +2888,7 @@ class TestWhereTheChoicesLive(StatusCase):
         self.assertEqual(prefs.lib(self.root).PREFERENCES_FILE, prefs.FILE)
         self.assertEqual("System/garrick-settings.json", prefs.FILE)
         html = self.page()
-        self.assertIn("<code>System/garrick-settings.json</code>", html)          # Settings says where they are kept
+        self.assertNotIn("<code>System/garrick-settings.json</code>", html)       # a help text names no file (#621): kept with the workspace
         self.assertNotIn("status-settings.json", html)
 
     def test_every_reader_reads_the_same_file(self):

@@ -503,6 +503,31 @@ How it works, and what it cannot do:
 - **The app tells it which apps are on** by leaving one empty file for each in `~/Library/Application Support/Garrick/Finder`. That is the only thing the app writes for it.
 - **After a rebuild** the extension is registered again and, if it was on, switched off and on, so Finder starts the new copy. If the menu does not appear, switch Garrick off and on in the same System Settings pane.
 
+## When something fails
+
+Every failure the app can show has one plain sentence and one next step. The tool's own text, the command it ran and any failure count sit under *Details*, closed until you open it, and nothing is dropped. A failure this list does not name says *This did not finish.*, with *Details*. The page and the notification line say a change is saved only after the operation record, `operations.jsonl`, holds its commit.
+
+| Failure | Where it comes from | The sentence | The next step |
+|---|---|---|---|
+| The zone's wall check refused a save | A button, Ask or a session; the record says `refused` | The rules' own sentence, word for word | None: the sentence stands alone |
+| Another check refused a save (a line that changed, a note that moved, a collision) | The same; the record says `refused` | This was not saved: the check refused it. | *Show why*, which opens *Details* |
+| A save stopped on an error | The record says `crashed` | This was not saved: the action stopped before it finished. | *Try again*, which sends the same request once more |
+| A save ended without saying how | The record says `unknown`: the worker died and left nothing | We cannot tell whether this went through. | *Refresh*, which rebuilds the page |
+| A save the page heard nothing of | No reply for sixteen minutes, or the record has no entry for it | This page did not hear back, so we cannot tell whether this went through. | *Refresh* |
+| A change that was made but not recorded | The reply says it worked, but the record holds no outcome for an action it keeps | The change was made, but Garrick could not confirm it from its record. | *Refresh* |
+| A reply that failed with no outcome | The app could not run `page_action.py` (on the page), or the action has no record (on the notification line) | This was not saved: the action stopped before it finished. On the notification line: This did not finish. | *Try again* |
+| *Continue* did not open Claude | `handoff.py` and the app's bridge | Claude did not open. | *Try again* |
+| *Open in Claude*, *Codex* or *cmux* from the menu or a card did not open | The Mac app's own launcher, before any request is sent | The app's name, then "did not open", then the thread's name | Say the phrase that resumes it, which the sentence names |
+| Ask could not start its server, or lost it before the answer | `ask.py`, shown in the Ask box | The ask server did not start. or The ask server stopped before it answered. | Ask again |
+| Ask did not answer in time | `ask.py`, shown in the Ask box | Garrick did not answer in a few minutes, and the change may still be on its way | Look at the Todo list or the thread before asking again |
+| Ask stopped on an error | `ask.py`, shown in the Ask box | Something went wrong, or That did not work, then the reason | Ask again |
+| The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
+| The page did not rebuild | The Mac app, after a build that failed | The window subtitle: Did not rebuild; showing the last build | *Refresh* |
+| An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
+| Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
+
+The sentences are one table in `page_action.py` (`FAILURES`). The page reads it when it is built, and a failed reply from `page_action.py` carries the matching `plain` entry, which the Mac app's notification line shows in place of the tool's text.
+
 ## What the actions keep
 
 The buttons that change something all go through `page_action.py`, from the Mac app or [Ask](#ask).

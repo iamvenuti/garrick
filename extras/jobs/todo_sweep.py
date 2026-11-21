@@ -208,7 +208,7 @@ def followup_answers(text: str, items: List[dict]) -> Optional[List[dict]]:
             item = items[int(m.group(1)) - 1]
             said = m.group(3).strip().strip("`'\"\u2018\u2019\u201c\u201d ").strip()
             listed = [e["path"] for e in item["evidence"]]
-            source = max((p for p in listed if said.startswith(p)), key=len, default=said)
+            source = max((p for p in listed if said == p or (said.startswith(p) and not (said[len(p)].isalnum() or said[len(p)] in "._-/~"))), key=len, default=said)
             out.append({"key": item["key"], "result": m.group(2).lower(), "source": source})
     return out
 

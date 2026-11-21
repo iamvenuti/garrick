@@ -2408,19 +2408,25 @@ class TestChase(ActionCase):
         self.assertEqual(1, len(git(self.work, "log", "--format=%s").splitlines()))     # and nothing was committed
 
     def test_the_held_chase_shows_its_subject_and_body_cut_at_four_hundred_characters(self):
-        self.engine.say = "Hi Dana, " + "x" * 600
-        self.chase()
-        shown = self.engine.hold.shown(self.held()[0])
+        entry = self.engine.hold.add("ask", "Work", "chase-x", "Send a follow-up", "dana@acmecorp.example",
+                                     {"tool": "mcp__mail__send", "args": {"to": ["dana@acmecorp.example"], "subject": "Following up: x",
+                                                                          "body": "Hi Dana, " + "x" * 600}})
+        shown = self.engine.hold.shown(entry)
         self.assertIn("subject: Following up:", shown)
         self.assertIn("body: Hi Dana, xxx", shown)
         self.assertTrue(shown.endswith("[cut]"))
         self.assertLess(len(shown), 600)
+        self.engine.hold.cancel(entry["id"])
         self.engine.say = "Short."
-        for e in self.held():
-            self.engine.hold.cancel(e["id"])
         self.chase()
         self.assertIn("body: Short.", self.engine.hold.shown(self.held()[-1]))
         self.assertIn("body: Short.", self.engine.hold.say(self.held()[-1]))
+
+    def test_a_draft_longer_than_the_confirmation_shows_is_never_held(self):
+        self.engine.say = "Hi Dana, " + "x" * (self.engine.hold.SHOWN_TEXT + 50)
+        got = self.chase()
+        self.assertEqual([], self.held())
+        self.assertIn("longer than a confirmation can show", json.dumps(got))
 
     def test_the_source_text_never_reaches_the_drafting_prompt(self):
         write(self.work / ".todo-followups.json", json.dumps({

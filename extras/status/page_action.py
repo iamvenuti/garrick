@@ -5580,10 +5580,14 @@ def chase(ws: Path, req: dict) -> object:
     tool = chase_setting(ws) if autonomy in ("act", "full") else ""
     todo = load_todo_skill(ws)
     to = todo.sender_address(Path(ws).resolve(), zone, person) if tool and todo is not None and person else ""
-    if not tool or not to:
+    # The confirmation of a held send shows at most hold.SHOWN_TEXT characters of the body. A longer draft is never
+    # held, so a yes never sends words the confirmation did not show: it is given to copy instead.
+    too_long = len(draft) > getattr(hold, "SHOWN_TEXT", 0)
+    if not tool or not to or too_long:
         why = ("this is the Ask channel at Read" if autonomy == "read" else
                "no send tool is set for it under chase in System/garrick-settings.json" if not tool else
-               "no address for %s is in the zone's Inbox" % (person or "them"))
+               "no address for %s is in the zone's Inbox" % (person or "them") if not to else
+               "the draft is longer than a confirmation can show in full")
         return {"say": "Here is a draft. Nothing was sent, and nothing is waiting for your yes: %s." % why, "draft": draft, "held": ""}
     entry = hold.add("ask", zone.name, exchange, "Send a follow-up to %s about: %s" % (person, line[:120]), to,
                      {"tool": tool, "args": {"to": [to], "subject": "Following up: %s" % line[:80], "body": draft}})

@@ -5104,8 +5104,8 @@ def preview_section(flags: Dict[str, bool]) -> str:
                    % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
             % (set_head("Preview features", "preview", "Off until you switch them on in a file."), rows,
-               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Ask your assistant '
-               'to switch one on, then rebuild the page. Point at a feature for what it does.')))
+               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Your assistant can '
+               'switch one on, then rebuild the page. Point at a feature for what it does.')))
 
 
 # The foot of Settings, under the last section: the cards hidden in this

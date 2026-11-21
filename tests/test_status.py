@@ -2055,7 +2055,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_previews_left(self):
         html = self.page()
         self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
-        self.assertIn("Ask your assistant to switch one on", html)          # no file or setting is named in a help text (#621)
+        self.assertIn("Your assistant can switch one on", html)          # no file or setting is named in a help text (#621)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])

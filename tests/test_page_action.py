@@ -1112,7 +1112,8 @@ class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""
 
     def run_script(self, request):
-        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root), "--via", "page"], input=request,
+        # As a session's shell runs it: a command line is never the page without Garrick.app's own process behind it.
+        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root), "--via", "session"], input=request,
                               capture_output=True, text=True)
 
     def lines(self):
@@ -1128,11 +1129,11 @@ class TestAudit(ActionCase):
                                     "password": "hunter2", "session": "abc"}))
         lines = self.lines()
         self.assertEqual(4, len(lines))
-        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September  \(page\)$")
+        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September  \(session\)$")
         self.assertIn('todo-add zone="Work" text="Book the room xxx', lines[1])
         self.assertIn("…\"  ->  ok: Added to Inbox", lines[1])
         self.assertLess(len(lines[1]), 320)
-        self.assertTrue(lines[2].endswith("?  ->  refused: not a request  (page)"))
+        self.assertTrue(lines[2].endswith("?  ->  refused: not a request  (session)"))
         self.assertIn("refused: Not done. Todo-add takes no password field and no session field.", lines[3])
         self.assertNotIn("hunter2", "\n".join(lines))
 
@@ -1977,7 +1978,7 @@ class TestScript(ActionCase):
         pa.act, sys.stdin = broken, io.StringIO(json.dumps({"verb": "todo-done", "zone": "Work"}))
         buf = io.StringIO()
         try:
-            with contextlib.redirect_stdout(buf):
+            with mock.patch.object(pa, "page_route", return_value=True), contextlib.redirect_stdout(buf):
                 code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin
@@ -2000,7 +2001,8 @@ class TestScript(ActionCase):
         pa.act, sys.stdin = broken, io.StringIO(json.dumps({"verb": "todo-done", "zone": "Work"}))
         buf = io.StringIO()
         try:
-            with mock.patch.object(pa, "ops_lib", return_value=None), contextlib.redirect_stdout(buf):
+            with mock.patch.object(pa, "ops_lib", return_value=None), mock.patch.object(pa, "page_route", return_value=True), \
+                    contextlib.redirect_stdout(buf):
                 code = pa.main(["--workspace", str(self.root), "--via", "page"])
         finally:
             pa.act, sys.stdin = real, stdin

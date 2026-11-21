@@ -5891,6 +5891,66 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "outbox-drop")
 
 
+# ---- The page's own route (#618 leftover) -------------------------------------------------
+# `--via page` is a word on a command line: a session's shell can type it. So a request that says it comes from the page
+# is believed only when the process that started this one is Garrick.app itself, which the app's bridge is (act() runs
+# page_action.py as its child). The check reads what the kernel says about the parent, never an argument, a variable
+# or a file the session can write alone. It is a function, so a test replaces it in this process, and nothing outside
+# the process can switch it off.
+APP_BUNDLE_ID = "local.garrick.status"      # make-app.sh's APP_ID for an installed app (a scratch build has another)
+APP_EXECUTABLE = "Garrick"
+PAGE_REFUSED = "this is the page's own button; it is not for the ask box or a session"
+
+
+def _parent_executable():
+    """The real path of the program that started this process, as the kernel names it (proc_pidpath), or None where it
+    cannot be read. macOS only: elsewhere there is no app, so no page."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = ctypes.create_string_buffer(4096)
+        n = lib.proc_pidpath(os.getppid(), buf, ctypes.sizeof(buf))
+        return Path(os.fsdecode(buf.value)) if n > 0 else None
+    except Exception:
+        return None
+
+
+def page_route(ws: Path) -> bool:
+    """Whether this request really came through Garrick.app's bridge: the parent process is the app's own executable,
+    in an app bundle in an Applications folder (the user's or the Mac's) whose Info.plist carries Garrick's bundle
+    identifier and names this workspace. A lookup that fails says no. A person who builds and signs a look-alike app
+    in their own Applications folder can still pass it; nothing outside the process can, which is the line this draws."""
+    try:
+        exe = _parent_executable()
+        if exe is None or not exe.is_absolute() or exe.resolve() != exe:
+            return False
+        bundle = exe.parent.parent.parent
+        if exe.name != APP_EXECUTABLE or exe.parent.name != "MacOS" or exe.parent.parent.name != "Contents" \
+                or bundle.suffix != ".app":
+            return False
+        homes = {(Path.home() / "Applications").resolve(), Path("/Applications")}
+        if bundle.parent.resolve() not in homes:
+            return False
+        import plistlib
+        with (bundle / "Contents" / "Info.plist").open("rb") as f:
+            info = plistlib.load(f)
+        if info.get("CFBundleIdentifier") != APP_BUNDLE_ID:
+            return False
+        named = info.get("GarrickWorkspace")
+        return isinstance(named, str) and Path(named).resolve() == Path(ws).resolve()
+    except Exception:
+        return False
+
+
+def caller(declared, ws: Path) -> str:
+    """Who the command line's `--via` says is asking, as far as it can be believed. A shell is a session. `page` holds
+    only when page_route() agrees; `ask` and `outbox` are in-process callers, never a command line, so a declared one is
+    a session too. Anything else is a session."""
+    return "page" if declared == "page" and page_route(ws) else "session"
+
+
 # The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
 PAGE_ONLY_ANSWERS = ("keep", "unkeep", "decision-holds")
 
@@ -6031,11 +6091,11 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             if isinstance(req, dict) and req.get("verb") in PAGE_ONLY and via != "page":
                 # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
                 # never reach it, and the command line has no verb for it.
-                raise Refused("this is the page's own button; it is not for the ask box or a session")
+                raise Refused(PAGE_REFUSED)
             if via != "page" and page_only_answer(req):
                 # Leaving a finding as it is, taking that back, and marking a decision as still holding are the user's own press:
                 # the ask box and a session never send them.
-                raise Refused("this is the page's own button; it is not for the ask box or a session")
+                raise Refused(PAGE_REFUSED)
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
                     run, joined = start_record(ops, req, via)
@@ -6202,7 +6262,7 @@ def main(argv=None) -> int:
     args = command_parser().parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
     cli = args.verb is not None
-    via = args.via or "session"          # S9: only an explicit --via page is the page
+    via = caller(args.via, ws)           # a declared `page` is believed only from Garrick.app's own bridge
     req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
@@ -6224,7 +6284,8 @@ def main(argv=None) -> int:
     except Exception as e:              # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
     out = with_plain(out, req, ops_lib(ws))
-    audit(req if req is not None else {}, out["ok"], logged or out["say"], via=via)
+    named = via if args.via in (None, via) else "%s; --via %s did not come from the app" % (via, args.via)
+    audit(req if req is not None else {}, out["ok"], logged or out["say"], via=named)
     if cli:                             # a session reads the sentence, not JSON
         undo = ("\nTo undo: python3 System/status/page_action.py undo --zone %s --commit %s" % (args.zone, out["commit"])
                 if out.get("ok") and out.get("commit") else "")

@@ -3234,7 +3234,7 @@ class TestWhatALaunchSays(StatusCase):
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_open_in_claude_on_a_thread_is_continue_where_the_cli_is_here(self):
         """#180: where the build found Claude Code's command-line tool, Open
-        in Claude on a thread sends the simple home's Continue request, and
+        in Claude on a thread sends Continue's request, and
         the working card says it is opening; without the tool it is the deep
         link, as before, and so is a card with no note to continue."""
         self.assertNotIn("data-cli", self.page(launchers=("claude",)))           # unsaid: the deep link

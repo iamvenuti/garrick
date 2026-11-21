@@ -42,6 +42,7 @@
   "test_memory_canary": 28.8,
   "test_merge_hooks": 21.0,
   "test_mod": 3.9,
+  "test_needs_you_rows": 16.0,
   "test_nested_checkout": 6.5,
   "test_next_up": 1.4,
   "test_notes": 23.0,

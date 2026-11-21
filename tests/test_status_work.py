@@ -647,7 +647,7 @@ class TestWorkOnThePage(StatusCase):
         # Ask something and the example's links act on no one zone (#175).
         # Stop, how far a copy or a move has got, and a work's own file opened (#189) take no zone's lock either,
         # nor what Settings › Memory would do (#108), which only reads, nor a note read or opened from Explore (#206).
-        unzoned = {"run", "settings", "check-name", "ask-desktop", "example", "discover",
+        unzoned = {"run", "settings", "check-name", "ask-desktop", "example",
                    "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update"}
         # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}

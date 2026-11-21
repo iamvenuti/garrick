@@ -7913,6 +7913,79 @@ def need_groups(needs: List[dict]) -> str:
     return html
 
 
+# ---- Waiting on you now > questions (#503) ----------------------------------------------
+# A question Garrick asked is a file in the `Needs you` folder of the work it blocks. It is a row of Waiting on you now in
+# its own zone, with a button for each answer and *Not now*; both go through page_action.py's `answer` and `later`. Each
+# row is one zone's, and nothing here adds one zone to another.
+QUESTION_BOX = "Needs you"
+QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
+QUESTION_ASK = 200
+
+
+def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
+    """The open questions in one piece of work's `Needs you` folder, oldest first, and the ones put off whose day has
+    come. One put off to a later day, an answered one and a file with no bold line to ask are left out."""
+    out: List[dict] = []
+    box = folder / QUESTION_BOX
+    if not box.is_dir():
+        return out
+    for f in sorted(box.glob("*.md")):
+        if f.name.startswith((".", "_")):
+            continue
+        fm = frontmatter(f)
+        state = as_text(fm.get("status")).strip().lower() or "open"
+        later = as_date(fm.get("later"))
+        if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
+            continue
+        try:
+            body = re.sub(r"\A---\n.*?\n---\n", "", f.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)
+        except OSError:
+            continue
+        ask, opts = "", []
+        for line in body.splitlines():
+            m = QUESTION_OPTION.match(line)
+            if m:
+                opts.append(m.group(1).strip())
+            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
+                ask = line.strip().strip("*").strip()
+        if ask:
+            out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
+                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name})
+    return out
+
+
+def question_need(q: dict, today: dt.date) -> dict:
+    """One question as one thing that waits: what it asks, one button for each answer it lists, *Not now*, and a link to
+    the threads. An answer in the user's own words is the assistant's: the row offers the listed answers only."""
+    own = q["own"].casefold()
+    ask = q["ask"] if len(q["ask"]) <= QUESTION_ASK else q["ask"][:QUESTION_ASK - 1].rstrip() + "\u2026"
+    buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s"' % E(q["file"]))
+                      for label in q["options"] if label.casefold() != own)
+    buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s"' % E(q["file"]))
+    return {"kind": "question", "group": "todo", "level": "warning", "zone": q["zone"], "count": 1,
+            "text": "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
+            "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
+
+
+def question_needs(ws: Path, today: dt.date) -> List[dict]:
+    """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
+    out: List[dict] = []
+    for zone in visible_dirs(ws / "Zones"):
+        found: List[dict] = []
+        for project in visible_dirs(zone):
+            hub = project / (project.name + ".md")
+            if hub.is_file():
+                found += questions_in(project, zone, today)
+            for thread in visible_dirs(project / "Threads"):
+                if (thread / (thread.name + ".md")).is_file():
+                    found += questions_in(thread, zone, today)
+        found.sort(key=lambda q: (q["asked"] or dt.date.max, q["file"]))
+        out += [question_need(q, today) for q in found]
+    return out
+
+
 LATE_ICON = ('<svg class="bi" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" '
              'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["late"])
 
@@ -8157,6 +8230,7 @@ lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+window.GarrickNeedsLead=function(){lead(box.children.length)};
 })();
 """
 
@@ -8191,6 +8265,19 @@ if(out&&out.ok&&b){line(row,say,b.commit,b.repo);var m=row.querySelector('[data-
 else{line(row,say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
+"""
+
+
+# ---- Waiting on you now > questions (#503): the row goes when its answer is noted ------
+# A question's buttons send `answer` or `later` (page_action.py). When the request was done the row goes, the group's count
+# and the card's sentence follow it; a refusal leaves the row, and the page says why in its own line.
+QUESTION_JS = r"""
+(function(){var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file})[0],
+row=b&&b.closest('.wneed');if(row){var g=row.closest('.wgroup'),c=document.getElementById('waiting-now');row.remove();
+if(g){var n=g.querySelector('.wgn'),left=g.querySelectorAll('.wneed').length;if(left)n.textContent=left;else g.remove()}
+if(c){c.dataset.n=Math.max(0,(+c.dataset.n||0)-1);if(window.GarrickNeedsLead)window.GarrickNeedsLead()}}}
+return prev?prev(q,out):undefined};})();
 """
 
 
@@ -8832,7 +8919,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date()))  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
+    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
@@ -8900,7 +8987,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

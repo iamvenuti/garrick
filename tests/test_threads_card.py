@@ -125,5 +125,124 @@ class Card(unittest.TestCase):
         self.assertNotIn("uppercase", card)
 
 
+HARNESS = r"""
+const vm = require("vm");
+const [panel, manage, card, hosted] = JSON.parse(process.argv[1]);
+const added = [];
+const ctx = { JSON, String, Array, Date, Math, setTimeout: () => 0, clearTimeout: () => 0,
+  localStorage: { getItem: () => null, setItem: () => {} },
+  document: { readyState: "complete", getElementById: (id) => id === "manage-data" ? { textContent: '{"zones":{},"acting":true}' } : null,
+              addEventListener: () => {}, createElement: () => ({}), body: { dataset: { launchers: "claude,cmux,finder", cli: "1" }, appendChild: () => 0 } } };
+ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
+vm.createContext(ctx);
+vm.runInContext(manage, ctx);
+ctx.GarrickManage = ctx.window.GarrickManage;
+vm.runInContext(panel + ";this.out=[Panel.card(" + JSON.stringify(card) + ",1), Panel.card(" + JSON.stringify(card) + ",0)]", ctx);
+process.stdout.write(JSON.stringify(ctx.out));
+"""
+
+PROJECT = {"n": "Harbour", "kl": "project", "z": "Work", "p": "", "t": ["acme"], "d": 1, "s": 0, "h": 1, "hp": 0, "tn": 3, "pp": ["Work", "Harbour"],
+           "mg": ["Work", "Harbour", "", [], [], ["Quay"], ["heading"]], "dk": ["Work", "Harbour", ""], "live": "idle", "f": "/w/Harbour",
+           "u": "file:///w/Harbour/Harbour.md", "w": "Harbour"}
+THREAD = {"n": "Quay", "kl": "thread", "z": "Work", "p": "Harbour", "t": ["acme"], "d": 3, "s": 0, "r": 1, "rd": 3, "pa": ["Work", "Harbour/Threads/Quay/Quay.md"],
+          "mg": ["Work", "Harbour", "Quay", [], [], [], ["own"]], "u": "file:///w/Quay.md", "w": "Quay"}
+
+
+class RowCard(unittest.TestCase):
+    """#620: header, Open in, a plain menu, Delete last."""
+
+    def run_card(self, card, hosted=True):
+        import json, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("Node is not installed")
+        done = subprocess.run(["node", "-e", HARNESS, json.dumps([status.PANEL_JS, status.MANAGE_JS, card, hosted])],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        import html
+        return [html.unescape(x) for x in json.loads(done.stdout)]
+
+    def order(self, html, *needles):
+        at = [html.index(n) for n in needles]
+        self.assertEqual(sorted(at), at, needles)
+
+    def test_a_project_reads_header_open_in_actions_then_delete(self):
+        row, graph = self.run_card(PROJECT)
+        self.order(row, 'class="phead"', 'class="pl pl1"', 'class="pl pl2"', 'class="gacts popen"', 'class="pmenu"', 'class="psep"', "Delete…")
+        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', "Close session", "Park</button>", 'class="psep"', 'data-manage="delete"')
+        self.assertTrue(row.rstrip().endswith("Delete…</button></div>"))                      # Delete is the last row
+        self.assertEqual(1, row.count('data-manage="delete"'))
+        self.assertIn("project · Work", graph)                                               # the graph's panel keeps kind, zone and project
+        self.assertNotIn("project · Work", row)
+
+    def test_line_one_is_the_chip_and_the_count_and_line_two_the_state(self):
+        row, _ = self.run_card(PROJECT)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><span>3 threads</span></div>', row)
+        self.assertIn('<div class="pl pl2">Touched yesterday</div>', row)
+        self.assertIn('<span class="live idle"></span>Session open in cmux, idle', row)
+        thread, _ = self.run_card(THREAD)
+        self.assertIn('<div class="pl pl2">Touched 3 days ago · Resume point dated 3 days ago</div>', thread)
+        self.assertNotIn("threads", thread.split('class="gacts')[0].split('pl1')[1])         # a thread has no count
+        parked, _ = self.run_card(dict(THREAD, s=1))
+        self.assertIn("Parked", parked)
+
+    def test_no_action_has_a_border_and_the_chip_is_the_only_bordered_element(self):
+        row, _ = self.run_card(PROJECT)
+        menu = row[row.index('class="pmenu"'):]
+        self.assertNotIn('class="act', menu)                                                 # plain rows
+        self.assertEqual(menu.count("<button"), menu.count('class="pmi'))
+        css = status.CSS
+        self.assertIn("border:0", css[css.index(".pmi{"):][:200])
+        self.assertEqual(1, row.count("chip"))
+        self.assertIn("border-color:transparent", css[css.index(".popen .act{"):][:80])
+
+    def test_delete_is_critical_icon_included_and_set_apart(self):
+        row, _ = self.run_card(PROJECT)
+        self.assertIn('<button class="pmi del" type="button" data-manage="delete"', row)
+        self.assertIn(".pmi.del,.pmi.del svg{color:var(--critical)}", status.CSS)
+        self.assertIn('<div class="psep" role="separator"></div><button class="pmi del"', row)
+
+    def test_every_verb_and_handler_is_kept(self):
+        row, _ = self.run_card(PROJECT)
+        for need in ('data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', 'data-manage="delete"', 'data-mg="',
+                     '"verb":"close"' if False else 'data-act=', 'data-expect="none:/w/Harbour"', 'data-expect="parked:Work/Harbour/Harbour.md"'):
+            self.assertIn(need, row)
+        thread, _ = self.run_card(THREAD)
+        self.assertIn('data-manage="move"', thread)
+        self.assertIn('data-manage="layout-own"', thread)
+        self.assertNotIn('data-manage="new-thread"', thread)
+        self.assertNotIn("Close session", self.run_card(dict(PROJECT, live=None, dk=None))[0])      # only with a session open
+
+    def test_a_parked_with_its_project_thread_has_no_menu_of_its_own(self):
+        row, _ = self.run_card(dict(THREAD, held=1, s=1, pa=None))
+        self.assertNotIn("pmenu", row)
+
+    def test_open_in_comes_first_and_the_default_is_a_dot_not_a_tint(self):
+        row, _ = self.run_card(PROJECT)
+        self.assertIn('<span class="plbl">Open in</span>', row)
+        self.assertLess(row.index("Open in"), row.index('class="pmenu"'))
+        css = status.CSS
+        self.assertIn('.appicons .act[data-k][data-d]::after{content:"";position:absolute;left:50%;bottom:-3px;width:4px;height:4px', css)
+        self.assertIn("background:var(--accent)", css[css.index("[data-d]::after"):][:200])
+        self.assertNotIn("22%,transparent)}\n.appicons .act[data-k]:hover", css)
+        self.assertIn("center/22px no-repeat", css[css.index(".appicons .act[data-k]{"):][:220])
+
+    def test_the_card_is_264_wide_and_the_rows_have_a_hover_and_a_focus_ring(self):
+        css = status.CSS
+        self.assertIn("width:264px", css[css.index(".gpop{position:absolute"):][:90])
+        self.assertIn("width:264px", css[css.index(".tcard{position:fixed"):][:90])
+        self.assertIn(".pmi:hover{background:var(--wash)}", css)
+        self.assertIn(":focus-visible{outline:2px solid var(--accent);outline-offset:2px}", status.LOOK_CSS)
+
+    def test_a_browser_keeps_the_words(self):
+        row, _ = self.run_card(THREAD, hosted=False)
+        self.assertIn("Open</a>", row)
+        self.assertIn('data-copy="park Quay"', row)
+
+    def test_one_component_for_row_search_result_and_graph_panel(self):
+        self.assertIn("tc.innerHTML=Panel.card(o,1);", status.JS)             # a project row, a thread row and a search result
+        self.assertIn("Panel.card(o,0,window.GarrickNote", status.GRAPH_JS)    # the graph panel
+        self.assertNotIn("Panel.head(o,1)+", status.JS)
+
+
 if __name__ == "__main__":
     unittest.main()

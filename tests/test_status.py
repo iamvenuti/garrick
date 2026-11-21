@@ -420,7 +420,7 @@ class TestGraph(StatusCase):
         self.assertIn("host.postMessage({act:{verb:'note-read',path:path}})", js)
         self.assertIn("host.postMessage({act:{verb:'note-open',path:path}})", js)
         # the card is drawn again for each node selected, a linked one included, so Preview reads the note in it
-        self.assertIn("Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')", status.GRAPH_JS)
+        self.assertIn("Panel.card(o,0,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')", status.GRAPH_JS)
         self.assertIn("if(b){var m=N[+b.dataset.i];", status.GRAPH_JS)
         self.assertIn("select(m,true)}});", status.GRAPH_JS)
 

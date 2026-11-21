@@ -1494,15 +1494,16 @@ class TestParkAProject(StatusCase):
         html = self.page()
         acme, birch = project_cards(html)["Acme Review"], project_cards(html)["Birch Entry"]
         pricing = cards(html)[("Acme Review", "Pricing")]
-        wake, park, held = panel(True, ("head", acme), ("head", birch), ("head", pricing))
+        wake, park, held, held_card = panel(True, ("menu", acme), ("menu", birch), ("menu", pricing), ("head", pricing))
         self.assertIn('data-act="{"verb":"wake","zone":"Work","project":"Acme Review"}"', wake)
         self.assertIn('data-expect="active:Work/Acme Review/Acme Review.md"', wake)
-        self.assertIn('title="Wake the project and every thread in it">Wake</button>', wake)
+        self.assertIn('title="Wake the project and every thread in it">', wake)
+        self.assertTrue(wake.endswith("Wake</button></div>"))
         self.assertIn('data-act="{"verb":"park","zone":"Work","project":"Birch Entry"}"', park)
         self.assertIn('data-expect="parked:Work/Birch Entry/Birch Entry.md"', park)
         self.assertNotIn("pflip", held)                                    # parked with its project: no button of its own
-        self.assertIn("Parked with its project", held)
-        browser = panel(False, ("head", dict(birch, pp=None)))[0]
+        self.assertIn("Parked with its project", held_card)
+        browser = panel(False, ("menu", dict(birch, pp=None)))[0]
         self.assertIn('data-copy="park Birch Entry"', browser)               # elsewhere it copies the phrase
 
 
@@ -1561,9 +1562,9 @@ class TestTheThreadsList(StatusCase):
         row, graph = panel(True, ("head", card, 1), ("head", card))
         self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the row above the project
         self.assertNotIn('<div class="muted">', row)
-        self.assertIn('<span class="chip" style="margin:0 4px 0 0">acme</span>', row)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span></div>', row)
         self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
-        self.assertIn("tc.innerHTML=Panel.head(o,1)+Panel.acts(o)", status.JS)
+        self.assertIn("tc.innerHTML=Panel.card(o,1);", status.JS)
 
     def test_the_live_dot_keeps_its_distance(self):
         self.assertIn(".thread .t a+.live{margin-left:.4em}", status.CSS)

@@ -1355,6 +1355,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if let plain = said["plain"] as? [String: Any], let band = plain["band"] as? String, !band.isEmpty {
 			return (band, band == own ? "" : own)
 		}
+		// The rules' wall sentence stands alone, so an older reply that has no "plain" keeps it whole.
+		if said["ok"] as? Bool == false, own.hasPrefix("A wall holds ") { return (own, "") }
 		if said["ok"] as? Bool == false, said["again"] == nil, !["asked", "running", "queued"].contains(said["state"] as? String ?? "") {
 			return (didNotFinish, own)
 		}

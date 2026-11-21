@@ -99,6 +99,21 @@ class TestTheReply(tpa.ActionCase):
         out = self.run_main({"verb": "frobnicate"})
         self.assertEqual({"ok": False, "say": "unknown action"}, out)           # the app says "This did not finish." for it
 
+    def test_a_wall_refusal_of_a_verb_outside_the_record_carries_the_wall_row(self):
+        self.assertNotIn("rename", ops.OPS)
+        out = pa.with_plain({"ok": False, "say": WALL}, {"verb": "rename"}, ops)
+        self.assertEqual("wall", out["plain"]["code"])
+        self.assertEqual(WALL, out["plain"]["band"])
+
+    def test_a_failed_hand_off_carries_the_handoff_row(self):
+        out = pa.with_plain({"ok": False, "say": "Could not start"}, {"verb": "continue"}, ops)
+        self.assertEqual("handoff", out["plain"]["code"])
+        self.assertEqual(pa.plain_failure("handoff")["band"], out["plain"]["band"])
+
+    def test_any_other_failure_without_a_record_keeps_the_fallback(self):
+        out = pa.with_plain({"ok": False, "say": "Could not rename"}, {"verb": "rename"}, ops)
+        self.assertNotIn("plain", out)
+
     def test_an_outcome_the_table_does_not_name_is_the_fallback(self):
         out = pa.with_plain({"ok": False, "say": "x", "outcome": "weird"}, {"verb": "park"}, ops)
         self.assertEqual(("other", "This did not finish."), (out["plain"]["code"], out["plain"]["say"]))
@@ -156,6 +171,8 @@ class TestTheNotificationLine(unittest.TestCase):
         # the rules' sentence is said alone
         wall = pa.plain_failure("wall", WALL)
         self.assertEqual([WALL, ""], line({"ok": False, "say": WALL, "outcome": "refused", "plain": wall}))
+        # an older reply with the wall sentence and no row keeps the sentence whole
+        self.assertEqual([WALL, ""], line({"ok": False, "say": WALL}))
         # a reply that is a question, or under way, is not a failure
         self.assertEqual(["Asked.", ""], line({"ok": False, "say": "Asked.", "state": "asked", "again": "a19f3c80"}))
         self.assertEqual(["Parking it\u2026", ""], line({"ok": True, "say": "Parking it\u2026", "state": "running"}))

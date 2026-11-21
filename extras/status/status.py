@@ -7992,10 +7992,10 @@ def question_need(q: dict, today: dt.date) -> dict:
     own = q["own"].casefold()
     ask = q["ask"] if len(q["ask"]) <= QUESTION_ASK else q["ask"][:QUESTION_ASK - 1].rstrip() + "\u2026"
     buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
-                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s"' % E(q["file"]))
+                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
                       for label in q["options"] if label.casefold() != own)
     buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
-                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s"' % E(q["file"]))
+                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
     return {"kind": "question", "group": "todo", "level": "warning", "zone": q["zone"], "count": 1,
             "text": "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
             "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
@@ -8305,7 +8305,7 @@ if(prev)return prev(q,out)};
 # and the card's sentence follow it; a refusal leaves the row, and the page says why in its own line.
 QUESTION_JS = r"""
 (function(){var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file})[0],
+if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file&&x.dataset.qz===q.zone})[0],
 row=b&&b.closest('.wneed');if(row){var g=row.closest('.wgroup'),c=document.getElementById('waiting-now');row.remove();
 if(g){var n=g.querySelector('.wgn'),left=g.querySelectorAll('.wneed').length;if(left)n.textContent=left;else g.remove()}
 if(c){c.dataset.n=Math.max(0,(+c.dataset.n||0)-1);if(window.GarrickNeedsLead)window.GarrickNeedsLead()}}}

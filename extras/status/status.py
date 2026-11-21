@@ -2060,6 +2060,8 @@ if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete
 var LAYW={};
 function lop(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
 function lbase(name){return String(name).split('/').pop()}
+/* a file name goes into a request for the assistant only when it is plain: letters, digits, spaces and ._-()&,' */
+function lsafe(name){return /^[\p{L}\p{N} ._\-()&,']+$/u.test(name)}
 function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:o.papers==='own'?'into '+o.thread+'’s papers':'into the project’s papers'}
 function lphrase(o){return o.heading?'make '+o.project+' a heading':o.papers==='own'?'give '+o.thread+' its own papers':'let '+o.thread+' use the project’s papers'}
 function details(t){return'<details class="mg-details"><summary>Details</summary><pre>'+esc(t)+'</pre></details>'}
@@ -2069,11 +2071,11 @@ if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block,
 if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.papers!=='project';
 h+='<p class="mg-msg">Left for you to place. Nothing here puts them anywhere:</p><ul id="lay-left">'+p.left.map(function(f,i){
 return'<li data-i="'+i+'"><span>'+esc(lbase(f[0]))+' ('+esc(f[1])+')</span>'+(sel?' <select aria-label="Thread for '+esc(lbase(f[0]))+'">'+p.threads.map(function(t){return'<option>'+esc(t)+'</option>'}).join('')+'</select>':'')
-+(sel&&z.folder?' <button class="act" type="button" data-request="" data-folder="'+esc(z.folder)+'" title="Hand the request to your assistant">Ask my assistant</button>':'')+'</li>'}).join('')+'</ul>'}
++(sel&&z.folder&&lsafe(lbase(f[0]))?' <button class="act" type="button" data-request="" data-folder="'+esc(z.folder)+'" title="Hand the request to your assistant">Ask my assistant</button>':'')+'</li>'}).join('')+'</ul>'}
 h+=details(out.say);d.querySelector('#lay-plan').innerHTML=h;
 /* the request for a left file names the file and the thread chosen; it is built when the choice or the button changes */
 [].forEach.call(d.querySelectorAll('#lay-left li'),function(li){var f=p.left[+li.dataset.i],s=li.querySelector('select'),b=li.querySelector('button');if(!b)return;
-function set(){b.dataset.request='In '+o.project+', place '+f[0]+' in the papers of the '+s.value+' thread. Its threads are '+p.threads.join(', ')+'.'}
+function set(){b.dataset.request='In '+o.project+', place the file "'+lbase(f[0])+'" in the papers of the '+s.value+' thread. Its threads are '+p.threads.join(', ')+'.'}
 s.onchange=set;set()});
 var go=d.querySelector('[data-go]');go.disabled=false}
 function lresult(d,o,out){var said=String((out&&out.say)||''),first=said.split('\n')[0],ok=!!(out&&out.ok),moved=ok&&/Changed in commit ([0-9a-f]{7,40})/.exec(said);

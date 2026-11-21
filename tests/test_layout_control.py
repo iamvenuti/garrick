@@ -241,7 +241,13 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
     def test_a_left_file_goes_to_the_assistant_as_a_request_never_to_a_move_of_its_own(self):
         self.assertIn("Ask my assistant", STATUS_SRC)
         self.assertIn("data-request=", STATUS_SRC)
-        self.assertIn("place '+f[0]+' in the papers of the '+s.value+' thread", STATUS_SRC)
+        self.assertIn("place the file \"'+lbase(f[0])+'\" in the papers of the '+s.value+' thread", STATUS_SRC)
+
+    def test_a_left_file_gets_the_assistant_button_only_for_a_plain_name(self):
+        # the name goes into the text handed to the assistant, so only letters, digits, spaces and ._-()&,' may
+        self.assertIn("function lsafe(name){return /^[\\p{L}\\p{N} ._\\-()&,']+$/u.test(name)}", STATUS_SRC)
+        self.assertIn("z.folder&&lsafe(lbase(f[0]))?' <button", STATUS_SRC)
+        self.assertNotIn("place '+f[0]+'", STATUS_SRC)
 
     def test_the_app_treats_a_look_as_reading_and_opens_the_dialog_for_a_choice(self):
         self.assertIn('request["verb"] as? String == "layout" && request["check"] as? Bool == true { return true }', SWIFT_SRC)

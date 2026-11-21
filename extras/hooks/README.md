@@ -97,6 +97,8 @@ python3 -m unittest discover -s tests -p test_zone_guard.py
 | `connector-tools` | a list of tool name patterns | the Gmail and Calendar patterns |
 | `connector-tools-skip` | a list of tool name patterns | none: tools you use that return nothing a party can label, so `check.py` stops naming them |
 
+The zone guard also refuses, in every mode, a session's write into the read guard's own folder (where its log and scope records are kept), and the read guard refuses a session's read of it once enforcing; each hook computes the folder the same way, and a test holds the two to one answer. A connector result is read whole: every list in it is filtered, what is left beside the lists is judged as one more result, and no count stays once anything is removed.
+
 It needs `python3` and the workspace's own `System/tools`. Point both assistants at `extras/hooks/read_guard.py` in the Garrick download you keep, as for the zone guard.
 
 **Claude Code**: add to the `hooks` block of `~/.claude/settings.json`, beside the zone guard's entries:

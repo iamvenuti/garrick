@@ -113,7 +113,8 @@ class TestKindTable(unittest.TestCase):
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
-        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed"), fq.PLAIN_KINDS)
+        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction"),
+                         fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
         self.assertEqual("mechanical", fq.MECHANICAL)
@@ -123,7 +124,9 @@ class TestPlainWording(unittest.TestCase):
             self.assertEqual(plain, fq.plain_kind(it), plain)
         self.assertEqual("mechanical", fq.plain_kind({"kind": "mechanical", "check": "links", "line": "x"}))
         self.assertEqual("", fq.plain_kind({"kind": "judgment", "check": "links", "line": "Zones/Work/a.md: something odd"}))
-        self.assertEqual("", fq.plain_kind({"kind": "attribution", "check": "memory", "line": "a"}))
+        self.assertEqual("attribution", fq.plain_kind({"kind": "attribution", "check": "memory", "line": "a"}))
+        self.assertEqual("correction", fq.plain_kind({"kind": "correction", "check": "", "line": "a"}))
+        self.assertEqual("", fq.plain_kind({"kind": "fade", "check": "", "line": "a"}))              # a kind the card never shows keeps no wording
         # the same words under another check are not the same finding
         self.assertEqual("", fq.plain_kind(dict(KINDS["resume-long"], check="threads")))
 
@@ -214,7 +217,8 @@ class TestPlainWording(unittest.TestCase):
                           "todo-long": ("keep", "later", "unkeep"),
                           "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
-                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep")}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep"),
+                          "attribution": ("later",), "correction": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -1332,12 +1336,15 @@ class TestEveryQuestionNamesItsSubject(unittest.TestCase):
             "meeting-long": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", MEETING_LINE),
             "hooks-blocked": ("Zones/Work", "Zones/Personal", HOOKS_LINE),
             "fix-failed": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: fixed (held: refused by the wall check)"),
+            "attribution": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", "%(p)s: unfinished: no zone"),
+            "correction": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: holds the value being corrected"),
         }
         self.assertEqual(set(fq.PLAIN_KINDS), set(pairs), "a kind with plain wording needs a pair here")
         for plain, (one, two, line) in pairs.items():
-            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical"}.get(plain, "judgment")
+            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "attribution": "attribution",
+                    "correction": "correction"}.get(plain, "judgment")
             check = {"note-long": "projects", "resume-long": "resume", "todo-long": "todo", "meeting-long": "meetings",
-                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x"}[plain]
+                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x", "attribution": "meetings", "correction": ""}[plain]
             sentences = []
             for path in (one, two):
                 it = item(kind, check, path, line, **({"listed": True, "message": "%s: repeats eight or more words from Personal: '%s'" % (path, REPEATED)} if plain == "wall" else {}))
@@ -1838,6 +1845,75 @@ class TestItStillHolds(PanelCase):
 def _status_for_panel():
     from test_questions_panel import status as panel_status
     return panel_status
+
+
+class TestAttributionAndCorrection(unittest.TestCase):
+    """#535: the two Nurture kinds that need a person had no wording of their own and fell to the generic sentence. They have it now,
+    with answers that go through the verbs there are: the assistant, the notes app, and Not now."""
+
+    PAGE = "Wikis/Meetings/wiki/261012 - Call.md"
+    ATTR = {"kind": "attribution", "check": "meetings", "path": PAGE, "scope": "Wikis/Meetings", "line": PAGE + ": unfinished: no zone or parties; ask which"}
+    CORR = {"kind": "correction", "check": "", "path": "Zones/Work/Acme Review/Acme Review.md", "scope": "Zones/Work",
+            "line": "Zones/Work/Acme Review/Acme Review.md: holds the value being corrected"}
+
+    def test_each_has_its_sentence_reason_tag_and_answers_and_no_path(self):
+        for it, sentence, labels in (
+                (self.ATTR, "“261012 - Call” in the Meetings wiki has a question only you can answer.",
+                 ["Sort it out with my assistant", "Let me open it", "Not now"]),
+                (self.CORR, "A correction in “Acme Review” in Work is not finished.",
+                 ["Finish the correction with my assistant", "Let me open it", "Not now"])):
+            q = fq.question(it, it["scope"])
+            self.assertEqual(sentence, q["sentence"])
+            self.assertEqual(labels, [a["label"] for a in q["answers"]])
+            self.assertTrue(q["why"] and q["tag"])
+            self.assertEqual(q["answers"][0]["id"], q["recommended"])
+            shown = text_of(fq.question_html(q))
+            for gone in ("Zones/", "Wikis/", ".md", "`", "--", "unfinished: no zone"):
+                self.assertNotIn(gone, shown)                                            # the check's own text is under Details only
+            self.assertIn(it["line"].split(": ", 1)[1], q["details"])
+            self.assertNotEqual("other", q["id"])
+            self.assertEqual(fq.QUESTION, fq.KIND_CLASS[q["id"]])
+
+    def test_they_have_no_keep_and_not_now_is_the_usual_one(self):
+        for kind in ("attribution", "correction"):
+            self.assertEqual(["later"], [a["id"] for a in fq.ANSWERS[kind] if a["action"] in ("later", "keep", "run")])
+            self.assertNotIn(kind, fq.KEEPABLE)
+        q = fq.question(self.ATTR, "Wikis/Meetings")
+        later = next(a for a in q["answers"] if a["id"] == "later")
+        self.assertEqual({"verb": "finding", "kind": "attribution", "path": self.PAGE, "answer": "later"}, later["req"])
+        self.assertEqual(fq.later_key("attribution", self.PAGE), q["key"])
+
+    def test_the_hand_off_names_the_file_and_never_the_checks_words(self):
+        for it in (self.ATTR, self.CORR):
+            phrase = fq.question(it, it["scope"])["answers"][0]["phrase"]
+            self.assertIn(it["path"], phrase)
+            self.assertIn("show me the change before anything is committed", phrase.lower())
+            self.assertNotIn("unfinished", phrase)
+            self.assertNotIn("holds the value", phrase)
+
+    def test_each_is_in_the_queue_of_its_own_place_and_not_now_hides_it(self):
+        out = fq.forecast_questions([self.ATTR, self.CORR], set())
+        self.assertEqual({"Wikis/Meetings", "Zones/Work"}, set(out))
+        self.assertEqual(["attribution"], [q["id"] for q in out["Wikis/Meetings"]])
+        self.assertEqual(["correction"], [q["id"] for q in out["Zones/Work"]])
+        self.assertEqual({"Zones/Work"}, set(fq.forecast_questions([self.ATTR, self.CORR], {fq.later_key("attribution", self.PAGE)})))
+
+    def test_a_page_with_a_wall_finding_has_no_question_of_its_own(self):
+        path = "Zones/Work/Acme Review/Deliverables/261027 - Sales deck.md"
+        wall = dict(KINDS["wall"], scope="Zones/Work")
+        attr = dict(self.ATTR, path=path, scope="Zones/Work", line=path + ": unfinished: no zone")
+        corr = dict(self.CORR, path=path)
+        got = fq.forecast_questions([wall, attr, corr], set())["Zones/Work"]
+        self.assertEqual(["wall"], [q["id"] for q in got])
+
+    def test_every_request_they_send_is_valid_for_the_verb_it_names(self):
+        for it in (self.ATTR, self.CORR):
+            for a in fq.question(it, it["scope"])["answers"]:
+                if a["action"] == "open":
+                    for req in a["reqs"]:
+                        self.assertEqual("note-open", req["verb"])
+                elif a["action"] == "later":
+                    self.assertIn(a["req"]["answer"], fq.VERB_ANSWERS[it["kind"]])
 
 
 if __name__ == "__main__":

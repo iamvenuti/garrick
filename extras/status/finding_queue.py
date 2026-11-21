@@ -70,7 +70,7 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
 # the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed")
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -84,6 +84,7 @@ AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
+    "attribution": QUESTION, "correction": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
@@ -120,6 +121,14 @@ ANSWERS: Dict[str, List[dict]] = {
     "fix-failed": [A("fix-now", "Fix it with my assistant", "Your assistant makes the fix and shows you the change.", "handoff"),
                    A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
+    # Nurture's two kinds that need a person and had no wording of their own (#535): which side something belongs on, and a
+    # correction that could not be finished. Both go to the assistant, or open the file; neither is kept, and Not now is as for the rest.
+    "attribution": [A("sort-it", "Sort it out with my assistant", "Your assistant asks you the question and shows you the change.", "handoff"),
+                    A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
+                    A("later", "Not now", "Ask again in a week.", "later")],
+    "correction": [A("finish", "Finish the correction with my assistant", "Your assistant makes the rest of the change and shows it to you.", "handoff"),
+                   A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
+                   A("later", "Not now", "Ask again in a week.", "later")],
 }
 # The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
 OTHER = "other"
@@ -147,14 +156,17 @@ NO_MOVE = {
     "unknown": ("Garrick could not ask what would move, so it does not offer a move.", "history.py did not answer in time, or is not in this workspace."),
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
-        "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up"}
+        "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up", "attribution": "Needs your answer",
+        "correction": "Tidy up"}
 HELD = re.compile(r"\(held: (.+)\)\s*$")
 # The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
 HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
               ("not committed", "It has changes that are not committed yet."), ("could not be undone", "No single repository holds its files."),
               ("two repositories", "Its files are in two repositories."), ("refused", "The commit was refused by the wall check."),
               ("changed again", "The file changed again while the fix was being checked."))
-WHY = {"fix-failed": "A fix this small is made on its own at night. This one was held back.",
+WHY = {"attribution": "Garrick cannot tell which of two ways is right, and a wrong guess could put material in the wrong project or on the wrong side of a wall.",
+       "correction": "A value you corrected still stands in a file Garrick could not change on its own, so the old and the new value disagree.",
+       "fix-failed": "A fix this small is made on its own at night. This one was held back.",
        "note-long": "Long pages are slow to read and slow for the assistant. Older entries can move to a history page, where they stay linked.",
        "resume-long": "A resume point is what you read first when you come back, so a short one is quicker to take in.",
        "todo-long": "A line names one action. What came of it belongs in the thread's notes.",
@@ -229,6 +241,8 @@ def plain_kind(item: dict) -> str:
         return "wall"
     if kind == MECHANICAL:
         return MECHANICAL
+    if kind in ("attribution", "correction"):
+        return kind
     if kind != "judgment":
         return ""
     if check in ("projects", "threads") and "`note-max-words`" in line and NOTE_RE.search(line):
@@ -593,6 +607,10 @@ def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
         n = int(MEETING_RE.search(text).group(1))
         title, day = meeting_subject(ws, path)
         return ("The meeting note “%s”%s is longer than usual: %s words." % (title, ", " + day + "," if day else "", about(n)), WHY[plain])
+    if plain == "attribution":
+        return ("“%s” in %s has a question only you can answer." % (stem(path), place(path)), WHY[plain])
+    if plain == "correction":
+        return ("A correction in “%s” in %s is not finished." % (stem(path), place(path)), WHY[plain])
     if plain == "fix-failed":
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
@@ -645,6 +663,11 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
                 "Show me the change before anything is committed." % path)
     if plain == "fix-failed":
         return "Make the small fix that Nurture holds back for %s, and show me the change before anything is committed." % path
+    if plain == "attribution":
+        return ("Ask me the question Nurture holds about %s, and with my answer make the change. Show me the change before anything "
+                "is committed." % path)
+    if plain == "correction":
+        return "Finish the correction that Nurture holds back for %s, and show me the change before anything is committed." % path
     if plain == "hooks-blocked":
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
@@ -693,7 +716,8 @@ def free_prefix(plain: str, item: dict) -> str:
     path = str(item["path"])
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
-             "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back"}.get(plain, "a check finding")
+             "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back",
+             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished"}.get(plain, "a check finding")
     if plain == "wall":
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
@@ -822,8 +846,11 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, ke
     if planner is None and ws is not None:
         planner = Planner(ws)
     kept = kept or {}
+    walled = {str(i["path"]) for i in items if plain_kind(i) == "wall"}       # a page with a wall finding has no question of its own
     for item in items:
         plain = plain_kind(item)
+        if plain in ("attribution", "correction") and str(item["path"]) in walled:
+            continue
         if plain == MECHANICAL and not held_reason(item):
             continue                # the nightly run makes it, and the card shows nothing (#550)
         if plain == MECHANICAL:

@@ -104,8 +104,12 @@ def log(folder, tool, decision, zone, what, kind=""):
 
 
 def inside(folder, path):
+    """Whether `path` lies in `folder`, on a disk that ignores case without it (fix round N1)."""
+    folder = os.path.realpath(folder)
+    if zg.case_blind(zg.nearest_existing(folder)):
+        folder, path = folder.casefold(), path.casefold()
     try:
-        return os.path.commonpath([os.path.realpath(folder), path]) == os.path.realpath(folder)
+        return os.path.commonpath([folder, path]) == folder
     except ValueError:
         return False
 

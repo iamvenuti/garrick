@@ -411,6 +411,20 @@ class TestLayout(LayoutCase):
         self.assertEqual("The deck is Deliverables/%s here.\n" % self.DECK, outside.read_text())
 
 
+    def test_a_hub_that_is_a_link_is_never_written_through(self):
+        hub = self.work / "Acme" / "Acme.md"
+        outside = Path(tempfile.mkdtemp()) / "Acme.md"
+        outside.write_text(hub.read_text())
+        before = outside.read_text()
+        hub.unlink()
+        hub.symlink_to(outside)
+        self.commit("the hub as a link")
+        r = self.layout("--heading")
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+        self.assertIn("is a link", r.stdout + r.stderr)
+        self.assertEqual(before, outside.read_text())
+        self.assertTrue(hub.is_symlink())
+
 class TestThePageBuildsBesideAHub(LayoutCase):
     """A hub that keeps `### Resume here` beside a thread is a row of Your work, not of the Threads card, and the
     page builds."""

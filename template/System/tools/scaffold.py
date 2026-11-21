@@ -1903,6 +1903,10 @@ def cmd_layout(root, args, today):
         if dirty:
             raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
                           "Commit or undo them, then change the layout.")
+        linked = [p for p in changes if p.is_symlink() or any(q.is_symlink() for q in p.parents if zone_dir in q.parents)]
+        if linked:                                                     # never write through a link, inside or out of the zone
+            raise Refusal(f"{', '.join(rel(p) for p in linked[:3])} is a link, so the layout was not changed. "
+                          "Replace the link with the file itself, then change the layout.")
         for path, text in changes.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")

@@ -6068,13 +6068,15 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .attn .adrift{display:flex;align-items:center;gap:6px}.attn .adrift>a{flex:1;min-width:0}.attn .adrift>.act{flex:none}
 .zones{display:grid;grid-template-columns:minmax(0,1fr);max-width:760px}
 /* Zones, projects and threads read as three levels (#619): a zone header is body text at weight 600 in the ink colour, its colour on its icon
-   alone; a 1px rule sits above every zone but the first; projects start 24px in and threads 22px further. */
+   alone; a 1px rule sits above every zone but the first; a project's name starts 24px in and a thread's 22px further, its chevron in the zone's column. */
 .zone>summary{display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer}
 .zone+.zone>summary{border-top:1px solid var(--line)}
 .zone>summary h3{margin:0;display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-body);font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink)}
 .zone>summary .chev{width:14px;height:14px;flex:none;color:var(--muted)}.zone>summary .zic{display:inline-flex;flex:none}
 .zone>summary .meta{margin-left:auto;font-size:var(--fs-meta);color:var(--muted);white-space:nowrap}.zone>summary .meta .late{color:var(--critical)}
-.zone .tunit>.thread{margin-left:24px}.zone .thread.sub{margin-left:46px}
+/* the chevrons of a zone and of a project share one column; the names and the project's rule step in 24px, then a thread's 22px more */
+.zone .tunit>.thread{position:relative;border-top:0}.zone .tunit>.thread::before{content:"";position:absolute;top:0;left:24px;right:0;border-top:1px solid var(--grid)}
+.zone .tunit>.thread.proj>.t{display:flex;align-items:center}.zone .tunit>.thread.proj .pchev{margin-right:30px;flex:none}.zone .tunit>.thread.proj>.t>a{min-width:0}.zone .tunit>.thread:not(.proj)>.t{padding-left:46px}.zone .thread.sub{margin-left:68px}
 .thread{display:grid;grid-template-columns:minmax(0,1fr) 70px 34px;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--grid);font-size:var(--fs-body)}
 .thread .t{min-width:0}.thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

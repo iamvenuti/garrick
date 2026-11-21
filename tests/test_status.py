@@ -1187,7 +1187,7 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         self.assertEqual(1, cards(html)[("Acme Review", "Pricing")]["lt"])          # the card says it, not its age
         self.assertNotIn("lt", cards(html)[("Birch Entry", "Market Sizing")])
-        self.assertIn("' · '+a+' late'", status.PARK_JS)                 # and PARK_JS recounts in those words
+        self.assertIn("' · <span class=\"late\">'+a+' late</span>'", status.PARK_JS)    # and PARK_JS recounts in those words
         self.assertIn("' · '+urg+' late'", status.PARK_JS)
         self.assertIn("'.thread:not(.proj) .tchip.todo.late'", status.PARK_JS)    # a red todo, as the build counts
         self.assertNotIn("needing a chase", status.PARK_JS)

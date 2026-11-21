@@ -84,8 +84,12 @@ class Card(unittest.TestCase):
         self.assertIn("grid-template-columns:minmax(0,1fr)", rule(status.CSS, ".zones"))
 
     def test_projects_start_24px_in_and_threads_22px_further(self):
-        self.assertIn("margin-left:24px", rule(status.CSS, ".zone .tunit>.thread"))
-        self.assertIn("margin-left:46px", rule(status.CSS, ".zone .thread.sub"))     # 24 + 22
+        # the names step in; the chevrons stay in one column, so the project row takes no margin of its own (#619)
+        self.assertNotIn("margin-left", rule(status.CSS, ".zone .tunit>.thread") or "")
+        self.assertIn("left:24px", status.CSS[status.CSS.index(".zone .tunit>.thread::before"):][:120])        # the project's rule starts 24px in
+        self.assertIn("margin-right:30px", rule(status.CSS, ".zone .tunit>.thread.proj .pchev"))             # 16 + 30 = 46: zone name + 24
+        self.assertIn("padding-left:46px", rule(status.CSS, ".zone .tunit>.thread:not(.proj)>.t"))
+        self.assertIn("margin-left:68px", rule(status.CSS, ".zone .thread.sub"))                             # 46 + 22
         self.assertIn("padding-left:0", rule(status.CSS, ".thread.sub") or status.CSS[status.CSS.index(".thread.sub{padding"):][:80])
 
     def test_one_chevron_size_for_zone_and_project(self):

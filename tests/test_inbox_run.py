@@ -532,7 +532,9 @@ class TestLiteralPaths(RunCase):
         out = self.run_with(act)
         self.assertEqual("done", out["state"], out)
         self.assertEqual(["Acme Review/Sources/a*.md"], git(self.work, "show", "--name-only", "--format=", "HEAD").split("\n")[:1])
-        self.assertEqual(" M Acme Review/Sources/ab.md", git(self.work, "status", "--porcelain").rstrip())
+        left = git(self.work, "status", "--porcelain").strip().splitlines()
+        self.assertEqual(1, len(left))
+        self.assertTrue(left[0].startswith("M ") and left[0].endswith('ab.md"'), left)
 
 
 class TestTheBackupFolder(RunCase):

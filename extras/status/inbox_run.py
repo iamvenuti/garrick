@@ -68,6 +68,8 @@ SAY_UNAVAILABLE = "The background assistant is not available, so this goes to a 
 SAY_FAILED = "The inbox could not be processed in the background."
 SAY_REFUSED = "The assistant changed something it may not, so nothing was kept. The items are still in the inbox."
 SAY_KEPT = "Something changed that the run may not change, so nothing was committed or put back in %s. Those files are left as they are."
+SAY_COPIES = "The versions it replaced are kept, in a hidden folder of each repository's own history."
+DETAILS_COPIES = ".git/garrick-put-back/, in each repository where a version was replaced"
 SAY_SYSTEM = "The assistant changed a file of the workspace's rules or tools, so nothing was kept. That file was left as it is."
 MEETINGS_INBOX = ("Wikis", "Meetings", "raw", "inbox")
 
@@ -234,6 +236,9 @@ class Snapshot:
         return all(git(r, "rev-parse", "HEAD").stdout.strip() == self.head[r] for r in self.repos)
 
 
+_COPIED: List[Path] = []        # the repositories where `put_back` kept a copy of a file it replaced, in this run
+
+
 def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
     """Put each path back as it was before the call: a file that was changed already, with the bytes then kept; a tracked file
     as the last commit has it; a file the call made, removed. Only a path that `allowed()` names, with no link on the way, is
@@ -241,6 +246,7 @@ def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
     into the repository's own `.git/garrick-put-back/`, so a writer that was not the call loses nothing. Returns the paths that
     were not put back."""
     left = []
+    copied = _COPIED
     keep = repo / ".git" / "garrick-put-back" / time.strftime("%Y%m%d-%H%M%S")
     for p in paths:
         full = repo / p
@@ -251,6 +257,10 @@ def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
                 continue
             if (repo, p) in snap.sig:
                 if (repo, p) in snap.kept:
+                    if full.is_file() and not full.is_symlink() and full.read_bytes() != snap.kept[(repo, p)]:
+                        (keep / p).parent.mkdir(parents=True, exist_ok=True)       # a later edit of the user's own is kept
+                        shutil.copy2(str(full), str(keep / p))
+                        copied.append(repo)
                     full.parent.mkdir(parents=True, exist_ok=True)
                     full.write_bytes(snap.kept[(repo, p)])
                 elif snap.sig[(repo, p)] != signature(full):
@@ -259,6 +269,7 @@ def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
             if full.is_file() and not full.is_symlink():
                 (keep / p).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(full), str(keep / p))
+                copied.append(repo)
             git(repo, "reset", "-q", "--", p)
             if git(repo, "ls-files", "--error-unmatch", "--", p).returncode == 0:
                 git(repo, "checkout", "-q", "HEAD", "--", p)
@@ -603,6 +614,7 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
     """One inbox run, whole: record, call, check, commit. Returns the state it wrote. `answer` is {"zone", "file", "label"} for
     the one item an answered question names. The call may be stubbed with `runner(cmd, tier, cwd, env) -> (code, got)`."""
     ws = Path(ws).resolve()
+    del _COPIED[:]
     started = dt.datetime.now().isoformat(timespec="seconds")
     folders = inboxes(ws)
     keep = (jobs or engine.agent_lib().jobs_dir()) / "inbox-run" / str(os.getpid())
@@ -662,10 +674,13 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
         if answer:
             set_question(ws, zone, answer["file"], reopen=True)
         base = SAY_SYSTEM if changed_system else SAY_FAILED
+        if _COPIED:
+            base += " " + SAY_COPIES
         kept_places = sorted({place_of(ws, r) for r in keep})
         out = {"state": "failed", "lines": {}, "tail": base, "kept": kept_places}
+        more = {"details": DETAILS_COPIES} if _COPIED else {}
         return finish(state="failed", say=sentence(out), refused=bool(changed_system or keep), system=changed_system,
-                      lines={}, tail=base, kept=kept_places)
+                      lines={}, tail=base, kept=kept_places, **more)
     undo(bad)
     refused = []
     for repo, paths in moved.items():

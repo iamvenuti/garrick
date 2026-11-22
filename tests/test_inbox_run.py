@@ -278,6 +278,25 @@ class TestTheRun(RunCase):
         self.assertIn("Theirs.", theirs.read_text())
         self.assertTrue(new.exists())
 
+    def test_a_later_edit_of_a_file_changed_before_the_run_is_kept_before_it_is_replaced_and_the_sentence_says_so_n2(self):
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text() + "\n- [ ] First edit.\n")
+        self.drop("Work", "a.eml")
+
+        def runner(cmd, tier, cwd, env):
+            shutil.move(str(self.work / "Inbox" / "a.eml"), str(self.acme / "Sources" / "a.eml"))       # the zone has an item of the run
+            todo.write_text(todo.read_text() + "- [ ] Second edit.\n")
+            return 1, {"text": ""}
+        out = ir.run(self.root, None, runner=runner, cap=self.cap, jobs=self.jobs)
+        self.assertEqual("failed", out["state"])
+        self.assertNotIn("Second edit", todo.read_text())
+        kept = list((self.work / ".git" / "garrick-put-back").rglob("Todo.md"))
+        self.assertEqual(1, len(kept))
+        self.assertIn("Second edit", kept[0].read_text())
+        self.assertIn("kept", out["say"])
+        self.assertNotIn("garrick-put-back", out["say"])
+        self.assertIn("garrick-put-back", out["details"])
+
     def test_a_question_file_the_call_wrote_by_hand_that_names_another_walled_zone_is_not_kept(self):
         self.drop("Work", "a.eml")
         self.drop("Work", "b.eml")
@@ -341,7 +360,7 @@ class TestTheRun(RunCase):
             return 1, {"text": ""}
         out = ir.run(self.root, None, runner=runner, cap=self.cap, jobs=self.jobs)
         self.assertEqual("failed", out["state"])
-        self.assertEqual(ir.SAY_FAILED, out["say"])
+        self.assertTrue(out["say"].startswith(ir.SAY_FAILED), out["say"])        # a copy of the file put back is named after it (N2)
         self.assertTrue((self.work / "Inbox" / "a.eml").exists())
         self.assertFalse((self.acme / "Sources" / "a.eml").exists())
 
@@ -416,7 +435,7 @@ class TestTheRun(RunCase):
                     target.write_text(was + "\n| Evil | x | Work | `evil` | yes | evil.example |\n")
                 out = self.run_with(act)
                 self.assertEqual("failed", out["state"])
-                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue(out["say"].startswith(ir.SAY_SYSTEM), out["say"])
                 self.assertTrue(out.get("system"))
                 self.assertEqual(before, self.heads())                       # nothing committed
                 self.assertFalse((self.acme / "Sources" / "kept.txt").exists())   # the run's own allowed change is put back
@@ -440,7 +459,7 @@ class TestTheRun(RunCase):
                     else:
                         target.write_text("changed\n")
                 out = self.run_with(act)
-                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue(out["say"].startswith(ir.SAY_SYSTEM), out["say"])
                 self.assertTrue((self.work / "Inbox" / "c.eml").exists())
                 if target.is_symlink():
                     target.unlink()

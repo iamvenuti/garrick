@@ -124,6 +124,21 @@ zone through its hooks, the finish record and the lock's end. It answers with
 a receipt. The steps did not change; only who carries them out. Never do them
 by hand, and never run `wrap_lock.py` yourself except as the request says.
 
+Two of those steps are other tools' commands, which the wrap tool runs for you
+and you never run for a wrap. The history mover keeps the note short; its
+`history/` folder beside the note goes in the wrap's own commit:
+
+```sh
+python3 System/tools/history.py apply "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+```
+
+The archive moves the lines ticked before today to the zone's `archive/`,
+before the commit is staged:
+
+```sh
+python3 System/skills/todo/todo.py archive --zone <Zone>
+```
+
 **How it runs.** Resolve X first ("hold this" or no name at all: the thread in
 focus, as under *No name given*). Then:
 
@@ -318,7 +333,7 @@ focus, as under *No name given*). Then:
      and the link the hub's `shared:` names, under `Zones/<Zone>/.shared/`,
      does not lead anywhere here, the copy cannot be made from this machine,
      and nothing here reads through the link. Record the `published.md` row
-     as above, then add one line to `todo.add` for the machine that does reach
+     as above, then add one line to the zone's `Todo.md`, through `todo.add`, for the machine that does reach
      the share, usually the laptop: `[[<Thread>]]: copy `<file>` to
      `<link>/<destination>`, from the machine that reaches the share 📅 <today>`.
      A copy to a share is a send, so it asks first when it is made. Say in

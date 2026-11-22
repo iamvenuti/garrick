@@ -2440,6 +2440,15 @@ def __getattr__(name):
     sits beside no work.py still loads for everything else."""
     if name == "work":
         return _load_work()
+    if name == "view":              # view.py, the view model (#650): the one document the App draws
+        import importlib.util
+        mod = sys.modules.get("garrick_view")
+        if mod is None:
+            spec = importlib.util.spec_from_file_location("garrick_view", str(Path(__file__).with_name("view.py")))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["garrick_view"] = mod
+            spec.loader.exec_module(mod)
+        return mod
     if name == "hub_keeps_resume":
         return _load_work().hub_keeps_resume          # defined in work.py, once
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

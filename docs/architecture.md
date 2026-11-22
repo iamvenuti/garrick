@@ -35,6 +35,33 @@ In the Mac app and in Obsidian, its buttons act: they tick, date and add Todo li
 
 Every action, from a button, the Ask box or a skill, goes through `page_action.py` in the status extra, and every one is declared in one table, `DECLARED` in `System/tools/operations.py`. A row per verb names the fields a request may carry, which of them say what the request is, what it may touch, whether it commits, whether a retry is safe, and what must still be true for it to run. Validation is closed: a request that carries a field its verb does not declare is refused, and the field is named. Park, wake and the four Todo verbs, the subset `OPS`, also keep a durable record in `operations.jsonl` in the jobs folder, so a reloaded page can find an action still running or learn how it ended, and so the same request sent again is recognised: joined or answered inside a double click's window, and past it, for as long as any client could still be waiting, asked about rather than done twice. That folder is outside the workspace, so the record is never committed; the notes and git stay the record of what changed. A launcher, such as *Open in Claude*, is reported the same honest way: the page says only that it is opening, and the Mac app, which alone knows how it went, says what opened. A Mac app built before that change says nothing back, so the opening line is all there is until it is rebuilt.
 
+#### The view model
+
+The Garrick App does not read your notes to decide what a card means. The core does that, in `System/tools/view.py`, and builds one JSON document of the workspace: `view.build(root)`, also `garrick_lib.view`. `status.py` takes the document and draws it, so a change of wording or layout cannot change what is true, and what is true can be tested without a page. The module reads through `work.py`, the one reader of the piece of work, and offers each piece the verbs of `DECLARED` that apply to it. It writes nothing.
+
+Every record carries its zone. A count is of one zone or one wiki, never two added together. `build(root, scope=["Work"])` holds that zone's records alone, and a zone folder that is a link, or an `Inbox` or a thread folder that leads out of its zone, is left out. What the page still reads for itself, because no core module owns it yet, is named in the document's `left` list.
+
+The shape, with one piece of work and one inbox:
+
+```json
+{"api": 1,
+ "zones": [{"name": "Work", "linked": false, "done": 0, "held": [],
+            "projects": {"Acme": {"status": "live", "spoken": "", "own": false, "heading": false,
+                                  "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"]}},
+            "work": [{"id": "Work/Acme/Pricing", "zone": "Work", "project": "Acme", "thread": "Pricing",
+                      "shown": "row", "state": "active", "held": false,
+                      "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md", "rel": "Acme/Threads/Pricing/Pricing.md",
+                      "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"], "updated": "2026-11-02", "spoken": "",
+                      "heading": false, "resume": true, "resumed": "2026-11-02", "checkpoint": null,
+                      "touched": "2026-11-02",
+                      "read": {"block": true, "date": "2026-11-02", "where": "Drafting.", "rows": {}, "entry": null, "about": ""},
+                      "actions": ["park", "rename", "move", "delete", "continue", "open", "close"]}]}],
+ "queues": {"inbox": [{"place": "Work", "kind": "zone", "folder": "Zones/Work/Inbox", "count": 2}]},
+ "left": ["jobs folder state", "operations journal", "..."]}
+```
+
+`shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
+
 ## Where you work
 
 The work happens in your assistant's own app, on the same files whichever you choose:
@@ -104,6 +131,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `check.py` tests the workspace against every rule a machine can check. Run by hand it reports; run by the pre-commit hook as `--staged --walls-only` it refuses. See [The check](commands.md#the-check).
 - `scaffold.py` makes zones, parties, projects and threads, and parks, wakes, renames and deletes them. It checks a name and a party before it writes anything. See [Your first project](commands.md#your-first-project).
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
+- `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes.
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.

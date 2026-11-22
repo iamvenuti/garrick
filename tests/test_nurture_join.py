@@ -7,6 +7,7 @@ already is the owner's to place, so it is held and nothing moves. The nightly ru
 
 from __future__ import annotations
 
+import shutil
 import sys
 import unittest
 
@@ -67,6 +68,19 @@ class MixedProject(Base):
         self.assertEqual(["Freight"], self.threads_with_papers())
         self.assertEqual("the brief\n", (self.freight / "Sources" / "brief.txt").read_text())
         self.assertEqual("the project's own brief\n", (self.acme / "Sources" / "brief.txt").read_text())
+        self.assertNotIn("join-papers", {i["fix"]["op"] for i in out["fixed"]})
+        self.assertFalse([s for s in git(self.work, "log", "--format=%s").splitlines() if "layout" in s])
+
+    def test_a_project_whose_papers_folder_is_a_link_into_another_zone_is_held_and_nothing_moves(self):
+        elsewhere = self.root / "Zones" / "Personal" / "Elsewhere"     # G26: the project's Deliverables/ is a link into Personal
+        elsewhere.mkdir(parents=True)
+        shutil.rmtree(self.acme / "Deliverables", ignore_errors=True)
+        (self.acme / "Deliverables").symlink_to(elsewhere, target_is_directory=True)
+        self.assertEqual([], self.joins())                            # the plan refuses the move: no one-yes fix is offered
+        code, out = self.run_tool("fix", "--yes")
+        self.assertEqual([], list(elsewhere.iterdir()))               # nothing reached the other zone
+        self.assertTrue((self.freight / "Deliverables" / "260201 - Freight plan.docx").is_file())
+        self.assertTrue((self.freight / "Sources" / "brief.txt").is_file())
         self.assertNotIn("join-papers", {i["fix"]["op"] for i in out["fixed"]})
         self.assertFalse([s for s in git(self.work, "log", "--format=%s").splitlines() if "layout" in s])
 

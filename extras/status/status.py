@@ -6204,6 +6204,8 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 /* five apps fit the card's 264px on one row (#633): Open in, then 28px squares 4px apart; the default keeps its dot */
 .appicons .gacts.popen{flex-wrap:nowrap}.appicons .gacts.popen .plbl{flex:none;margin:0 4px}
 .appicons .gacts.popen .act[data-k]{flex:none;width:28px;height:28px;min-height:0;background-size:20px}
+/* Seven icons are 26px too wide at the card's 264px with 28px squares (#652): from the sixth icon on, 24px squares, 4px gaps, 168 + 24 = 192px beside the label */
+.appicons .gacts.popen:has(>.act[data-k]:nth-child(7)) .act[data-k]{width:24px;height:24px;background-size:18px}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:var(--fs-meta);padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}

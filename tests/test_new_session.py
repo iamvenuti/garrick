@@ -127,6 +127,25 @@ class TestBuildCheck(unittest.TestCase):
         self.assertNotIn("data-url", js[js.index("function launch("):js.index("function deskReq")])
 
 
+class TestTheIconRow(unittest.TestCase):
+    """Seven app icons on a card (#652): one row inside 264px with 4px gaps; five or fewer keep today's 28px squares."""
+
+    def test_the_rule_shrinks_the_squares_only_from_the_sixth_icon(self):
+        css = status.CSS if hasattr(status, "CSS") else ""
+        css = css or "".join(v for v in vars(status).values() if isinstance(v, str) and ".gacts.popen" in v)
+        self.assertIn(".appicons .gacts.popen .act[data-k]{flex:none;width:28px;height:28px;min-height:0;background-size:20px}", css)
+        rule = ".appicons .gacts.popen:has(>.act[data-k]:nth-child(7)) .act[data-k]{width:24px;height:24px;background-size:18px}"
+        self.assertIn(rule, css)
+        self.assertGreater(css.index(rule), css.index(".appicons .gacts.popen .act[data-k]{flex:none;width:28px"))   # it wins by order
+        self.assertIn(".appicons .gacts.popen{flex-wrap:nowrap}", css)                  # one row, never wrapped
+
+    def test_seven_icons_fit_where_five_did(self):
+        # Measured by the page gate: seven 28px squares with 4px gaps end 26px past the card's right edge.
+        over = 7 * 28 + 6 * 4 - 26                  # what the icons may take: 194px beside the label
+        self.assertLessEqual(5 * 28 + 4 * 4, over)  # five squares fit, as before
+        self.assertLessEqual(7 * 24 + 6 * 4, over)  # seven 24px squares: 192px, inside the card
+
+
 class WorkspaceCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

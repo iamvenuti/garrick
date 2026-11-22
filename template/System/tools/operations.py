@@ -241,6 +241,9 @@ DECLARED: Dict[str, Op] = {
     # reads, or opened in the app the Mac uses for a .md file.
     "note-read": _op(("path",), ("path",), "none", retry="safe"),
     "note-open": _op(("path",), ("path",), "machine"),
+    # A new session in the Claude or Codex desktop app (#652): the page names a key and a folder, the reply
+    # carries the link the app opens. It only reads.
+    "session-url": _op(("key", "folder"), ("key", "folder"), "none", retry="safe"),
     # A Needs you question (#175), listed in Waiting on you now, answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.

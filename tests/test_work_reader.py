@@ -234,6 +234,58 @@ class Shadow(unittest.TestCase):
         self.assertTrue((self.root / "System" / "Sys" / "Sys.md").is_file())
 
 
+class NoReader(unittest.TestCase):
+    """A half-finished update leaves the extras new and System/tools without work.py: nothing crashes, and each says so."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="work-reader-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.root = work_fixture.build(self.tmp)
+        self.zone = self.root / "Zones" / "Work"
+
+    def gone(self, module):
+        def raises(*a, **k):
+            raise FileNotFoundError("System/tools/work.py")
+        return unittest.mock.patch.object(module, "work_reader", raises)
+
+    def test_the_status_page_builds_and_says_garrick_needs_updating(self):
+        st = load("garrick_status_noreader", REPO / "extras" / "status" / "status.py")
+        with self.gone(st):
+            t = st.threads(self.root)
+            self.assertEqual(t["Work"]["rows"], [])
+            self.assertTrue(t["Work"]["needs_update"])
+            out = self.tmp / "page.html"
+            work_fixture.put(self.root / "System" / "rules.md", "# Rules\n")
+            with unittest.mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(self.tmp / "jobs")}):
+                st.main(["--workspace", str(self.root), "--out", str(out)])
+        self.assertIn("Garrick needs updating before it can list your work.", out.read_text(encoding="utf-8"))
+
+    def test_the_sweep_skips_the_reading_with_one_line(self):
+        ts = load("garrick_todo_sweep_noreader", REPO / "extras" / "jobs" / "todo_sweep.py")
+        err = io.StringIO()
+        with self.gone(ts), unittest.mock.patch("sys.stderr", err):
+            self.assertEqual(ts.thread_notes(self.zone), [])
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+        self.assertIn("update", err.getvalue().lower())
+
+    def test_intake_skips_the_reading_with_one_line(self):
+        it = load("garrick_intake_noreader", REPO / "template" / "System" / "skills" / "intake" / "intake.py")
+        err = io.StringIO()
+        gl_ = sys.modules["garrick_lib"]
+        saved = sys.modules.pop("garrick_work", None)
+        self.addCleanup(sys.modules.__setitem__, "garrick_work", saved) if saved else None
+
+        def raises(*a, **k):
+            raise FileNotFoundError("work.py")
+        with unittest.mock.patch.object(gl_, "_load_work", raises), unittest.mock.patch("sys.stderr", err):
+            self.assertEqual(it._live_threads(self.zone / "Mixed"), [])
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+        err = io.StringIO()
+        with unittest.mock.patch.object(gl_, "_load_work", raises), unittest.mock.patch("sys.stderr", err):
+            self.assertEqual(it._hub_kind(self.zone / "Mixed"), "plain")
+        self.assertEqual(len(err.getvalue().strip().splitlines()), 1)
+
+
 class NoOtherReader(unittest.TestCase):
     """After the move, no module outside the reader decides which pieces of work exist."""
 

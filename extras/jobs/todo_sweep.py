@@ -154,7 +154,13 @@ def thread_notes(zone: Path) -> List[Path]:
     work or keep a resume point of their own beside their threads, and the thread notes. A note whose status is done
     or parked is left out, and so is every thread of a parked project."""
     notes = []
-    for r in work_reader(zone).pieces(zone.parent.parent, zone=zone.name):
+    try:
+        reader = work_reader(zone)
+    except FileNotFoundError:
+        print("%s: System/tools/work.py is missing, so the Next action rows are not read; update Garrick." % zone.name,
+              file=sys.stderr)
+        return []
+    for r in reader.pieces(zone.parent.parent, zone=zone.name):
         if r.kind != "piece" or (r.thread and r.hub_status == "parked"):
             continue
         if (r.status or "active") not in ("done", "parked"):

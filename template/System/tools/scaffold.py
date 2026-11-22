@@ -1729,6 +1729,33 @@ def resume_choices(zone_dir, project_dir):
     return [(t.name, next_action_of((t / f"{t.name}.md").read_text(encoding="utf-8", errors="replace"))) for t in found]
 
 
+def through_a_link(project_dir, path):
+    """Does a path go through a link, or out of the project? True when any part of it below the project folder is a
+    symlink, or when its real place is not inside the project folder's real place. A path that is not there yet is
+    read as far as it exists."""
+    try:
+        parts = Path(path).relative_to(project_dir).parts
+    except ValueError:
+        return True
+    here = Path(project_dir)
+    for part in parts:
+        here = here / part
+        if here.is_symlink():
+            return True
+    base = os.path.realpath(project_dir)
+    real = os.path.realpath(path)
+    return not (real == base or real.startswith(base + os.sep))
+
+
+def refuse_linked_moves(zone_dir, project_dir, moves):
+    """Refuse, moving nothing, when a source or a destination of a move goes through a link or out of the project:
+    a file moved there would land in whatever the link points at, which may be another zone."""
+    bad = [p for a, b in moves for p in (a, b) if through_a_link(project_dir, zone_dir / p)]
+    if bad:
+        raise Refusal(f"{say_files(dict.fromkeys(bad))} goes through a link or out of the project, so nothing was moved. "
+                      "Replace the link with the folder itself, then change the layout.")
+
+
 def plan_layout(zone_dir, project_dir, split=False, join=False):
     """(moves, left, what): the files to move as (from, to) paths from the zone's top, the files listed for the
     owner to place with why, and what the change is. Reads, writes nothing. A Split gives a file to a thread only
@@ -1758,6 +1785,7 @@ def plan_layout(zone_dir, project_dir, split=False, join=False):
                 else:
                     taken.add(target.casefold())
                     moves.append((name, target))
+        refuse_linked_moves(zone_dir, project_dir, moves)
         return moves, left, f"{pname} becomes one job"
 
     if is_heading(project_dir):
@@ -1773,6 +1801,7 @@ def plan_layout(zone_dir, project_dir, split=False, join=False):
         else:
             left.append((f"{rel(project_dir)}/{inside}", "no thread names it" if not namers else
                          "more than one note names it" if len(namers) > 1 or hub_names else ""))
+    refuse_linked_moves(zone_dir, project_dir, moves)
     return moves, left, f"{pname} becomes separate jobs"
 
 
@@ -1932,7 +1961,9 @@ def cmd_layout(root, args, today):
     heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
     outside = []
     try:
+        refuse_linked_moves(zone_dir, project_dir, moves)             # again, now the work starts
         for a, b in moves:
+            refuse_linked_moves(zone_dir, project_dir, [(a, b)])      # and before each one
             (zone_dir / b).parent.mkdir(parents=True, exist_ok=True)
             git_ok(["mv", "--", a, b], zone_dir)
         for folder in (threads if split else []):                     # separate jobs: each thread keeps both folders

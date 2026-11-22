@@ -468,6 +468,110 @@ class TestALinkedThreadFolder(LayoutFiles):
         self.assertEqual(["Pricing"], names)
 
 
+class TestALinkedPapersFolder(LayoutFiles):
+    """G26: a Split or a Join never moves a file through a link, or out of the project: it refuses and nothing moves."""
+
+    def one_job(self):
+        self.make("project", "--zone", "Work", "--name", "Acme")
+        for t in ("Pricing", "Freight"):
+            self.make("thread", "--zone", "Work", "--project", "Acme", "--name", t)
+        a = self.work / "Acme"
+        (a / "Sources" / "brief.txt").write_text("brief")
+        note = a / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\nThe brief is Sources/brief.txt.\n")
+        self.commit("one job")
+        return a
+
+    def separate(self):
+        self.make("project", "--zone", "Work", "--name", "Acme", "--separate")
+        for t in ("Pricing", "Freight"):
+            self.make("thread", "--zone", "Work", "--project", "Acme", "--name", t)
+        a = self.work / "Acme"
+        (a / "Threads" / "Pricing" / "Sources" / "brief.txt").write_text("brief")
+        (a / "Threads" / "Pricing" / "Deliverables" / "260101 - Deck.pptx").write_bytes(b"deck")
+        (a / "Threads" / "Pricing" / "Sources" / "sub").mkdir()
+        (a / "Threads" / "Pricing" / "Sources" / "sub" / "extra.txt").write_text("extra")
+        self.commit("separate jobs")
+        return a
+
+    def other_zone(self):
+        folder = self.root / "Zones" / "Personal" / "Stuff"
+        folder.mkdir(parents=True)
+        (folder / "keep.txt").write_text("keep")
+        return folder
+
+    def link(self, folder, outside, commit=True):
+        """Replace a folder with a link. A link in the index holds none of the files that were under it, so a source
+        folder is linked without a commit: git still lists its files, and a move would follow the link."""
+        import shutil
+        if folder.exists():
+            if not commit:                                        # the files are there on the other side, so the link reads as the folder did
+                shutil.copytree(folder, outside, dirs_exist_ok=True)
+            shutil.rmtree(folder)
+        folder.symlink_to(outside, target_is_directory=True)
+        if not commit:
+            return
+        # The zone's hook refuses a link into another walled zone, so the fixture commits the way a workspace
+        # that got the link in before the hook did would hold it.
+        self.git("add", "-A")
+        r = self.git("-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "a linked folder")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+
+    def held(self, *args, outside):
+        before, other, count = self.snapshot(), sorted(p.name for p in outside.rglob("*")), self.commits()
+        r = self.layout(*args)
+        self.assertNotEqual(0, r.returncode)
+        self.assertIn("link", r.stderr + r.stdout)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(other, sorted(p.name for p in outside.rglob("*")))
+        self.assertEqual(count, self.commits())
+
+    def test_a_join_into_a_project_deliverables_that_is_a_link_moves_nothing(self):
+        a = self.separate()
+        outside = self.other_zone()
+        self.link(a / "Deliverables", outside)
+        self.held("--join", outside=outside)
+        self.held("--join", "--check", "--json", outside=outside)
+        self.assertTrue((a / "Threads" / "Pricing" / "Deliverables" / "260101 - Deck.pptx").is_file())
+        self.assertEqual(["keep.txt"], [p.name for p in outside.iterdir()])
+
+    def test_a_split_into_a_thread_folder_that_is_a_link_moves_nothing(self):
+        a = self.one_job()
+        outside = self.other_zone()
+        self.link(a / "Threads" / "Pricing" / "Sources", outside)
+        self.held("--split", outside=outside)
+        self.assertTrue((a / "Sources" / "brief.txt").is_file())
+
+    def test_a_split_of_a_project_papers_folder_that_is_a_link_moves_nothing(self):
+        a = self.one_job()
+        outside = self.other_zone()
+        self.link(a / "Sources", outside, commit=False)
+        self.held("--split", outside=outside)
+
+    def test_a_join_of_a_thread_sources_that_is_a_link_moves_nothing(self):
+        a = self.separate()
+        outside = self.other_zone()
+        self.link(a / "Threads" / "Pricing" / "Sources", outside, commit=False)
+        self.held("--join", outside=outside)
+        self.assertTrue((a / "Threads" / "Pricing" / "Deliverables" / "260101 - Deck.pptx").is_file())
+
+    def test_a_join_through_a_link_inside_a_papers_folder_moves_nothing(self):
+        a = self.separate()
+        outside = self.other_zone()
+        self.link(a / "Threads" / "Pricing" / "Sources" / "sub", outside, commit=False)
+        self.held("--join", outside=outside)
+        self.assertTrue((a / "Threads" / "Pricing" / "Sources" / "brief.txt").is_file())
+
+    def test_the_check_names_a_path_through_a_link_and_one_inside_the_project_is_clean(self):
+        a = self.separate()
+        outside = self.other_zone()
+        self.assertFalse(sc.through_a_link(a, a / "Threads" / "Pricing" / "Sources" / "brief.txt"))
+        self.assertFalse(sc.through_a_link(a, a / "Deliverables" / "new.txt"))
+        self.assertTrue(sc.through_a_link(a, outside / "keep.txt"))
+        self.link(a / "Deliverables", outside)
+        self.assertTrue(sc.through_a_link(a, a / "Deliverables" / "new.txt"))
+
+
 class TestJoin(LayoutFiles):
     """scaffold.py layout --join: separate jobs made one job, the threads' papers moved up, and the switch back."""
 

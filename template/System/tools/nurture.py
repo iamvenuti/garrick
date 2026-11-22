@@ -423,7 +423,48 @@ def from_drift(ctx: Ctx) -> List[Item]:
     return out
 
 
-SOURCES: List[Callable[[Ctx], List[Item]]] = [from_check, from_wiki_lint, from_drift]
+OLD_PARENT = re.compile(r'(?m)^parent: "\[\[([^\]|/\n]+)\]\]"$')
+
+
+def from_history_parents(ctx: Ctx) -> List[Item]:
+    """The history files the first history.py wrote (#627): `parent: "[[<Note>]]"`, which the current form,
+    `[[<dir>/<Note>|<Note>]]`, replaced in 0.64.0. Each is a mechanical fix, so none waits until its quarter next receives an
+    entry. A file is left alone when it names another note than its own, carries `status:`, is not `type: history`, or sits
+    beside no such note."""
+    import history
+    out = []
+    zones = ctx.root / "Zones"
+    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
+        if not zone.is_dir() or zone.is_symlink() or zone.name.startswith((".", "_")):
+            continue
+        for f in sorted(zone.rglob("*.md")):
+            if f.parent.name != "history" or f.is_symlink() or any(p.startswith(".") or p == "archive" for p in f.relative_to(zone).parts):
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+            if not m or "\r" in text:
+                continue
+            fm = m.group(1).split("\n")
+            if "type: history" not in fm or any(l.startswith("status:") for l in fm):
+                continue
+            old = OLD_PARENT.search(m.group(1))
+            if not old:
+                continue
+            note = f.parent.parent / (old.group(1) + ".md")
+            if not note.is_file() or note.is_symlink() or not f.name.startswith(old.group(1) + " history "):
+                continue
+            item = Item("history", "parent", ctx.rel(f), "its parent link is in the form the first history tool wrote",
+                        "A history file's parent link is in an older form", kind="mechanical")
+            item.fix = {"op": "history-parent", "note": ctx.rel(note), "to": history.note_link(note)}
+            item.touches = [item.path]
+            out.append(item)
+    return out
+
+
+SOURCES: List[Callable[[Ctx], List[Item]]] = [from_check, from_wiki_lint, from_drift, from_history_parents]
 
 
 def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
@@ -918,13 +959,29 @@ def apply_history(ctx: Ctx, item: Item, journal: "Journal") -> str:
     return "%d older entries moved to history files, %d words down to %d" % (len(plan.moves), plan.before, plan.after)
 
 
+def apply_history_parent(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    """The one `parent:` line of a history file in the form the first history.py wrote, in the current one (#627). The file is
+    read again: one that no longer fits (another note's parent, a `status:`) is held, never rewritten."""
+    path = ctx.root / item.path
+    note = ctx.root / item.fix["note"]
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    old = OLD_PARENT.search(m.group(1)) if m else None
+    if (not m or not old or old.group(1) != note.stem or "type: history" not in m.group(1).split("\n")
+            or any(l.startswith("status:") for l in m.group(1).split("\n")) or not note.is_file()):
+        raise Held("it is not a history file of that note in the older form any more")
+    fm = m.group(1).replace(old.group(0), 'parent: "%s"' % item.fix["to"], 1)
+    journal.write(path, "---\n" + fm + "\n---\n" + text[m.end():])
+    return "its parent link is now in the current form"
+
+
 OPS: Dict[str, Callable[[Ctx, Item, "Journal"], str]] = {
     "status": apply_status, "list-thread": apply_list_thread, "date": apply_date, "relink": apply_relink,
-    "codelink": apply_codelink, "parent": apply_parent, "history": apply_history}
+    "codelink": apply_codelink, "parent": apply_parent, "history": apply_history, "history-parent": apply_history_parent}
 OP_WORDS = {"status": ("status word", "status words"), "list-thread": ("hub list", "hub lists"),
             "date": ("date prefix", "date prefixes"), "relink": ("link", "links"),
             "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links"),
-            "history": ("note trimmed", "notes trimmed")}
+            "history": ("note trimmed", "notes trimmed"), "history-parent": ("history parent link", "history parent links")}
 
 
 def apply_mechanical(ctx: Ctx, item: Item, journal: "Journal") -> str:
@@ -940,7 +997,8 @@ def say_mechanical(item: Item) -> str:
             "codelink": lambda: "`%s` becomes [[%s]]" % (f.get("ref"), f.get("ref")),
             "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread"),
             "history": lambda: "move %s older entries to history files: %s words down to %s"
-                               % (f.get("moved"), f.get("before"), f.get("after"))}.get(f.get("op"))
+                               % (f.get("moved"), f.get("before"), f.get("after")),
+            "history-parent": lambda: "write its parent link in the current form"}.get(f.get("op"))
     line = "%s: %s" % (item.path, item.said or (what() if what else item.message))
     return line + (" (held: %s)" % item.held if item.held and not item.said else "")
 

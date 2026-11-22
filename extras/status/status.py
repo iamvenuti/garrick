@@ -4488,13 +4488,43 @@ def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
     return ["mend"] if mixed_papers(folder) else ["split"]
 
 
+def _keeps_papers(folder: Path) -> bool:
+    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
+    `.DS_Store` or a `published.md` ledger with no row."""
+    if not folder.is_dir():
+        return False
+    try:
+        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
+                                 text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables":
+            rows = 0
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for l in lines:
+                if l.strip().startswith("|"):
+                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
+                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
+                        rows += 1
+            if not rows:
+                continue
+        return True
+    return False
+
+
 def mixed_papers(project: Path) -> bool:
     """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
     jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
     names is the Join, not the Split (#632)."""
     threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
-    holding = [t for t in threads if any(
-        f.is_file() and f.name != ".gitkeep" for k in ("Sources", "Deliverables") for f in (t / k).rglob("*"))]
+    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
     if not holding or len(holding) == len(threads):
         return False
     try:

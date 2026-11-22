@@ -708,6 +708,27 @@ class TestTheMixedProjectFinding(LayoutFiles):
         self.commit("one real file")
         self.assertEqual(1, len(self.finding()))
 
+    def test_what_a_join_never_moves_is_no_papers_for_the_check_or_the_chip(self):
+        """N1: an untracked .DS_Store, and a ledger with no row, leave nothing to move: neither raises the finding."""
+        status_page = status
+        self.make("project", "--zone", "Work", "--name", "Cedar")
+        self.make("thread", "--zone", "Work", "--project", "Cedar", "--name", "Quay")
+        self.make("thread", "--zone", "Work", "--project", "Cedar", "--name", "Wharf")
+        quay = self.work / "Cedar" / "Threads" / "Quay"
+        (quay / "Sources").mkdir(exist_ok=True)
+        (quay / "Deliverables").mkdir(exist_ok=True)
+        (quay / "Deliverables" / "published.md").write_text("| Date | File | Destination | Copy |\n|---|---|---|---|\n")
+        self.commit("empty ledger")
+        (quay / "Sources" / ".DS_Store").write_text("x")                  # untracked
+        self.assertEqual([], self.finding())
+        self.assertFalse(status_page.mixed_papers(self.work / "Cedar"))
+        (quay / "Sources" / "brief.txt").write_text("brief")              # untracked: still none
+        self.assertEqual([], self.finding())
+        self.assertFalse(status_page.mixed_papers(self.work / "Cedar"))
+        self.commit("one real file")
+        self.assertEqual(1, len(self.finding()))
+        self.assertTrue(status_page.mixed_papers(self.work / "Cedar"))
+
     def test_a_project_whose_threads_all_keep_papers_also_offers_to_split(self):
         self.mixed(threads=("Quay", "Wharf"), hold=("Quay", "Wharf"))
         (found,) = self.finding()

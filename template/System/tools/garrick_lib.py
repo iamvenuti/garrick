@@ -2419,16 +2419,6 @@ def resume_lines(text: str) -> List[str]:
     return out
 
 
-def hub_keeps_resume(text: str, fm: Optional[dict] = None) -> bool:
-    """Does a project's hub hold a resume point of its own, the main line of a project that is one
-    piece of work? It does while it has a `### Resume here` block; an `### Outcome` in that place
-    ends it, and a heading (`layout: thread-first`) never has one. It stands beside the project's
-    threads, so every reader of resume points reads it whether the project has threads or not."""
-    if str((fm or {}).get("layout") or "").strip().lower() == "thread-first":
-        return False
-    return any(l.strip().lower() == RESUME_HEADING.lower() for l in text.splitlines())
-
-
 def _load_work():
     """work.py, beside this file: the one reader of the piece of work. One module object for every caller."""
     import importlib.util
@@ -2450,6 +2440,8 @@ def __getattr__(name):
     sits beside no work.py still loads for everything else."""
     if name == "work":
         return _load_work()
+    if name == "hub_keeps_resume":
+        return _load_work().hub_keeps_resume          # defined in work.py, once
     raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 

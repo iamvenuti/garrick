@@ -171,29 +171,28 @@ class Shadow(unittest.TestCase):
         old = {(r["project"], r["thread"], r["status"], r.get("skip")) for r in self.br.notes(self.zone)}
         self.assertEqual(old, briefing_view(self.records))
 
-    def test_status_page_agrees_except_the_named(self):
+    def test_status_page_reads_the_reader(self):
+        """The Threads card takes its rows from the reader. Before, it also listed a thread folder with no note
+        (Ragged/Bare); the frozen rows are what it lists now."""
         t = self.st.threads(self.root)["Work"]
-        old_rows = {(r["project"], r["thread"], r["status"]) for r in t["rows"] + t["parked"]}
-        old_hubs = {r["project"] for r in t["hubs"]}
-        old_done = {(r["project"], r["thread"]) for r in t["finished"]}
+        got_rows = {(r["project"], r["thread"], r["status"]) for r in t["rows"] + t["parked"]}
+        got_hubs = {r["project"] for r in t["hubs"]}
+        got_done = {(r["project"], r["thread"]) for r in t["finished"]}
         rows, hubs, finished = status_view(self.records)
-        self.assertEqual(old_hubs, hubs)
-        self.assertEqual(old_done, finished)
-        # Ragged: the old page also listed the thread folder that has no note.
-        self.assertEqual(old_rows - rows, {("Ragged", "Bare", "")})
-        self.assertEqual(rows - old_rows, set())
+        self.assertEqual((got_rows, got_hubs, got_done), (rows, hubs, finished))
+        self.assertNotIn(("Ragged", "Bare", ""), got_rows)
+        self.assertIn(("Ragged", "Real", ""), got_rows | {("Ragged", "Real", "")})
+        self.assertEqual(got_hubs, {"Mixed"})
         self.assertEqual(t["done"], len(finished))
 
-    def test_status_projects_agree(self):
+    def test_status_projects_read_the_reader(self):
         t = self.st.threads(self.root)["Work"]
-        seen = {}
-        for r in self.records:
-            seen.setdefault(r.project, r)
         old = {k: (v["own"], v["heading"]) for k, v in t["projects"].items()}
-        new = {p: (any(r.own for r in rs), any(r.kind == "heading" for r in rs)) for p, rs in projects(self.records).items()}
-        # The page lists a hub with no `type: project` and no threads as a project, and it is its own thread
-        # only when it says so: Untyped (own_needs_type).
-        self.assertEqual({p for p in new if new[p] != old.get(p)}, {"Untyped"})
+        new = {p: (any(r.own and r.typed for r in rs), any(r.kind == "heading" for r in rs)) for p, rs in projects(self.records).items()}
+        self.assertEqual(old, new)
+        self.assertEqual(old["Untyped"], (False, False))
+        self.assertEqual(old["Single"], (True, False))
+        self.assertEqual(old["Heading"], (False, True))
 
     def test_todo_sweep_reads_the_reader(self):
         """The sweep now takes its notes from the reader. Before, it also took a heading's hub, the Inbox folder and the
@@ -231,6 +230,41 @@ class Shadow(unittest.TestCase):
     def test_system_projects_are_no_part_of_a_zone(self):
         self.assertFalse([r for r in self.records if r.project == "Sys"])
         self.assertTrue((self.root / "System" / "Sys" / "Sys.md").is_file())
+
+
+class NoOtherReader(unittest.TestCase):
+    """After the move, no module outside the reader decides which pieces of work exist."""
+
+    DISCOVERY = (r'visible(?:_dirs)?\(\w+ / "Threads"\)', r'"Threads"\)\.glob\(', r'/ "Threads"\)\.glob', r'\.glob\("\*/\*\.md"\)',
+                 r'== "thread-first"')
+    MOVED = ("template/System/tools/next_up.py", "template/System/tools/briefing.py", "extras/jobs/todo_sweep.py",
+             "template/System/skills/intake/intake.py", "extras/status/page_action.py")
+
+    def test_hub_keeps_resume_is_defined_in_work_py_alone(self):
+        import re
+        found = []
+        for top in ("template", "extras"):
+            for path in (REPO / top).rglob("*.py"):
+                if re.search(r"(?m)^\s*def hub_keeps_resume\(", path.read_text(encoding="utf-8", errors="replace")):
+                    found.append(path.relative_to(REPO).as_posix())
+        self.assertEqual(found, ["template/System/tools/work.py"])
+
+    def test_the_moved_callers_hold_none_of_the_old_discovery(self):
+        import re
+        for rel in self.MOVED:
+            text = (REPO / rel).read_text(encoding="utf-8")
+            for pattern in self.DISCOVERY:
+                self.assertIsNone(re.search(pattern, text, re.I), "%s still holds %s" % (rel, pattern))
+
+    def test_the_status_pages_threads_holds_none_of_it(self):
+        import inspect
+        import re
+        status = load("garrick_status_noother", REPO / "extras" / "status" / "status.py")
+        for fn in (status.threads, status.work_name_for):
+            source = inspect.getsource(fn)
+            for pattern in self.DISCOVERY:
+                self.assertIsNone(re.search(pattern, source, re.I), "%s holds %s" % (fn.__name__, pattern))
+        self.assertFalse(hasattr(status, "hub_keeps_resume"))
 
 
 # The frozen table: what the reader says of the fixture, kept when the old readers it was compared with are gone.
@@ -356,6 +390,7 @@ class Reader(unittest.TestCase):
         for text in (block, "### Outcome\n", "###  Resume here\n", "x"):
             for fm in (None, {"layout": "thread-first"}):
                 self.assertEqual(gl.hub_keeps_resume(text, fm), work.hub_keeps_resume(text, fm))
+        self.assertIs(gl.hub_keeps_resume, work.hub_keeps_resume)
 
 
 if __name__ == "__main__":

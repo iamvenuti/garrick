@@ -163,7 +163,8 @@ step 7, and another session may have changes of its own in any repository.
    zone's flag, with `scaffold.py zone --name <Zone> --walled` or `--open`.
 2. **Parties, People, Aliases.** Re-read `System/context.md` and
    `System/names.md` (if there is one) right before editing them, then add the rows: Parties in
-   the first, People and Aliases in the second. Commit them alone in the
+   the first, People and Aliases in the second (in `System/context.md` until
+   the update has moved them). Commit them alone in the
    workspace root's repository:
    ```sh
    git add -- System/context.md System/names.md

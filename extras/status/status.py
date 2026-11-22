@@ -6336,7 +6336,7 @@ dialog.settings[open]{display:flex;flex-direction:column}
 .setmain{position:relative;overflow:auto;overscroll-behavior:contain;padding:18px 32px 28px}.setmain>*{max-width:46rem}
 .setgroup+.setgroup{margin-top:30px;padding-top:16px;border-top:1px solid var(--line)}
 .setgrp{margin:0 0 12px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-.wallrows{list-style:none;margin:8px 0 0;padding:0}.wallrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.wallrows{list-style:none;margin:8px 0 0;padding:0}.wallrow{display:flex;flex-wrap:wrap;align-items:center;gap:0 10px;padding:8px 0;border-top:1px solid var(--line)}
 .wallrow b{min-width:7em}.wallrow .wchange{margin-left:auto;border:0;background:none;color:var(--accent);font:inherit;font-size:var(--fs-meta);text-decoration:underline;cursor:pointer;padding:6px 4px;min-height:40px}
 .wallrow .wchange:hover{color:var(--ink)}
 dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.45;color:var(--ink2)}
@@ -8310,6 +8310,7 @@ button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,
 button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .appicons .act[data-k]{width:40px;height:40px}
 .qhelp::after{content:"";position:absolute;inset:-4px}
+dialog.settings .setsec .qhelp{margin-right:4px}   /* the 24px target reaches 4px past the "?"; keep it inside the section, or the section scrolls sideways by 3px */
 .grip,.hide,.totab,.tick,.pchev,button.chip,.jname{position:relative}
 .grip::after,.hide::after,.totab::after,.tick::after,.pchev::after,button.chip::after,.jname::after{content:"";position:absolute;inset:-9px -6px}
 .trow.done .tick::after{inset:auto}

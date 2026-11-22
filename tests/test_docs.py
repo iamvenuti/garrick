@@ -501,3 +501,16 @@ class WrapAsACommandTest(unittest.TestCase):
         self.assertIn("The steps did not change; only who carries them out.", commands)
         for word in ("*saved*", "*refused*", "*conflict*", "*failed*"):
             self.assertIn(word, commands)
+
+
+class WrapWordsAfterReviewTest(unittest.TestCase):
+    """The wording the release review asked for (#645)."""
+
+    def test_the_todo_skill_names_the_wraps_commit_step_as_the_skill_numbers_it(self):
+        todo = (REPO / "template" / "System" / "skills" / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        wrap = (REPO / "template" / "System" / "skills" / "threads" / "reference" / "wrap.md").read_text(encoding="utf-8")
+        steps = re.findall(r"(?m)^(\d+)\. \*\*", wrap.split("**What you decide, in order.**", 1)[1].split("**The receipt**", 1)[0])
+        self.assertEqual(str(len(steps)), steps[-1])
+        self.assertIn("Make the one call**", wrap.split("%s. **" % steps[-1], 1)[1][:40])
+        self.assertNotIn("the wrap's step 12", " ".join(todo.split()))
+        self.assertIn("the wrap's step %s" % steps[-1], " ".join(todo.split()))

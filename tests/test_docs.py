@@ -514,3 +514,9 @@ class WrapWordsAfterReviewTest(unittest.TestCase):
         self.assertIn("Make the one call**", wrap.split("%s. **" % steps[-1], 1)[1][:40])
         self.assertNotIn("the wrap's step 12", " ".join(todo.split()))
         self.assertIn("the wrap's step %s" % steps[-1], " ".join(todo.split()))
+
+    def test_resume_trim_auto_is_described_as_the_assistant_writing_the_shorter_block_before_the_call(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("With `auto` your assistant writes the shorter block, 75% of the limit (300 words at 400), before it makes the call", flat)
+        self.assertNotIn("with `auto` it trims the block", flat)
+        self.assertNotIn("in the commit message", flat.split("`resume-trim`", 1)[1][:700])

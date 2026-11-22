@@ -102,8 +102,17 @@ def whole(lines, start, end):
     return [lines[i] for i in rows]
 
 
-def study(root):
-    """What the move would do, read only: {"state", "people", "aliases", "said"} with state one of `none` (nothing
+def tools_read_names(root):
+    """Whether the workspace's own System/tools/garrick_lib.py reads names.md. A move made while the tools are older
+    leaves them reading no people and no aliases, and the checks that use them then see nobody."""
+    try:
+        return "def names_path" in (root / "System" / "tools" / "garrick_lib.py").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def study(root, tools_follow=False):
+    """What the move would do, read only (`tools_follow`: this run's update writes the new tools first): {"state", "people", "aliases", "said"} with state one of `none` (nothing
     to move: already moved, or no tables), `waiting` (both tables are whole and in context.md), `unreadable` (a
     table is not whole, so it stays), `both` (names.md already holds one of them)."""
     context = root / "System" / "context.md"
@@ -131,14 +140,18 @@ def study(root):
                         "Aliases stay where they are." % bad[0]}
     if names.is_file():
         try:
-            held = named(names.read_text(encoding="utf-8").split("\n"))
+            filled = bool(names.read_text(encoding="utf-8", errors="replace").strip())
         except OSError:
-            held = None
-        if held is None or held:
+            filled = True
+        if filled:       # a file of your own is never written over, whatever it holds
             return {"state": "both", "people": len(rows["People"]), "aliases": len(rows["Aliases"]),
-                    "said": "System/names.md already has a People or Aliases section, so nothing moves; "
+                    "said": "System/names.md already holds text, so nothing moves; "
                             "both files are read together."}
-    return {"state": "waiting", "people": len(rows["People"]), "aliases": len(rows["Aliases"]),
+    if not tools_read_names(root) and not tools_follow:
+        return {"state": "tools", "people": len(rows["People"]), "aliases": len(rows["Aliases"]),
+                "said": "This workspace's tools do not read System/names.md yet, so People and Aliases stay where they "
+                        "are. Update the tools first, then ask again."}
+    return {"state": "waiting", "after_update": not tools_read_names(root), "people": len(rows["People"]), "aliases": len(rows["Aliases"]),
             "said": "People (%d rows) and Aliases (%d rows) are still in System/context.md, which every session loads. "
                     "With your yes the update moves them to System/names.md." % (len(rows["People"]), len(rows["Aliases"]))}
 

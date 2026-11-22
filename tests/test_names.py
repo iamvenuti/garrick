@@ -351,6 +351,40 @@ class TheMove(Legacy):
         names = [p["name"] for p in lib.load_context(self.root)["people"]]
         self.assertEqual({"Alex Birch", "Dana Whitlock", "Theo Marsh"}, set(names))
 
+    def test_the_move_waits_while_the_workspaces_own_tools_cannot_read_names_md(self):
+        """W1: with 0.76's garrick_lib the move would leave every reader of People seeing nobody."""
+        lib_path = "System/tools/garrick_lib.py"
+        (self.root / lib_path).write_text("# the tools of 0.76, which read no names.md\n")
+        self.commit(self.root, "old tools, not in the stamp as Garrick wrote them")
+        state = names_move.study(self.root)
+        self.assertEqual("tools", state["state"])
+        self.assertIn("Update the tools first", state["said"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        self.assertFalse((self.root / NAMES).exists())
+        self.assertEqual(self.before, (self.root / CONTEXT).read_text())
+        self.assertIn("Update the tools first", update.report(self.plan()))
+        self.assertNotIn("say yes", update.report(self.plan()))
+
+    def test_the_report_offers_the_move_after_the_update_when_the_update_writes_the_tools(self):
+        lib_path = "System/tools/garrick_lib.py"
+        self.as_if_older(lib_path, "# older tools\n")
+        p = self.plan()
+        self.assertIn(lib_path, p["actions"]["replace"])
+        self.assertEqual("waiting", p["names"]["state"])
+        self.assertTrue(p["names"]["after_update"])
+        self.assertIn("apply this update, say yes", update.report(p))
+
+    def test_a_names_md_of_the_users_own_is_never_written_over(self):
+        """S2: any file with text in it is left as it is, whatever it holds."""
+        (self.root / NAMES).write_text("# my own notes\nimportant\n")
+        self.commit(self.root, "my names.md")
+        self.assertEqual("both", names_move.study(self.root)["state"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        self.assertEqual("# my own notes\nimportant\n", (self.root / NAMES).read_text())
+        self.assertEqual(self.before, (self.root / CONTEXT).read_text())
+
     def test_it_refuses_a_file_with_changes_not_committed(self):
         (self.root / CONTEXT).write_text(self.before + "\nA note of mine.\n")
         r = self.run_update("--names", "--apply")

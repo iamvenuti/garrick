@@ -1083,7 +1083,8 @@ HELD_FILE = ("System", "generated", "status-answers.json")
 # Why a place's answers were left, by the code work_in.py keeps: the plain words. The file holds a code and a day, never a path or a title.
 ANSWERS_HELD = {"cap": "The assistant's limit for scheduled calls was reached.", "assistant": "The assistant could not be reached tonight.",
                 "incomplete": "The assistant did not finish.", "held": "Some of the answers were unclear, so the assistant left them.",
-                "commit": "The wall check refused the change, so nothing was kept."}
+                "commit": "The wall check refused the change, so nothing was kept.",
+                "long": "One answer took longer than a night's run allows, so the night leaves it and works in the others."}
 
 
 def held_answers(ws, places: Dict[str, str], waiting: Dict[str, int], hidden: set) -> Dict[str, List[dict]]:

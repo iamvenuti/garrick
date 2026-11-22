@@ -400,5 +400,58 @@ class TestWhatTheNightCouldNotWorkInIsAskedOnTheCard(unittest.TestCase):
 
 
 
+class TestAQuestionStoppedTwice(TestOneCallForEachAnswer):
+    """#629, the optional part: a question whose call is stopped at the limit on two runs is held as too long, the card says so, and the
+    night works in the others. The file keeps a hash of the question, never its path."""
+
+    TWO = [("Zones/Work", "Work", 2)]
+
+    def stops(self):
+        return json.loads(self.ws.joinpath(*work_in.HELD_FILE).read_text()).get("stopped", {})
+
+    def test_stopped_once_is_not_held_and_the_count_waits_for_the_next_night(self):
+        runs = [(agent.EXIT_TIMEOUT, "", None), (0, DONE, "Wikis/Meetings/wiki/a2.md")]
+        code, calls, said = self.timed([100, 10], runs, places=self.TWO)
+        self.assertEqual(agent.EXIT_TIMEOUT, code)
+        self.assertEqual(2, len(calls))
+        self.assertEqual({"Zones/Work": {"why": "assistant", "day": "2026-11-13"}}, self.held())          # the reason is the stopped call's, not too long
+        self.assertEqual([1], [v["n"] for v in self.stops().values()])
+
+    def test_stopped_on_two_runs_it_is_held_as_too_long_and_the_next_night_skips_it_and_works_the_others(self):
+        self.timed([100, 10], [(agent.EXIT_TIMEOUT, "", None), (0, DONE, "Wikis/Meetings/wiki/a2.md")], places=self.TWO)
+        code, calls, said = self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=[("Zones/Work", "Work", 1)])          # the second run stops it
+        self.assertEqual(agent.EXIT_TIMEOUT, code)
+        self.assertEqual({"Zones/Work": {"why": "long", "day": "2026-11-13"}}, self.held())
+        self.assertEqual([2], [v["n"] for v in self.stops().values()])
+        code, calls, said = self.timed([10, 10], [(0, DONE, "Wikis/Meetings/wiki/a3.md")], places=self.TWO)               # the third night
+        self.assertEqual(0, code)                                        # no call was stopped
+        self.assertEqual(1, len(calls))                                  # the held question is not called again; the other is
+        self.assertIn("`questions/q2.md`", calls[0])
+        self.assertIn("Work: 1 worked in, 1 left (long)", said)
+        self.assertEqual({"Zones/Work": {"why": "long", "day": "2026-11-13"}}, self.held())
+
+    def test_the_file_holds_a_hash_and_nothing_that_names_the_question(self):
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=[("Zones/Work", "Work", 1)])
+        raw = self.ws.joinpath(*work_in.HELD_FILE).read_text()
+        self.assertNotIn("questions", raw)
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{12}", k) for k in self.stops()))
+        self.assertIn("long", fq.ANSWERS_HELD)
+
+    def test_a_question_that_runs_to_its_end_after_a_stop_starts_its_count_again(self):
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=[("Zones/Work", "Work", 1)])
+        self.timed([10], [(0, DONE, "Wikis/Meetings/wiki/a1.md")], places=[("Zones/Work", "Work", 1)])
+        self.assertEqual({}, self.stops())
+
+    def test_the_card_shows_the_held_question_in_plain_words(self):
+        self.assertIn("longer than a night", fq.ANSWERS_HELD["long"])
+        write(self.ws.joinpath(*fq.HELD_FILE), json.dumps({"held": {"Zones/Work": {"why": "long", "day": "2026-11-13"}}}))
+        out = fq.held_answers(self.ws, {"Zones/Work": "Work"}, {"Zones/Work": 1}, set())
+        (q,) = out["Zones/Work"]
+        self.assertEqual("answers-held", q["id"])
+        self.assertIn("could not be worked in", q["sentence"])
+        self.assertIn("longer than a night", q["why"])
+        self.assertNotRegex(q["why"] + q["sentence"], r"questions/|\.md|exit|124")
+
+
 if __name__ == "__main__":
     unittest.main()

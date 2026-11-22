@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import itertools
 import json
@@ -57,7 +58,8 @@ EXIT_NO_PANEL = 64
 STOPPED: List[str] = []      # the places whose call was stopped at its time limit, in this run
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
-REASONS = ("cap", "assistant", "incomplete", "held", "commit")
+REASONS = ("cap", "assistant", "incomplete", "held", "commit", "long")
+STOP_LIMIT = 2       # a question whose call was stopped at the limit on this many runs is held as too long, and the night skips it (#629)
 # What the call may run. page_action.py only by the two CLI verbs it needs: a CLI verb runs as `via: session`, which refuses
 # the page-only verbs, while JSON on stdin would run as `via: page`.
 ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
@@ -196,12 +198,32 @@ def read_held(ws: Path) -> Dict[str, dict]:
     return {k: v for k, v in (held or {}).items() if isinstance(v, dict) and v.get("why") in REASONS} if isinstance(held, dict) else {}
 
 
-def write_held(ws: Path, held: Dict[str, dict]) -> None:
+def question_key(scope: str, wiki: str, rel: str) -> str:
+    """Twelve hex digits that name one question in the file below: never its path, its title or its answer."""
+    return hashlib.sha1(("%s\0%s\0%s" % (scope, wiki, rel)).encode("utf-8", "surrogatepass")).hexdigest()[:12]
+
+
+def read_stopped(ws: Path) -> Dict[str, dict]:
+    """For each question whose call was stopped at the step's limit, how many runs stopped it and the day of the last (#629)."""
+    try:
+        data = json.loads(ws.joinpath(*HELD_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found = data.get("stopped") if isinstance(data, dict) else None
+    return {k: {"n": int(v["n"]), "day": str(v.get("day") or "")} for k, v in (found or {}).items()
+            if isinstance(v, dict) and re.fullmatch(r"[0-9a-f]{12}", str(k)) and isinstance(v.get("n"), int) and v["n"] > 0} \
+        if isinstance(found, dict) else {}
+
+
+def write_held(ws: Path, held: Dict[str, dict], stopped: Optional[Dict[str, dict]] = None) -> None:
     path = ws.joinpath(*HELD_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".status-answers-")
+    body = {"held": held}
+    if stopped:
+        body["stopped"] = stopped
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"held": held}, f, indent=1, sort_keys=True)
+        json.dump(body, f, indent=1, sort_keys=True)
         f.write("\n")
     os.replace(tmp, str(path))
 
@@ -250,6 +272,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     held = read_held(ws)
     for scope in [s for s in held if s not in {i[0] for i in items}]:
         del held[scope]                               # nothing waits there any more
+    stops = read_stopped(ws)
+    for key in [k for k in stops if k not in {question_key(i[0], i[2], i[3]) for i in items}]:
+        del stops[key]                                # answered or gone: no longer counted
     total = 0
     del STOPPED[:]
     deadline = time.time() + args.limit if args.limit else None
@@ -258,11 +283,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         place = group[0][1]
         worked_in, reason, cut = 0, None, False
         for _, _, wiki, rel in group:
-            if cut or (deadline is not None and deadline - time.time() < MIN_LEFT):
+            key = question_key(scope, wiki, rel)
+            if stops.get(key, {}).get("n", 0) >= STOP_LIMIT:
+                why, worked = "long", 0                # stopped at the limit on two runs: held for the card, the others go on (#629)
+            elif cut or (deadline is not None and deadline - time.time() < MIN_LEFT):
                 cut = True                            # the limit is reached between answers: what is left waits for the night after
                 why, worked = "cap", 0
             else:
+                stopped_before = len(STOPPED)
                 why, worked = work_place(ws, scope, place, wiki, rel, args.tier, deadline)
+                if len(STOPPED) > stopped_before:     # this question's call was stopped while it ran
+                    stops[key] = {"n": stops.get(key, {}).get("n", 0) + 1, "day": today.isoformat()}
+                    if stops[key]["n"] >= STOP_LIMIT:
+                        why = "long"
+                elif why in (None, "held"):
+                    stops.pop(key, None)              # it ran to its end: the count starts again
             total += worked
             if why is None:
                 worked_in += 1
@@ -275,11 +310,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             held.pop(scope, None)
         else:
             held[scope] = {"why": reason, "day": today.isoformat()}
-        write_held(ws, held)
+        write_held(ws, held, stops)
     if not items:
         print("work_in: no answer is waiting")
         if ws.joinpath(*HELD_FILE).exists():
-            write_held(ws, held)
+            write_held(ws, held, stops)
     agent.report_items(total)
     return agent.EXIT_TIMEOUT if STOPPED else 0
 

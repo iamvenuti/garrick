@@ -182,11 +182,12 @@ VERB_ANSWERS = {kind: ids + ((UNKEEP,) if KEEP in ids else ()) for kind, ids in 
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
 # The handoff answers that are one bounded edit of the finding's own file (#592): the engine runs them in the background, in the
 # file's zone or wiki, and commits through the wall check; a visible assistant opens only when it is not available. A split creates
-# new notes, only in the finding's own folder (#626). *Undo* is the one more answer the verb takes. Left as visible handoffs on
-# purpose: a to-do line (its thread's notes are other files, not known before the run), a correction (the files Nurture lists
-# for it are not in the request), a wrong attribution and a hook of the user's own (judgment).
+# new notes, only in the finding's own folder (#626). A to-do line's engine run may also change the thread notes the long lines
+# name, and a correction's the files correct.py lists for it, in the finding's own zone: the verb works both lists out and checks
+# them before the run (page_action.py). *Undo* is the one more answer the verb takes. Left as visible handoffs on purpose: a wrong
+# attribution and a hook of the user's own (judgment).
 BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": ("shorten",), "fix-failed": ("fix-now",),
-           "note-long": ("split",), "other": ("fix-now",)}
+           "note-long": ("split",), "other": ("fix-now",), "todo-long": ("shorten",), "correction": ("finish",)}
 UNDO = "undo-bounded"
 VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later", HOLDS), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
 for _kind, _ids in BOUNDED.items():
@@ -708,8 +709,34 @@ def bounded_request(kind: str, answer: str, rel: str) -> str:
     raise KeyError((kind, answer))
 
 
+def bounded_todo_request(rel: str, threads) -> str:
+    """The engine's request for a to-do list's long lines (#626): `threads` are the thread notes the long lines' own links name,
+    worked out and checked before the run. With none, the lines are shortened and nothing moves to a note."""
+    if threads:
+        return ("Shorten the long lines of %s to one action each, and keep their dates and tags. Move what came of each line into "
+                "the dated entry of the thread note it names, which is one of the other files given. Change no other line." % rel)
+    return "Shorten the long lines of %s to one action each, and keep their dates and tags. Change no other line." % rel
+
+
+def bounded_correction_request(old: str, new: str) -> str:
+    """The engine's request to finish a correction (#626): the value, and the files it is given, nothing more."""
+    return ('Change "%s" to "%s" in every file you are given, wherever it stands as that value and never inside a longer word. '
+            'Do not write that the value was ever different. Change nothing else.' % (old, new))
+
+
+CORRECT_LINE = re.compile(r'^Correct "([^"\n]{1,200})" to "([^"\n]{1,200})": ')
+
+
+def correction_values(item: dict):
+    """(old, new) a standing correction finding holds in its line (Nurture's `say_correction`), or None for one that holds
+    no values, such as a held file or a refused commit: those stay with a visible assistant."""
+    m = CORRECT_LINE.match(str(item.get("line") or ""))
+    return (m.group(1), m.group(2)) if m and m.group(1) != m.group(2) else None
+
+
 # The first line of the commit a bounded edit makes, by kind and answer: one fixed sentence, never a path or a page's name.
-BOUNDED_MESSAGE = {("note-long", "split"): "Split a long note into its own notes", (OTHER, "fix-now"): "Fix a page"}
+BOUNDED_MESSAGE = {("note-long", "split"): "Split a long note into its own notes", (OTHER, "fix-now"): "Fix a page",
+                   ("todo-long", "shorten"): "Shorten the long lines of a to-do list", ("correction", "finish"): "Finish a correction"}
 
 
 def bounded_new_in(kind: str, answer: str, rel: str) -> str:
@@ -735,6 +762,10 @@ def bounded_said(kind: str, ws, rel: str) -> str:
         return "Took the private material out of “%s”." % stem(rel)
     if kind == "note-long":
         return "Split the long sections of “%s” into their own notes." % note_name(rel)[0]
+    if kind == "todo-long":
+        return "Shortened the long lines of the %s to-do list." % place(rel)
+    if kind == "correction":
+        return "Finished the correction in %s." % place(rel)
     if kind == OTHER:
         return "Made the change to “%s”." % stem(rel)
     return "Made the small fix to “%s”." % stem(rel)
@@ -824,6 +855,12 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
             # (a project kept under System/) is in no repository the engine commits in: a visible handoff with its phrase (#623)
             if a["id"] in BOUNDED.get(plain, ()) and keepable_path(path):
                 a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
+                if plain == "correction":       # the values ride with the request, checked against the record when it runs
+                    vals = correction_values(item)
+                    if vals:
+                        a["req"].update(old=vals[0], new=vals[1])
+                    else:
+                        del a["req"]            # a held or refused correction holds no values: a visible assistant
         elif a["action"] == "open":
             a["reqs"] = [{"verb": "note-open", "path": path}]
         elif a["action"] in ("look", "allow"):

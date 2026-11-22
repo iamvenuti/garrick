@@ -214,11 +214,11 @@ class TestPlainWording(unittest.TestCase):
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "keep", "later", "unkeep", "split", "undo-bounded"), "resume-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"),
-                          "todo-long": ("keep", "later", "unkeep"),
+                          "todo-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"),
                           "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
                           "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep", "fix-now", "undo-bounded"),
-                          "attribution": ("later",), "correction": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "attribution": ("later",), "correction": ("later", "finish", "undo-bounded")}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -955,7 +955,7 @@ class TestFindingVerb(ActionCase):
         ops = pa.ops_lib(self.root)
         self.assertIn("finding", pa.VERBS)
         self.assertIn("finding", ops.DECLARED)
-        self.assertEqual(("kind", "path", "answer", "commit", "repo"), ops.DECLARED["finding"].fields)      # commit and repo ride with Undo (#592)
+        self.assertEqual(("kind", "path", "answer", "commit", "repo", "old", "new"), ops.DECLARED["finding"].fields)      # commit and repo ride with Undo (#592); old and new with a correction (#626)
         self.assertIsNone(ops.validate("finding", {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "preview"}))
         self.assertIsNotNone(ops.validate("finding", {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "preview", "extra": 1}))
 
@@ -1135,6 +1135,8 @@ class TestFindingVerb(ActionCase):
         ops = pa.ops_lib(self.root)
         for kind, ids in fq.BOUNDED.items():
             for answer in ids:
+                if kind in ("todo-long", "correction"):
+                    continue                # their requests name a file list worked out when the run starts: TestTodoAndCorrectionInTheBackground
                 text = fq.bounded_request(kind, answer, "Zones/Work/Acme Review/Acme Review.md")
                 self.assertIn("Zones/Work/Acme Review/Acme Review.md", text)
                 self.assertNotIn("`", text)
@@ -1221,6 +1223,146 @@ class TestEveryBoundedAnswer(ActionCase):
         self.assertTrue(self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})["ok"])
         self.assertNotIn("Fixed.", self.hub.read_text())
 
+    # --- a to-do line and a correction run in the background too (#626) -----------------------------------------------------
+
+    def long_todo(self, link="Pricing"):
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text().replace("## Done", "- [ ] [[%s]]: Send the revised terms, then %s 📅 2026-10-09\n\n## Done" % (link, "and so on " * 25)))
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "a long line")
+        return "Zones/Work/Todo.md", todo
+
+    def test_shorten_the_line_runs_in_the_background_with_the_thread_note_its_link_names_and_undo_reverts_it(self):
+        rel, todo = self.long_todo()
+        seen = []
+
+        def act(cmd, env):
+            seen.append(" ".join(cmd))
+            todo.write_text(todo.read_text().replace("and so on " * 25, ""))
+            self.pricing.write_text(self.pricing.read_text() + "**2 November 2026.** What came of it.\n")
+        self.pricing = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        self.with_assistant(act)
+        before = git(self.work, "rev-parse", "HEAD").strip()
+        got = self.ask(kind="todo-long", answer="shorten", path=rel)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(sorted([rel, "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"]), sorted(got["files"]))
+        self.assertEqual(1, len(git(self.work, "log", "--format=%H", before + "..HEAD").split()))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertIn("Pricing.md", " ".join(seen))                             # the request names the thread note it may change
+        self.assertNotIn("show me", " ".join(seen).lower())
+        undone = self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})
+        self.assertTrue(undone["ok"], undone)
+        self.assertIn("and so on", todo.read_text())
+
+    def test_a_to_do_run_that_changes_a_note_its_lines_do_not_name_keeps_nothing(self):
+        rel, todo = self.long_todo()
+        other = self.work / "Acme Review" / "Acme Review.md"
+        if not other.exists():
+            write(other, "# Acme Review\n")
+            git(self.work, "add", "-A")
+            git(self.work, "commit", "-q", "-m", "hub")
+
+        def act(cmd, env):
+            todo.write_text(todo.read_text().replace("and so on " * 25, ""))
+            other.write_text(other.read_text() + "Moved here.\n")
+        self.with_assistant(act)
+        before, was = git(self.work, "rev-parse", "HEAD").strip(), todo.read_text()
+        got = self.ask(kind="todo-long", answer="shorten", path=rel)
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())          # no commit
+        self.assertEqual(was, todo.read_text())                                        # the file it was given is put back
+        self.assertNotIn("Moved here", git(self.work, "show", "HEAD:Acme Review/Acme Review.md"))     # and the other was never committed
+
+    def test_a_long_line_whose_link_reaches_no_note_may_change_the_to_do_list_only(self):
+        rel, todo = self.long_todo(link="Nowhere")
+        asked = []
+        self.with_assistant(lambda cmd, env: (asked.append(" ".join(cmd)), todo.write_text(todo.read_text().replace("and so on " * 25, ""))))
+        got = self.ask(kind="todo-long", answer="shorten", path=rel)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual([rel], got["files"])
+        self.assertNotIn("thread note", " ".join(asked))
+        self.assertEqual([], pa.todo_thread_notes(self.root, rel))
+        rel2, _ = self.long_todo(link="Pricing")
+        self.assertEqual(["Zones/Work/Acme Review/Threads/Pricing/Pricing.md"], pa.todo_thread_notes(self.root, rel2))
+
+    def test_a_to_do_answer_is_refused_for_any_file_but_a_zones_to_do_list(self):
+        for rel in ("Zones/Work/Acme Review/Acme Review.md", "Wikis/Meetings/wiki/x.md", "Zones/Work/Inbox/Todo.md"):
+            with mock.patch.object(self.eng, "run_bounded") as run:
+                got = self.ask(kind="todo-long", answer="shorten", path=rel)
+            self.assertFalse(got["ok"], rel)
+            run.assert_not_called()
+
+    def record(self, line, path="Zones/Work/Acme Review/Acme Review.md"):
+        folder = self.root / "System" / "generated" / "nurture"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "2026-11-20.json").write_text(json.dumps({"date": "2026-11-20", "left": {"Zones/Work": [{"kind": "correction", "path": path, "line": line}]}}))
+
+    def correction_setup(self):
+        shutil.copy2(REPO / "template" / "System" / "tools" / "correct.py", self.root / "System" / "tools" / "correct.py")
+        self.hub.write_text(self.hub.read_text() + "\nThe partner is Birchwood Ltd here.\n")
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text().replace("Invoice for September", "Invoice Birchwood Ltd for September"))
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "the wrong value")
+        self.record('Correct "Birchwood Ltd" to "Birch Ltd": 2 files (Zones/Work/Acme Review/Acme Review.md, Zones/Work/Todo.md)')
+        return {"kind": "correction", "answer": "finish", "path": self.rel, "old": "Birchwood Ltd", "new": "Birch Ltd"}
+
+    def test_finish_the_correction_changes_the_files_correct_py_lists_in_one_commit_and_undo_reverts_it(self):
+        req = self.correction_setup()
+        todo = self.work / "Todo.md"
+        asked = []
+
+        def act(cmd, env):
+            asked.append(" ".join(cmd))
+            for f in (self.hub, todo):
+                f.write_text(f.read_text().replace("Birchwood Ltd", "Birch Ltd"))
+        self.with_assistant(act)
+        before = git(self.work, "rev-parse", "HEAD").strip()
+        got = self.ask(**req)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(sorted([self.rel, "Zones/Work/Todo.md"]), sorted(got["files"]))
+        self.assertEqual(1, len(git(self.work, "log", "--format=%H", before + "..HEAD").split()))
+        self.assertNotIn("Birchwood", self.hub.read_text() + todo.read_text())
+        self.assertNotIn("show me", " ".join(asked).lower())
+        self.assertTrue(self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})["ok"])
+        self.assertIn("Birchwood Ltd", self.hub.read_text())
+
+    def test_a_correction_that_is_not_on_the_record_or_reaches_beyond_its_zone_is_not_run(self):
+        req = self.correction_setup()
+        with mock.patch.object(self.eng, "run_bounded") as run:
+            self.assertFalse(self.ask(**dict(req, new="Other Ltd"))["ok"])                      # values the record does not hold
+            self.assertFalse(self.ask(**dict(req, old="Birch Ltd", new="Birchwood Ltd"))["ok"])
+            self.record('Correct "Birchwood Ltd" to "Birch Ltd": 1 file', path="Zones/Work/Acme Review/Sibling.md")
+            self.assertFalse(self.ask(**req)["ok"])                                             # another file's finding
+            self.record('Correct "Birchwood Ltd" to "Birch Ltd": 2 files (a)')
+            context = self.root / "System" / "context.md"
+            write(context, "The partner is Birchwood Ltd.\n")                                  # a copy outside the zone
+            got = self.ask(**req)
+            self.assertTrue(got["ok"] and got.get("unavailable"), got)                          # a visible assistant takes it
+            run.assert_not_called()
+
+    def test_a_correction_run_that_writes_outside_its_files_changes_nothing(self):
+        req = self.correction_setup()
+        todo = self.work / "Todo.md"
+
+        def act(cmd, env):
+            for f in (self.hub, todo):
+                f.write_text(f.read_text().replace("Birchwood Ltd", "Birch Ltd"))
+            write(self.work / "Elsewhere.md", "x\n")
+        self.with_assistant(act)
+        before, was = git(self.work, "rev-parse", "HEAD").strip(), self.hub.read_text()
+        got = self.ask(**req)
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
+        self.assertEqual(was, self.hub.read_text())
+
+    def test_a_held_or_refused_correction_offers_no_background_request_and_one_with_values_does(self):
+        held = fq.question(item("correction", "", self.rel, "%(p)s: holds the value being corrected"), "Zones/Work")
+        self.assertNotIn("req", next(a for a in held["answers"] if a["id"] == "finish"))
+        ok = fq.question(item("correction", "", self.rel, 'Correct "Birchwood Ltd" to "Birch Ltd": 1 file (%(p)s)'), "Zones/Work")
+        self.assertEqual({"verb": "finding", "kind": "correction", "path": self.rel, "answer": "finish", "old": "Birchwood Ltd", "new": "Birch Ltd"},
+                         next(a for a in ok["answers"] if a["id"] == "finish")["req"])
+
     def test_a_page_outside_a_zone_or_wiki_is_refused_by_the_verb_and_never_offered(self):
         write(self.root / "System" / "Setup Notes" / "Setup Notes.md", "---\ntitle: Setup Notes\n---\n\n# Setup Notes\n")
         for kind, answer in (("note-long", "split"), ("other", "fix-now"), ("resume-long", "shorten")):
@@ -1234,7 +1376,7 @@ class TestEveryBoundedAnswer(ActionCase):
         q = fq.question(item, "Zones/Work", {"moves": 0, "case": "sections", "skipped": "", "before": 900, "after": 900, "still_over": False})
         split = next(a for a in q["answers"] if a["id"] == "split")
         self.assertIn("show me the change", split["phrase"].lower())
-        for kind, answer in [(k, a) for k, ids in fq.BOUNDED.items() for a in ids]:
+        for kind, answer in [(k, a) for k, ids in fq.BOUNDED.items() for a in ids if k not in ("todo-long", "correction")]:
             text = fq.bounded_request(kind, answer, self.rel).lower()
             self.assertNotIn("show me", text, (kind, answer))
             self.assertNotIn("until i say", text, (kind, answer))
@@ -1250,12 +1392,12 @@ class TestEveryBoundedAnswer(ActionCase):
             self.assertTrue(fix["phrase"], path)
 
     def test_what_stays_a_visible_handoff(self):
-        for kind in ("todo-long", "attribution", "hooks-blocked", "correction"):
+        for kind in ("attribution", "hooks-blocked"):
             self.assertNotIn(kind, fq.BOUNDED)
             for a in fq.ANSWERS[kind]:
                 if a["action"] == "handoff":
                     self.assertTrue(a["id"] not in fq.BOUNDED.get(kind, ()))
-        for kind, answer in (("todo-long", "shorten"), ("attribution", "sort-it"), ("hooks-blocked", "add-check"), ("correction", "finish")):
+        for kind, answer in (("attribution", "sort-it"), ("hooks-blocked", "add-check")):
             got = self.ask(kind=kind, answer=answer, path=self.rel)
             self.assertFalse(got["ok"], kind)
 
@@ -1568,17 +1710,19 @@ class TestHandoffMemoryAndBoundedAnswers(unittest.TestCase):
     def test_the_bounded_answers_carry_a_request_and_keep_the_phrase_for_a_browser(self):
         for plain, ids in fq.BOUNDED.items():
             it = (KINDS[plain] if plain in KINDS else item("judgment", "zz", "Zones/Work/Acme Review/One.md", "%(p)s: something odd") if plain == "other"
+                  else item("correction", "", "Zones/Work/Acme Review/One.md", 'Correct "Acme Co" to "Acme Corp": 2 files (%(p)s, Zones/Work/Todo.md)') if plain == "correction"
                   else item("mechanical", "x", "Zones/Work/Acme Review/One.md", "%(p)s: fixed (held: refused by the wall check)"))
             q = fq.question(it, "Zones/Work", {"moves": 0, "case": "sections", "skipped": "", "before": 900, "after": 900, "still_over": False} if plain == "note-long" else None)
             for a in q["answers"]:
                 if a["id"] in ids:
-                    self.assertEqual({"verb": "finding", "kind": plain, "path": q["path"], "answer": a["id"]}, a["req"], plain)
+                    values = {"old": "Acme Co", "new": "Acme Corp"} if plain == "correction" else {}
+                    self.assertEqual(dict({"verb": "finding", "kind": plain, "path": q["path"], "answer": a["id"]}, **values), a["req"], plain)
                     self.assertTrue(a["phrase"], plain)
                     data = json.loads(htmllib.unescape(re.search(r'data-id="%s" data-fa="([^"]+)"' % a["id"], fq.question_html(q)).group(1)))
                     self.assertEqual((a["req"], a["phrase"]), (data["req"], data["phrase"]))
         self.assertTrue(set(fq.BOUNDED) - {fq.OTHER} <= set(fq.PLAIN_KINDS))
-        for plain in ("todo-long", "hooks-blocked", "attribution", "correction"):
-            self.assertNotIn(plain, fq.BOUNDED)                                    # a second file, a hook of the user's, or judgment (#626)
+        for plain in ("hooks-blocked", "attribution"):
+            self.assertNotIn(plain, fq.BOUNDED)                                    # a hook of the user's, or judgment (#626)
 
     def test_the_script_runs_a_bounded_answer_through_the_engine_and_falls_back_to_a_tab_when_it_cannot(self):
         js = fq.QUEUE_JS

@@ -755,3 +755,19 @@ class Page(OutboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplaySummary(unittest.TestCase):
+    """The printed line names an unusable journal and the requests not applied again (0.76.0 confirmation pass, N2)."""
+
+    def test_the_line_says_the_journal_could_not_be_read(self):
+        line = outbox.summary({"applied": 0, "held": 0, "skipped": 0, "journal": 1})
+        self.assertIn("nothing was applied", line)
+
+    def test_the_line_names_the_requests_whose_record_is_gone(self):
+        line = outbox.summary({"applied": 1, "held": 0, "skipped": 0, "gone": ["a1", "b2"]})
+        self.assertIn("2 not applied again", line)
+        self.assertIn("a1, b2", line)
+
+    def test_a_plain_run_reads_as_before(self):
+        self.assertEqual(outbox.summary({"applied": 2, "held": 1, "skipped": 0}), "Applied 2, held 1, skipped 0.")

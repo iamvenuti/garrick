@@ -137,8 +137,30 @@ class ParseTest(unittest.TestCase):
     def test_result_and_numbers_from_the_json(self):
         out = agent.parse_claude_output("a warning\n" + json.dumps(SAMPLE) + "\n")
         self.assertEqual("Filed two mails.\nSWEEP_COMPLETE", out["text"])
-        self.assertEqual((3, 0.42, ["Bash"], "success"), (out["turns"], out["cost_usd"], out["denied"], out["subtype"]))
+        self.assertEqual((3, 0.42, ["Bash", "Bash(python3)"], "success"), (out["turns"], out["cost_usd"], out["denied"], out["subtype"]))
         self.assertTrue(out["parsed"])
+
+    def refused(self, *commands):
+        return agent.parse_claude_output(json.dumps(dict(SAMPLE, permission_denials=[{"tool_name": "Bash", "tool_input": {"command": c}} for c in commands])))["denied"]
+
+    def test_a_refused_shell_command_is_kept_by_its_first_program_and_never_by_an_argument(self):
+        """#635: `cd x && grep y | head` is `grep`, after the `cd`, a `timeout N` and an `env` with its assignments are left out."""
+        self.assertEqual(["Bash", "Bash(grep)"], self.refused("cd wiki && grep -n secret-file.txt notes | head"))
+        self.assertEqual(["Bash", "Bash(bash)"], self.refused("timeout 100 bash -c 'until grep -q done secret-file.txt; do sleep 5; done'"))
+        self.assertEqual(["Bash", "Bash(python3)"], self.refused("env TOKEN=abc123 python3 tool.py --wiki Meetings | tail -15"))
+        self.assertEqual(["Bash", "Bash(ps)"], self.refused("ps -o pid,etime,command -p 4242"))
+        self.assertEqual(["Bash", "Bash(grep)", "Bash(ls)"], self.refused("cd a && grep x f", "/bin/ls -l"))
+        for command in ("cd wiki && grep -n secret-file.txt notes | head", "env TOKEN=abc123 python3 tool.py", "cd 'my folder' && ls secret-file.txt"):
+            line = agent.ledger_entry(1000.0, "answers", "sonnet", agent.parse_claude_output(json.dumps(dict(
+                SAMPLE, permission_denials=[{"tool_name": "Bash", "tool_input": {"command": command}}]))), 1.0, 0)
+            for text in ("secret-file.txt", "abc123", "wiki", "my folder", "notes"):
+                self.assertNotIn(text, json.dumps(line))                   # no argument reaches the ledger
+
+    def test_a_command_that_cannot_be_read_is_recorded_as_bash_alone(self):
+        for command in ("grep 'unclosed", "$(cat secret-file.txt)", "cd secret-folder", "&& ls", "", None, 5, "x" * 30000):
+            self.assertEqual(["Bash"], self.refused(command), repr(command)[:40])
+        out = agent.parse_claude_output(json.dumps(dict(SAMPLE, permission_denials=[{"tool_name": "Write"}, {"tool_name": "Bash"}])))
+        self.assertEqual(["Bash", "Write"], out["denied"])                 # a refusal with no command in it, as before
 
     def test_not_json_passes_through_with_unknown_numbers(self):
         out = agent.parse_claude_output("Not logged in. Please run /login\n")

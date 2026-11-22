@@ -11,6 +11,7 @@ import datetime as dt
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -80,6 +81,34 @@ class Case(unittest.TestCase):
         with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake):
             code = work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
         return code, calls
+
+
+class TestTheRequestNamesTheTools(unittest.TestCase):
+    """#635: the call is told which tools it has, so it does not spend turns on shell commands the allow list refuses."""
+
+    def test_the_request_names_the_tools_and_what_not_to_do(self):
+        text = work_in.prompt_for("Zones/Work", "Work", "Meetings", "questions/q1.md")
+        for needle in ("Read, Grep and Glob", "question-work", "question-done", "no other shell command", "never wait for a file to change",
+                       "never run the lint"):
+            self.assertIn(needle, text)
+
+    def test_the_request_and_both_skills_agree_with_the_allow_list(self):
+        bash = [a for a in work_in.ALLOW if a.startswith("Bash(")]
+        verbs = sorted(re.search(r"page_action\.py ([a-z-]+):\*\)", a).group(1) for a in bash)
+        self.assertEqual(["question-done", "question-work"], verbs)
+        self.assertEqual(["Edit", "Glob", "Grep", "Read", "Write"], sorted(a for a in work_in.ALLOW if not a.startswith("Bash(")))
+        text = work_in.prompt_for("Zones/Work", "Work", "Meetings", "questions/q1.md")
+        for skill in ("meetings", "knowledge"):
+            body = (REPO / "template" / "System" / "skills" / skill / "SKILL.md").read_text()
+            note = body[body.index("**Run unattended.**"):]
+            note = note[:note.index("\n\n")]
+            for verb in verbs:
+                self.assertIn(verb, note, skill)
+                self.assertIn(verb, text)
+            for needle in ("Read, Grep and Glob", "never\nwait for a file to change", "never run the lint"):
+                self.assertIn(needle, note, skill)
+        shell = set(re.findall(r"`python3 ([\w/.]+ [a-z-]+)`", text))
+        self.assertEqual({"System/status/page_action.py question-work", "System/status/page_action.py question-done"}, shell)
 
 
 class TestTheNightlyWorksInWhatIsWaiting(Case):
@@ -368,6 +397,7 @@ class TestWhatTheNightCouldNotWorkInIsAskedOnTheCard(unittest.TestCase):
 
     def test_not_now_is_a_valid_finding_answer(self):
         self.assertEqual(("later",), fq.VERB_ANSWERS["answers-held"])
+
 
 
 if __name__ == "__main__":

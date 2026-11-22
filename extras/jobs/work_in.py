@@ -110,6 +110,9 @@ def prompt_for(scope: str, place: str, wiki: str = "", rel: str = "") -> str:
             "only. Change only the pages `question-work` lists, cite the raw answer, and mark the question done. Never commit, "
             "never send, and never ask a question: where the answer is unclear, or `question-work` refuses, leave the question as "
             "it is and count it as held.\n"
+            "Look with Read, Grep and Glob. The shell runs only `python3 System/status/page_action.py question-work` and "
+            "`python3 System/status/page_action.py question-done`: no other shell command, never wait for a file to change, and "
+            "never run the lint, since the nightly run's own steps do that.\n"
             "Then write one line exactly: WORKED <n> HELD <n>, and after it one line that says exactly %s" % (place, rel, wiki, skill, SENTINEL))
 
 

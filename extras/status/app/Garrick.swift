@@ -1203,6 +1203,44 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// Sends the link to a Claude whose window is up, and says what happened.
+	// `window` is how a cold Claude's window was found, nil for a Claude that
+	// was already running; a wait that ran out says the session may have come
+	// up empty and names the phrase again.
+	@discardableResult
+	func sendToClaude(_ url: URL, name: String, phrase: String, window: ClaudeWindow?) -> Bool {
+		guard NSWorkspace.shared.open(url) else {
+			toast(notOpened("Claude", name, phrase))
+			return false
+		}
+		toast(window == .late ? claudeWasLate(name, phrase) : opened("Claude", name, phrase), alsoNotify: window != nil)
+		return true
+	}
+
+	// Starts a Claude that is not running, waits for its window, then sends the
+	// link. It says it is starting first, so a ten-second gap does not look
+	// like nothing happened, and says what opened when the link has gone.
+	// Nothing is sent to anybody: the phrase is typed into the new session, for
+	// you to send, exactly as it is for a Claude already running.
+	func startClaude(_ url: URL, name: String, phrase: String) {
+		guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) else { return }
+		let from = claudeLogSize()                   // before it starts: only what it writes from here counts
+		toast(startingClaude(name))
+		let cfg = NSWorkspace.OpenConfiguration()
+		cfg.activates = true
+		NSWorkspace.shared.openApplication(at: app, configuration: cfg) { [weak self] _, error in
+			guard let self else { return }
+			if error != nil {
+				DispatchQueue.main.async { self.toast(self.notOpened("Claude", name, phrase)) }
+				return
+			}
+			DispatchQueue.global(qos: .userInitiated).async {
+				let window = awaitClaudeWindow(from: from)
+				DispatchQueue.main.async { self.sendToClaude(url, name: name, phrase: phrase, window: window) }
+			}
+		}
+	}
+
 	// A new session in the Claude or Codex desktop app, in the work's folder, with "open <name>" filled in and
 	// not sent (#652). page_action.py's session-url built the link from the folder the workspace holds; the page
 	// sent only a key and a folder to find the work by. Neither app documents the route, so this opens the link
@@ -1244,44 +1282,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					_ = awaitClaudeWindow(from: from)
 					DispatchQueue.main.async { send() }
 				}
-			}
-		}
-	}
-
-	// Sends the link to a Claude whose window is up, and says what happened.
-	// `window` is how a cold Claude's window was found, nil for a Claude that
-	// was already running; a wait that ran out says the session may have come
-	// up empty and names the phrase again.
-	@discardableResult
-	func sendToClaude(_ url: URL, name: String, phrase: String, window: ClaudeWindow?) -> Bool {
-		guard NSWorkspace.shared.open(url) else {
-			toast(notOpened("Claude", name, phrase))
-			return false
-		}
-		toast(window == .late ? claudeWasLate(name, phrase) : opened("Claude", name, phrase), alsoNotify: window != nil)
-		return true
-	}
-
-	// Starts a Claude that is not running, waits for its window, then sends the
-	// link. It says it is starting first, so a ten-second gap does not look
-	// like nothing happened, and says what opened when the link has gone.
-	// Nothing is sent to anybody: the phrase is typed into the new session, for
-	// you to send, exactly as it is for a Claude already running.
-	func startClaude(_ url: URL, name: String, phrase: String) {
-		guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) else { return }
-		let from = claudeLogSize()                   // before it starts: only what it writes from here counts
-		toast(startingClaude(name))
-		let cfg = NSWorkspace.OpenConfiguration()
-		cfg.activates = true
-		NSWorkspace.shared.openApplication(at: app, configuration: cfg) { [weak self] _, error in
-			guard let self else { return }
-			if error != nil {
-				DispatchQueue.main.async { self.toast(self.notOpened("Claude", name, phrase)) }
-				return
-			}
-			DispatchQueue.global(qos: .userInitiated).async {
-				let window = awaitClaudeWindow(from: from)
-				DispatchQueue.main.async { self.sendToClaude(url, name: name, phrase: phrase, window: window) }
 			}
 		}
 	}
@@ -1348,7 +1348,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		// Only the JSON boolean true counts: the number 1 bridges to Bool in Swift, and the page's rule is `is True`.
 		if request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,
 		   CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }
-		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look", "session-url"].contains(request["verb"] as? String ?? "")
+		if request["verb"] as? String == "session-url" { return true }       // opens an app: no toast of its own, no rebuild under the page
+		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")
 	}
 
 	// What changes nothing the page shows is not followed by a rebuild, which

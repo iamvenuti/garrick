@@ -285,7 +285,7 @@ default: print("?")
 class TestTheAppCode(unittest.TestCase):
     def test_the_app_opens_the_reply_link_through_the_shared_rules_and_falls_back(self):
         src = (APP / "Garrick.swift").read_text(encoding="utf-8")
-        body = src[src.index("func openNewSession"):src.index("// Sends the link to a Claude whose window is up")]
+        body = src[src.index("func openNewSession"):src.index("// Whether the page says the desk opens cmux here")]
         self.assertIn("GarrickSession.link(key: key", body)
         self.assertIn("GarrickSession.open(url, prompt: prompt", body)
         self.assertIn('"session-url"', src[src.index("func reading("):src.index("func rebuilds(")])   # a read: no rebuild under the page

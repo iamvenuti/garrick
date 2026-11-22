@@ -26,6 +26,8 @@ USAGE_FILE = ("System", "garrick-usage.json")
 SETTING = "usage-counts"
 OUTCOMES = ("saved", "refused", "conflict", "failed")
 DAY = re.compile(r"\d{4}-\d\d-\d\d")
+CARD_ID = re.compile(r"[a-z][a-z-]{0,23}")        # the same shape usage_counts.py writes
+MAX_COUNT = 1_000_000
 # One line of page-actions.log: "2026-11-22 10:00:00  wrap zone="Work" ...  ->  ok: said  (ask)".
 LOG_LINE = re.compile(r"^(\d{4}-\d\d-\d\d) \d\d:\d\d:\d\d  (\S+)(.*?)  ->  (ok|refused): .*?(?:  \(([a-z]+)[;)][^\n]*)?$")
 ZONE_FIELD = re.compile(r' zone=("(?:[^"\\]|\\.)*")')
@@ -80,15 +82,15 @@ def read_counts(root: Path) -> Tuple[Optional[Dict[str, Dict[str, int]]], str]:
         return None, "no counts file"
     except (OSError, ValueError):
         return None, "the counts file does not read"
-    counts = data.get("counts") if isinstance(data, dict) and data.get("v") == 1 else None
+    counts = data.get("counts") if isinstance(data, dict) and set(data) == {"v", "counts"} and data.get("v") == 1 else None
     if not isinstance(counts, dict):
         return None, "the counts file is not the App's"
     out: Dict[str, Dict[str, int]] = {}
     for card, days in counts.items():
-        if not isinstance(card, str) or not isinstance(days, dict):
+        if not isinstance(card, str) or not CARD_ID.fullmatch(card) or not isinstance(days, dict):
             return None, "the counts file is not the App's"
         for day, n in days.items():
-            if not (_real_day(day) and isinstance(n, int) and not isinstance(n, bool) and n >= 0):
+            if not (_real_day(day) and isinstance(n, int) and not isinstance(n, bool) and 0 < n <= MAX_COUNT):
                 return None, "the counts file is not the App's"
         out[card] = dict(days)
     return out, ""
@@ -106,7 +108,9 @@ def _bump(table: Dict[str, Dict[str, int]], zone: str, outcome: str) -> None:
 
 def read_journal(folder: Path, since: dt.date, workspace: str) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], str]:
     """(wraps, ask) from operations.jsonl, each zone -> outcome -> count, and why not when it cannot be read. One entry per
-    operation, its last record; a record of another workspace, or one that has not finished, is left out."""
+    operation, its last record; a record of another workspace, or one that has not finished, is left out. The journal
+    keeps only the verbs in operations.RECORDED, never a wrap, so `wraps` is always empty: a wrap row in the file is
+    not counted."""
     path = folder / "operations.jsonl"
     wraps: Dict[str, Dict[str, int]] = {}
     ask: Dict[str, Dict[str, int]] = {}
@@ -133,9 +137,7 @@ def read_journal(folder: Path, since: dt.date, workspace: str) -> Tuple[Dict[str
             continue
         outcome = "saved" if rec["outcome"] == "saved" else "refused" if rec["outcome"] == "refused" else "failed"
         zone = rec.get("zone") if isinstance(rec.get("zone"), str) and rec.get("zone") else "(no zone)"
-        if rec.get("verb") == "wrap":
-            _bump(wraps, zone, outcome)
-        if rec.get("via") == "ask":
+        if rec.get("via") == "ask" and rec.get("verb") in _operations().RECORDED:
             _bump(ask, zone, outcome)
     return wraps, ask, ""
 
@@ -217,7 +219,10 @@ def report(root: Path, days: int = 30, today: Optional[dt.date] = None, folder: 
         if why:
             failed.append(why)
     out += ["", "Wraps, by outcome, for each zone", *table_lines(merge(jw, lw)),
+            "  From the App's action log, which is shared by every workspace on this Mac: wraps started from the App only,",
+            "  and a wrap that conflicted or failed shows as refused.",
             "", "Ask actions, by outcome, for each zone", *table_lines(merge(ja, la)),
+            "  From the operations journal (this workspace) and the App's action log (every workspace on this Mac).",
             "  The autonomy level is in neither record, so it is not counted."]
     if failed:
         out += ["", "Could not read: " + "; ".join(failed) + "."]

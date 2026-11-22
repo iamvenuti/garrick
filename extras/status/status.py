@@ -607,6 +607,7 @@ def piece_row(ws: Path, p: dict) -> dict:
 def view_model(ws: Path) -> Optional[dict]:
     """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet."""
     try:
+        work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
         return view_reader(ws).build(ws)
     except FileNotFoundError:
         return None
@@ -5851,8 +5852,8 @@ OWNER_HEAD = re.compile(r"^\s*(?P<who>(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z
 
 
 def known_owners(ctx: Optional[dict], me: str = "") -> set:
-    """The names a bare "Name:" head may be: the people and parties of System/context.md (full name and first
-    name), and the user's own name, lower case."""
+    """The names a bare "Name:" head may be: the people (System/names.md, or System/context.md until an update has moved them) and the parties of
+    System/context.md (full name and first name), and the user's own name, lower case."""
     names = set()
     for person in (ctx or {}).get("people") or []:
         full = str(person.get("name") or "").strip()

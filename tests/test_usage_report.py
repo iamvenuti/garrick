@@ -55,24 +55,26 @@ class TestReport(Case):
         self.assertNotIn("14", said)             # the day outside the period is not in the figure
         self.assertEqual([], [f for f in failed if "garrick-usage" in f])
 
-    def test_it_counts_wraps_and_ask_actions_by_outcome_from_a_fixture_journal(self):
+    def test_it_counts_ask_actions_from_the_journal_and_ignores_a_wrap_row_in_it(self):
         (self.jobs / "operations.jsonl").write_text("\n".join([
-            self.row("a1" * 4, "wrap", "Work", "saved"),
-            self.row("a2" * 4, "wrap", "Work", "saved"),
-            self.row("a3" * 4, "wrap", "Work", "refused"),
-            self.row("a4" * 4, "wrap", "Home", "crashed"),
             self.row("a5" * 4, "todo-done", "Work", "saved", via="ask"),
             self.row("a6" * 4, "todo-add", "Work", "refused", via="ask"),
             self.row("a7" * 4, "park", "Home", "saved", via="ask"),
-            self.row("a8" * 4, "wrap", "Work", "saved", workspace="/another/workspace"),    # another workspace's: not counted
-            self.row("a9" * 4, "wrap", "Work", "saved", at=self.when - 90 * 86400),            # outside the period
+            self.row("a1" * 4, "wrap", "Work", "saved"),                 # the journal never holds a wrap: ignored
+            self.row("a8" * 4, "park", "Work", "saved", via="ask", workspace="/another/workspace"),
+            self.row("a9" * 4, "park", "Work", "saved", via="ask", at=self.when - 90 * 86400),
         ]) + "\n", encoding="utf-8")
         said, failed = self.text()
-        self.assertIn("Work: saved 2, refused 1", said)
-        self.assertIn("Home: failed 1", said)
         asks = said.split("Ask actions, by outcome, for each zone")[1]
         self.assertIn("Work: saved 1, refused 1", asks)
         self.assertIn("Home: saved 1", asks)
+        self.assertEqual("  none", said.split("Wraps, by outcome, for each zone\n")[1].split("\n")[0])
+
+    def test_it_names_its_sources_and_what_they_cannot_see(self):
+        said, _ = self.text()
+        self.assertIn("wraps started from the App only", said)
+        self.assertIn("conflicted or failed shows as refused", said)
+        self.assertIn("every workspace on this Mac", said)
 
     def test_it_counts_a_wrap_the_journal_does_not_keep_from_the_action_log_and_no_action_twice(self):
         (self.jobs / "operations.jsonl").write_text(self.row("b1" * 4, "todo-done", "Work", "saved", via="ask") + "\n")
@@ -90,8 +92,8 @@ class TestReport(Case):
         self.assertIn("Home: saved 1", asks)
 
     def test_no_figure_adds_two_zones_together(self):
-        (self.jobs / "operations.jsonl").write_text("\n".join(self.row("c%d" % i * 4, "wrap", z, "saved")
-                                                              for i, z in enumerate(("Work", "Home", "Work"))) + "\n")
+        self.log(*('2026-11-21 09:0%d:00  wrap zone="%s"  ->  ok: Saved.  (page)' % (i, z)
+                   for i, z in enumerate(("Work", "Home", "Work"))))
         said, _ = self.text()
         self.assertIn("Work: saved 2", said)
         self.assertIn("Home: saved 1", said)
@@ -105,6 +107,16 @@ class TestReport(Case):
         said, failed = self.text()
         self.assertIn("No card data: counting card opens is switched off.", said)
         self.assertNotIn("threads", said)
+
+    def test_a_counts_file_with_a_key_that_is_no_card_or_a_bad_count_is_not_the_apps_and_prints_none_of_it(self):
+        for bad in ({"/etc/passwd": {"2026-11-22": 1}}, {"threads": {"2026-11-22": 0}}, {"threads": {"2026-13-45": 1}},
+                    {"Threads": {"2026-11-22": 1}}):
+            self.file.write_text(json.dumps({"v": 1, "counts": bad}))
+            said, failed = self.text()
+            self.assertIn("the counts file is not the App's", said)
+            self.assertNotIn("passwd", said)
+        self.file.write_text(json.dumps({"v": 1, "counts": {}, "extra": "x"}))
+        self.assertIn("the counts file is not the App's", self.text()[0])
 
     def test_it_names_each_source_it_could_not_read(self):
         self.file.write_text("not json")

@@ -61,6 +61,7 @@ ALLOW = ["Read", "Grep", "Glob", "Edit", "Write"] \
     + ["Bash(python3 System/skills/meetings/ingest.py %s:*)" % sub for sub in INGEST_SUBS]
 # What the run must leave as it found it: the files that decide a wall and the code a run could change under itself.
 WATCHED_FILES = ("context.md", "rules.md", "rules.local.md")           # in System/
+ROOT_FILES = ("AGENTS.md", "AGENTS.local.md")                           # in the workspace root
 WATCHED_TREES = ("skills", "tools")                                     # under System/
 SAY_BUSY = "The inbox is being processed already. Nothing new was started."
 SAY_UNAVAILABLE = "The background assistant is not available, so this goes to a visible one."
@@ -107,6 +108,11 @@ def system_hash(ws: Path) -> str:
         base = ws / "System" / tree
         if base.is_dir():
             files += sorted(p for p in base.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
+    files += [ws / n for n in ROOT_FILES]
+    shared = ws / "Zones" / ".shared"                    # a link there is a share; one added or pointed elsewhere is a change (C3)
+    if shared.is_dir():
+        for e in sorted(shared.iterdir()):
+            h.update(e.name.encode("utf-8", "replace") + b"\0" + (os.readlink(str(e)).encode("utf-8", "replace") if e.is_symlink() else b"-") + b"\0")
     for f in files:
         h.update(str(f.relative_to(ws)).encode("utf-8", "replace") + b"\0")
         try:

@@ -252,6 +252,19 @@ class TestTheRun(RunCase):
         self.assertIn("Sources/a.eml", git(self.work, "status", "--porcelain", "--untracked-files=all"))
         self.assertEqual(["b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
 
+    def test_a_change_in_a_zone_the_run_filed_nothing_in_keeps_that_zone_as_it_is_w1(self):
+        self.drop("Work", "a.eml")
+        before = self.heads()
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()                                              # a Work item leaves ...
+            write(self.home / "Garden" / "Sources" / "a.eml", mail("a.eml"))                      # ... and lands in a Personal project
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(["Personal"], out["kept"])
+        self.assertEqual(before["Personal"], self.heads()["Personal"])
+        self.assertTrue((self.home / "Garden" / "Sources" / "a.eml").exists())
+
     def test_put_back_touches_only_paths_inside_the_allowed_set(self):
         snap = ir.Snapshot(self.root)
         theirs = self.acme / "Acme Review.md"
@@ -409,6 +422,27 @@ class TestTheRun(RunCase):
                 self.assertTrue((self.work / "Inbox" / ("a-%s.eml" % name)).exists())
                 self.assertNotEqual(was, target.read_text())                 # the file itself is left as it is, not guessed at
                 target.write_text(was)
+
+    def test_a_run_that_changes_a_root_file_or_a_share_link_is_refused_c3(self):
+        for name in ("AGENTS.md", "AGENTS.local.md", "Zones/.shared/newlink"):
+            with self.subTest(name):
+                target = self.root / name
+                if not name.endswith("newlink"):
+                    write(target, "x\n")
+                self.drop("Work", "c.eml")
+
+                def act():
+                    (self.work / "Inbox" / "c.eml").unlink()
+                    if name.endswith("newlink"):
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        os.symlink("/tmp", str(target))
+                    else:
+                        target.write_text("changed\n")
+                out = self.run_with(act)
+                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue((self.work / "Inbox" / "c.eml").exists())
+                if target.is_symlink():
+                    target.unlink()
 
     def test_a_run_that_leaves_the_rules_and_tools_as_they_were_is_not_refused(self):
         self.drop("Work", "a.eml")

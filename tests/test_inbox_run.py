@@ -535,6 +535,58 @@ class TestLiteralPaths(RunCase):
         self.assertEqual(" M Acme Review/Sources/ab.md", git(self.work, "status", "--porcelain").rstrip())
 
 
+class TestTheBackupFolder(RunCase):
+    def test_a_folder_an_earlier_run_left_is_cleared_at_the_start_and_the_runs_own_is_private_s5(self):
+        stale = self.jobs / "inbox-run" / "999999" / "Work"
+        write(stale / "old.eml", "an old item\n")
+        self.drop("Work", "a.eml")
+        seen = {}
+
+        def act():
+            mine = self.jobs / "inbox-run" / str(os.getpid())
+            seen["mode"] = (mine.parent.stat().st_mode & 0o777, mine.stat().st_mode & 0o777, (mine / "Work").stat().st_mode & 0o777)
+            seen["stale"] = stale.exists()
+            (self.work / "Inbox" / "a.eml").unlink()
+        self.run_with(act)
+        self.assertFalse(seen["stale"])
+        self.assertEqual((0o700, 0o700, 0o700), seen["mode"])
+        self.assertFalse((self.jobs / "inbox-run" / str(os.getpid())).exists())
+
+
+class TestTheWordsOfAQuestion(RunCase):
+    def test_the_name_of_the_item_in_the_question_file_is_not_a_word_of_the_question_c5(self):
+        self.drop("Work", "Maple Studio invoice.eml")             # a party of another walled zone, in an item's own file name
+
+        def act():
+            intake.ask_question(self.root, self.work / "Inbox" / "Maple Studio invoice.eml", "Acme Review or Birch Entry?",
+                                [("Acme Review", "File it in Acme Review"), ("Birch Entry", "File it in Birch Entry")], "2026-11-02")
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
+        self.assertEqual(1, out["places"]["Work"]["questions"])
+
+
+class TestTheAnswerArgument(RunCase):
+    def test_a_label_that_starts_with_a_dash_reaches_the_run_as_the_label_c6(self):
+        spawned = []
+        label = "-Keep both"
+        with mock.patch.object(ir, "available", return_value=True):
+            ir.start(self.root, {"zone": "Work", "file": "261102 - ask a.md", "label": label}, spawn=lambda a, fd: spawned.append(a))
+        args = spawned[0]
+        self.assertEqual(1, len([a for a in args if a.startswith("--answer-json=")]))
+        got = {}
+
+        def fake_run(ws, answer=None, **kw):
+            got["answer"] = answer
+            return {"state": "done"}
+        with mock.patch.object(ir, "run", fake_run):
+            self.assertEqual(0, ir.main([a for a in args[2:] if a != "--lock-fd" and not a.isdigit()]))
+        self.assertEqual({"zone": "Work", "file": "261102 - ask a.md", "label": label}, got["answer"])
+
+    def test_an_answer_that_does_not_read_fails_the_run_and_says_so(self):
+        self.assertEqual(1, ir.main(["run", "--workspace", str(self.root), "--answer-json=[1]"]))
+        self.assertEqual("failed", ir.read_state(self.root)["state"])
+
+
 class TestAnswering(RunCase):
     def test_answering_the_question_files_that_item_in_the_background_and_closes_the_question(self):
         self.drop("Work", "e.eml")

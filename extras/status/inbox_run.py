@@ -293,6 +293,9 @@ class Backup:
     def __init__(self, ws: Path, folders: Dict[str, Path], where: Path):
         self.root, self.copies, self.ok = where, {}, True
         total = n = 0
+        for d in (where.parent, where):
+            d.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(str(d), 0o700)
         for place, folder in folders.items():
             for f in sorted(p for p in folder.rglob("*") if p.is_file() and not p.is_symlink()):
                 total += f.stat().st_size
@@ -303,7 +306,7 @@ class Backup:
         for place, folder in folders.items():
             for f in sorted(p for p in folder.rglob("*") if p.is_file() and not p.is_symlink()):
                 dst = where / place / f.relative_to(folder)
-                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 shutil.copy2(str(f), str(dst))
                 self.copies[f] = dst
 
@@ -476,7 +479,7 @@ def question_problems(ws: Path, moved: Dict[Path, List[str]]) -> List[str]:
                     text = (repo / p).read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     text = ""
-                if question_names_another_zone(ws, parts[1], text):
+                if question_names_another_zone(ws, parts[1], re.sub(r"(?m)^intake:.*$", "", text)):      # the item's file name is not the question's words
                     bad.append("/".join(parts))
     return bad
 
@@ -557,6 +560,16 @@ def kept_repos(ws: Path, snap: Snapshot, moved: Dict[Path, List[str]], active: s
     return keep
 
 
+def clear_stale(folder: Path, mine: str) -> None:
+    """Take away the backup folders an earlier run left (a crash, a kill): the run holds the lock, so no other is going (S5)."""
+    try:
+        for e in folder.iterdir():
+            if e.name.isdigit() and e.name != mine and e.is_dir() and not e.is_symlink():
+                shutil.rmtree(str(e), ignore_errors=True)
+    except OSError:
+        pass
+
+
 def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = None, cap: Optional[dict] = None,
         jobs: Optional[Path] = None) -> dict:
     """One inbox run, whole: record, call, check, commit. Returns the state it wrote. `answer` is {"zone", "file", "label"} for
@@ -565,6 +578,7 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
     started = dt.datetime.now().isoformat(timespec="seconds")
     folders = inboxes(ws)
     keep = (jobs or engine.agent_lib().jobs_dir()) / "inbox-run" / str(os.getpid())
+    clear_stale(keep.parent, keep.name)
     state = {"state": "running", "at": started, "places": {}, "say": "Processing the inbox.", "answer": bool(answer)}
     write_state(ws, state)
 
@@ -685,7 +699,8 @@ def start(ws: Path, answer: Optional[dict] = None, spawn: Optional[Callable] = N
         return {"say": SAY_BUSY, "state": "running", "busy": True}
     args = [sys.executable, str(HERE / "inbox_run.py"), "run", "--workspace", str(ws), "--lock-fd", str(fd)]
     if answer:
-        args += ["--answer", answer["zone"], answer["file"], answer["label"]]
+        # one value in the `=` form, so a label that starts with `-` is read as the label (C6)
+        args += ["--answer-json=" + json.dumps([answer["zone"], answer["file"], answer["label"]])]
     try:
         write_state(ws, {"state": "running", "at": dt.datetime.now().isoformat(timespec="seconds"), "places": {},
                          "say": "Processing the inbox.", "answer": bool(answer)})
@@ -705,10 +720,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     r = sub.add_parser("run")
     r.add_argument("--workspace", required=True)
     r.add_argument("--answer", nargs=3, metavar=("ZONE", "FILE", "LABEL"))
+    r.add_argument("--answer-json", default=None)
     r.add_argument("--lock-fd", type=int, default=-1)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
-    answer = dict(zip(("zone", "file", "label"), args.answer)) if args.answer else None
+    given = args.answer
+    if args.answer_json:
+        try:
+            given = json.loads(args.answer_json)
+        except ValueError:
+            given = None
+    if args.answer_json and not (isinstance(given, list) and len(given) == 3):
+        write_state(ws, {"state": "failed", "at": dt.datetime.now().isoformat(timespec="seconds"), "places": {}, "say": SAY_FAILED})
+        return 1
+    answer = dict(zip(("zone", "file", "label"), map(str, given))) if given and len(given) == 3 else None
     try:
         out = run(ws, answer)
     except Exception:

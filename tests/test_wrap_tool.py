@@ -755,3 +755,15 @@ class PageRoute(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoReader(unittest.TestCase):
+    """A tools folder an update left half copied, with wrap.py and no work.py: the wrap fails in plain words
+    and never crashes (0.76.0 confirmation pass, N1)."""
+
+    def test_a_missing_reader_is_a_failed_wrap_not_a_crash(self):
+        with mock.patch.object(wrap, "work", None):
+            with self.assertRaises(wrap.Stop) as stop:
+                wrap.resume_note(Path("/nowhere"), "Work", "Acme", "Pricing")
+        self.assertEqual(stop.exception.outcome, "failed")
+        self.assertIn("update Garrick", str(stop.exception.why))

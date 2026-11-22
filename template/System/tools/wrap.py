@@ -85,7 +85,10 @@ if str(HERE) not in sys.path:
 import garrick_lib as gl  # noqa: E402
 import history as hist  # noqa: E402
 import wrap_lock as wl  # noqa: E402
-import work  # noqa: E402
+try:
+    import work  # noqa: E402
+except ImportError:  # a tools folder an update left half copied: every wrap fails, nothing written
+    work = None
 
 OUTCOMES = ("saved", "refused", "conflict", "failed")
 ROWS = ("Live artifact", "Rebuild with", "Next action", "Keep in mind", "Waiting on", "Deadline")
@@ -209,6 +212,8 @@ def resume_note(root: Path, zone: str, project: str, thread: Optional[str]) -> O
     """The note that holds the Resume here block of what is being wrapped: the thread's own note, or the hub of
     a project that keeps its resume point there. The one place this tool decides it, and it asks the one reader of the
     piece of work (`work.py`), so a change to the unit of work is made there."""
+    if work is None:
+        raise Stop("failed", "the reader of the pieces of work (System/tools/work.py) is missing; update Garrick, then wrap again")
     found = [w for w in work.pieces(root, zone=zone) if w.project == project and w.kind == "piece"]
     if thread:
         for w in found:

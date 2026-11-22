@@ -6,8 +6,9 @@
 Prints, for the last N days (30 unless said):
 - how often each card of the App was opened, from `System/garrick-usage.json`, which the App keeps while the setting
   `usage-counts` is on (it is, unless it was switched off): a card's name, a day and a count, nothing else;
-- the wraps, by outcome, and what Ask did, by outcome, from the operations journal (`operations.jsonl`) and the App's
-  action log (`page-actions.log`), both in the jobs folder. They are counted for each zone on its own: no figure adds two
+- the wraps, by outcome, from the App's action log (`page-actions.log`) alone, which every workspace on this Mac shares:
+  wraps started from the App only, and a wrap that conflicted or failed shows as refused; and what Ask did, by outcome,
+  from the operations journal (`operations.jsonl`) and that action log, both in the jobs folder. They are counted for each zone on its own: no figure adds two
   zones together. Nothing new records either; where a record does not say, the report says it could not count.
 
 Each source it could not read is named. It runs with the status extra absent: it reads the files and nothing else, and it

@@ -65,6 +65,9 @@ DONE = {"done", "closed", "archived", "complete", "completed"}
 PARKED = {"parked", "dormant", "paused", "on-hold"}
 # The verbs that may act on a piece of work, as the page offers them; each must be declared in operations.DECLARED.
 PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "close")
+# The cards of the page, by the id each carries (`<details class="card" id=...>`): the one set the App counts opens of (#651).
+# Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
+CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "System/ files of the App", "Todo lists", "the check's kept result",
         "waiting sessions", "settings", "wiki lists", "repositories")

@@ -3128,7 +3128,8 @@ def garrick_ignores(zones) -> Dict[str, str]:
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
     generated = ("# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
-                 "# The notes a channel wrote into an inbox, with their hashes: this machine's alone.\nSystem/notes-ledger.json*\n")
+                 "# The notes a channel wrote into an inbox, with their hashes: this machine's alone.\nSystem/notes-ledger.json*\n"
+                 "# Which cards of the App were opened, and how often, on this machine: never committed.\nSystem/garrick-usage.json*\n")
     shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
               "Inbox/*\n!Inbox/.gitkeep\n")
     example = ("# The example's shared drive, read and never written, and what System/tools/example.py\n"
@@ -3554,8 +3555,9 @@ def release_repository(root: PathLike) -> str:
 # (#410), which release.py reads; "ask" is Settings › Menu bar › Answer in the
 # Ask box (#528): on unless it is false. "channels" is each channel's tier, effort and autonomy (#571):
 # {"ask": {...}, "telegram": {...}}, read by extras/status/channels.py, which holds the choices and their defaults.
+# "usage-counts" is Settings › About Garrick's switch for the count of which cards are opened (#651): on unless it is false.
 PREFERENCES = ("zones", "launchers", "default", "notifications", "home", "memory", "catch-up", "graph",
-               "release-notice", "release-notice-every", "ask", "channels")
+               "release-notice", "release-notice-every", "ask", "channels", "usage-counts")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 # The read guard's four settings (#613, #614) are kept by Settings › Walls (#621) as well as by hand.

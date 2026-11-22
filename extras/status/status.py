@@ -4940,6 +4940,30 @@ def release_controls(on: bool, every: int) -> str:
             % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
+def usage_on(ws: Optional[Path]) -> bool:
+    """Whether the App counts which cards are opened (#651): on unless the settings say false."""
+    try:
+        return prefs().read(ws).get("usage-counts") is not False if ws is not None else True
+    except Exception:
+        return True
+
+
+def usage_cards(ws: Optional[Path]) -> List[str]:
+    """The ids of the page's cards that may be counted (view.CARDS); none while the view model is not in place."""
+    try:
+        return list(view_reader(ws).CARDS)
+    except (FileNotFoundError, AttributeError):
+        return []
+
+
+def usage_control(on: bool) -> str:
+    """Settings › About Garrick's switch for counting which cards are opened (#651), in the app only: the setting is saved
+    when Settings closes, with the rest, as `usage-counts`. USAGE_JS reads the box, so a card opened after it is cleared is
+    not counted."""
+    return ('<div class="setrel apponly" id="usage-settings"><p class="setrelrow"><label><input type="checkbox" id="usage-on"%s> '
+            '<span>Count which cards I open</span></label></p></div>' % (" checked" if on else ""))
+
+
 def stale_band_lines(ws: Optional[Path]) -> str:
     """The band kept outside the workspace, when it is from another commit than
     the workspace runs: `check.py --version` says the same. Read through the
@@ -4973,7 +4997,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), stale_band_lines(ws), release_controls(*release_choice(ws)) if ws is not None else "", rows))
+               E(version), stale_band_lines(ws), (release_controls(*release_choice(ws)) + usage_control(usage_on(ws))) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -6613,12 +6637,13 @@ var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Not
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
 /* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications,
    Memory, each only when it changed. null when there is nothing. */
-function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed());
-if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl))return null;
+function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed()),U=window.GarrickUsage,uc=!!(U&&U.changed());
+if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl||uc))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(m){q.memory=M.request();M.saved()}
 if(rl){var rq=R.request();q['release-notice']=rq.on;q['release-notice-every']=rq.every;R.saved()}
+if(uc){q['usage-counts']=U.request();U.saved()}
 lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
@@ -6792,6 +6817,22 @@ window.GarrickRelease={update:function(){if(!busy)go()},changed:function(){retur
 })();
 """
 # ---- end of Settings › About Garrick: Check for updates ------------------------------
+
+
+# ---- Settings › About Garrick: counting which cards are opened (#651) -------------------
+# A click that opens a closed card sends its id, one of the page's own cards (view.CARDS), to the Mac app, which
+# adds one to that day's count (`count-card`). Nothing is sent where the page is not in the app, and nothing while the box in
+# Settings is clear. A card's id is all that is sent: a thread's row is no card and is never counted.
+USAGE_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,on=document.getElementById('usage-on'),
+IDS=%s,changed=false;
+document.addEventListener('click',function(e){if(!host||!on||!on.checked)return;var t=e.target;if(!t||!t.closest)return;
+var s=t.closest('details.card>summary');if(!s||t.closest('.tools'))return;var d=s.parentNode;
+if(d.open||IDS.indexOf(d.id)<0)return;host.postMessage({act:{verb:'count-card',card:d.id}})},true);
+if(on)on.addEventListener('change',function(){changed=true});
+window.GarrickUsage={changed:function(){return changed},request:function(){return!!(on&&on.checked)},saved:function(){changed=false}};
+})();
+"""
 
 
 # ---- Settings › Memory (#108) -----------------------------------------------------
@@ -9119,7 +9160,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

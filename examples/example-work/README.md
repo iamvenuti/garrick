@@ -41,7 +41,7 @@ It sits inside the workspace rather than beside it so that a session opened ther
 
 ## Sealed and removable
 
-The example is a zone of its own, **Example**, with its own repository, so nothing of yours links into it. Its party and people go into `System/context.md` with Example as their zone. Then:
+The example is a zone of its own, **Example**, with its own repository, so nothing of yours links into it. Its party goes into `System/context.md` and its people into `System/names.md`, with Example as their zone. Then:
 
     python3 System/tools/example.py status
     python3 System/tools/example.py archive

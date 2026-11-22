@@ -63,7 +63,7 @@ user the tab can be closed.
 ## Names
 
 desk resolves a heard name as the `threads` skill does: an alias from the
-Aliases table in `System/context.md` (and any in `System/desk.json`), then a
+Aliases table in `System/names.md` (`System/context.md` before the move) and any in `System/desk.json`, then a
 thread's name, then "project thread", then a project, a wiki or System, then a
 part of a name, initials, and a name that sounds close. When it lists several,
 ask which in one line, naming them. Never pick, and never pick between zones.

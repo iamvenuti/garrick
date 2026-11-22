@@ -231,9 +231,9 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 The status page's *Process the Inbox* button runs this skill in the background, with nobody to ask. The request says
 "unattended". Then the steps above hold, with these changes. The helper checks what it can; the run is also checked
-afterwards, and anything outside the paths below is put back.
+afterwards, and a change outside the paths below is left as it is, reported, and nothing in that repository is committed.
 
-- **Write only where intake files things:** the inboxes, `Wikis/Meetings/`, `Wikis/Knowledge/`, a project's `Sources/`,
+- **Write only where intake files things:** the inboxes, `Wikis/Meetings/`, `Wikis/Knowledge/`, a project's or a thread's `Sources/`,
   a zone's `Todo.md`, and the `Needs you` question files below. Run no command but these: `intake.py` with `list`,
   `parse`, `file-conversation`, `file-reading`, `file-to-project`, `extract-attachment`, `skip` or `ask`, and `ingest.py`
   with `land`, `index`, `log` or `link`. Anything else is refused, `learn`, `person` and `move-to-zone` among it: what

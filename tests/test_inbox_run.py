@@ -164,7 +164,8 @@ class TestTheRun(RunCase):
         self.assertEqual(["Work"], [r["zone"] for r in rows])
         self.assertEqual("Acme Review or Birch Entry?", rows[0]["text"])
 
-    def test_a_write_outside_the_allowed_paths_changes_nothing_and_the_items_stay(self):
+    def test_a_write_outside_the_allowed_paths_keeps_that_repository_exactly_as_it_is_and_commits_nothing_there(self):
+        # S2: a changed path outside allowed() is reported, never deleted or reverted; the repository is kept whole
         self.drop("Work", "a.eml")
         self.drop("Work", "b.eml")
         hub = self.acme / "Acme Review.md"
@@ -177,12 +178,91 @@ class TestTheRun(RunCase):
             write(self.home / "Garden" / "Plan.md", "A plan.\n")                                        # another zone's project file
         out = self.run_with(act)
         self.assertEqual("failed", out["state"])
-        self.assertEqual(ir.SAY_REFUSED, out["say"])
-        self.assertEqual(was, hub.read_text())
-        self.assertFalse((self.home / "Garden" / "Plan.md").exists())
-        self.assertFalse((self.acme / "Sources" / "a.eml").exists())
-        self.assertEqual(["a.eml", "b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
-        self.assertEqual(before, self.heads())                                  # no commit anywhere, not in the repository that was fine
+        self.assertTrue(out["refused"])
+        self.assertEqual(["Personal", "Work"], out["kept"])
+        self.assertIn("Personal, Work", out["say"])
+        self.assertNotIn("Plan.md", out["say"])                                 # a place, never a file
+        self.assertIn("Added by the call", hub.read_text())                     # nothing deleted or reverted
+        self.assertEqual("A plan.\n", (self.home / "Garden" / "Plan.md").read_text())
+        self.assertTrue((self.acme / "Sources" / "a.eml").exists())
+        self.assertEqual(["b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
+        self.assertEqual(before, self.heads())                                  # no commit anywhere
+
+    def test_a_repository_the_call_did_not_touch_outside_the_allowed_paths_is_still_committed(self):
+        self.drop("Work", "a.eml")
+        hub = self.acme / "Acme Review.md"
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(self.wikis / "Meetings" / "wiki" / "sources" / "261102-acme-call.md", meeting_page("Work", "[acme]", "Acme call"))
+            hub.write_text(hub.read_text() + "\nAdded.\n")
+        before = self.heads()
+        out = self.run_with(act)
+        self.assertEqual(["Work"], out["kept"])
+        self.assertEqual(before["Work"], self.heads()["Work"])
+        self.assertNotEqual(before["Wikis"], self.heads()["Wikis"])             # the wiki's own paths were all the call's own and allowed
+
+    def test_another_writer_loses_nothing_a_clean_file_edited_and_a_new_note_added_during_a_run_that_fails(self):
+        self.drop("Work", "a.eml")
+        hub = self.acme / "Acme Review.md"
+        note = self.acme / "Notes" / "my-new-note.md"
+        edited = hub.read_text() + "\nMy edit while the run went.\n"
+
+        def runner(cmd, tier, cwd, env):
+            hub.write_text(edited)                                  # someone else, mid-run
+            write(note, "A note I wrote.\n")
+            shutil.move(str(self.work / "Inbox" / "a.eml"), str(self.acme / "Sources" / "a.eml"))
+            return 1, {"text": ""}
+        out = ir.run(self.root, None, runner=runner, cap=self.cap, jobs=self.jobs)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(edited, hub.read_text())
+        self.assertEqual("A note I wrote.\n", note.read_text())
+        self.assertEqual(["Work"], out["kept"])
+        self.assertIn("Work", out["say"])
+
+    def test_another_writer_loses_nothing_when_the_run_is_refused_for_what_it_wrote(self):
+        self.drop("Work", "a.eml")
+        note = self.acme / "Notes" / "my-new-note.md"
+        hub = self.acme / "Acme Review.md"
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(note, "A note I wrote.\n")
+            hub.write_text(hub.read_text() + "\nMy edit.\n")
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual("A note I wrote.\n", note.read_text())
+        self.assertIn("My edit.", hub.read_text())
+
+    def test_a_head_that_moved_during_the_run_keeps_every_file_and_commits_nothing_there(self):
+        self.drop("Work", "a.eml")
+        self.drop("Work", "b.eml")
+
+        def act():
+            shutil.move(str(self.work / "Inbox" / "a.eml"), str(self.acme / "Sources" / "a.eml"))
+            write(self.work / "Other" / "theirs.md", "Committed by someone else.\n")        # another session commits in the zone
+            git(self.work, "add", "--", "Other/theirs.md")
+            git(self.work, "commit", "-q", "-m", "someone else")
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(["Work"], out["kept"])
+        self.assertEqual("Committed by someone else.\n", (self.work / "Other" / "theirs.md").read_text())
+        self.assertEqual("someone else", git(self.work, "log", "-1", "--format=%s").strip())      # no commit of ours on top
+        self.assertTrue((self.acme / "Sources" / "a.eml").exists())                             # kept, uncommitted
+        self.assertIn("Sources/a.eml", git(self.work, "status", "--porcelain", "--untracked-files=all"))
+        self.assertEqual(["b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
+
+    def test_put_back_touches_only_paths_inside_the_allowed_set(self):
+        snap = ir.Snapshot(self.root)
+        theirs = self.acme / "Acme Review.md"
+        was = theirs.read_text()
+        theirs.write_text(was + "\nTheirs.\n")
+        new = self.acme / "Notes" / "new.md"
+        write(new, "New.\n")
+        left = ir.put_back(snap, self.work, ["Acme Review/Acme Review.md", "Acme Review/Notes/new.md"])
+        self.assertEqual(["Acme Review/Acme Review.md", "Acme Review/Notes/new.md"], left)
+        self.assertIn("Theirs.", theirs.read_text())
+        self.assertTrue(new.exists())
 
     def test_a_question_file_the_call_wrote_by_hand_that_names_another_walled_zone_is_not_kept(self):
         self.drop("Work", "a.eml")
@@ -348,6 +428,23 @@ class TestTheRun(RunCase):
         with mock.patch.object(agent, "run_prepared", prepared):
             ir.default_runner(["claude"], ir.TIER, self.root, {})
         self.assertEqual(("inbox", ir.TIMEOUT, self.root), (seen["job"], seen["timeout"], seen["cwd"]))
+
+
+class TestLiteralPaths(RunCase):
+    def test_a_filed_file_named_with_a_glob_is_committed_alone_and_never_takes_a_dirty_file_beside_it_s4(self):
+        mine = self.acme / "Sources" / "ab.md"
+        write(mine, "mine\n")
+        commit_all(self.work, "ab")
+        mine.write_text("mine, edited and not committed\n")
+        self.drop("Work", "a.eml")
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(self.acme / "Sources" / "a*.md", "filed\n")
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
+        self.assertEqual(["Acme Review/Sources/a*.md"], git(self.work, "show", "--name-only", "--format=", "HEAD").split("\n")[:1])
+        self.assertEqual(" M Acme Review/Sources/ab.md", git(self.work, "status", "--porcelain").rstrip())
 
 
 class TestAnswering(RunCase):

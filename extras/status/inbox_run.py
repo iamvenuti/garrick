@@ -66,6 +66,7 @@ SAY_BUSY = "The inbox is being processed already. Nothing new was started."
 SAY_UNAVAILABLE = "The background assistant is not available, so this goes to a visible one."
 SAY_FAILED = "The inbox could not be processed in the background."
 SAY_REFUSED = "The assistant changed something it may not, so nothing was kept. The items are still in the inbox."
+SAY_KEPT = "Something changed that the run may not change, so nothing was committed or put back in %s. Those files are left as they are."
 SAY_SYSTEM = "The assistant changed a file of the workspace's rules or tools, so nothing was kept. That file was left as it is."
 MEETINGS_INBOX = ("Wikis", "Meetings", "raw", "inbox")
 
@@ -147,7 +148,7 @@ def question_files(ws: Path) -> Dict[str, List[str]]:
 # ---- repositories ---------------------------------------------------------------------------------------------------
 
 def git(repo: Path, *args: str, timeout: int = 300) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=timeout,
+    return subprocess.run(["git", "--literal-pathspecs", *args], cwd=str(repo), capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, env=engine.agent_lib().own_repo_env())
 
 
@@ -229,11 +230,19 @@ class Snapshot:
 
 def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
     """Put each path back as it was before the call: a file that was changed already, with the bytes then kept; a tracked file
-    as the last commit has it; a file the call made, removed. Returns the paths that could not be put back."""
+    as the last commit has it; a file the call made, removed. Only a path that `allowed()` names, with no link on the way, is
+    ever touched (S2): any other is left exactly as it is and returned. A file about to be reverted or removed is first copied
+    into the repository's own `.git/garrick-put-back/`, so a writer that was not the call loses nothing. Returns the paths that
+    were not put back."""
     left = []
+    keep = repo / ".git" / "garrick-put-back" / time.strftime("%Y%m%d-%H%M%S")
     for p in paths:
         full = repo / p
         try:
+            rel = str(full.relative_to(snap.ws)).replace(os.sep, "/")
+            if not allowed(rel) or linked(snap.ws, repo, p):
+                left.append(p)
+                continue
             if (repo, p) in snap.sig:
                 if (repo, p) in snap.kept:
                     full.parent.mkdir(parents=True, exist_ok=True)
@@ -241,12 +250,15 @@ def put_back(snap: Snapshot, repo: Path, paths: List[str]) -> List[str]:
                 elif snap.sig[(repo, p)] != signature(full):
                     left.append(p)
                 continue
+            if full.is_file() and not full.is_symlink():
+                (keep / p).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(full), str(keep / p))
             git(repo, "reset", "-q", "--", p)
             if git(repo, "ls-files", "--error-unmatch", "--", p).returncode == 0:
                 git(repo, "checkout", "-q", "HEAD", "--", p)
             elif full.is_symlink() or full.is_file():
                 full.unlink()
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, ValueError):
             left.append(p)
     return left
 
@@ -294,7 +306,7 @@ class Backup:
             if folders is not None and not any(f in orig.parents for f in folders):
                 continue
             try:
-                if not orig.exists() or signature(orig) != signature(copy):
+                if not orig.exists() and not orig.is_symlink():          # only what is gone: a file there now is not the call's to replace
                     orig.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(str(copy), str(orig))
             except OSError:
@@ -458,6 +470,66 @@ def set_question(ws: Path, zone: str, name: str, reopen: bool = False, label: st
     f.write_text("---\n" + "\n".join(lines) + "\n---\n" + text[m.end():], encoding="utf-8")
 
 
+def repo_of(snap: Snapshot, path: Path) -> Optional[Path]:
+    """The recorded repository that holds a path, or None (the workspace's own Inbox is in none)."""
+    try:
+        real = path.resolve()
+    except OSError:
+        return None
+    return next((r for r in snap.repos if r == real or r in real.parents), None)
+
+
+def place_of(ws: Path, repo: Path) -> str:
+    """A repository by its place, never by a file: a zone's name, Meetings, Knowledge, or Wikis when one repository holds both."""
+    try:
+        parts = repo.relative_to(ws).parts
+    except ValueError:
+        return "the workspace"
+    if len(parts) == 2 and parts[0] == "Zones":
+        return parts[1]
+    if parts[:2] == ("Wikis", "Meetings"):
+        return "Meetings"
+    if parts[:2] == ("Wikis", "Knowledge"):
+        return "Knowledge"
+    return "Wikis" if parts == ("Wikis",) else "the workspace"
+
+
+def active_zones(ws: Path, folders: Dict[str, Path], before_items: Dict[str, List[str]],
+                 before_questions: Dict[str, List[str]], answered: str = "") -> set:
+    """The zones this run may have changed something in (W1): a zone whose inbox lost an item, a zone that gained a question file,
+    and the zone of the answered question. A change in any other zone is not the run's."""
+    out = {answered} if answered else set()
+    now_q = question_files(ws)
+    for place, folder in folders.items():
+        if place in ("Meetings", "Inbox"):
+            continue
+        if set(before_items.get(place, [])) - set(waiting(folder)) or set(now_q.get(place, [])) - set(before_questions.get(place, [])):
+            out.add(place)
+    return out
+
+
+def kept_repos(ws: Path, snap: Snapshot, moved: Dict[Path, List[str]], active: set) -> Dict[Path, str]:
+    """The repositories to leave exactly as they are (S2, W1): one whose HEAD moved, one with a changed path that `allowed()` does
+    not name or a link on the way to, and one with a changed path in a zone the run had no item in. In such a repository the call's
+    own changes cannot be told from another writer's, so nothing is committed there and nothing is put back."""
+    keep = {}
+    for repo, paths in moved.items():
+        if not paths:
+            continue
+        reason = ""
+        if git(repo, "rev-parse", "HEAD").stdout.strip() != snap.head[repo]:
+            reason = "head"
+        for p in paths:
+            rel = str((repo / p).relative_to(ws)).replace(os.sep, "/")
+            if not allowed(rel) or linked(ws, repo, p):
+                reason = reason or "outside"
+            elif rel.startswith("Zones/") and rel.split("/")[1] not in active:
+                reason = reason or "zone"
+        if reason:
+            keep[repo] = reason
+    return keep
+
+
 def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = None, cap: Optional[dict] = None,
         jobs: Optional[Path] = None) -> dict:
     """One inbox run, whole: record, call, check, commit. Returns the state it wrote. `answer` is {"zone", "file", "label"} for
@@ -501,33 +573,36 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
         code, got = (runner or default_runner)(cmd, TIER, ws, env)
     except Exception:
         code, got = 1, {}
-    if got.get("refused") or code != 0:
-        backup.restore()
-        put_all(snap)
-        backup.drop()
-        if answer:
-            set_question(ws, zone, answer["file"], reopen=True)
-        return finish(state="failed", say=SAY_FAILED)
-    if system_hash(ws) != system_before:
-        backup.restore()
-        put_all(snap)
-        backup.drop()
-        if answer:
-            set_question(ws, zone, answer["file"], reopen=True)
-        return finish(state="failed", say=SAY_SYSTEM, refused=True, system=True)
     moved = snap.moved()
-    outside = [(r, p) for r, ps in moved.items() for p in ps
-               if not allowed(str((r / p).relative_to(ws)).replace(os.sep, "/")) or linked(ws, r, p)]
-    if outside or not snap.untouched_head() or question_problems(ws, moved):
-        backup.restore()
-        put_all(snap, moved)
+    changed_system = system_hash(ws) != system_before
+    active = active_zones(ws, folders, before_items, before_questions, zone if answer else "")
+    keep = kept_repos(ws, snap, moved, active)
+    bad = {r for r in moved if r not in keep and any(
+        True for _ in question_problems(ws, {r: moved[r]}))}
+    failed = bool(got.get("refused") or code != 0)
+
+    def undo(repos, root_inbox: bool = False) -> None:
+        for repo, paths in moved.items():
+            if repo in repos:
+                put_back(snap, repo, paths)
+        backup.restore([f for f in folders.values() if repo_of(snap, f) in repos or (root_inbox and repo_of(snap, f) is None)])
+
+    def tail(say: str, repos) -> str:
+        places = sorted({place_of(ws, r) for r in repos})
+        return (say + " " if say else "") + SAY_KEPT % ", ".join(places) if places else say
+
+    if failed or changed_system:
+        undo({r for r in snap.repos if r not in keep}, root_inbox=True)
         backup.drop()
         if answer:
             set_question(ws, zone, answer["file"], reopen=True)
-        return finish(state="failed", say=SAY_REFUSED, refused=True)
+        base = SAY_SYSTEM if changed_system else SAY_FAILED
+        return finish(state="failed", say=tail(base, keep), refused=bool(changed_system or keep), system=changed_system,
+                      kept=sorted({place_of(ws, r) for r in keep}))
+    undo(bad)
     refused = []
     for repo, paths in moved.items():
-        if not paths:
+        if not paths or repo in keep or repo in bad:
             continue
         rel = lambda p: str((repo / p).relative_to(ws)).replace(os.sep, "/")  # noqa: E731
         zones = {rel(p).split("/")[1] for p in paths if rel(p).startswith("Zones/")}
@@ -552,13 +627,12 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
     say = result_line(places)
     if refused:
         say = (say + ". " if places else "") + "A commit was refused, so those items stay in the inbox"
-    return finish(state="done" if not refused else "failed", say=say, places=places)
-
-
-def put_all(snap: Snapshot, moved: Optional[Dict[Path, List[str]]] = None) -> None:
-    """Every repository back as it was, for a run that is not kept."""
-    for repo, paths in (moved if moved is not None else snap.moved()).items():
-        put_back(snap, repo, paths)
+    if bad and not places and not refused and not keep:
+        say = SAY_REFUSED
+    elif bad:
+        say = (say + ". " if places else "") + "A question named another zone, so nothing was kept in %s" % ", ".join(sorted({place_of(ws, r) for r in bad}))
+    return finish(state="done" if not (refused or keep or bad) else "failed", say=tail(say, keep) if keep else say, places=places,
+                  kept=sorted({place_of(ws, r) for r in keep}), refused=bool(keep or bad) or None)
 
 
 # ---- starting a run from the page -----------------------------------------------------------------------------------

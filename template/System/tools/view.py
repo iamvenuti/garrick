@@ -340,8 +340,11 @@ def files_in(folder: Path) -> int:
 def open_links(zone: Path) -> List[List[str]]:
     """For each open line of the zone's Todo.md that links to a note, the names of the notes it links to (the last part
     of each link, without an alias or a heading). Names only: no line's words are kept."""
+    todo = zone / "Todo.md"
+    if not _work()._within(todo, zone.resolve()):         # a Todo.md that is a link out of the zone is no part of it
+        return []
     try:
-        text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
+        text = todo.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
     out = []

@@ -235,10 +235,12 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         (pricing / "Sources" / ".gitkeep").write_text("")
         self.assertEqual(["split"], self.offers("Acme"))                      # an empty folder is no papers
         (pricing / "Sources" / "brief.txt").write_text("brief")
+        self.commit("the thread's papers")                                     # only files git tracks count as papers (N1)
         self.assertEqual(["mend"], self.offers("Acme"))                       # one of two threads holds papers: mixed
         freight = self.work / "Acme" / "Threads" / "Freight"
         (freight / "Deliverables").mkdir(exist_ok=True)
         (freight / "Deliverables" / "260101 - Rates.xlsx").write_bytes(b"x")
+        self.commit("the second thread's papers")
         self.assertEqual(["split"], self.offers("Acme"))                      # every thread holds papers: they look like separate jobs
 
     def test_the_mixed_chip_opens_the_join(self):

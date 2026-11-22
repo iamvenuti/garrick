@@ -673,6 +673,10 @@ def install_missing_hooks(root):
 # until the tool is in place, so that an update that stops half way never leaves a page without its reader.
 WORK_TOOL = "System/tools/work.py"
 WORK_EXTRAS = ("System/status/", "System/jobs/todo_sweep.py")
+# The status page builds its cards through System/tools/view.py, the view model, in the same way. The extras that import it.
+VIEW_TOOL = "System/tools/view.py"
+VIEW_EXTRAS = ("System/status/",)
+VIEW_HELD = "its view model (%s) is not in this workspace yet, so it waits; update again once the tool is there" % VIEW_TOOL
 WORK_HELD = "its reader (%s) is not in this workspace yet, so it waits; update again once the tool is there" % WORK_TOOL
 
 
@@ -746,6 +750,10 @@ def apply(root, p, only=None, today=None):
     if not (root / WORK_TOOL).is_file() and WORK_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
         waits = [item for item in todo if item[0] != "merge" and item[1].startswith(WORK_EXTRAS)]
         skipped += [(item[1], WORK_HELD) for item in waits]
+        todo = [item for item in todo if item not in waits]
+    if not (root / VIEW_TOOL).is_file() and VIEW_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
+        waits = [item for item in todo if item[0] != "merge" and item[1].startswith(VIEW_EXTRAS)]
+        skipped += [(item[1], VIEW_HELD) for item in waits]
         todo = [item for item in todo if item not in waits]
 
     by_repo = {}

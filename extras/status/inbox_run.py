@@ -487,6 +487,15 @@ def question_names_another_zone(ws: Path, zone: str, text: str) -> bool:
     return any(re.search(r"(?<![\w])%s(?![\w])" % re.escape(n.casefold()), low) for n in names)
 
 
+def _without_item_line(ws: Path, zone: str, text: str) -> str:
+    """The question's text without its `intake:` line, when that line's value is a file name in the zone's own Inbox (the item's
+    name is not the question's words). Any other value is screened like the rest."""
+    value = item_of(text)
+    if value and "/" not in value and (ws / "Zones" / zone / "Inbox" / value).is_file():
+        return re.sub(r"(?m)^intake:.*$", "", text)
+    return text
+
+
 def question_problems(ws: Path, moved: Dict[Path, List[str]]) -> List[str]:
     """The question files the call wrote or changed whose words reach into another walled zone."""
     bad = []
@@ -498,7 +507,7 @@ def question_problems(ws: Path, moved: Dict[Path, List[str]]) -> List[str]:
                     text = (repo / p).read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     text = ""
-                if question_names_another_zone(ws, parts[1], re.sub(r"(?m)^intake:.*$", "", text)):      # the item's file name is not the question's words
+                if question_names_another_zone(ws, parts[1], _without_item_line(ws, parts[1], text)):
                     bad.append("/".join(parts))
     return bad
 

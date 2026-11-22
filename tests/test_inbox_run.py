@@ -567,6 +567,17 @@ class TestTheWordsOfAQuestion(RunCase):
         self.assertEqual(1, out["places"]["Work"]["questions"])
 
 
+class TestTheIntakeLine(RunCase):
+    def test_the_intake_line_is_screened_unless_it_is_a_file_name_in_that_zones_inbox_n3(self):
+        self.drop("Work", "a.eml")
+        q = "---\ntype: question\nstatus: open\nasked: 2026-11-02\nintake: %s\n---\n\n**Which one?**\n\n- [Yes] Yes\n"
+        for line, bad in (('"a.eml"', False), ('"Maple Studio notes"', True), ('"a.eml Maple Studio"', True)):
+            f = self.work / "Needs you" / "261102 - ask.md"
+            write(f, q % line)
+            found = ir.question_problems(self.root, {self.work: ["Needs you/261102 - ask.md"]})
+            self.assertEqual(bad, bool(found), line)
+
+
 class TestTheAnswerArgument(RunCase):
     def test_a_label_that_starts_with_a_dash_reaches_the_run_as_the_label_c6(self):
         spawned = []

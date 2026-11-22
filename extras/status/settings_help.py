@@ -112,7 +112,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "How much thought goes into an answer. Low is faster. High takes longer and may answer better. Raise it for hard questions."),
     (r'id="ch-ask-autonomy"', "ch-ask-autonomy", "Ask: how far it may go",
      "Read only answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. "
-     "Full sends without asking. Pick Read until you trust it with more."),
+     "Full sends without asking you first. Pick Read until you trust it with more."),
     (r'id="ch-telegram-tier"', "ch-telegram-tier", "Telegram: model size",
      "How large a model answers in a Telegram chat. Small is quick and cheap. Large thinks longer and costs more. Pick Medium "
      "until an answer falls short."),

@@ -1087,7 +1087,11 @@ def _extra_module(root: Path, name: str):
 def _records(folder: Path) -> list:
     """The records of one project folder, from the one reader of the piece of work (System/tools/work.py)."""
     import garrick_lib
-    return garrick_lib.work.project_pieces(folder.parent.parent.parent, folder.parent, folder)
+    try:
+        return garrick_lib.work.project_pieces(folder.parent.parent.parent, folder.parent, folder)
+    except FileNotFoundError:
+        print("intake: System/tools/work.py is missing, so a project's threads are not read; update Garrick.", file=sys.stderr)
+        return []
 
 
 def _live_threads(folder: Path, only_active: bool = False) -> List[str]:

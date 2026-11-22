@@ -712,7 +712,12 @@ def threads(ws: Path) -> Dict[str, dict]:
     hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
-    reader = work_reader(ws)
+    try:
+        reader = work_reader(ws)
+    except FileNotFoundError:
+        # A half-finished update: this page is new and System/tools has no work.py yet. The page builds and says so.
+        return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
+                            "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
     for zone in visible_dirs(ws / "Zones"):
         rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
         for (_, name_), found in reader.by_project(reader.pieces(ws, zone=zone.name)).items():
@@ -8957,9 +8962,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # what it finds takes the columns' place while a query is in it (#140).
     new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>' % FIND_BOX)
+    stale = ('<p class="muted">Garrick needs updating before it can list your work.</p>'
+             if any(z.get("needs_update") for z in T.values()) else "")
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty · Dot: a session is open in it</p></div>'
-                        % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
+                        '%s<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty · Dot: a session is open in it</p></div>'
+                        % (stale, new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
 
 
     # ---- checks

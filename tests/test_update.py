@@ -2777,6 +2777,47 @@ class TestReleases(unittest.TestCase):
             self.assertEqual(before, subprocess.run(["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True).stdout)
 
 
+class TestExtrasWaitForTheReader(Case):
+    """#644: the status page and the todo sweep read the pieces of work through System/tools/work.py, so an update holds them
+    back while the tool is missing and does not bring it in the same step."""
+
+    TOOL = "System/tools/work.py"
+    PAGE = "System/status/status.py"
+    SWEEP = "System/jobs/todo_sweep.py"
+
+    def older(self):
+        self.as_if_older(self.PAGE, "# status, older\n")
+
+    def test_the_page_and_the_sweep_wait_when_the_tool_is_missing(self):
+        self.older()
+        (self.root / self.TOOL).unlink()
+        self.commit(self.root, "tool gone")
+        result = self.apply()
+        held = dict(result["skipped"])
+        self.assertIn(self.PAGE, held)
+        self.assertIn(self.TOOL, held[self.PAGE])
+        self.assertEqual("# status, older\n", (self.root / self.PAGE).read_text())
+
+    def test_they_are_written_when_the_tool_is_there(self):
+        self.older()
+        self.assertTrue((self.root / self.TOOL).is_file())
+        result = self.apply()
+        self.assertEqual((REPO / "extras" / "status" / "status.py").read_text(), (self.root / self.PAGE).read_text())
+        self.assertNotIn(self.PAGE, dict(result["skipped"]))
+
+    def test_they_are_written_in_the_same_step_as_a_tool_the_update_adds(self):
+        self.older()
+        (self.root / self.TOOL).unlink()
+        self.commit(self.root, "tool gone")
+        stamp = self.stamp()
+        stamp["files"].pop(self.TOOL, None)
+        self.set_stamp(stamp)
+        result = self.apply()
+        self.assertTrue((self.root / self.TOOL).is_file())
+        self.assertEqual((REPO / "extras" / "status" / "status.py").read_text(), (self.root / self.PAGE).read_text())
+        self.assertNotIn(self.PAGE, dict(result["skipped"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 

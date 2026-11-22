@@ -156,8 +156,9 @@ class TestTheRun(RunCase):
         # the call is the background one: no visible session, the deny profile, and the tools named
         cmd, env = self.last
         self.assertIn("--settings", cmd)
-        self.assertTrue(Path(cmd[cmd.index("--settings") + 1]).name == "headless-settings.json")
+        self.assertEqual("settings.json", Path(cmd[cmd.index("--settings") + 1]).name)       # the deny profile plus the run's own guard (S3)
         self.assertEqual("1", env["GARRICK_BACKGROUND"])
+        self.assertEqual(str(self.root), env["GARRICK_INBOX_WS"])
         self.assertEqual(ir.ALLOW, cmd[cmd.index("--allowedTools") + 1:])
         self.assertEqual(out["state"], ir.read_state(self.root)["state"])
         rows = status.question_needs(self.root, dt.date(2026, 11, 3))              # the one question is a row of Waiting on you now, in Work
@@ -462,6 +463,59 @@ class TestTheRun(RunCase):
         with mock.patch.object(agent, "run_prepared", prepared):
             ir.default_runner(["claude"], ir.TIER, self.root, {})
         self.assertEqual(("inbox", ir.TIMEOUT, self.root), (seen["job"], seen["timeout"], seen["cwd"]))
+
+
+class TestThePathGuard(RunCase):
+    """S3: a file write outside the allowed set is refused before it happens, by a hook registered for this run's call alone."""
+
+    def event(self, path, tool="Write"):
+        return json.dumps({"tool_name": tool, "tool_input": {"file_path": str(path)}, "cwd": str(self.root)})
+
+    def guard(self, path, tool="Write", zone=""):
+        import subprocess
+        env = dict(os.environ, GARRICK_INBOX_WS=str(self.root), GARRICK_INBOX_ZONE=zone)
+        return subprocess.run([sys.executable, str(STATUS / "inbox_guard.py")], input=self.event(path, tool), capture_output=True,
+                              text=True, env=env)
+
+    def test_the_call_loads_a_settings_file_with_the_guard_before_every_write_tool_and_the_deny_list(self):
+        cmd, env = ir.build(self.root, "x", "Work")
+        data = json.loads(Path(cmd[cmd.index("--settings") + 1]).read_text())
+        hook = data["hooks"]["PreToolUse"][0]
+        self.assertEqual("Edit|Write|MultiEdit|NotebookEdit", hook["matcher"])
+        self.assertIn("inbox_guard.py", hook["hooks"][0]["command"])
+        self.assertIn("mcp__claude_ai_Gmail__send_message", data["permissions"]["deny"])
+        self.assertEqual("Work", env["GARRICK_INBOX_ZONE"])
+
+    def test_a_write_in_the_home_folder_a_nested_repository_and_an_ignored_path_is_refused_before_it_happens(self):
+        nested = self.work / "Acme Review" / "tools" / "x.py"
+        ignored = self.root / "Zones" / "Projects" / "Garrick" / "Repo" / "x.py"
+        for path in (Path(os.environ["HOME"]) / ".zshrc", nested, ignored, self.root / "System" / "context.md",
+                     self.work / "Acme Review" / "Acme Review.md", self.root / "AGENTS.md", self.work / ".git" / "config"):
+            for tool in ("Write", "Edit"):
+                r = self.guard(path, tool)
+                self.assertEqual(2, r.returncode, (path, tool, r.stdout))
+                self.assertIn("deny", r.stdout)
+                self.assertFalse(path.exists() and path.name == ".zshrc")
+
+    def test_a_write_that_leads_out_through_a_link_is_refused_and_one_in_the_allowed_set_is_not(self):
+        outside = Path(self._tmp.name) / "elsewhere"
+        outside.mkdir()
+        os.symlink(str(outside), str(self.acme / "Sources" / "out"))
+        self.assertEqual(2, self.guard(self.acme / "Sources" / "out" / "x.md").returncode)
+        for ok in (self.acme / "Sources" / "a.pdf", self.work / "Inbox" / "a.eml", self.work / "Todo.md",
+                   self.wikis / "Meetings" / "wiki" / "sources" / "a.md", self.root / "Inbox" / "a.eml"):
+            r = self.guard(ok)
+            self.assertEqual(0, r.returncode, (ok, r.stdout, r.stderr))
+
+    def test_an_answer_run_is_bound_to_its_zone(self):
+        self.assertEqual(0, self.guard(self.acme / "Sources" / "a.pdf", zone="Work").returncode)
+        self.assertEqual(2, self.guard(self.home / "Garden" / "Sources" / "a.pdf", zone="Work").returncode)
+
+    def test_a_guard_that_cannot_read_its_event_refuses(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(STATUS / "inbox_guard.py")], input="not json", capture_output=True, text=True,
+                           env=dict(os.environ, GARRICK_INBOX_WS=str(self.root)))
+        self.assertEqual(2, r.returncode)
 
 
 class TestLiteralPaths(RunCase):

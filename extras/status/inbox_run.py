@@ -393,11 +393,32 @@ def default_runner(cmd, tier, cwd, env):
     return engine.agent_lib().run_prepared(cmd, tier, cwd=cwd, job=JOB, timeout=TIMEOUT, env=env)
 
 
-def build(ws: Path, prompt: str) -> Tuple[List[str], dict]:
+def settings_file(ws: Path, folder: Optional[Path] = None) -> Path:
+    """The settings the call loads: Garrick's deny profile, and before every file write the inbox run's own guard (S3)."""
+    import inbox_guard
     a = engine.agent_lib()
-    cmd = a.claude_command(TIER, prompt, list(ALLOW), a._number("GARRICK_MAX_CALL_USD", a.DEFAULT_MAX_CALL_USD), a.PROFILE)
+    try:
+        base = json.loads(Path(a.PROFILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        base = {}
+    out = dict(base)
+    out["hooks"] = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
+        {"type": "command", "command": inbox_guard.hook_command()}]}]}
+    folder = folder or (a.jobs_dir() / "inbox-run")
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = folder / "settings.json"
+    path.write_text(json.dumps(out), encoding="utf-8")
+    return path
+
+
+def build(ws: Path, prompt: str, zone: str = "") -> Tuple[List[str], dict]:
+    a = engine.agent_lib()
+    cmd = a.claude_command(TIER, prompt, list(ALLOW), a._number("GARRICK_MAX_CALL_USD", a.DEFAULT_MAX_CALL_USD), settings_file(ws))
     cmd[0] = channels.claude_path() or "claude"
-    return cmd, {"GARRICK_BACKGROUND": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+    env = {"GARRICK_BACKGROUND": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "GARRICK_INBOX_WS": str(ws)}
+    if zone:
+        env["GARRICK_INBOX_ZONE"] = zone
+    return cmd, env
 
 
 def item_of(text: str) -> str:
@@ -574,7 +595,7 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
                       unavailable=True)
     if answer:
         set_question(ws, zone, answer["file"], label=answer["label"])
-    cmd, env = build(ws, prompt_for(answer, item, zone))
+    cmd, env = build(ws, prompt_for(answer, item, zone), zone)
     try:
         code, got = (runner or default_runner)(cmd, TIER, ws, env)
     except Exception:

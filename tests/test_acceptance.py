@@ -213,7 +213,7 @@ class ReviewFixesTest(unittest.TestCase):
         for flag, code in (([], 0), (["--strict"], 1)):
             res = run_acceptance("--steps", "resume", *flag)
             self.assertEqual(code, res.returncode, res.stdout)
-            self.assertIn("Passed, with 11 skipped", res.stdout)
+            self.assertIn("Passed, with 12 skipped", res.stdout)
 
     def test_the_refused_save_must_be_the_walls_sentence(self):
         src = RUN.read_text(encoding="utf-8")

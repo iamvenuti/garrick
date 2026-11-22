@@ -239,6 +239,8 @@ afterwards, and a change outside the paths below is left as it is, reported, and
   with `land`, `index`, `log` or `link`. Anything else is refused, `learn`, `person` and `move-to-zone` among it: what
   decides a wall is the user's to write. Send, share and delete nothing, and never delete anything that is not an inbox
   item you have just filed.
+- **Never pass `--confirmed`.** Only the user's own answer confirms a filing the helper refused with "Needs your answer
+  first". The helper refuses the flag in an unattended run, and the item stays in its inbox with its question.
 - **File without asking** what the rules settle: a mail whose domain a party lists in its zone, a transcript that names
   its parties, something to read from a sender no party owns, a file for the one project of its zone.
 - **Never ask in the conversation.** An item you would ask about stays in its inbox, and you write the question as a file:

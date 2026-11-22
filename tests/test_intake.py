@@ -14,6 +14,7 @@ from each other, as in fixtures.py.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -1229,6 +1230,19 @@ class TestKnowledgeCarriesNoParties(MailCase):
         found = [f for f in check.run_checks(self.root) if f.check == "knowledge"]
         self.assertEqual(["error"], [f.severity for f in found])
         self.assertIn("`parties` and `zone`", found[0].message)
+
+
+class TestUnattendedNeverConfirms(MailCase):
+    def test_the_confirmed_flag_is_refused_when_the_run_is_unattended_n4(self):
+        item = self.drop("a.eml", eml())
+        for sub, extra in (("file-conversation", []), ("file-to-project", ["--project", "Acme Review"])):
+            argv = ["--root", str(self.root), sub, "--file", str(item), "--confirmed"] + extra
+            with mock.patch.dict(os.environ, {"GARRICK_BACKGROUND": "1"}), mock.patch("sys.stderr", new=io.StringIO()) as err:
+                self.assertEqual(2, intake.main(argv))
+            self.assertIn("never passes --confirmed", err.getvalue())
+            self.assertTrue(item.exists())
+        with mock.patch.dict(os.environ, {"GARRICK_BACKGROUND": ""}):
+            self.assertNotEqual(2, intake.main(["--root", str(self.root), "file-conversation", "--file", str(item), "--confirmed"]))
 
 
 if __name__ == "__main__":

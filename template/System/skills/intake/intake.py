@@ -1627,6 +1627,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     l.add_argument("--domain", required=True)
     l.add_argument("--party", required=True)
     args = ap.parse_args(argv)
+    if getattr(args, "confirmed", False) and os.environ.get("GARRICK_BACKGROUND"):
+        print("An unattended run never passes --confirmed: only the user's own answer confirms. Ask with `ask` instead.",
+              file=sys.stderr)
+        return 2
     try:
         root = Path(args.root).expanduser().resolve() if args.root else workspace_root(HERE)
     except FileNotFoundError:

@@ -408,7 +408,7 @@ class Lead(unittest.TestCase):
                 none = status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs")
                 two = status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs", waiting_now=sessions)
         for html, n_sessions in ((none, 0), (two, 2)):
-            fixed = len(re.findall(r'<div class="wrow wneed">', html))
+            fixed = len(re.findall(r'<div class="wrow wneed"[^>]*>', html))
             said = re.search(r'id="waiting-now"[^>]*><summary class="head">.*?<h2>([^<]*)</h2>', html, re.S).group(1)
             self.assertEqual(status.lead_said(fixed + n_sessions), said)
             self.assertEqual(n_sessions, len(re.findall(r'<div class="wrow" data-id=', html)))
@@ -468,7 +468,7 @@ class PlainRows(unittest.TestCase):
     def rows(self, html):
         start = html.index('id="wneeds"')
         block = html[start:html.index('id="wrows"', start)]
-        return [(re.sub(r"<[^>]+>", "|", m).replace("||", "|").strip("|")) for m in re.findall(r'<div class="wrow wneed">(.*?)</div>', block, re.S)]
+        return [(re.sub(r"<[^>]+>", "|", m).replace("||", "|").strip("|")) for m in re.findall(r'<div class="wrow wneed"[^>]*>(.*?)</div>', block, re.S)]
 
     def test_a_failed_job_reads_title_failed_reason_with_the_day_and_see_the_log(self):
         html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out", "failing_since": "2026-11-13 02:20:00"}})
@@ -508,7 +508,7 @@ class PlainRows(unittest.TestCase):
             (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it 📅 2026-11-02\n\n## Done\n", encoding="utf-8")
         html = build_with_beats({}, todo)
         block = html.split('id="wneeds"')[1].split('id="wrows"')[0]
-        for row in re.findall(r'<div class="wrow wneed">(.*?)</div>', block, re.S):
+        for row in re.findall(r'<div class="wrow wneed"[^>]*>(.*?)</div>', block, re.S):
             name = re.search(r'<span class="wname">([^<]*)</span>', row).group(1)
             self.assertNotRegex(name, r"^(Work|Personal|Home):|\bin Work\b", name)
 
@@ -544,7 +544,7 @@ class WaitingActs(unittest.TestCase):
         return html[start:html.index("</details>", start)]
 
     def need_rows(self, html):
-        return re.findall(r'<div class="wrow wneed">.*?(?=<div class="wrow wneed">|</div></section>|</details>)', self.card(html), re.S)
+        return re.findall(r'<div class="wrow wneed"[^>]*>.*?(?=<div class="wrow wneed"[^>]*>|</div></section>|</details>)', self.card(html), re.S)
 
     def test_the_status_tab_has_no_hero_and_no_tiles_and_keeps_its_badge(self):
         html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
@@ -1021,7 +1021,7 @@ class FollowUps(unittest.TestCase):
 
     def rows(self, html):
         start = html.index('id="wneeds"')
-        return re.findall(r'<div class="wrow wneed">.*?(?=<div class="wrow wneed">|</div></section>|</details>)', html[start:], re.S)
+        return re.findall(r'<div class="wrow wneed"[^>]*>.*?(?=<div class="wrow wneed"[^>]*>|</div></section>|</details>)', html[start:], re.S)
 
     def follow(self, html):
         return [r for r in self.rows(html) if "follow-up" in r]

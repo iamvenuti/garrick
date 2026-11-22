@@ -582,3 +582,29 @@ class TestConnectorFilterFailsClosed(GuardCase):
                 else:
                     self.assertIsNone(reply)
                     self.assertEqual(["undecided"], [line["decision"] for line in self.log_lines()])
+
+
+class TestInboxRunPathLimits(unittest.TestCase):
+    """Process the Inbox in the background (#634): the one set of paths its call may change, one row for each kind of path. The real
+    workspace run is test_inbox_run's; these rows are the decision."""
+
+    ROWS = (
+        ("Zones/Work/Inbox/a.eml", True),                                  # an inbox
+        ("Zones/Work/Todo.md", True),                                     # a zone's to-do list
+        ("Zones/Work/Acme Review/Sources/a.pdf", True),                   # a project's Sources
+        ("Wikis/Meetings/wiki/sources/261102-call.md", True),             # the Meetings wiki
+        ("Wikis/Knowledge/raw/a.txt", True),                              # the Knowledge wiki
+        ("Zones/Work/Needs you/261102 - ask a.md", True),                 # a question the run asked, in its own zone
+        ("Zones/Home/Garden/Garden.md", False),                           # another zone's project file
+        ("Zones/Work/Acme Review/Acme Review.md", False),                 # a project's own page
+        ("Zones/Work/AGENTS.md", False),
+        ("System/context.md", False),
+        ("Zones/Work/.git/hooks/pre-commit", False),                      # a hook
+        ("Zones/Work/Inbox/../AGENTS.md", False),                         # a way out
+    )
+
+    def test_each_kind_of_path_is_allowed_or_refused(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "status"))
+        import inbox_run
+        for path, ok in self.ROWS:
+            self.assertEqual(ok, inbox_run.allowed(path), path)

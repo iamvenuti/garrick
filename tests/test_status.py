@@ -1045,7 +1045,7 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         tab = overview(html)
         self.assertEqual(["threads", "graph"], card_order(tab))
-        self.assertIn('<div class="slot full" data-slot="top"><details class="card calm" id="waiting-now" data-n="0" open>', tab)   # #474: the sessions waiting on you first; one line when nothing waits (#595)
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card calm" id="waiting-now" data-n="0" data-view="Work"', tab)   # #474: the sessions waiting on you first; one line when nothing waits (#595)
         self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
         self.assertIn('<div class="slot stack left" data-slot="left"></div>', tab)       # the Todo card is gone (#594)
         for gone in ("recent", "due", "thought", "waiting"):
@@ -2128,9 +2128,9 @@ class TestPreviewFeatures(StatusCase):
             self.assertIn(verb, status.TODO_JS)
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
-        self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
-        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: Park and Wake sit in the card's menu (#620)
-        self.assertIn("function pflip(o)", status.PANEL_JS)
+        self.assertIn("if(host&&(o.h?o.pp:o.pa)){var v=s?'wake':'park'", status.PANEL_JS)          # only the app parks
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: the state is a chip on line 1 (#633)
+        self.assertIn("function stchip(o)", status.PANEL_JS)
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 
@@ -2243,7 +2243,7 @@ class TestPanels(StatusCase):
         self.assertNotIn("1 waiting", html)                                 # no tile saying so (#593)
 
     def inbox_rows(self, html):
-        return re.findall(r'<div class="wrow wneed">(?:(?!</div>).)*?in the inboxes.*?</div>', html, re.S)
+        return re.findall(r'<div class="wrow wneed"[^>]*>(?:(?!</div>).)*?in the inboxes.*?</div>', html, re.S)
 
     def test_every_inbox_empty_says_nothing_about_inboxes(self):
         html = self.page()
@@ -3313,8 +3313,8 @@ class TestApp(unittest.TestCase):
         opened = swift[swift.index("	func openInbox(_ act: [String: String]) {"):]
         opened = opened[:opened.index("\n	}\n")]
         self.assertIn("toast(", opened)                                       # a click that cannot launch says so
-        self.assertIn("self.openInbox(act)", swift[swift.index("	func fillPanel("):])
-        self.assertIn("openInbox(act)", swift[swift.index("	@objc func processInbox(_ sender: NSMenuItem) {"):])
+        self.assertIn("self.runInbox(act)", swift[swift.index("	func fillPanel("):])            # the panel runs the inbox in the background first (#634); openInbox is its fallback
+        self.assertIn("runInbox(act)", swift[swift.index("	@objc func processInbox(_ sender: NSMenuItem) {"):])        # the menu row too (#634)
 
     def test_the_icon_menu_only_finds(self):
         """#310: the menu's field finds, takes the keys as the menu opens, and

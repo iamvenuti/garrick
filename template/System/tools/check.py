@@ -1959,8 +1959,8 @@ def check_projects(ws: Workspace) -> List[Finding]:
         text = read_text(hub) or ""
         if not threads and not own_resume(text) and str(fm.get("layout") or "").strip().lower() != "thread-first":
             out.append(Finding(WARNING, "projects", rel(ws, project),
-                               "no threads, and no `### Resume here` block in the hub; a project that is one piece of work "
-                               "keeps its resume point in the hub, and a heading says `layout: thread-first`",
+                               "no threads, and no `### Resume here` block in the hub; a project that is one job "
+                               "keeps its resume point in the hub, and separate jobs say `layout: thread-first`",
                                "Project %s has no threads" % project.name))
         # The hub is the project's index: it links every thread, and lists a
         # finished one under ## Finished.
@@ -2009,6 +2009,56 @@ def check_projects(ws: Workspace) -> List[Finding]:
                                        "the project is thread-first, so everything sits inside a thread: move it into "
                                        "Threads/<Thread>/, and give material with no thread a thread of its own",
                                        "Project %s keeps a folder outside its threads" % project.name))
+    return out
+
+
+MIXED_PAPERS = "is one job, but the thread"
+MIXED_SPLIT = "; these threads look like separate jobs, so split the project into separate jobs instead"
+
+
+def keeps_papers(folder: Path) -> bool:
+    """Does the folder hold a file of its own that a Join would move? Only files git tracks count, and not a
+    `.gitkeep`, a `.DS_Store`, or a `published.md` ledger with no row: the files `scaffold.py layout --join` never moves
+    (N1). An empty folder is no papers, so the check must not name it. extras/status/status.py's `mixed_papers`
+    applies the same test."""
+    if not folder.is_dir():
+        return False
+    listing = _git(["ls-files", "-z", "--", "."], folder) or ""
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        base = Path(name).name
+        if base in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables" and not any(
+                l.strip().startswith("|") and len(cells := [c.strip() for c in l.strip().strip("|").split("|")]) > 1
+                and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date"
+                for l in (read_text(path) or "").splitlines()):
+            continue
+        return True
+    return False
+
+
+def check_mixed_papers(ws: Workspace) -> List[Finding]:
+    """A project that is one job with a thread holding `Sources/` or `Deliverables/` of its own (#632). In one job every
+    thread uses the project's papers, so the files belong in the project's: the fix moves them up, in one commit that
+    Undo takes back (`scaffold.py layout --join`). Where the threads look like separate jobs (the hub has no resume
+    point, or every thread keeps its own papers), the other answer is to split the project. Read only."""
+    out = []
+    for project, pfm in ws.projects:
+        if str(pfm.get("layout") or "").strip().lower() == "thread-first":
+            continue
+        threads = visible_dirs(project / "Threads")
+        holding = [t for t in threads if any(keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
+        if not holding:
+            continue
+        hub = project / (project.name + ".md")
+        text = read_text(hub) or ""
+        looks_separate = len(holding) == len(threads) or not own_resume(text)
+        names = ", ".join(t.name for t in holding[:3]) + (" and %d more" % (len(holding) - 3) if len(holding) > 3 else "")
+        out.append(Finding(WARNING, "projects", rel(ws, hub),
+                           "%s %s keeps its own Sources/ or Deliverables/; a thread of a one-job project uses the project's, "
+                           "so move them up%s" % (MIXED_PAPERS, names, MIXED_SPLIT if looks_separate else ""),
+                           "Project %s keeps papers in a thread of its own" % project.name))
     return out
 
 
@@ -6850,7 +6900,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks, check_cmux,
-    check_skills, check_names, check_projects, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
+    check_skills, check_names, check_projects, check_mixed_papers, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates, check_connector_tools,
     check_machines,

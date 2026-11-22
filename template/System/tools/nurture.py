@@ -85,7 +85,7 @@ wiki's count reaches the `"memory"` setting's nightly minimum.
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
 changes with nobody watching. Of the mechanical kind, the ops in
-ATTENDED_OPS wait for a yes too (none now). It reads drift from `System/generated/
+ATTENDED_OPS wait for a yes too (the Join of a mixed project's papers: it moves files, and the run with nobody watching leaves it). It reads drift from `System/generated/
 drift.json`, since macOS keeps a scheduled job out of cloud folders. Under
 GARRICK_HEADLESS=1, as the jobs extra sets it, `fix --yes` behaves the same.
 
@@ -423,7 +423,48 @@ def from_drift(ctx: Ctx) -> List[Item]:
     return out
 
 
-SOURCES: List[Callable[[Ctx], List[Item]]] = [from_check, from_wiki_lint, from_drift]
+OLD_PARENT = re.compile(r'(?m)^parent: "\[\[([^\]|/\n]+)\]\]"$')
+
+
+def from_history_parents(ctx: Ctx) -> List[Item]:
+    """The history files the first history.py wrote (#627): `parent: "[[<Note>]]"`, which the current form,
+    `[[<dir>/<Note>|<Note>]]`, replaced in 0.64.0. Each is a mechanical fix, so none waits until its quarter next receives an
+    entry. A file is left alone when it names another note than its own, carries `status:`, is not `type: history`, or sits
+    beside no such note."""
+    import history
+    out = []
+    zones = ctx.root / "Zones"
+    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
+        if not zone.is_dir() or zone.is_symlink() or zone.name.startswith((".", "_")):
+            continue
+        for f in sorted(zone.rglob("*.md")):
+            if f.parent.name != "history" or f.is_symlink() or any(p.startswith(".") or p == "archive" for p in f.relative_to(zone).parts):
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+            if not m or "\r" in text:
+                continue
+            fm = m.group(1).split("\n")
+            if "type: history" not in fm or any(l.startswith("status:") for l in fm):
+                continue
+            old = OLD_PARENT.search(m.group(1))
+            if not old:
+                continue
+            note = f.parent.parent / (old.group(1) + ".md")
+            if not note.is_file() or note.is_symlink() or not f.name.startswith(old.group(1) + " history "):
+                continue
+            item = Item("history", "parent", ctx.rel(f), "its parent link is in the form the first history tool wrote",
+                        "A history file's parent link is in an older form", kind="mechanical")
+            item.fix = {"op": "history-parent", "note": ctx.rel(note), "to": history.note_link(note)}
+            item.touches = [item.path]
+            out.append(item)
+    return out
+
+
+SOURCES: List[Callable[[Ctx], List[Item]]] = [from_check, from_wiki_lint, from_drift, from_history_parents]
 
 
 def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
@@ -536,7 +577,7 @@ CODE_NOTE_RE = re.compile(r"^names `(.+)` as code; write it as a wikilink")
 NO_PARENT = "no `parent:`, a link to its thread note or hub"
 # Ops that write into a page a person wrote by hand: offered on a yes, and
 # never applied in a run with nobody watching, whatever their kind allows.
-ATTENDED_OPS = ()
+ATTENDED_OPS = ("join-papers",)
 DATE_INSIDE = re.compile(r"(?<!\d)(?:\d{6}|\d{4}-\d{2}-\d{2}|\d{8})(?!\d)")
 NOT_LIVE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
 LINK = re.compile(r"(!?\[\[)([^\[\]|#\n]+)((?:#[^\[\]|\n]*)?(?:\|[^\[\]\n]*)?\]\])")
@@ -567,6 +608,8 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     path = ctx.root / item.path
     if item.source == "check" and item.check in ("projects", "threads") and HISTORY_RE.match(item.message):
         return history_fix(ctx, item)
+    if item.source == "check" and item.check == "projects" and item.message.startswith(mixed_papers_prefix()):
+        return join_papers_fix(ctx, item)
     if item.source == "check" and item.check in ("projects", "threads"):
         m = STATUS_RE.match(item.message)
         if m:
@@ -622,6 +665,50 @@ def history_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     item.touches = [item.path] + [ctx.rel(f) for f in sorted(files)]
     item.where = [ctx.rel(note.parent)]
     return {"op": "history", "moved": len(plan.moves), "before": plan.before, "after": plan.after}
+
+
+def mixed_papers_prefix() -> str:
+    import check
+    return check.MIXED_PAPERS
+
+
+def join_target(ctx: Ctx, item: Item) -> Tuple[Path, Path]:
+    """(zone folder, project folder) of the hub a mixed-papers finding names: exactly `Zones/<Zone>/<Project>/<Project>.md`."""
+    parts = Path(item.path).parts
+    if len(parts) != 4 or parts[0] != "Zones" or parts[3] != parts[2] + ".md":
+        raise Held("it is not the hub of a project in one zone")
+    return ctx.root / "Zones" / parts[1], ctx.root / "Zones" / parts[1] / parts[2]
+
+
+def join_plan(ctx: Ctx, item: Item):
+    """The Join's own plan (scaffold.py layout --join), read again: the files it would move, in the zone's own paths.
+    Held when the plan lists a file for the owner to place, since a name already taken is theirs to settle, or when it would
+    move nothing."""
+    import scaffold
+    zone_dir, project_dir = join_target(ctx, item)
+    try:
+        moves, left, _ = scaffold.plan_layout(zone_dir, project_dir, join=True)
+    except (scaffold.Refusal, OSError) as why:
+        raise Held(str(why))
+    if left:
+        raise Held("%d file%s of a thread would share a name with one the project has, so placing %s is yours"
+                   % (len(left), "" if len(left) == 1 else "s", "it" if len(left) == 1 else "them"))
+    if not moves:
+        raise Held("there is nothing for it to move")
+    prefix = project_dir.relative_to(zone_dir).as_posix() + "/"
+    if any(not (a.startswith(prefix) and b.startswith(prefix)) for a, b in moves):
+        raise Held("a move would leave the project")
+    return zone_dir, project_dir, moves
+
+
+def join_papers_fix(ctx: Ctx, item: Item) -> dict:
+    """#632: a one-job project with a thread keeping `Sources/` or `Deliverables/` of its own. The fix is the Join, which
+    moves those files into the project's, inside the one zone, in one commit that scaffold.py's Undo takes back."""
+    zone_dir, project_dir, moves = join_plan(ctx, item)
+    zone = ctx.rel(zone_dir)
+    item.touches = [item.path] + [zone + "/" + x for move in moves for x in move]
+    item.where = [ctx.rel(project_dir)]
+    return {"op": "join-papers", "moved": len(moves)}
 
 
 def date_fix(ctx: Ctx, item: Item, path: Path) -> dict:
@@ -918,13 +1005,48 @@ def apply_history(ctx: Ctx, item: Item, journal: "Journal") -> str:
     return "%d older entries moved to history files, %d words down to %d" % (len(plan.moves), plan.before, plan.after)
 
 
+def apply_history_parent(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    """The one `parent:` line of a history file in the form the first history.py wrote, in the current one (#627). The file is
+    read again: one that no longer fits (another note's parent, a `status:`) is held, never rewritten."""
+    path = ctx.root / item.path
+    note = ctx.root / item.fix["note"]
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    old = OLD_PARENT.search(m.group(1)) if m else None
+    if (not m or not old or old.group(1) != note.stem or "type: history" not in m.group(1).split("\n")
+            or any(l.startswith("status:") for l in m.group(1).split("\n")) or not note.is_file()):
+        raise Held("it is not a history file of that note in the older form any more")
+    fm = m.group(1).replace(old.group(0), 'parent: "%s"' % item.fix["to"], 1)
+    journal.write(path, "---\n" + fm + "\n---\n" + text[m.end():])
+    return "its parent link is now in the current form"
+
+
+def apply_join_papers(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    """The Join of scaffold.py, run in the one zone, which makes its own commit through the zone's hook (and puts everything
+    back if the hook refuses). The plan is read again first: a name taken since is held, never overwritten. The journal holds
+    nothing of it, so `apply` records the commit as the fix's own."""
+    import argparse
+    import scaffold
+    zone_dir, project_dir, moves = join_plan(ctx, item)
+    args = argparse.Namespace(zone=zone_dir.name, project=project_dir.name, thread=None, heading=False, join=True,
+                              resume_from=None, check=False, json=False, papers=None)
+    try:
+        scaffold.cmd_layout(ctx.root, args, ctx.today)
+    except (scaffold.Refusal, scaffold.GitError) as why:
+        raise Held(" ".join(str(why).split()))
+    item.fix = dict(item.fix, self_commit=ctx.git(zone_dir, "rev-parse", "--short", "HEAD").stdout.strip())
+    return "%d file%s moved from the threads into the project's Sources/ and Deliverables/" % (len(moves), "" if len(moves) == 1 else "s")
+
+
 OPS: Dict[str, Callable[[Ctx, Item, "Journal"], str]] = {
     "status": apply_status, "list-thread": apply_list_thread, "date": apply_date, "relink": apply_relink,
-    "codelink": apply_codelink, "parent": apply_parent, "history": apply_history}
+    "codelink": apply_codelink, "parent": apply_parent, "history": apply_history, "history-parent": apply_history_parent,
+    "join-papers": apply_join_papers}
 OP_WORDS = {"status": ("status word", "status words"), "list-thread": ("hub list", "hub lists"),
             "date": ("date prefix", "date prefixes"), "relink": ("link", "links"),
             "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links"),
-            "history": ("note trimmed", "notes trimmed")}
+            "history": ("note trimmed", "notes trimmed"), "history-parent": ("history parent link", "history parent links"),
+            "join-papers": ("project joined", "projects joined")}
 
 
 def apply_mechanical(ctx: Ctx, item: Item, journal: "Journal") -> str:
@@ -940,7 +1062,9 @@ def say_mechanical(item: Item) -> str:
             "codelink": lambda: "`%s` becomes [[%s]]" % (f.get("ref"), f.get("ref")),
             "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread"),
             "history": lambda: "move %s older entries to history files: %s words down to %s"
-                               % (f.get("moved"), f.get("before"), f.get("after"))}.get(f.get("op"))
+                               % (f.get("moved"), f.get("before"), f.get("after")),
+            "history-parent": lambda: "write its parent link in the current form",
+            "join-papers": lambda: "move the thread papers into the project's"}.get(f.get("op"))
     line = "%s: %s" % (item.path, item.said or (what() if what else item.message))
     return line + (" (held: %s)" % item.held if item.held and not item.said else "")
 
@@ -1446,7 +1570,7 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path, List[str
     for repo, group in sorted(by_repo.items()):
         start = journal.mark()
         applied = []
-        for item in group:
+        for item in sorted(group, key=lambda i: (i.fix or {}).get("op") != "join-papers"):   # the Join first: it commits for itself
             mark = journal.mark()
             try:
                 item.said = KINDS[item.kind].apply(ctx, item, journal)
@@ -1455,6 +1579,13 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path, List[str
                 journal.rollback(mark)
                 item.held = str(why) if isinstance(why, Held) else "%s: %s" % (type(why).__name__, why)
                 done["held"].append(item)
+        for item in [i for i in applied if i.fix.get("self_commit")]:
+            applied.remove(item)
+            sha = item.fix["self_commit"]
+            done["commits"].append({"repo": ctx.rel(repo) or ".", "commit": sha, "paths": sorted(item.touches),
+                                    "message": ctx.git(repo, "log", "-1", "--format=%s", sha).stdout.strip()})
+            item.fix = dict(item.fix, commit=sha)
+            done["fixed"].append(item)
         if not applied:
             continue
         paths = sorted({(ctx.root / t).relative_to(repo).as_posix() for i in applied for t in (i.touches or [i.path])})

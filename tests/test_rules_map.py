@@ -139,7 +139,7 @@ MAP = [
     ("files: never commit across zones", "Never commit across zones", "rules"),
     ("files: deliverables dated", "**Deliverables carry their first-made date**: `YYMMDD - <name>.<ext>`.", "rules"),
     ("files: deliverables, in full", "The date never moves, so a folder sorts by when the work started. Build intermediates (`build/`, `render/`, `specs/`), scripts and a folder's `README.md` are not deliverables and keep their names.", "threads"),
-    ("files: hub options", "**A hub can change two things about its project.** `layout: thread-first` keeps everything inside the threads", "threads"),
+    ("files: hub options", "**A hub can change two things about its project.** `layout: thread-first` makes it separate jobs: everything stays inside the threads", "threads"),
     ("files: anonymous, in rules", "**`anonymous: true` on a hub** makes the project's deliverables name no other party of its zone, nor any of their people.", "rules"),
     ("files: hub options, anonymous", "`anonymous: true` makes a project whose deliverables name no other party of its zone, nor any of their people; it can be a list of further names to keep out instead.", "threads"),
     ("files: cloud folders", "**Reach a cloud-synced folder through a link in the workspace**, never its full path (`~/Library/CloudStorage/...`)", "rules"),

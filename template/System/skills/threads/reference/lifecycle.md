@@ -14,7 +14,7 @@ These are the rules in `System/rules.md` that this request carries out, word for
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
-- **A hub can change two things about its project.** `layout: thread-first` keeps everything inside the threads, each with its own `Sources/` and `Deliverables/`, and nothing at the project's top but `Threads/`. `anonymous: true` makes a project whose deliverables name no other party of its zone, nor any of their people; it can be a list of further names to keep out instead.
+- **A hub can change two things about its project.** `layout: thread-first` makes it separate jobs: everything stays inside the threads, each with its own `Sources/` and `Deliverables/`, and nothing at the project's top but `Threads/`. `anonymous: true` makes a project whose deliverables name no other party of its zone, nor any of their people; it can be a list of further names to keep out instead.
 - **Instruction files point, they do not restate.** An `AGENTS.md` routes to the file that owns a fact; it never copies it, holds status, or keeps a hand-written list of projects or skills.
 - **Garrick's instruction files stay as shipped.** This file and every `AGENTS.md` are Garrick's. A rule or a route of the workspace's own goes in the local file beside it, `System/rules.local.md` or an `AGENTS.local.md`, which Garrick never ships or changes. `check.py` warns when one of Garrick's differs from what it shipped.
 - **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud. Rules that only this workspace keeps are switched on in `System/garrick-checks.json`.
@@ -164,8 +164,8 @@ scaffolding script, whose checks are the same, and commits. Run it from the
 workspace root.
 
 ```sh
-python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--heading yes] [--spoken "<how it is said>"] [--thread-spoken "<how the thread is said>"]
-python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>" [--papers own] [--spoken "<how it is said>"]
+python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--separate yes] [--spoken "<how it is said>"] [--thread-spoken "<how the thread is said>"]
+python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
 ```
 
 **Ask how a name is said first.** Run the same line with
@@ -179,26 +179,28 @@ must be one of the zone's own in `System/context.md`; it is refused otherwise.
 scaffolding script directly, as step 4 and step 6 then say:
 
 ```sh
-python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--heading]
-python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>" [--papers own] [--spoken "<how it is said>"]
+python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--separate]
+python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
 ```
 
 1. **Resolve the parts.** The zone against the folders under `Zones/`; the
    project against existing projects; the party against Parties and Aliases,
    giving its tag. The zone may be left out when the party's row in Parties
    names it, or the project already exists.
-2. **A new project needs no thread, and one question.** Ask: "Is this project
-   one piece of work, or a heading over separate pieces?" One piece of work is
-   the default: its hub holds the resume point, and it has `Sources/` and
-   `Deliverables/`. A heading has no resume point and no papers of its own, and
-   is made with `--heading yes` (`--heading` with the script). Ask for a first
-   thread only when the user names one. A request that cannot be asked takes
-   the default and moves nothing.
-   **A new thread in a project that is one piece of work** asks one more
-   question: "Does this thread keep its own papers, or use the project's?" The
-   project's is the default; `--papers own` gives the thread a `Sources/` and
-   a `Deliverables/` of its own. A heading asks nothing, because every thread
-   under it keeps its own.
+2. **A new project needs no thread, and one question.** Ask: "One job or
+   separate jobs?" One job is the default: its hub holds the resume point, and
+   it has `Sources/` and `Deliverables/`. Separate jobs have no resume point
+   and no papers of their own in the hub, each thread has its own, and the
+   project is made with `--separate yes` (`--separate` with the script). Ask
+   for a first thread only when the user names one. A request that cannot be
+   asked takes the default and moves nothing.
+   **A new thread asks nothing about papers.** The project's switch decides:
+   in one job the thread uses the project's `Sources/` and `Deliverables/`, in
+   separate jobs it keeps its own. A request that names a papers choice for a thread is refused.
+   To switch a project later, split it into separate jobs or join it into one
+   job with `scaffold.py layout --split` or `--join`: it plans first and
+   writes nothing, and a Join gives the hub its Resume here block back,
+   opening with the Next action of the thread the user chooses.
    **Look for the name first**, as *Find* does: a project or thread with the
    same name, or one heard as it, in any project, zone or status. If there is
    one, say so in one line before making anything: "There's already a Freight

@@ -23,6 +23,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `extras/` | Optional tools outside core: the mail fetcher, scheduled jobs, and the status page with its Mac app. None is installed except the status page, which the installer puts in place; `EXTRAS` in `install.py` says where each goes in a workspace |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |
+| `tools/` | Development tools for this repository. Not shipped. `render.py` takes look-check screenshots of an HTML page, at several widths and themes, with a headless shell |
 | `tests/` | `python3 -m unittest discover -s tests`. CI runs it in four shards per Python on `main` and on `release-*` pull requests, and only the modules a branch pull request touches (`TOUCH_MAP` in `tests/shard.py`) on the system Python; `python3 tests/shard.py 2/4 --jobs 3` runs one as CI does, by the times in `tests/shard-times.json` |
 
 ## Placeholders
@@ -68,4 +69,5 @@ To add it to a release already published, `gh release upload v0.25.0 /tmp/garric
 - **Fixed three levels.** Zone, project, thread. Do not add a configurable depth: the voice grammar depends on it.
 - **A rule a machine can check gets a check** in the same commit, once the checker exists.
 - **A test never reads this Mac.** A test that asserts what the page offers, or what a launcher says, builds its own app bundles and sets its own card fields. Anything that consults the machine passes on one and fails on another.
+- **Look checks use `tools/render.py`.** Take screenshots of a page with `python3 tools/render.py PAGE --out DIR --width 390 1280 --theme light dark`. Never start the installed Chrome, or any browser app, for this: it bounces in the user's Dock and leaves crash dumps. With no headless shell installed, the helper says how to install one.
 - **Voice is a design constraint, not a feature.** Any name, prompt or reply format added here has to work when spoken and when heard.

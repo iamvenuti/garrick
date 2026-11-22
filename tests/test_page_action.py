@@ -732,6 +732,22 @@ class TestSettings(ActionCase):
     def path(self):
         return self.root / "System" / "garrick-settings.json"
 
+    def test_there_is_no_home_to_save_and_a_stored_one_is_left_alone(self):
+        write(self.path(), json.dumps({"home": "simple", "ask": True}))
+        for req in ({"home": "full"}, {"home": "simple", "ask": False}):
+            with self.assertRaises(pa.Refused) as why:
+                self.act(verb="settings", **req)
+            self.assertIn("no home field", str(why.exception))
+        self.assertEqual({"home": "simple", "ask": True}, json.loads(self.path().read_text()))     # refused: nothing written
+        self.act(verb="settings", ask=False)
+        self.assertEqual({"home": "simple", "ask": False}, json.loads(self.path().read_text()))    # a stored value is kept, never read
+
+    def test_the_app_no_longer_sends_the_removed_discover_verb(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertNotIn('"verb": "discover"', swift)
+        self.assertNotIn("pickFolder", swift)
+        self.assertNotIn("discover", pa.VERBS)
+
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
         self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True},
@@ -2537,6 +2553,6 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "machine-role", "read-guard"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
         self.assertIn("page's own wall buttons", section)

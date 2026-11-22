@@ -146,10 +146,10 @@ process.stdout.write(JSON.stringify(ctx.out));
 """
 
 PROJECT = {"n": "Harbour", "kl": "project", "z": "Work", "p": "", "t": ["acme"], "d": 1, "s": 0, "h": 1, "hp": 0, "tn": 3, "pp": ["Work", "Harbour"],
-           "mg": ["Work", "Harbour", "", [], [], ["Quay"], ["heading"]], "dk": ["Work", "Harbour", ""], "live": "idle", "f": "/w/Harbour",
+           "mg": ["Work", "Harbour", "", [], [], ["Quay"], ["split"]], "dk": ["Work", "Harbour", ""], "live": "idle", "f": "/w/Harbour",
            "u": "file:///w/Harbour/Harbour.md", "w": "Harbour"}
 THREAD = {"n": "Quay", "kl": "thread", "z": "Work", "p": "Harbour", "t": ["acme"], "d": 3, "s": 0, "r": 1, "rd": 3, "pa": ["Work", "Harbour/Threads/Quay/Quay.md"],
-          "mg": ["Work", "Harbour", "Quay", [], [], [], ["own"]], "u": "file:///w/Quay.md", "w": "Quay"}
+          "mg": ["Work", "Harbour", "Quay", [], [], [], []], "u": "file:///w/Quay.md", "w": "Quay"}
 
 
 class RowCard(unittest.TestCase):
@@ -172,22 +172,27 @@ class RowCard(unittest.TestCase):
     def test_a_project_reads_header_open_in_actions_then_delete(self):
         row, graph = self.run_card(PROJECT)
         self.order(row, 'class="phead"', 'class="pl pl1"', 'class="pl pl2"', 'class="gacts popen"', 'class="pmenu"', 'class="psep"', "Delete…")
-        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', "Close session", "Park</button>", 'class="psep"', 'data-manage="delete"')
+        self.assertEqual(0, row[row.index('class="pmenu"'):].count('"verb":"park"'))               # no Park row in the menu (#633)
+        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', "Close session", 'class="psep"', 'data-manage="delete"')
+        self.assertNotIn('data-manage="layout', row[row.index('class="pmenu"'):])               # the layout is a chip on line 1, not a menu row (#633)
         self.assertTrue(row.rstrip().endswith("Delete…</button></div>"))                      # Delete is the last row
         self.assertEqual(1, row.count('data-manage="delete"'))
         self.assertIn("project · Work", graph)                                               # the graph's panel keeps kind, zone and project
         self.assertNotIn("project · Work", row)
 
-    def test_line_one_is_the_chip_and_the_count_and_line_two_the_state(self):
+    def test_line_one_is_the_party_and_the_state_and_line_two_when_it_was_touched(self):
         row, _ = self.run_card(PROJECT)
-        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><span>3 threads</span></div>', row)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><button class="ctl pflip" type="button" data-act=', row)
+        self.assertIn('>Active</button><button class="ctl" type="button" data-manage="layout-split"', row)
+        self.assertNotIn("3 threads", row)                                                    # the row has the count (#633)
         self.assertIn('<div class="pl pl2">Touched yesterday</div>', row)
         self.assertIn('<span class="live idle"></span>Session open in cmux, idle', row)
         thread, _ = self.run_card(THREAD)
         self.assertIn('<div class="pl pl2">Touched 3 days ago · Resume point dated 3 days ago</div>', thread)
         self.assertNotIn("threads", thread.split('class="gacts')[0].split('pl1')[1])         # a thread has no count
         parked, _ = self.run_card(dict(THREAD, s=1))
-        self.assertIn("Parked", parked)
+        self.assertIn('class="ctl parked pflip"', parked)
+        self.assertIn('>Parked</button>', parked)
 
     def test_no_action_has_a_border_and_the_chip_is_the_only_bordered_element(self):
         row, _ = self.run_card(PROJECT)
@@ -199,6 +204,33 @@ class RowCard(unittest.TestCase):
         self.assertEqual(1, row.count("chip"))
         self.assertIn("border-color:transparent", css[css.index(".popen .act{"):][:80])
 
+    def test_a_project_shows_its_layout_as_a_chip_and_a_thread_shows_none(self):
+        row, graph = self.run_card(PROJECT)
+        line1 = row[row.index('class="pl pl1"'):row.index('class="pl pl2"')]
+        self.assertIn('<button class="ctl" type="button" data-manage="layout-split"', line1)
+        self.assertIn('title="Split Harbour into separate jobs…" aria-label="Split Harbour into separate jobs…"', line1)
+        self.assertIn('One job</button>', line1)
+        self.assertIn('data-manage="layout-split"', graph)                                   # the graph's panel is the same component
+        sep, _ = self.run_card(dict(PROJECT, mg=["Work", "Harbour", "", [], [], ["Quay"], ["join"]], hp=1))
+        self.assertIn('aria-label="Join Harbour into one job…"', sep)
+        self.assertIn('Separate jobs</button>', sep)
+        self.assertIn('aria-label="Wake Harbour"', sep)
+        thread, _ = self.run_card(THREAD)
+        self.assertNotIn("data-manage=\"layout", thread)
+        self.assertEqual(1, line1.count("chip"))                                              # the party's label stays a span
+        self.assertIn('<span class="chip">acme</span>', line1)
+        self.assertIn('class="ctl"', line1)
+
+    def test_the_chips_are_buttons_with_a_label_that_names_the_change(self):
+        row, _ = self.run_card(PROJECT)
+        line1 = row[row.index('class="pl pl1"'):row.index('class="pl pl2"')]
+        for label in ("Park Harbour and its threads", "Split Harbour into separate jobs…"):
+            self.assertIn('title="%s" aria-label="%s"' % (label, label), line1)
+        self.assertEqual(2, line1.count("<button"))
+        done, _ = self.run_card(dict(THREAD, fin=1, pa=None))
+        self.assertIn('<span class="ctl done">Done</span>', done)
+        self.assertNotIn("<button", done[done.index('class="pl pl1"'):done.index('class="pl pl2"')])
+
     def test_delete_is_critical_icon_included_and_set_apart(self):
         row, _ = self.run_card(PROJECT)
         self.assertIn('<button class="pmi del" type="button" data-manage="delete"', row)
@@ -207,12 +239,12 @@ class RowCard(unittest.TestCase):
 
     def test_every_verb_and_handler_is_kept(self):
         row, _ = self.run_card(PROJECT)
-        for need in ('data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', 'data-manage="delete"', 'data-mg="',
+        for need in ('data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-split"', 'data-manage="delete"', 'data-mg="',
                      '"verb":"close"' if False else 'data-act=', 'data-expect="none:/w/Harbour"', 'data-expect="parked:Work/Harbour/Harbour.md"'):
             self.assertIn(need, row)
         thread, _ = self.run_card(THREAD)
         self.assertIn('data-manage="move"', thread)
-        self.assertIn('data-manage="layout-own"', thread)
+        self.assertNotIn('data-manage="layout', thread)               # a thread has no layout of its own (#632)
         self.assertNotIn('data-manage="new-thread"', thread)
         self.assertNotIn("Close session", self.run_card(dict(PROJECT, live=None, dk=None))[0])      # only with a session open
 

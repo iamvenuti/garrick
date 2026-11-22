@@ -803,6 +803,11 @@ questions", "work in the answers" or "work it in", or "work in the answers in
 4. Commit the changed pages, the raw answer and the question in the Wikis
    repository, by name, in one commit. Never `git add -A`.
 
+**Run unattended.** When the request comes from the nightly run ("work in the answer in <place>", one question), look
+with Read, Grep and Glob; run no shell command but `python3 System/status/page_action.py question-work` and `question-done`; never
+wait for a file to change, and never run the lint, since the nightly run's own steps do that. A session the user watches is
+unchanged.
+
 **A decision is annotated by the assistant and settled only by the user.** The
 user's own save through *Record as a decision* is the act that settles it:
 `status: valid`, with their words under *Decision*. A decision page has four

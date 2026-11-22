@@ -302,6 +302,11 @@ has no parties, so every page it names may change. Knowledge holds published
 material: the answer is cited as the user's word, and nothing from a
 conversation goes in.
 
+**Run unattended.** When the request comes from the nightly run ("work in the answer in <place>", one question), look
+with Read, Grep and Glob; run no shell command but `python3 System/status/page_action.py question-work` and `question-done`; never
+wait for a file to change, and never run the lint, since the nightly run's own steps do that. A session the user watches is
+unchanged.
+
 **Who settles a decision.** *Record as a decision* belongs to the Meetings
 wiki: a decision carries a zone and parties, and Knowledge has neither, so
 `question-decide` refuses a Knowledge question and writes nothing. Where a

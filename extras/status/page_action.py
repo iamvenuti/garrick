@@ -46,13 +46,16 @@ zone's repository, as the skills would:
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
     new-project a project, as "new project" by voice: {"zone", "name", "party",
-                "thread", "heading"}; one piece of work unless "heading" says a
-                heading over separate pieces, and no thread unless one is
-                named; committed in the zone
-    new-thread  a thread in a project: {"zone", "project", "name", "papers"};
-                "papers" is "own" for a thread that keeps its own Sources and
-                Deliverables, and the project's otherwise (a heading's threads
-                always keep their own)
+                "thread", "heading"}; one job unless "heading" says separate
+                jobs, and no thread unless one is named; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name"}; the project
+                decides where its papers are (one job: the project's; separate
+                jobs: its own), so a request that names "papers" is refused
+    layout      the project's switch, one job or separate jobs: {"zone",
+                "project", "heading": true} splits it into separate jobs,
+                {"zone", "project", "join": true, "resume_from"?} joins it
+                into one job; "check" and "plan" say what would move and write
+                nothing; a thread or "papers" is refused
     check-name  whether a new name would do, making nothing, for the form as
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
@@ -83,7 +86,6 @@ zone's repository, as the skills would:
                 "quiet": {...}}}, which notices this Mac shows, checked and
                 kept by System/tools/notifications.py.
                 Settings › Home:
-                {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
                 System/tools/fade.py keeps; saving moves no page.
@@ -355,6 +357,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "todo-retire",
          "chase",
          "outbox-drop",
+         "inbox-run", "intake-answer",
          "machine-role", "read-guard")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -372,8 +375,6 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 GRAPH_OFF = ("Red", "Crimson", "Amber")
 GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity", "decision")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
-# Settings › Home: which the page opens on. Its words are status.py's HOMES too.
-HOMES = ("simple", "full")
 # Settings › About Garrick: how often, in days, the check for a newer Garrick runs (garrick_lib's RELEASE_CADENCES).
 RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
@@ -1763,7 +1764,6 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
-    {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
     {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
     {"channels": {"telegram": {"autonomy": "act"}}}, Settings › Channels (#571): tier, effort and autonomy of Ask and
@@ -1771,7 +1771,9 @@ def save_settings(ws: Path, req: dict) -> str:
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
+    if "home" in req:                   # Settings has no Home choice any more (#503): the app opens on the full page, and a stored value is ignored
+        raise Refused("there is no home to choose: Garrick opens on the full page")
+    if not {"launchers", "zones", "graph", "notifications", "memory", "desk-agent",
             "release-notice", "release-notice-every", "ask", "channels"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
@@ -1798,10 +1800,6 @@ def save_settings(ws: Path, req: dict) -> str:
         if not (isinstance(days, int) and not isinstance(days, bool) and days in RELEASE_CADENCES):
             raise Refused("the check for a newer Garrick runs every %s days" % " or ".join(str(d) for d in RELEASE_CADENCES))
         new["release-notice-every"] = days
-    if "home" in req:
-        if req["home"] not in HOMES:
-            raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
-        new["home"] = req["home"]
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1843,8 +1841,6 @@ def save_settings(ws: Path, req: dict) -> str:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
-        return "Garrick opens on the full page"
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
@@ -2285,14 +2281,26 @@ def wants_heading(req: dict) -> bool:
     raise Refused("not a heading choice: %r" % (value,))
 
 
-def papers_of(req: dict) -> Optional[str]:
-    """A new thread's papers, own or project; none when the request does not say."""
-    value = req.get("papers")
-    if value is None:
-        return None
-    if value in ("own", "project"):
-        return value
-    raise Refused("papers is own or project, not %r" % (value,))
+SWITCH_SAID = ("A thread has no papers choice of its own: a project is one job or separate jobs, and every thread "
+               "follows it. To change the project, Split it into separate jobs or Join it into one job.")
+
+
+def no_papers(req: dict) -> None:
+    """A thread's papers follow its project's switch (one job or separate jobs), never a choice of the thread: a
+    request that still names `papers`, or a thread for a layout, is refused with the sentence that names the switch."""
+    if req.get("papers") is not None:
+        raise Refused(SWITCH_SAID)
+
+
+def wants_join(req: dict) -> bool:
+    """Is the layout change a Join, one job from separate jobs? True, or yes or true from a command line; anything
+    else but nothing is refused. A Split is `heading`, the key the request has always had."""
+    value = req.get("join")
+    if value is None or value is False or (isinstance(value, str) and value.strip().lower() in ("no", "false")):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("yes", "true")):
+        return True
+    raise Refused("not a join choice: %r" % (value,))
 
 
 def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
@@ -2397,10 +2405,9 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
-        papers = papers_of(req)
+        no_papers(req)
         args = ["thread", "--zone", z, "--project", project, "--name", name,
-                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
-                *(["--papers", papers] if papers else [])]
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
         if not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
@@ -2425,11 +2432,18 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
     if verb == "layout":
-        # Where a thread keeps its papers, or a project made a heading (scaffold.py layout): the plan, with `check`,
-        # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
-        papers, heading = papers_of(req), wants_heading(req)
+        # A project split into separate jobs, or joined into one job (scaffold.py layout): the plan, with `check`,
+        # or the change, in one commit through the zone's wall check. A Split moves only what exactly one thread note
+        # names; a Join moves each thread's papers up, a name already taken in the project's moved nowhere.
+        no_papers(req)
+        if thread:
+            raise Refused(SWITCH_SAID)
+        heading, join = wants_heading(req), wants_join(req)
+        if heading == join:
+            raise Refused("say what changes: heading to split the project into separate jobs, or join to join it into one job")
+        resume = field(req, "resume_from", required=False) if join else None
         want_plan = check or req.get("check") is True
-        args = ["layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else [])]
+        args = ["layout", *which, *(["--split"] if heading else ["--join", *(["--resume-from", resume] if resume else [])])]
         if req.get("plan") is True:
             # The plan as data, for the page's dialog (#604): the same check, which writes nothing, and the same
             # words beside it. Only with `check`; a plan of a real run is no such thing.
@@ -3113,6 +3127,62 @@ def answer_question(ws: Path, req: dict, today: dt.date) -> str:
             your_work().keep_first_look(ws, key, request="Help me with the next step on %s: %s" % (name, chosen[1]))
         return "Noted. Next for %s: %s. Continue in Claude starts on it" % (name, said_text(chosen[1]))
     return "Noted: %s. Next for %s: %s" % (chosen[0], name, said_text(chosen[1]))
+
+
+_INBOX = None
+
+
+def inbox_module():
+    """inbox_run.py, beside this file: Process the Inbox in the background (#634)."""
+    global _INBOX
+    if _INBOX is None:
+        sys.path.insert(0, str(HERE))
+        spec = importlib.util.spec_from_file_location("garrick_inbox_run", str(HERE / "inbox_run.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _INBOX = mod
+    return _INBOX
+
+
+def inbox_run_start(ws: Path) -> object:
+    """*Process the Inbox* (#634): one background run at the workspace root, started and not waited for. Page only. With the
+    background assistant unavailable the reply says so (`unavailable`) and the app opens a visible session as before; a run
+    already going says so and starts nothing."""
+    got = inbox_module().start(ws)
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
+
+
+def intake_answer(ws: Path, req: dict, today: dt.date) -> object:
+    """The answer to a question an unattended `intake` run asked (#634): a file in `Zones/<Zone>/Needs you/` that names the item
+    waiting in that zone's Inbox. An option files that one item in the background, with the same limits as the run itself;
+    *Not now* puts the question off to tomorrow. Page only. The question is read from its file, never from the request."""
+    zone = zone_dir(ws, req.get("zone"))
+    name = req.get("file")
+    if not isinstance(name, str) or not re.fullmatch(r"%s/[^/\\\0]+\.md" % re.escape(NEEDS), name) or name.split("/")[1].startswith((".", "_")):
+        raise Refused("that is not a question Garrick asked")
+    q = zone / NEEDS / name.split("/", 1)[1]
+    if q.is_symlink() or not q.is_file() or (zone / NEEDS).is_symlink():
+        raise Refused("that question is not there any more; the page rebuilds now")
+    label = answer(req, "label", most=LABEL_MAX)
+    text = open_question(q)
+    if not inbox_module().item_of(text):
+        raise Refused("that question is not one an inbox run asked")
+    if label.casefold() == "not now":
+        day = today + dt.timedelta(days=1)
+        with zone_lock(zone):
+            before = q.read_bytes()
+            q.write_text(set_front(open_question(q), {"status": "later", "later": day.isoformat()}), encoding="utf-8")
+            commit(zone, q, before, "Inbox question put off to %s" % day.isoformat(), wall=wall_refusal(ws))
+        return "Put off until tomorrow. It will be back then"
+    chosen = next((l for l, _ in options(text) if l.casefold() == label.casefold()), None)
+    if chosen is None:
+        raise Refused("that question has no answer called %r" % label)
+    got = inbox_module().start(ws, {"zone": zone.name, "file": name.split("/", 1)[1], "label": chosen})
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
 
 
 def answered_note(text: str, step: str, label: str, today: dt.date, name: str) -> str:
@@ -5597,16 +5667,121 @@ BOUNDED_COMMIT = {("wall", "take-out"): "Take private material out of a page", (
                   ("meeting-long", "shorten"): "Shorten a meeting page", ("fix-failed", "fix-now"): "Make a small fix to a page"}
 
 
+TODO_LONG_RAW = 200                 # check.py's TODO_LONG: a line whose text reaches this is a candidate; its own links are read, never its words
+MOST_THREAD_NOTES = 7               # the thread notes one to-do engine run may also change (the engine takes eight files in all)
+
+
+def todo_thread_notes(ws: Path, rel: str) -> list:
+    """The thread notes of a zone that the long lines of its Todo.md name by link (`[[Thread]]`), as paths from the workspace,
+    worked out before the engine runs so that it can be held to them (#626). A link that reaches no note or more than one, a
+    link that is a symlink, and a count over MOST_THREAD_NOTES give none at all: then the run may change Todo.md only."""
+    parts = rel.split("/")
+    zone = zone_dir(ws, parts[1])
+    try:
+        text = (ws / rel).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return []
+    names = []
+    for line in text.splitlines():
+        if re.match(r"^- \[[ xX]\] ", line) and len(line) > TODO_LONG_RAW:
+            for m in re.finditer(r"\[\[([^\]|#]+)", line):
+                name = m.group(1).strip()
+                if name and name not in names:
+                    names.append(name)
+    found = []
+    for name in names:
+        if "/" in name or "\\" in name or name.startswith(".") or "\0" in name:
+            return []
+        hits = [c for c in list(zone.glob("*/Threads/%s/%s.md" % (name, name))) + [zone / name / ("%s.md" % name)] if c.is_file()]
+        if len(hits) != 1 or hits[0].is_symlink() or zone.resolve() not in hits[0].resolve().parents:
+            return []
+        found.append(str(hits[0].resolve().relative_to(ws.resolve())))
+    return found if len(found) <= MOST_THREAD_NOTES else []
+
+
+def correction_on_record(ws: Path, rel: str, old: str, new: str) -> bool:
+    """Whether the Nurture record still holds the correction the request names, for that file (#626): the values ride with the
+    request, but only a pair the last runs recorded is ever acted on."""
+    mine = 'Correct "%s" to "%s": ' % (old, new)
+    folder = ws / "System" / "generated" / "nurture"
+    try:
+        days = sorted(f for f in folder.glob("*.json") if f.is_file() and not f.is_symlink())[-3:]
+    except OSError:
+        return False
+    for f in days:
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        left = rec.get("left") if isinstance(rec, dict) else None
+        for items in (left.values() if isinstance(left, dict) else []):
+            for i in items if isinstance(items, list) else []:
+                if isinstance(i, dict) and i.get("kind") == "correction" and i.get("path") == rel and str(i.get("line") or "").startswith(mine):
+                    return True
+    return False
+
+
+def correction_files(ws: Path, rel: str, old: str, new: str):
+    """The files `correct.py` lists for a correction, when the engine can finish all of them: every copy a live `.md` page of the
+    finding's own zone, no other repository, no raw record, no memory entry, no page outside the zone, and the finding's own
+    file among them. None otherwise, and the correction stays with a visible assistant: nothing crosses a zone (#626)."""
+    for v in (old, new):
+        if not isinstance(v, str) or not v or len(v) > 200 or any(c in v for c in "\n\r\0\""):
+            raise Refused("that correction is not on the record any more; the page rebuilds now")
+    if old == new or not correction_on_record(ws, rel, old, new):
+        raise Refused("that correction is not on the record any more; the page rebuilds now")
+    r = finding_run(ws, [finding_tool(ws, "correct.py"), "--root", ws, "--old=%s" % old, "--new=%s" % new, "--json"])
+    try:
+        hits = json.loads(r.stdout).get("hits")
+    except (ValueError, TypeError, AttributeError):
+        raise Refused("correct.py did not answer")
+    if not isinstance(hits, list) or not hits:
+        raise Refused("nothing holds the old value any more, so there is nothing to finish; the page rebuilds now")
+    zone = "/".join(rel.split("/")[:2]) + "/"
+    files = []
+    for h in hits:
+        path = h.get("path") if isinstance(h, dict) else None
+        if not (isinstance(path, str) and h.get("kind") not in ("raw", "memory", "context") and h.get("edited") and path.endswith(".md")
+                and path.startswith(zone) and ".." not in path.split("/") and not (ws / path).is_symlink()):
+            return None
+        files.append(path)
+    return files if rel in files and len(files) <= engine_module().MOST_FILES else None
+
+
 def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> object:
     """A handoff answer that is one bounded edit of the finding's own file (finding_queue.BOUNDED), run by the engine in the
     background, in that file's zone or wiki, committed through its wall check. With the engine unavailable the reply says so
-    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence."""
+    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence. A split
+    may also create new notes in its own folder, and nowhere else (#626). A to-do list's run may also change the thread notes its
+    long lines name, and a correction's the files correct.py lists for it, in the finding's own zone (#626): both lists are
+    worked out here and the engine holds the run to them."""
     fq = finding_queue()
     parts = rel.split("/")
     if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or not rel.endswith(".md"):
         raise Refused("only a page of a zone or a wiki can be changed here")
-    said = BOUNDED_COMMIT.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
-    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said)
+    if kind == "note-long":
+        finding_note(ws, rel)                 # a hub or a thread note of a zone, the only notes a split is about
+    files, request, new_in = [rel], None, ""
+    if kind == "todo-long":
+        if parts[0] != "Zones" or len(parts) != 3 or parts[2] != "Todo.md":
+            raise Refused("that is not a zone's to-do list")
+        threads = todo_thread_notes(ws, rel)
+        files, request = [rel] + threads, fq.bounded_todo_request(rel, threads)
+    elif kind == "correction":
+        if parts[0] != "Zones":
+            raise Refused("only a page of a zone can be corrected here")
+        old, new = req.get("old"), req.get("new")
+        files = correction_files(ws, rel, old, new)
+        if files is None:
+            return {"say": "This correction reaches more than the engine may change, so it goes to a visible assistant.", "unavailable": True}
+        request = fq.bounded_correction_request(old, new)
+    else:
+        new_in = fq.bounded_new_in(kind, answer, rel)
+    if request is None:
+        request = fq.bounded_request(kind, answer, rel)
+    said = BOUNDED_COMMIT.get((kind, answer)) or fq.BOUNDED_MESSAGE.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
+    run = engine_module().run_bounded
+    got = run(ws, parts[1], files, request, said, new_in=new_in) if new_in else run(ws, parts[1], files, request, said)
     if got.get("unavailable"):
         return {"say": got["say"], "unavailable": True}
     if not got.get("ok"):
@@ -5979,6 +6154,10 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "inbox-run":
+        return inbox_run_start(ws)
+    if req["verb"] == "intake-answer":
+        return intake_answer(ws, req, today or dt.date.today())
     if req["verb"] == "finding":
         return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "commit-files":
@@ -6029,6 +6208,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "chase",
              "layout",
              "outbox-drop",
+             "inbox-run", "intake-answer",
              "machine-role", "read-guard")
 
 
@@ -6351,14 +6531,14 @@ def start_record(ops, req: dict, via: str):
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
     "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken",
-                    "heading",
+                    "heading", "separate",
                     ),
     "new-thread": ("zone", "project", "name", "spoken",
                    "papers",
                    ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
-    "layout": ("zone", "project", "thread", "papers", "heading"),
+    "layout": ("zone", "project", "thread", "papers", "heading", "join", "resume_from"),
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
@@ -6407,6 +6587,8 @@ def session_request(ws: Path, args) -> dict:
     elif not given.get("zone"):
         raise Refused("no zone given: say which, with --zone")
     req = dict({"verb": args.verb}, **{k: v for k, v in given.items() if v is not None})
+    if "separate" in req:                     # the word a person says for it (#632); the request has always called it `heading`
+        req["heading"] = req.pop("separate")
     if args.verb in ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire"):
         req = session_line(ws, req)
     return req
@@ -6423,7 +6605,7 @@ def command_parser() -> argparse.ArgumentParser:
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
                  "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
-                 "heading",
+                 "heading", "separate", "join", "resume-from",
                  "papers"):
         ap.add_argument("--" + name)
     return ap

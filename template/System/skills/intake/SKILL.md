@@ -227,6 +227,37 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 10. **Next item.** When all are done, one summary.
 
+## Running unattended
+
+The status page's *Process the Inbox* button runs this skill in the background, with nobody to ask. The request says
+"unattended". Then the steps above hold, with these changes. The helper checks what it can; the run is also checked
+afterwards, and a change outside the paths below is left as it is, reported, and nothing in that repository is committed.
+
+- **Write only where intake files things:** the inboxes, `Wikis/Meetings/`, `Wikis/Knowledge/`, a project's or a thread's `Sources/`,
+  a zone's `Todo.md`, and the `Needs you` question files below. Run no command but these: `intake.py` with `list`,
+  `parse`, `file-conversation`, `file-reading`, `file-to-project`, `extract-attachment`, `skip` or `ask`, and `ingest.py`
+  with `land`, `index`, `log` or `link`. Anything else is refused, `learn`, `person` and `move-to-zone` among it: what
+  decides a wall is the user's to write. Send, share and delete nothing, and never delete anything that is not an inbox
+  item you have just filed.
+- **Never pass `--confirmed`.** Only the user's own answer confirms a filing the helper refused with "Needs your answer
+  first". The helper refuses the flag in an unattended run, and the item stays in its inbox with its question.
+- **File without asking** what the rules settle: a mail whose domain a party lists in its zone, a transcript that names
+  its parties, something to read from a sender no party owns, a file for the one project of its zone.
+- **Never ask in the conversation.** An item you would ask about stays in its inbox, and you write the question as a file:
+  ```sh
+  python3 System/skills/intake/intake.py ask --file "Zones/<Zone>/Inbox/<file>" --question "Acme Review or Acme Renewal?" \
+      --option "Acme Review=File it in Acme Review" --option "Acme Renewal=File it in Acme Renewal"
+  ```
+  The question is one short line and each answer a short label and what it does. It names nothing from a walled zone
+  other than the item's own: for a transcript or a mail across two walled zones it asks only which zone files it. The
+  helper refuses a question that names another walled zone's party or person.
+- **An item that is in the Meetings inbox or the workspace's own `Inbox/`, and whose zone the rules do not settle, gets no
+  question file**, because no zone may hold it. Leave it where it is and go on; the page then says it needs the user.
+- **An item that already has an open question** is not asked again: `ask` says "already asked". Go on to the next.
+- **Answered.** A request that says the user answered a question names the item and the answer: file that one item as the
+  answer says, and nothing else.
+- End with one line, "Done", and nothing about the content.
+
 ## A note to yourself
 
 A fourth kind, for text the owner wrote to themselves about a piece of work: from the Ask box, or from any fetcher (a chat bot, a mail rule, a phone shortcut) that checked the sender and wrote it into an inbox. It is not a conversation, nothing to read and not project material: nobody else took part and nothing was published or sent.

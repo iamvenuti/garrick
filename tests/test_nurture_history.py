@@ -91,5 +91,72 @@ class HistoryItems(Base):
         self.assertEqual(text, self.freight.read_text(encoding="utf-8"))
 
 
+class OldParentLinks(Base):
+    """#627, point 3: a history file the first history.py wrote carries `parent: "[[<Note>]]"`; Nurture rewrites that one line to the
+    current form as a mechanical fix, in one commit for the repository, through its hook. A file that is not that is never touched."""
+
+    def setUp(self):
+        super().setUp()
+        self.freight = self.acme / "Threads" / "Freight" / "Freight.md"
+        self.folder = self.freight.parent / "history"
+
+    def history_file(self, name, parent='parent: "[[Freight]]"', extra="", kind="type: history"):
+        path = self.folder / name
+        write(path, "---\n%s\n%s\n%screated: 2026-10-01\n---\n\n# Freight: history, 2026-Q3\n\n**1 September 2026.** An old entry.\n"
+              % (kind, parent, extra))
+        return path
+
+    def parents(self):
+        return [i for i in self.run_tool("list")[1]["items"] if (i.get("fix") or {}).get("op") == "history-parent"]
+
+    def test_the_old_form_is_a_mechanical_finding_and_fix_rewrites_the_one_line_in_one_commit(self):
+        old = self.history_file("Freight history 2026-Q3.md")
+        mine = self.history_file("Freight history 2026-Q2.md")
+        self.commit(self.work, "2026-10-01T10:00:00")
+        found = self.parents()
+        self.assertEqual(2, len(found))
+        self.assertEqual({"mechanical"}, {i["kind"] for i in found})
+        before = len(self.log(self.work))
+        code, out = self.run_tool("fix", "--yes")
+        self.assertEqual(0, code, out)
+        self.assertEqual(before + 1, len(self.log(self.work)))                       # one commit for the repository
+        for f in (old, mine):
+            text = f.read_text(encoding="utf-8")
+            self.assertIn('parent: "[[Acme Review/Threads/Freight/Freight|Freight]]"', text)
+            self.assertNotIn('parent: "[[Freight]]"', text)
+            self.assertIn("An old entry.", text)
+        self.assertEqual([], self.parents())
+        self.assertEqual(2, len([f for f in git(self.work, "show", "--name-only", "--format=", "HEAD").splitlines() if "history" in f]))
+
+    def test_the_nightly_run_applies_it_too(self):
+        self.history_file("Freight history 2026-Q3.md")
+        self.commit(self.work, "2026-10-01T10:00:00")
+        code, out = self.run_tool("nightly")
+        self.assertEqual(0, code, out)
+        self.assertIn("history-parent", {i["fix"]["op"] for i in out["fixed"]})
+
+    def test_a_file_with_another_notes_parent_or_with_status_or_the_current_form_is_not_touched(self):
+        other = self.history_file("Freight history 2026-Q1.md", parent='parent: "[[Pricing]]"')
+        status = self.history_file("Freight history 2026-Q2.md", extra="status: active\n")
+        current = self.history_file("Freight history 2026-Q3.md", parent='parent: "[[Acme Review/Threads/Freight/Freight|Freight]]"')
+        notype = self.history_file("Freight history 2026-Q4.md", kind="type: note")
+        named = self.history_file("Pricing history 2026-Q3.md")                       # a note's name that is not the file's own
+        self.commit(self.work, "2026-10-01T10:00:00")
+        was = {f: f.read_text(encoding="utf-8") for f in (other, status, current, notype, named)}
+        self.assertEqual([], self.parents())
+        self.run_tool("fix", "--yes")
+        self.run_tool("nightly")
+        for f, text in was.items():
+            self.assertEqual(text, f.read_text(encoding="utf-8"), f.name)
+
+    def test_a_file_changed_since_it_was_found_is_held_not_rewritten(self):
+        f = self.history_file("Freight history 2026-Q3.md")
+        self.commit(self.work, "2026-10-01T10:00:00")
+        self.assertEqual(1, len(self.parents()))
+        f.write_text(f.read_text(encoding="utf-8").replace("type: history\n", "type: history\nstatus: active\n"), encoding="utf-8")
+        self.commit(self.work, "2026-10-02T10:00:00")
+        self.assertEqual([], self.parents())
+
+
 if __name__ == "__main__":
     unittest.main()

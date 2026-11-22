@@ -2015,6 +2015,8 @@ dialog.gmanage .mg-details{margin:10px 0 0;font-size:var(--fs-meta);color:var(--
 dialog.gmanage .mg-msg{margin:12px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-msg.bad{color:var(--critical)}
 dialog.gmanage select,dialog.gmanage input[type=text]{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;box-sizing:border-box}
 dialog.gmanage .mg-row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+dialog.gmanage .mg-pick{border:0;margin:6px 0 0;padding:0}dialog.gmanage .mg-opt{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:var(--fs-meta);color:var(--ink2)}
+dialog.gmanage .mg-opt b{color:var(--ink);font-weight:600}
 dialog.gmanage ul{margin:8px 0 0;padding-left:18px;font-size:var(--fs-meta)}.act.danger{color:var(--critical);border-color:var(--critical)}
 .act.danger:disabled{opacity:.45}#mg-undo{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:11;display:flex;gap:10px;align-items:center;
 background:var(--ink);color:var(--surface);font-size:var(--fs-meta);padding:7px 8px 7px 14px;border-radius:10px}
@@ -2037,15 +2039,21 @@ function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;host.postM
 /* the card's own buttons: Rename and Delete on a thread or a project, New thread here on a project */
 var MI={plus:'<path d="M8 3v10M3 8h10"/>',pen:'<path d="M3 13l1-3 7-7 2 2-7 7z"/>',move:'<path d="M3 8h9M9 5l3 3-3 3"/>',list:'<path d="M3 4h10M3 8h7M3 12h7"/>',trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/>'};
 function mi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+MI[d]+'</svg>'}
-/* the card's menu (#620): New thread here, Rename, Move, a change of layout, then what the card passes in (Close session, Park or Wake), then
-   a separator and Delete last, in the critical colour. Every row is the button it was, with the same data-manage and data-mg. */
+/* the card's menu (#620, #633): the one-off actions only, New thread here, Rename, Move, then what the card passes in (Close session), then
+   a separator and Delete last, in the critical colour. What a project is, one job or separate jobs, is a chip on line 1 (GarrickLayoutChip). Every row is the button it was, with the same data-manage and data-mg. */
 window.GarrickManage=function(o,mid){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
 function row(what,label,icon,more){return'<button class="pmi" type="button" data-manage="'+what+'" data-mg="'+m+'"'+(more||'')+'>'+mi(icon)+esc(label)+'</button>'}
 return'<div class="pmenu" role="group">'+(k==='project'?row('new-thread','New thread here','plus'):'')+row('rename','Rename…','pen')+(k==='thread'?row('move','Move…','move'):'')
-+LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return row('layout-'+l[0],l[1],'list',' title="'+esc(l[2])+'"')}).join('')
 +(mid||'')+'<div class="psep" role="separator"></div><button class="pmi del" type="button" data-manage="delete" data-mg="'+m+'">'+mi('trash')+'Delete…</button></div>'};
-/* the changes of layout (#604), offered by the build only where each applies: code, button, what it is */
-var LAYOUTS=[['own','Own papers…','A thread to its own papers'],['project','Project’s papers…','A thread back to the project’s papers'],['heading','Make a heading…','A project to a heading']];
+/* the project's switch (#604, #632), offered by the build only where it applies, as the layout chip on a project's card (#633): what the
+   project is now, and the plan it opens. Never a thread's: the project decides for every thread. */
+var LAYOUTS=[['split','One job','Split ',' into separate jobs…','<rect x="3" y="3" width="10" height="10" rx="2"/>'],
+['join','Separate jobs','Join ',' into one job…','<rect x="2.5" y="2.5" width="4.5" height="11" rx="1.5"/><rect x="9" y="2.5" width="4.5" height="11" rx="1.5"/>'],
+['mend','One job','Join ',' into one job…','<rect x="3" y="3" width="10" height="10" rx="2"/>']];
+window.GarrickLayoutChip=function(o){if(!o||!o.mg||o.mg[2]||o.held)return'';var off=o.mg[6]||[],l=LAYOUTS.filter(function(x){return off.indexOf(x[0])>=0})[0];if(!l)return'';
+var label=l[2]+o.mg[1]+l[3];
+return'<button class="ctl" type="button" data-manage="layout-'+l[0]+'" data-mg="'+esc(JSON.stringify(o.mg))+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'
++'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4">'+l[4]+'</svg>'+l[1]+'</button>'};
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
 d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
 document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
@@ -2072,22 +2080,19 @@ function watch(d){var i=d.querySelector('#mg-name');i.addEventListener('input',f
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
 function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div><div id="mg-papers"></div>'+field('mg-name','Name, one you can say')+DUP,
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say')+DUP,
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-/* in a piece of work a thread chooses its papers; under a heading every thread keeps its own, so nothing is asked */
-function papers(){var z=val(d,'mg-zone'),p=val(d,'mg-project'),h=((D.zones[z]||{}).headings||[]).indexOf(p)>=0;
-d.querySelector('#mg-papers').innerHTML=p&&!h?select('mg-own','Does this thread keep its own papers, or use the project’s?',[['project','The project’s papers'],['own','Its own papers']],'project'):''}
+/* the project's switch decides where a thread's papers are, so a thread is asked nothing about them (#632) */
 function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>';
-var s=d.querySelector('#mg-project');if(s)s.onchange=papers;papers()}
+}
 d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
-var own=val(d,'mg-own')==='own';if(own)q.papers='own';
-d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project+(own?', with its own papers':''),'Copied “new thread '+q.name+' in '+q.project+(own?', with its own papers':'')+'”. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
-/* a project is one piece of work unless it is a heading over separate pieces; it gets no thread unless one is named */
+/* a project is one job unless it is separate jobs; it gets no thread unless one is named */
 var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP
-+select('mg-kind','Is this project one piece of work, or a heading over separate pieces?',[['piece','One piece of work'],['heading','A heading over separate pieces of work']],'piece')
++select('mg-kind','One job or separate jobs?',[['piece','One job'],['heading','Separate jobs']],'piece')
 +'<div id="mg-pt"></div>'
 +'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
 +'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="None to start with">',
@@ -2107,7 +2112,7 @@ if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-ne
 if(th)r.thread=th;if(w)r.party_what=w;if(hd)r.heading=true;q=r}
 else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;if(hd)o.heading=true;q=o}
 if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as a heading':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as separate jobs':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -2147,13 +2152,16 @@ function lop(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.f
 function lbase(name){return String(name).split('/').pop()}
 /* a file name goes into a request for the assistant only when it is plain: letters, digits, spaces and ._-()&,' */
 function lsafe(name){return /^[\p{L}\p{N} ._\-()&,']+$/u.test(name)}
-function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:o.papers==='own'?'into '+o.thread+'’s papers':'into the project’s papers'}
-function lphrase(o){return o.heading?'make '+o.project+' a heading':o.papers==='own'?'give '+o.thread+' its own papers':'let '+o.thread+' use the project’s papers'}
+function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:'into the project’s papers'}
+function lphrase(o){return o.heading?'split '+o.project+' into separate jobs':'join '+o.project+' into one job'}
 function details(t){return'<details class="mg-details"><summary>Details</summary><pre>'+esc(t)+'</pre></details>'}
 function lplan(d,o,out){var p=out.plan,h='<p>'+esc(p.what)+'.</p>';
 h+=p.moves.length?'<p class="mg-msg">What moves, and where:</p><ul>'+p.moves.map(function(m){return'<li>'+esc(lbase(m[0]))+' '+esc(lwhere(o,m[1]))+'</li>'}).join('')+'</ul>':'<p class="mg-msg">No file moves.</p>';
-if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block, and a heading holds none: move it into a thread, or close it as an Outcome.</p>';
-if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.papers!=='project';
+if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block, and separate jobs hold none: move it into a thread, or close it as an Outcome.</p>';
+/* a Join gives the hub its Resume here block back: the user chooses whose Next action it opens with, the thread touched last first */
+if(p.opens_resume){h+='<p class="mg-msg" id="lay-resume-lead">The project’s Resume here block opens with the Next action of one thread. The others stay in Todo.md as they are.</p><fieldset id="lay-resume" class="mg-pick" aria-labelledby="lay-resume-lead">'
++p.next_actions.map(function(n,i){return'<label class="mg-opt"><input type="radio" name="lay-from" value="'+esc(n[0])+'"'+(n[0]===p.resume_from?' checked':'')+'> <b>'+esc(n[0])+'</b>: '+esc(n[1]||'no Next action written')+'</label>'}).join('')+'</fieldset>'}
+if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.heading;
 h+='<p class="mg-msg">Left for you to place. Nothing here puts them anywhere:</p><ul id="lay-left">'+p.left.map(function(f,i){
 return'<li data-i="'+i+'"><span>'+esc(lbase(f[0]))+' ('+esc(f[1])+')</span>'+(sel?' <select aria-label="Thread for '+esc(lbase(f[0]))+'">'+p.threads.map(function(t){return'<option>'+esc(t)+'</option>'}).join('')+'</select>':'')
 +(sel&&z.folder&&lsafe(lbase(f[0]))?' <button class="act" type="button" data-request="" data-folder="'+esc(z.folder)+'" title="Hand the request to your assistant">Ask my assistant</button>':'')+'</li>'}).join('')+'</ul>'}
@@ -2168,10 +2176,10 @@ var line=moved?first.replace(/\.$/,'')+'. It was committed.':ok?'Nothing moved. 
 var box=d.querySelector('#lay-plan');box.innerHTML='<p class="'+(ok?'':'mg-msg bad')+'" role="status">'+esc(line)+'</p>'+details(said);
 var r=d.querySelector('.mg-row');r.innerHTML='<button class="act primary" type="button" data-cancel>Close</button>';r.querySelector('[data-cancel]').onclick=function(){d.close()};
 if(moved){try{localStorage.setItem('garrick-undo',JSON.stringify({zone:o.zone,commit:moved[1],what:line.replace(/\.$/,''),until:Date.now()+60000}))}catch(e){}}}
-function layout(o){if(!o||!o.zone||!o.project||!(o.heading||(o.thread&&(o.papers==='own'||o.papers==='project')))){say('That change needs a project, or a thread and its papers.');return}
-var title=o.heading?'Make '+o.project+' a heading':o.papers==='own'?o.thread+': its own papers':o.thread+': the project’s papers',
-base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=true;else{base.thread=o.thread;base.papers=o.papers}
-if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':o.papers==='own'?'The files only this thread’s note names move into it.':'Its files move up into the project’s papers.')+' In the Garrick app this shows what would move first.</p>',
+function layout(o){if(!o||!o.zone||!o.project||!(o.heading||o.join)){say('That change needs a project.');return}
+var title=o.heading?'Split '+o.project+' into separate jobs':'Join '+o.project+' into one job',
+base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=true;else base.join=true;
+if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':'Each thread’s papers move up into the project’s, and its Resume here block comes back.')+' In the Garrick app this shows what would move first.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>Copy the phrase</button>');d0.querySelector('[data-go]').onclick=function(){d0.close();copy(lphrase(o),'Copied “'+lphrase(o)+'”. Paste it to your assistant.')};return}
 var held=window.GarrickBusy&&GarrickBusy(o.zone);if(held){say(o.zone+' is still busy: '+held+' Try again when it is done.');return}
 var d=dialog(title,'<div id="lay-plan" role="status" aria-live="polite"><p>Checking what would move…</p></div>',CANCEL+'<button class="act primary" type="button" data-go disabled>Move them</button>');
@@ -2179,14 +2187,14 @@ var op=lop();LAYW[op]=function(out){if(out&&out.ok&&out.plan)lplan(d,o,out);else
 host.postMessage({act:Object.assign({},base,{check:true,plan:true,op:op})});
 d.querySelector('[data-go]').onclick=function(){if(busy(d,o.zone))return;var go=d.querySelector('[data-go]'),op2=lop();go.disabled=true;
 d.querySelector('#lay-plan').insertAdjacentHTML('afterbegin','<p role="status">Moving…</p>');LAYW[op2]=function(out){lresult(d,o,out)};
-host.postMessage({act:Object.assign({},base,{op:op2})})}}
+var from=d.querySelector('#lay-resume input:checked'),more={op:op2};if(from)more.resume_from=from.value;
+host.postMessage({act:Object.assign({},base,more)})}}
 window.GarrickLayout=layout;
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
 var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg);
-else if(v==='layout-own'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'own'});
-else if(v==='layout-project'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'project'});
-else if(v==='layout-heading'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true})},true);
+else if(v==='layout-split'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true});
+else if((v==='layout-join'||v==='layout-mend')&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],join:true})},true);
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
@@ -2939,6 +2947,64 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
             n = sum(1 for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
             out.append((name, folder, n))
     return out
+
+
+INBOX_STATE = ("System", "generated", "status-inbox.json")
+
+
+def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Optional[dict]:
+    """What the last background run of Process the Inbox left for the page (#634): `running`, `done` or `failed`, with its one
+    sentence and its figures for each place, never over two. None for none, for one over a day old, and for a `running` that no
+    process holds the run's lock for any more (a run that died)."""
+    try:
+        data = json.loads(ws.joinpath(*INBOX_STATE).read_text(encoding="utf-8"))
+        at = dt.datetime.fromisoformat(str(data.get("at")))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
+        return None
+    if data["state"] == "running":
+        try:
+            import fcntl
+            fd = os.open(str((folder or jobs_dir(None)) / "inbox-run.lock"), os.O_RDWR)
+        except (OSError, ImportError):
+            return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return None                 # nobody holds it: the run is not going
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return data
+
+
+def inbox_said(state: dict, only=None) -> str:
+    """The run's result sentence for the places in `only` alone (W4): the row lists some places, and shows nothing of another. A
+    state from before the sentence was kept by place gives its own, which names none."""
+    try:
+        import inbox_run
+        return inbox_run.sentence(state, None if only is None else set(only))
+    except Exception:
+        return str(state.get("say") or "")
+
+
+def inbox_act(state: Optional[dict], ws: Path, only=None) -> Tuple[str, str]:
+    """(the row's button, its result sentence) for Process the Inbox (#634). The main button starts the background run in the
+    Mac app (`inbox-run`); a browser, and the app when no background assistant is there, get the visible request. While a run
+    goes the button waits; a run that failed, or an item that no zone may hold a question about, offers the visible session."""
+    visible = request_button("Process it with my assistant", "process the inbox", ws)
+    if state and state["state"] == "running":
+        return '<button class="act" type="button" disabled>Processing\u2026</button>', "Processing the inbox\u2026"
+    start = act_button(json.dumps({"verb": "inbox-run"}), "Process the Inbox", "Processing the inbox\u2026", "act apponly") + \
+        request_button("Process the Inbox", "process the inbox", ws, cls="act webonly")
+    if state is None:
+        return start, ""
+    said = inbox_said(state, only)
+    if state["state"] == "failed":
+        return visible, said
+    needs = sum(int(v.get("needs") or 0) for v in (state.get("places") or {}).values() if isinstance(v, dict))
+    return (visible if needs else start), said       # the sentence already says "1 item needs you", place by place
 
 
 def check_file(out: Path) -> Path:
@@ -4469,17 +4535,61 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 
 def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
-    """The changes of layout a card offers (#604), as `scaffold.py layout` makes them, and only where each applies:
-    `own` for a thread of a project that is one piece of work whose papers are the project's, `project` for one that
-    keeps papers of its own (a folder of Sources or Deliverables), `heading` for a project that is one piece of work
-    (a thread's `folder` is its own, a project's is the project's). A heading offers none: every thread under it
-    keeps its own papers already, and it is not made one piece of work again. A project with no hub offers none."""
-    if heading or not hub:
+    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
+    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
+    project where a thread holds papers of its own; a thread offers none, since
+    the project's switch decides for every thread under it. A project with no hub offers none."""
+    if not hub or folder.parent.name == "Threads":
         return []
-    if folder.parent.name == "Threads":
-        have = [k for k in ("Sources", "Deliverables") if (folder / k).is_dir()]
-        return (["own"] if len(have) < 2 else []) + (["project"] if have else [])
-    return ["heading"]
+    if heading:
+        return ["join"]
+    return ["mend"] if mixed_papers(folder) else ["split"]
+
+
+def _keeps_papers(folder: Path) -> bool:
+    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
+    `.DS_Store` or a `published.md` ledger with no row."""
+    if not folder.is_dir():
+        return False
+    try:
+        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
+                                 text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables":
+            rows = 0
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for l in lines:
+                if l.strip().startswith("|"):
+                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
+                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
+                        rows += 1
+            if not rows:
+                continue
+        return True
+    return False
+
+
+def mixed_papers(project: Path) -> bool:
+    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
+    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
+    names is the Join, not the Split (#632)."""
+    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
+    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
+    if not holding or len(holding) == len(threads):
+        return False
+    try:
+        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
 
 
 def files_in(folder: Path) -> int:
@@ -6232,6 +6342,13 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .gpop h4,.tcard h4{margin:0;font-size:var(--fs-sub);font-weight:640;overflow-wrap:anywhere}
 .gpop .x{position:absolute;right:8px;top:6px;z-index:1;border:0;background:none;color:var(--muted);font-size:var(--fs-h3);line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
+.gacts.popen{gap:4px;margin:10px 0 8px}
+/* the card's controls (#633): the state is a chip you press, beside the party's label; a finished thread's is a label too */
+.ctl{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;background:var(--wash);border-radius:999px;padding:0 8px 0 7px;line-height:22px;font:inherit;font-size:var(--fs-meta);color:var(--ink);cursor:pointer}
+.ctl:hover{border-color:var(--line);background:var(--surface)}
+.ctl .dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--good)}.ctl.parked .dot{background:transparent;border:1.5px solid var(--muted)}
+.ctl.done{cursor:default;background:none;border-color:var(--line);color:var(--muted)}.ctl.done:hover{background:none;border-color:var(--line)}
+.ctl svg{width:13px;height:13px;flex:none;color:var(--muted)}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}
@@ -6241,6 +6358,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 /* the default app, the one a click on the name uses, is the one with a 4px accent dot under it */
 .appicons .act[data-k][data-d]::after{content:"";position:absolute;left:50%;bottom:-3px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--accent)}
 .appicons .act[data-k]:hover{background-color:var(--wash)}
+/* five apps fit the card's 264px on one row (#633): Open in, then 28px squares 4px apart; the default keeps its dot */
+.appicons .gacts.popen{flex-wrap:nowrap}.appicons .gacts.popen .plbl{flex:none;margin:0 4px}
+.appicons .gacts.popen .act[data-k]{flex:none;width:28px;height:28px;min-height:0;background-size:20px}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:var(--fs-meta);padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
@@ -6481,34 +6601,41 @@ function row(k){return one(k,{l:RESUME[k],i:ico(k),t:k===d}).replace(/^<(button|
 var apps=['cmux','claude','codex'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
 var items=apps.map(row).join('')+(apps.length&&rest.length?'<hr class="ydiv" role="separator">':'')+rest.map(row).join('');
 return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" title="Other ways to resume" aria-label="Other ways to resume" aria-haspopup="menu">▾</summary><div class="ymenu" role="menu">'+items+'</div></details></span>'}
-/* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
-function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
+/* The state, a chip beside the party's on line 1 (#633): Active or Parked, and a button that does what the menu's Park and Wake did, by
+   its note for a thread (pa) or by its name for a project (pp), its hub then holding every thread in it. A finished thread says Done
+   and a thread parked with its project says so, neither a button. In the app it parks or wakes; elsewhere it copies the phrase. */
+function stchip(o){if(o.fin)return'<span class="ctl done">Done</span>';
+if(o.held)return'<span class="ctl done" title="Parked with its project">Parked</span>';
+if(o.pend||(o.h&&o.hp==null))return'';
+var s=o.h?o.hp:o.s,who=o.N||o.n,label=s?'Wake '+who:'Park '+who+(o.h&&o.tn?' and its thread'+(o.tn===1?'':'s'):''),
+inner='<span class="dot"></span>'+(s?'Parked':'Active'),cls='ctl'+(s?' parked':'')+' pflip',
+tip=' title="'+esc(label)+'" aria-label="'+esc(label)+'"';
+if(host&&(o.h?o.pp:o.pa)){var v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
-return'<button class="pmi pflip" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
-+'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
+return'<button class="'+cls+'" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
++'" data-say="'+(s?'Waking ':'Parking ')+esc(who)+'…"'+tip+'>'+inner+'</button>'}
+if(!o.w)return'<span class="ctl done">'+(s?'Parked':'Active')+'</span>';
+var p=(s?'wake ':'park ')+o.w;
+return'<button class="'+cls+'" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="'+esc(label+'. Copies “'+p+'”')+'" aria-label="'+esc(label)+'">'+inner+'</button>'}
 function pi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+d+'</svg>'}
 function shut(o){return o.dk&&o.live&&host?'<button class="pmi pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
 +' data-say="Closing the session…">'+pi('<path d="M4 4l8 8M12 4l-8 8"/>')+'Close session</button>':''}
-/* a menu row: Close session, then Park or Wake, which acts in the app and copies the phrase anywhere else */
-function pflip(o){if(o.fin||o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
-var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
-return'<button class="pmi pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 /* how long since the note moved, as a figure: age is not urgency, so nothing here reads as a fault */
-function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.d==null)return'';
 return'Touched '+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
 /* A row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project; the
-   graph's panel, which floats free of any list, keeps them. The card reads top to bottom (#620): what it is (line 1: the party as a chip, then
-   a project's thread count; line 2: its state, a thread's resume point and an open session), where to open it (acts), what to change
-   (menu), and last, set apart, what removes it. The chip is the only bordered element. */
+   graph's panel, which floats free of any list, keeps them. The card reads top to bottom (#620, #633): what it is and what can be changed (line 1:
+   the party as a chip, then the state, Active or Parked, as a button; line 2: when it was touched, a thread's resume point and an open session),
+   where to open it (acts), what is done once (menu), and last, set apart, what removes it. The party's chip is the only bordered label. */
 function head(o,row){var chips=o.t&&o.t.length?o.t.map(function(t){return'<span class="chip">'+esc(t)+'</span>'}).join(''):'',
-n=o.h&&o.tn?'<span>'+o.tn+' thread'+(o.tn===1?'':'s')+'</span>':'',st=[state(o),resume(o)].filter(Boolean).join(' · ');
+ctls=stchip(o)+(window.GarrickLayoutChip?window.GarrickLayoutChip(o):''),st=[state(o),resume(o)].filter(Boolean).join(' · ');
 return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4></div>'+(row?'':'<div class="pl pkind">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
-+(chips||n?'<div class="pl pl1">'+chips+n+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
++(chips||ctls?'<div class="pl pl1">'+chips+ctls+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
 +(o.live?'<div class="pl pl2 psess"><span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live)+'</div>':'')}
-function menu(o){var mid=shut(o)+pflip(o),m=window.GarrickManage?GarrickManage(o,mid):'';return m||(mid?'<div class="pmenu" role="group">'+mid+'</div>':'')}
+function menu(o){var mid=shut(o),m=window.GarrickManage?GarrickManage(o,mid):'';return m||(mid?'<div class="pmenu" role="group">'+mid+'</div>':'')}
 function card(o,row,pre){return head(o,row)+acts(o,pre)+menu(o)}
 /* what clicking a thread's name does, on its row or among what the search box found (.sres): its own link,
    unless Settings picked an app the Mac app can open it in */
@@ -7586,7 +7713,7 @@ if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuil
 /* Escape closes the card, unless a preview is open over it: that Escape is the preview's (NOTE_JS) */
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel&&!(window.GarrickNote&&GarrickNote.shown()))close()});
 function redo(){if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
-function show(z){zsel=z;ks=kindsFor(z);if(fq)fq.value='';q='';hi=-1;redo()}
+function show(z){zsel=z;if(window.GarrickWaitingZone)GarrickWaitingZone(z);ks=kindsFor(z);if(fq)fq.value='';q='';hi=-1;redo()}
 /* a pick is stored, leads the card (#72) and is what a reload opens on */
 var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){var z=zsl.value;st.set('garrick-graph-place',z);leadZone(z);if(!cardZone(z))held=true;show(z)};
 /* the legend is the filter: a kind's button shows or hides it, kept for the place (#250) */
@@ -7780,6 +7907,21 @@ def late_need(z: dict, today: dt.date, actions: bool = False) -> dict:
             "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
 
 
+# ---- Process the Inbox in the background (#634): the fallback ------------------------------
+# The button sends `inbox-run`, and an answer to a question it asked sends `intake-answer`; with no background assistant
+# the reply says `unavailable`, and the page opens the visible session as the button did before: the request button the row
+# keeps for a browser holds the folder and the phrase.
+INBOX_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&(q.verb==='inbox-run'||q.verb==='intake-answer')&&out&&out.unavailable){var a=window.GarrickAssistant&&GarrickAssistant(),
+b=document.querySelector('button[data-request="process the inbox"]');
+if(a&&b){host.postMessage({launch:a,folder:b.dataset.folder,phrase:b.dataset.request});if(window.GarrickSay)GarrickSay('Opening your assistant on \u201cprocess the inbox\u201d\u2026')}
+else if(window.GarrickSay)GarrickSay('Switch on an assistant in Settings to process the inbox from here.');return}
+return prev?prev(q,out):undefined};})();
+"""
+
+
 # ---- Waiting on you now > Follow-ups (#603) ---------------------------------------------
 # One row for each zone that has a Waiting on line whose chase day has come. What the follow-up found is read from the
 # zone's own .todo-followups.json, written by the todo skill's script; this file only reads it. A line nobody has looked at
@@ -7969,8 +8111,9 @@ def job_need(j: dict) -> dict:
     return dict({"kind": "job", "text": "%s failed: %s" % (j["title"], why), "late": since, "label": "See the log"}, **({"act": again} if again else {}))
 
 
-def need_row(n: dict) -> str:
-    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how long, one button."""
+def need_row(n: dict, view: Optional[str] = None, zones: Tuple[str, ...] = ()) -> str:
+    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how long, one button. In a card that has
+    a zone in view, a row of another zone is built hidden and says whose it is (`data-nz`), for WAITING_JS to show it in its turn; the rows in view are as they always were."""
     cls, path = NEED_ICON[n["level"]]
     icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
             'stroke-linejoin="round">%s</svg>' % path)
@@ -7986,24 +8129,26 @@ def need_row(n: dict) -> str:
         # The main button does the work, or the late lines themselves do; the link to where the item lives is secondary (#595).
         go = '<span class="wacts">%s%s</span>' % (n.get("act", ""), go.replace('class="act"', 'class="alt"', 1))
     lines = '<div class="wlate">%s</div>' % n["lines"] if n.get("lines") else ""
-    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go, lines)
+    mine = ' data-nz="%s" hidden' % E(n["zone"]) if view is not None and n.get("zone") and n["zone"] in zones and not in_view(n, view, zones) else ""
+    return '<div class="wrow wneed"%s><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s%s</div>' % (mine, cls, icon, E(n["text"]), where, late, go, lines)
 
 
-def need_groups(needs: List[dict]) -> str:
+def need_groups(needs: List[dict], view: Optional[str] = None, zones: Tuple[str, ...] = ()) -> str:
     """The rows in two groups (#559): Broken (a job that failed, an error the check found) and To do (late
     actions, the inboxes, files not committed, warnings). With a row in Broken, To do starts folded and says how
     many it holds."""
     broken = [n for n in needs if n.get("group") == "broken"]
     todo = [n for n in needs if n.get("group") != "broken"]
+    shown = lambda ns: sum(1 for n in ns if in_view(n, view, zones))                  # noqa: E731  what the zone in view counts
     html = ""
     if broken:
         html += ('<section class="wgroup" data-g="broken" aria-label="Broken"><h3 class="wgh">Broken <span class="wgn">%d</span></h3>%s</section>'
-                 % (len(broken), "".join(need_row(n) for n in broken)))
+                 % (shown(broken), "".join(need_row(n, view, zones) for n in broken)))
     if todo:
-        rows = "".join(need_row(n) for n in todo)
-        html += ('<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">%d</span></summary>%s</details>' % (len(todo), rows)
+        rows = "".join(need_row(n, view, zones) for n in todo)
+        html += ('<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">%d</span></summary>%s</details>' % (shown(todo), rows)
                  if broken else
-                 '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (len(todo), rows))
+                 '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (shown(todo), rows))
     return html
 
 
@@ -8027,6 +8172,8 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
         if f.name.startswith((".", "_")):
             continue
         fm = frontmatter(f)
+        if folder == zone and not as_text(fm.get("intake")).strip():
+            continue                    # the zone's own box holds only what an inbox run asked (#634)
         state = as_text(fm.get("status")).strip().lower() or "open"
         later = as_date(fm.get("later"))
         if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
@@ -8044,7 +8191,8 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
                 ask = line.strip().strip("*").strip()
         if ask:
             out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
-                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name})
+                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name,
+                        "intake": bool(as_text(fm.get("intake")).strip()) and folder == zone})
     return out
 
 
@@ -8053,13 +8201,21 @@ def question_need(q: dict, today: dt.date) -> dict:
     the threads. An answer in the user's own words is the assistant's: the row offers the listed answers only."""
     own = q["own"].casefold()
     ask = q["ask"] if len(q["ask"]) <= QUESTION_ASK else q["ask"][:QUESTION_ASK - 1].rstrip() + "\u2026"
-    buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
-                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
-                      for label in q["options"] if label.casefold() != own)
-    buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
-                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
+    attrs = ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"]))
+    if q.get("intake"):                     # a question an unattended inbox run asked, in the zone's own Needs you folder (#634)
+        buttons = "".join(act_button(json.dumps({"verb": "intake-answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                     label, "Filing it\u2026", "act apponly", attrs)
+                          for label in q["options"] if label.casefold() != own)
+        buttons += act_button(json.dumps({"verb": "intake-answer", "zone": q["zone"], "file": q["file"], "label": "Not now"}), "Not now",
+                              "Putting it off until tomorrow\u2026", "act apponly", attrs)
+    else:
+        buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                     label, "Noting: %s\u2026" % label, "act apponly", attrs)
+                          for label in q["options"] if label.casefold() != own)
+        buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                              "Putting it off until tomorrow\u2026", "act apponly", attrs)
     return {"kind": "question", "group": "todo", "level": "warning", "zone": q["zone"], "count": 1,
-            "text": "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
+            "text": ask if q.get("intake") else "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
             "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
 
 
@@ -8067,7 +8223,7 @@ def question_needs(ws: Path, today: dt.date) -> List[dict]:
     """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
     out: List[dict] = []
     for zone in visible_dirs(ws / "Zones"):
-        found: List[dict] = []
+        found: List[dict] = questions_in(zone, zone, today)      # the zone's own: what an inbox run asked (#634)
         for project in visible_dirs(zone):
             hub = project / (project.name + ".md")
             if hub.is_file():
@@ -8261,23 +8417,35 @@ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();var at=items.index
 """
 
 
-def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None) -> str:
+def in_view(n: dict, view: Optional[str], zones: Tuple[str, ...]) -> bool:
+    """Does a row count in the lead sentence (W7)? Every row, when no zone is in view; otherwise a row with no zone (a job
+    that failed), a row of a zone the page cannot put in view, and the rows of the zone in view: never the rows of two
+    zones added into one figure."""
+    return view is None or not n.get("zone") or n["zone"] not in zones or n["zone"] == view
+
+
+def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None, view: Optional[str] = None,
+                 zones: Tuple[str, ...] = ()) -> str:
     """The Waiting on you now card: what waits on the user, each with an icon, one sentence, its zone, how late and
     one button. First the things the page knows from its records (`needs`: what failed, each zone's late actions,
-    the warnings), then one row per waiting session, oldest first, which the app keeps current."""
+    the warnings), then one row per waiting session, oldest first, which the app keeps current. With a zone `view`,
+    the lead sentence counts that zone's rows and the rows that belong to no zone; the rows of another zone are in
+    the card, hidden until that zone is in view (WAITING_JS), so the sentence and the rows in view always agree."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
     needs = needs or []
-    total = len(rows) + len(needs)
+    seen = [n for n in needs if in_view(n, view, zones)]
+    total = len(rows) + len(seen)
     # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
     html = card("waiting-now", lead_said(total), "",
                 '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows">%s</div>'
-                % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
+                % (need_groups(needs, view, zones), "".join(waiting_row(r, now) for r in rows)))
     # The region a screen reader listens to sits in the card but outside its body, which the calm rule hides: it says the
     # lead sentence again whenever the count changes, calm or not (#600). Visually hidden, never display:none.
     html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
                                               % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
-    html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
+    zone_attrs = (' data-view="%s" data-zones="%s"' % (E(view), E(json.dumps(list(zones), ensure_ascii=False)))) if view is not None else ""
+    html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"%s' % ("" if total else " calm", len(seen), zone_attrs), 1)
     return html
 
 
@@ -8312,7 +8480,7 @@ if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.cl
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
 /* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
-function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
+function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=c.dataset.zones?c.querySelectorAll('.wneed:not([hidden])').length:+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
 var s=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
 if(h)h.textContent=s;c.classList.toggle('calm',t<1);
 /* the live region says it only when it changes, so the build's own sentence is not read out again (#600) */
@@ -8324,6 +8492,14 @@ lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+/* the zone in view (W7): the rows of the other zones wait, hidden, until that zone is picked; the sentence counts what shows */
+function zoneView(z){var c=document.getElementById('waiting-now'),zs=[];if(!c||!c.dataset.zones)return;try{zs=JSON.parse(c.dataset.zones)}catch(e){}
+if(zs.indexOf(z)<0)return;c.dataset.view=z;
+[].forEach.call(c.querySelectorAll('.wneed'),function(r){var a=r.querySelector('[data-tz-go]'),w=r.dataset.nz||(a&&a.dataset.tzGo)||'';r.hidden=!!w&&zs.indexOf(w)>=0&&w!==z});
+[].forEach.call(c.querySelectorAll('.wgroup'),function(g){var n=g.querySelectorAll('.wneed:not([hidden])').length,e=g.querySelector('.wgn');if(e)e.textContent=n;g.hidden=!n});
+lead(box.children.length)}
+window.GarrickWaitingZone=zoneView;
+try{var kept=localStorage.getItem('garrick-graph-place');if(kept)zoneView(kept)}catch(e){}
 window.GarrickNeedsLead=function(){lead(box.children.length)};
 })();
 """
@@ -8367,7 +8543,7 @@ if(prev)return prev(q,out)};
 # and the card's sentence follow it; a refusal leaves the row, and the page says why in its own line.
 QUESTION_JS = r"""
 (function(){var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file&&x.dataset.qz===q.zone})[0],
+if(q&&(q.verb==='answer'||q.verb==='later'||q.verb==='intake-answer')&&out&&out.ok&&!out.unavailable){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file&&x.dataset.qz===q.zone})[0],
 row=b&&b.closest('.wneed');if(row){var g=row.closest('.wgroup'),c=document.getElementById('waiting-now');row.remove();
 if(g){var n=g.querySelector('.wgn'),left=g.querySelectorAll('.wneed').length;if(left)n.textContent=left;else g.remove()}
 if(c){c.dataset.n=Math.max(0,(+c.dataset.n||0)-1);if(window.GarrickNeedsLead)window.GarrickNeedsLead()}}}
@@ -8568,8 +8744,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         # zone the row does not name (W4). With one zone the link is that inbox, as it was; with several, the attention list's own
         # link is the card, since no single inbox is the row.
         attn.append(("warning", said_inbox, link(full[0][1]) if len(full) == 1 else "#waiting-now"))
+        inbox_button, inbox_said_text = inbox_act(inbox_state(ws, now), ws, [name for name, _ in full])
         detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
-                              "act": request_button("Process the Inbox", "process the inbox", ws),
+                              "act": inbox_button, "late": inbox_said_text,
                               "links": [(name, link(f)) for name, f in full] if len(full) > 1 else []}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
@@ -9015,7 +9192,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
     needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
-    lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+    zones_here = tuple(T)                                                          # the zones the picker can put in view; Work first, as the graph does
+    view_zone = ("Work" if "Work" in zones_here else zones_here[0]) if zones_here else None
+    lead = waiting_card(waiting_now or [], now, needs, view_zone, zones_here) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
@@ -9082,7 +9261,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

@@ -1025,7 +1025,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
 		if let u = body["open"] as? String, let url = URL(string: u) { return follow(url, place: body["place"] as? String) }
 		if let row = body["reveal"] as? [String: Any] { return revealBoth(row) }
-		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
 		if let id = body["waitingGo"] as? String { return goToWaiting(id) }
@@ -1043,33 +1042,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
 		if let request = body["act"] as? [String: Any] { act(request) }
-	}
-
-	// Add your own work (#182): macOS's own folder picker, which also grants
-	// this app access to the folder picked, as a sheet on the window. It opens
-	// on the cloud drives where there are any, since that is where work is
-	// usually kept. The folder goes to page_action.py's `discover`, which
-	// reads its names and dates and changes nothing in it; discover.py
-	// refuses the whole Mac, the home folder and Garrick's own folders. The
-	// page then opens on what it found.
-	func pickFolder() {
-		let panel = NSOpenPanel()
-		panel.canChooseDirectories = true
-		panel.canChooseFiles = false
-		panel.allowsMultipleSelection = false
-		panel.canCreateDirectories = false
-		panel.prompt = "Choose"
-		panel.message = "Choose the folder you work from. Garrick reads the names and dates in it, and never changes anything."
-		let cloud = URL(fileURLWithPath: NSHomeDirectory() + "/Library/CloudStorage", isDirectory: true)
-		var isDir: ObjCBool = false
-		panel.directoryURL = FileManager.default.fileExists(atPath: cloud.path, isDirectory: &isDir) && isDir.boolValue
-			? cloud : URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-		panel.beginSheetModal(for: window) { [weak self] response in
-			guard let self, response == .OK, let folder = panel.url else { return }
-			self.toast("Looking through \(folder.lastPathComponent): names and dates only, and nothing in it is changed.",
-			           alsoNotify: false)
-			self.act(["verb": "discover", "folder": folder.path])
-		}
 	}
 
 	// Save a copy, on an earlier version of a work's file (#189): macOS's own
@@ -1282,7 +1254,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// request gets a reply on the page, a failed one too: the page shows a
 	// request running until its reply comes.
 	func act(_ request: [String: Any]) {
-		guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
+		guard let data = try? JSONSerialization.data(withJSONObject: request) else {
+			if request["verb"] as? String == "inbox-run" { inboxFallback = nil }          // no reply will come to clear it (C9)
+			return
+		}
 		let script = builder.deletingLastPathComponent().appendingPathComponent("page_action.py")
 		guard FileManager.default.fileExists(atPath: script.path) else {
 			return acted(request, ["ok": false, "say": "This page's actions need page_action.py beside status.py."])
@@ -1341,6 +1316,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
 	// has its own reply, and the row moves as fast as after a button.
 	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
+		// Process the Inbox from the menu or the panel: with no background run to be had, the visible session opens (#634).
+		if request["verb"] as? String == "inbox-run", let visible = inboxFallback {
+			inboxFallback = nil
+			if said["unavailable"] as? Bool == true { return openInbox(visible) }
+		}
 		if toasting && !reading(request) {
 			let line = bandLine(said)
 			toast(line.sentence, detail: line.detail)
@@ -1983,11 +1963,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// MARK: process the inbox
 	// One row for everything waiting: the intake skill reads each item and
 	// decides whether it is a conversation, reading or project material. The
-	// row opens the Settings default assistant (Claude, Codex or cmux; the
-	// first of those switched on when the default is the note or Finder) at the
-	// workspace root with "process the inbox", as a thread's row opens with
-	// "open X": Claude gets it typed in, Codex on the clipboard, and cmux too
-	// unless the desk is ready, when a tab at the root starts on it.
+	// row runs it in the background (#634): the page's `inbox-run` starts one
+	// run at the workspace root and the window goes on. Only when that says it
+	// cannot (Ask at Read, an assistant other than Claude, no background
+	// assistant) does the row open the Settings default assistant (Claude,
+	// Codex or cmux; the first of those switched on when the default is the
+	// note or Finder) at the workspace root with "process the inbox", as a
+	// thread's row opens with "open X": Claude gets it typed in, Codex on the
+	// clipboard, and cmux too unless the desk is ready, when a tab at the root
+	// starts on it.
 	// The assistant a phrase goes to: the default for clicking a thread when it
 	// is Claude, Codex or cmux, else the first of those switched on.
 	func assistant() -> String? {
@@ -2024,9 +2008,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: nil,
 			                why: "Switch on Claude, Codex or cmux in Settings › Opening a thread to process it from here")
 		}
-		let said = app == "cmux" && deskReady()
-			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
-			: "Opens \(label(["k": app]).replacingOccurrences(of: "Open in ", with: "")) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		let name = label(["k": app]).replacingOccurrences(of: "Open in ", with: "")
+		let said = "Files what settles in the background and asks you about the rest. Where it cannot, "
+			+ (app == "cmux" && deskReady()
+				? "opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
+				: "opens \(name) at the workspace root with \u{201C}\(phrase)\u{201D}")
 		return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: ["k": app, "f": folder, "w": phrase], why: said)
 	}
 
@@ -2061,7 +2047,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	@objc func processInbox(_ sender: NSMenuItem) {
 		guard let act = sender.representedObject as? [String: String] else { return }
 		if checking { return heard.append("menu:inbox") }
-		openInbox(act)
+		runInbox(act)
+	}
+
+	// Process the Inbox (#634): the page's own verb first. `inboxFallback` holds the visible request for the one reply that
+	// says the background run is not available; page_action.py's reply names that case, and nothing else opens a session.
+	var inboxFallback: [String: String]? = nil
+	func runInbox(_ visible: [String: String]) {
+		inboxFallback = nil                    // an earlier press that got no reply must not open its request now (C9)
+		inboxFallback = visible
+		act(["verb": "inbox-run"])
 	}
 
 	// MARK: questions (#224, #384)
@@ -2125,7 +2120,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				{ [weak self] in
 					guard let self else { return }
 					if checking { return self.heard.append("panel:inbox") }
-					self.openInbox(act)
+					self.runInbox(act)
 				}
 			})
 		}

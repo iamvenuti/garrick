@@ -236,6 +236,31 @@ class TestReadGuardBlock(SettingsCase):
         self.settings_file(**{"read-guard": "warn"})
         self.assertRegex(self.block(), r'name="rg-mode" value="warn" checked')
 
+    def claude_only(self):
+        """The guard is registered for Claude Code, and the Codex folder is there with nothing in it."""
+        (self.home / ".claude").mkdir(exist_ok=True)
+        sg.guard_module().register(str(REPO / "extras" / "hooks" / "read_guard.py"), str(self.home))
+        (self.home / ".codex").mkdir(exist_ok=True)
+
+    def test_a_claude_only_registration_beside_an_empty_codex_folder_shows_the_mode_as_set(self):
+        self.claude_only()
+        self.assertEqual([], list((self.home / ".codex").iterdir()))
+        for mode in ("warn", "enforce"):
+            self.settings_file(**{"read-guard": mode})
+            self.assertRegex(self.block(), r'name="rg-mode" value="%s" checked' % mode)
+
+    def test_an_assistant_that_is_installed_without_the_guard_keeps_it_off(self):
+        self.claude_only()
+        (self.home / ".codex" / "config.toml").write_text("model = 'x'\n")                 # Codex is here, and has no hook
+        self.settings_file(**{"read-guard": "enforce"})
+        self.assertRegex(self.block(), r'name="rg-mode" value="off" checked')               # fail closed: never On for what is not set up
+
+    def test_no_registration_in_any_assistant_is_off_whatever_the_file_says(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        self.settings_file(**{"read-guard": "enforce"})
+        self.assertRegex(self.block(), r'name="rg-mode" value="off" checked')
+
     def test_settings_that_do_not_read_show_On_with_a_line_that_says_so(self):
         self.assistants(registered=True)
         (self.root / "System" / "garrick-settings.json").write_text("{not json")

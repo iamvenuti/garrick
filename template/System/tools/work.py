@@ -39,7 +39,7 @@ page's view model builds on them.
   point beside its threads. `keeps_resume`: the hub holds a `### Resume here` block (always
   true for `beside`, never for a heading); a thread's is False.
 
-Walls. `pieces(root)` returns each record with its zone; `pieces(root, zone="Work")`
+Walls. A zone folder that is a link is no zone. `pieces(root)` returns each record with its zone; `pieces(root, zone="Work")`
 returns that zone's alone. Nothing inside a zone is followed out of it: a link to a
 folder that resolves outside the zone is left out. Nothing here adds two zones into
 one figure.
@@ -129,11 +129,15 @@ def _note(path: Path, inside: Path) -> bool:
 
 
 def zones(root: Path) -> List[Path]:
-    """The zone folders of a workspace, by name."""
+    """The zone folders of a workspace, by name. A folder that is a link to another folder, inside Zones/ or outside
+    it, is no zone: it would list that folder's work twice, or work that is no zone's."""
+    base = Path(root) / "Zones"
     try:
-        return sorted(p for p in (Path(root) / "Zones").iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+        found = sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+        home = base.resolve()
     except OSError:
         return []
+    return [p for p in found if p.resolve() == home / p.name]
 
 
 def project_pieces(root: Path, zone: Path, project: Path) -> List[Work]:

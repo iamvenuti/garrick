@@ -32,11 +32,13 @@ for parked and done, as before: the reader reports the status as written, and do
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -356,12 +358,21 @@ class Reader(unittest.TestCase):
         self.assertNotIn("Work/Plain/Away", {r.identity for r in got})
         self.assertNotIn("Work/Mixed/Delta", {r.identity for r in got})
 
-    def test_a_zone_that_is_itself_a_link_is_read(self):
-        away = self.tmp.parent / (self.tmp.name + "-away")
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symbolic links")
+    def test_a_zone_that_is_a_link_to_another_zone_is_listed_once(self):
+        os.symlink(self.root / "Zones" / "Work", self.root / "Zones" / "Alias")
+        got = work.pieces(self.root)
+        self.assertEqual({r.zone for r in got}, {"Work"})
+        self.assertEqual(len(got), len(FROZEN))
+        self.assertEqual(work.pieces(self.root, zone="Alias"), [])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symbolic links")
+    def test_a_zone_that_is_a_link_out_of_zones_is_no_zone(self):
+        away = self.tmp.parent / (self.tmp.name + "-out")
         self.addCleanup(shutil.rmtree, away, ignore_errors=True)
         work_fixture.put(away / "Hub" / "Hub.md", work_fixture.hub("Hub", body=work_fixture.BLOCK))
-        os.symlink(away, self.root / "Zones" / "Linked")
-        self.assertIn("Linked/Hub", {r.identity for r in work.pieces(self.root, zone="Linked")})
+        os.symlink(away, self.root / "Zones" / "Away")
+        self.assertEqual({r.zone for r in work.pieces(self.root)}, {"Work"})
 
     def test_a_workspace_with_no_zones_has_no_work(self):
         empty = Path(tempfile.mkdtemp(prefix="work-reader-"))

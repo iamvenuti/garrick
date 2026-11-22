@@ -6579,8 +6579,6 @@ def session_line(ws: Path, req: dict) -> dict:
 
 def session_request(ws: Path, args) -> dict:
     """The request a verb typed in a terminal means: only the options that verb
-    if "separate" in req:                     # the word a person says for it (#632); the request has always called it `heading`
-        req["heading"] = req.pop("separate")
     takes, each given or left out. A zone is always named; nothing is guessed."""
     given = {k: getattr(args, k.replace("-", "_")) for k in CLI_FIELDS[args.verb]}
     if args.verb.startswith("question-"):
@@ -6589,6 +6587,8 @@ def session_request(ws: Path, args) -> dict:
     elif not given.get("zone"):
         raise Refused("no zone given: say which, with --zone")
     req = dict({"verb": args.verb}, **{k: v for k, v in given.items() if v is not None})
+    if "separate" in req:                     # the word a person says for it (#632); the request has always called it `heading`
+        req["heading"] = req.pop("separate")
     if args.verb in ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire"):
         req = session_line(ws, req)
     return req

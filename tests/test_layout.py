@@ -255,6 +255,23 @@ class TestLayout(LayoutFiles):
         names = [n for n in self.git("show", "--name-only", "--format=", "HEAD").stdout.split("\n") if n]
         self.assertTrue(names and all(n.startswith("Acme/") for n in names), names)           # the commit stays inside the project
 
+    def test_a_working_file_a_split_gave_a_thread_stays_there_after_a_join_and_the_docs_say_so(self):
+        a = self.work / "Acme"
+        (a / "Notes").mkdir()
+        (a / "Notes" / "x.md").write_text("working note")
+        pricing = a / "Threads" / "Pricing" / "Pricing.md"
+        pricing.write_text(pricing.read_text() + "\nSee Notes/x.md for the working.\n")
+        self.commit("a working note, named by Pricing")
+        r = self.layout("--split")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((a / "Threads" / "Pricing" / "Notes" / "x.md").is_file())
+        r = self.layout("--join")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((a / "Threads" / "Pricing" / "Notes" / "x.md").is_file())       # Join moves papers only
+        self.assertFalse((a / "Notes" / "x.md").exists())
+        docs = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
+        self.assertIn("A Join moves papers only", docs)
+
     def test_the_ledger_row_follows_its_file_and_its_destination_stays(self):
         self.layout("--split")
         a = self.work / "Acme"
@@ -411,6 +428,44 @@ class TestLayout(LayoutFiles):
         self.assertIn("is a link", r.stdout + r.stderr)
         self.assertEqual(before, outside.read_text())
         self.assertTrue(hub.is_symlink())
+
+
+class TestALinkedThreadFolder(LayoutFiles):
+    """S7: a thread folder that is a link is no thread of the project; a layout change never acts through it."""
+
+    def linked(self):
+        self.make("project", "--zone", "Work", "--name", "Acme")
+        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing")
+        outside = self.base / "elsewhere" / "Linked"
+        outside.mkdir(parents=True)
+        (outside / "Linked.md").write_text("---\ntype: thread\n---\n")
+        (outside / "Sources").mkdir()
+        (outside / "Sources" / ".gitkeep").write_text("")
+        (self.work / "Acme" / "Threads" / "Linked").symlink_to(outside, target_is_directory=True)
+        self.commit("a linked thread folder")
+        return outside
+
+    def test_split_makes_no_folder_through_a_link(self):
+        outside = self.linked()
+        before = sorted(p.name for p in outside.rglob("*"))
+        r = self.layout("--split")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, sorted(p.name for p in outside.rglob("*")))
+        self.assertFalse((outside / "Deliverables").exists())
+
+    def test_join_removes_nothing_through_a_link(self):
+        outside = self.linked()
+        (self.work / "Acme" / "Threads" / "Pricing" / "Sources").mkdir(exist_ok=True)
+        (self.work / "Acme" / "Threads" / "Pricing" / "Sources" / "brief.txt").write_text("brief")
+        self.commit("papers in a real thread")
+        r = self.layout("--join")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((outside / "Sources" / ".gitkeep").is_file())
+
+    def test_the_link_is_not_listed_as_a_thread(self):
+        self.linked()
+        names = [t.name for t in sc.thread_dirs_of(self.work / "Acme")]
+        self.assertEqual(["Pricing"], names)
 
 
 class TestJoin(LayoutFiles):
@@ -640,6 +695,19 @@ class TestTheMixedProjectFinding(LayoutFiles):
         self.assertNotIn("Wharf", found.message)
         self.assertNotIn("separate jobs", found.message)             # one thread of two: a mixed project, not separate jobs
 
+    def test_an_empty_papers_folder_is_not_reported_and_one_real_file_is(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar")
+        self.make("thread", "--zone", "Work", "--project", "Cedar", "--name", "Quay")
+        quay = self.work / "Cedar" / "Threads" / "Quay"
+        (quay / "Sources").mkdir(exist_ok=True)
+        (quay / "Sources" / ".gitkeep").write_text("")
+        (quay / "Deliverables").mkdir(exist_ok=True)
+        self.commit("empty folders")
+        self.assertEqual([], self.finding())
+        (quay / "Sources" / "brief.txt").write_text("brief")
+        self.commit("one real file")
+        self.assertEqual(1, len(self.finding()))
+
     def test_a_project_whose_threads_all_keep_papers_also_offers_to_split(self):
         self.mixed(threads=("Quay", "Wharf"), hold=("Quay", "Wharf"))
         (found,) = self.finding()
@@ -729,6 +797,14 @@ class TestThePage(LayoutCase):
         with self.assertRaises(pa.Refused):
             self.act(verb="new-project", zone="Work", name="Cedar", heading="maybe")
         self.assertFalse((self.work / "Cedar").exists())
+
+    def test_the_separate_option_of_a_command_line_makes_separate_jobs(self):
+        args = pa.command_parser().parse_args(["new-project", "--zone", "Work", "--name", "Cedar", "--separate", "yes"])
+        req = pa.session_request(self.root, args)
+        self.assertNotIn("separate", req)
+        self.assertIn(req["heading"], ("yes", True))
+        self.act(**req)
+        self.assertIn("layout: thread-first", self.hub_text("Cedar"))
 
     def test_a_thread_in_one_job_uses_the_projects_papers_and_a_papers_choice_is_refused(self):
         self.act(verb="new-project", zone="Work", name="Acme")

@@ -2048,7 +2048,8 @@ return'<div class="pmenu" role="group">'+(k==='project'?row('new-thread','New th
 /* the project's switch (#604, #632), offered by the build only where it applies, as the layout chip on a project's card (#633): what the
    project is now, and the plan it opens. Never a thread's: the project decides for every thread. */
 var LAYOUTS=[['split','One job','Split ',' into separate jobs…','<rect x="3" y="3" width="10" height="10" rx="2"/>'],
-['join','Separate jobs','Join ',' into one job…','<rect x="2.5" y="2.5" width="4.5" height="11" rx="1.5"/><rect x="9" y="2.5" width="4.5" height="11" rx="1.5"/>']];
+['join','Separate jobs','Join ',' into one job…','<rect x="2.5" y="2.5" width="4.5" height="11" rx="1.5"/><rect x="9" y="2.5" width="4.5" height="11" rx="1.5"/>'],
+['mend','One job','Join ',' into one job…','<rect x="3" y="3" width="10" height="10" rx="2"/>']];
 window.GarrickLayoutChip=function(o){if(!o||!o.mg||o.mg[2]||o.held)return'';var off=o.mg[6]||[],l=LAYOUTS.filter(function(x){return off.indexOf(x[0])>=0})[0];if(!l)return'';
 var label=l[2]+o.mg[1]+l[3];
 return'<button class="ctl" type="button" data-manage="layout-'+l[0]+'" data-mg="'+esc(JSON.stringify(o.mg))+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'
@@ -2193,7 +2194,7 @@ document.addEventListener('click',function(e){var b=e.target.closest&&e.target.c
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
 var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg);
 else if(v==='layout-split'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true});
-else if(v==='layout-join'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],join:true})},true);
+else if((v==='layout-join'||v==='layout-mend')&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],join:true})},true);
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
@@ -4535,11 +4536,30 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
     """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
-    makes it. `split` for a project that is one job, `join` for one that is separate jobs; a thread offers none, since
+    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
+    project where a thread holds papers of its own; a thread offers none, since
     the project's switch decides for every thread under it. A project with no hub offers none."""
     if not hub or folder.parent.name == "Threads":
         return []
-    return ["join"] if heading else ["split"]
+    if heading:
+        return ["join"]
+    return ["mend"] if mixed_papers(folder) else ["split"]
+
+
+def mixed_papers(project: Path) -> bool:
+    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
+    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
+    names is the Join, not the Split (#632)."""
+    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
+    holding = [t for t in threads if any(
+        f.is_file() and f.name != ".gitkeep" for k in ("Sources", "Deliverables") for f in (t / k).rglob("*"))]
+    if not holding or len(holding) == len(threads):
+        return False
+    try:
+        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
 
 
 def files_in(folder: Path) -> int:

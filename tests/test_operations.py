@@ -299,7 +299,7 @@ SHAPES = {
     "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
     "onclick: 'delete'": {"delete": ()},
-    "layout: 'layout'": {"layout": ("thread", "papers", "heading", "check", "plan")},     # the layout dialog's base (#604), added to by Object.assign
+    "layout: 'layout'": {"layout": ("thread", "papers", "heading", "join", "resume_from", "check", "plan")},     # the layout dialog's base (#604), added to by Object.assign
     "onclick: 'undo'": {"undo": ()},                     # offer(): the undo bar
     "poll: 'operations'": {"operations": ()},            # WORK_JS: the one verb that reads
     # TODO_JS send(verb,r,more,said); `more` is {date:v} from the date menu,

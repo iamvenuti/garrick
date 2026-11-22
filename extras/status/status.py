@@ -2015,6 +2015,8 @@ dialog.gmanage .mg-details{margin:10px 0 0;font-size:var(--fs-meta);color:var(--
 dialog.gmanage .mg-msg{margin:12px 0 0;font-size:var(--fs-meta);color:var(--ink2)}dialog.gmanage .mg-msg.bad{color:var(--critical)}
 dialog.gmanage select,dialog.gmanage input[type=text]{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;box-sizing:border-box}
 dialog.gmanage .mg-row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+dialog.gmanage .mg-pick{border:0;margin:6px 0 0;padding:0}dialog.gmanage .mg-opt{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:var(--fs-meta);color:var(--ink2)}
+dialog.gmanage .mg-opt b{color:var(--ink);font-weight:600}
 dialog.gmanage ul{margin:8px 0 0;padding-left:18px;font-size:var(--fs-meta)}.act.danger{color:var(--critical);border-color:var(--critical)}
 .act.danger:disabled{opacity:.45}#mg-undo{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:11;display:flex;gap:10px;align-items:center;
 background:var(--ink);color:var(--surface);font-size:var(--fs-meta);padding:7px 8px 7px 14px;border-radius:10px}
@@ -2044,8 +2046,8 @@ function row(what,label,icon,more){return'<button class="pmi" type="button" data
 return'<div class="pmenu" role="group">'+(k==='project'?row('new-thread','New thread here','plus'):'')+row('rename','Rename…','pen')+(k==='thread'?row('move','Move…','move'):'')
 +LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return row('layout-'+l[0],l[1],'list',' title="'+esc(l[2])+'"')}).join('')
 +(mid||'')+'<div class="psep" role="separator"></div><button class="pmi del" type="button" data-manage="delete" data-mg="'+m+'">'+mi('trash')+'Delete…</button></div>'};
-/* the changes of layout (#604), offered by the build only where each applies: code, button, what it is */
-var LAYOUTS=[['own','Own papers…','A thread to its own papers'],['project','Project’s papers…','A thread back to the project’s papers'],['heading','Make a heading…','A project to a heading']];
+/* the project's switch (#604, #632), offered by the build only where it applies: code, button, what it is */
+var LAYOUTS=[['split','Split into separate jobs…','Each file goes to the one thread that names it'],['join','Join into one job…','Each thread’s papers move up into the project’s']];
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
 d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
 document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
@@ -2072,22 +2074,19 @@ function watch(d){var i=d.querySelector('#mg-name');i.addEventListener('input',f
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
 function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div><div id="mg-papers"></div>'+field('mg-name','Name, one you can say')+DUP,
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say')+DUP,
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-/* in a piece of work a thread chooses its papers; under a heading every thread keeps its own, so nothing is asked */
-function papers(){var z=val(d,'mg-zone'),p=val(d,'mg-project'),h=((D.zones[z]||{}).headings||[]).indexOf(p)>=0;
-d.querySelector('#mg-papers').innerHTML=p&&!h?select('mg-own','Does this thread keep its own papers, or use the project’s?',[['project','The project’s papers'],['own','Its own papers']],'project'):''}
+/* the project's switch decides where a thread's papers are, so a thread is asked nothing about them (#632) */
 function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>';
-var s=d.querySelector('#mg-project');if(s)s.onchange=papers;papers()}
+}
 d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
-var own=val(d,'mg-own')==='own';if(own)q.papers='own';
-d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project+(own?', with its own papers':''),'Copied “new thread '+q.name+' in '+q.project+(own?', with its own papers':'')+'”. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
-/* a project is one piece of work unless it is a heading over separate pieces; it gets no thread unless one is named */
+/* a project is one job unless it is separate jobs; it gets no thread unless one is named */
 var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP
-+select('mg-kind','Is this project one piece of work, or a heading over separate pieces?',[['piece','One piece of work'],['heading','A heading over separate pieces of work']],'piece')
++select('mg-kind','One job or separate jobs?',[['piece','One job'],['heading','Separate jobs']],'piece')
 +'<div id="mg-pt"></div>'
 +'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
 +'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="None to start with">',
@@ -2107,7 +2106,7 @@ if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-ne
 if(th)r.thread=th;if(w)r.party_what=w;if(hd)r.heading=true;q=r}
 else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;if(hd)o.heading=true;q=o}
 if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as a heading':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as separate jobs':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -2147,13 +2146,16 @@ function lop(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.f
 function lbase(name){return String(name).split('/').pop()}
 /* a file name goes into a request for the assistant only when it is plain: letters, digits, spaces and ._-()&,' */
 function lsafe(name){return /^[\p{L}\p{N} ._\-()&,']+$/u.test(name)}
-function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:o.papers==='own'?'into '+o.thread+'’s papers':'into the project’s papers'}
-function lphrase(o){return o.heading?'make '+o.project+' a heading':o.papers==='own'?'give '+o.thread+' its own papers':'let '+o.thread+' use the project’s papers'}
+function lwhere(o,to){var m=/^Threads\/([^/]+)\//.exec(to);return m?'to '+m[1]:'into the project’s papers'}
+function lphrase(o){return o.heading?'split '+o.project+' into separate jobs':'join '+o.project+' into one job'}
 function details(t){return'<details class="mg-details"><summary>Details</summary><pre>'+esc(t)+'</pre></details>'}
 function lplan(d,o,out){var p=out.plan,h='<p>'+esc(p.what)+'.</p>';
 h+=p.moves.length?'<p class="mg-msg">What moves, and where:</p><ul>'+p.moves.map(function(m){return'<li>'+esc(lbase(m[0]))+' '+esc(lwhere(o,m[1]))+'</li>'}).join('')+'</ul>':'<p class="mg-msg">No file moves.</p>';
-if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block, and a heading holds none: move it into a thread, or close it as an Outcome.</p>';
-if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.papers!=='project';
+if(p.resume_block)h+='<p class="mg-msg">The hub still holds a Resume here block, and separate jobs hold none: move it into a thread, or close it as an Outcome.</p>';
+/* a Join gives the hub its Resume here block back: the user chooses whose Next action it opens with, the thread touched last first */
+if(p.opens_resume){h+='<p class="mg-msg" id="lay-resume-lead">The project’s Resume here block opens with the Next action of one thread. The others stay in Todo.md as they are.</p><fieldset id="lay-resume" class="mg-pick" aria-labelledby="lay-resume-lead">'
++p.next_actions.map(function(n,i){return'<label class="mg-opt"><input type="radio" name="lay-from" value="'+esc(n[0])+'"'+(n[0]===p.resume_from?' checked':'')+'> <b>'+esc(n[0])+'</b>: '+esc(n[1]||'no Next action written')+'</label>'}).join('')+'</fieldset>'}
+if(p.left.length){var z=(D.zones[o.zone]||{}),sel=p.threads.length&&o.heading;
 h+='<p class="mg-msg">Left for you to place. Nothing here puts them anywhere:</p><ul id="lay-left">'+p.left.map(function(f,i){
 return'<li data-i="'+i+'"><span>'+esc(lbase(f[0]))+' ('+esc(f[1])+')</span>'+(sel?' <select aria-label="Thread for '+esc(lbase(f[0]))+'">'+p.threads.map(function(t){return'<option>'+esc(t)+'</option>'}).join('')+'</select>':'')
 +(sel&&z.folder&&lsafe(lbase(f[0]))?' <button class="act" type="button" data-request="" data-folder="'+esc(z.folder)+'" title="Hand the request to your assistant">Ask my assistant</button>':'')+'</li>'}).join('')+'</ul>'}
@@ -2168,10 +2170,10 @@ var line=moved?first.replace(/\.$/,'')+'. It was committed.':ok?'Nothing moved. 
 var box=d.querySelector('#lay-plan');box.innerHTML='<p class="'+(ok?'':'mg-msg bad')+'" role="status">'+esc(line)+'</p>'+details(said);
 var r=d.querySelector('.mg-row');r.innerHTML='<button class="act primary" type="button" data-cancel>Close</button>';r.querySelector('[data-cancel]').onclick=function(){d.close()};
 if(moved){try{localStorage.setItem('garrick-undo',JSON.stringify({zone:o.zone,commit:moved[1],what:line.replace(/\.$/,''),until:Date.now()+60000}))}catch(e){}}}
-function layout(o){if(!o||!o.zone||!o.project||!(o.heading||(o.thread&&(o.papers==='own'||o.papers==='project')))){say('That change needs a project, or a thread and its papers.');return}
-var title=o.heading?'Make '+o.project+' a heading':o.papers==='own'?o.thread+': its own papers':o.thread+': the project’s papers',
-base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=true;else{base.thread=o.thread;base.papers=o.papers}
-if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':o.papers==='own'?'The files only this thread’s note names move into it.':'Its files move up into the project’s papers.')+' In the Garrick app this shows what would move first.</p>',
+function layout(o){if(!o||!o.zone||!o.project||!(o.heading||o.join)){say('That change needs a project.');return}
+var title=o.heading?'Split '+o.project+' into separate jobs':'Join '+o.project+' into one job',
+base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=true;else base.join=true;
+if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':'Each thread’s papers move up into the project’s, and its Resume here block comes back.')+' In the Garrick app this shows what would move first.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>Copy the phrase</button>');d0.querySelector('[data-go]').onclick=function(){d0.close();copy(lphrase(o),'Copied “'+lphrase(o)+'”. Paste it to your assistant.')};return}
 var held=window.GarrickBusy&&GarrickBusy(o.zone);if(held){say(o.zone+' is still busy: '+held+' Try again when it is done.');return}
 var d=dialog(title,'<div id="lay-plan" role="status" aria-live="polite"><p>Checking what would move…</p></div>',CANCEL+'<button class="act primary" type="button" data-go disabled>Move them</button>');
@@ -2179,14 +2181,14 @@ var op=lop();LAYW[op]=function(out){if(out&&out.ok&&out.plan)lplan(d,o,out);else
 host.postMessage({act:Object.assign({},base,{check:true,plan:true,op:op})});
 d.querySelector('[data-go]').onclick=function(){if(busy(d,o.zone))return;var go=d.querySelector('[data-go]'),op2=lop();go.disabled=true;
 d.querySelector('#lay-plan').insertAdjacentHTML('afterbegin','<p role="status">Moving…</p>');LAYW[op2]=function(out){lresult(d,o,out)};
-host.postMessage({act:Object.assign({},base,{op:op2})})}}
+var from=d.querySelector('#lay-resume input:checked'),more={op:op2};if(from)more.resume_from=from.value;
+host.postMessage({act:Object.assign({},base,more)})}}
 window.GarrickLayout=layout;
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
 var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg);
-else if(v==='layout-own'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'own'});
-else if(v==='layout-project'&&mg&&mg[2])layout({zone:mg[0],project:mg[1],thread:mg[2],papers:'project'});
-else if(v==='layout-heading'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true})},true);
+else if(v==='layout-split'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],heading:true});
+else if(v==='layout-join'&&mg&&!mg[2])layout({zone:mg[0],project:mg[1],join:true})},true);
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
@@ -4469,17 +4471,12 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 
 def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
-    """The changes of layout a card offers (#604), as `scaffold.py layout` makes them, and only where each applies:
-    `own` for a thread of a project that is one piece of work whose papers are the project's, `project` for one that
-    keeps papers of its own (a folder of Sources or Deliverables), `heading` for a project that is one piece of work
-    (a thread's `folder` is its own, a project's is the project's). A heading offers none: every thread under it
-    keeps its own papers already, and it is not made one piece of work again. A project with no hub offers none."""
-    if heading or not hub:
+    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
+    makes it. `split` for a project that is one job, `join` for one that is separate jobs; a thread offers none, since
+    the project's switch decides for every thread under it. A project with no hub offers none."""
+    if not hub or folder.parent.name == "Threads":
         return []
-    if folder.parent.name == "Threads":
-        have = [k for k in ("Sources", "Deliverables") if (folder / k).is_dir()]
-        return (["own"] if len(have) < 2 else []) + (["project"] if have else [])
-    return ["heading"]
+    return ["join"] if heading else ["split"]
 
 
 def files_in(folder: Path) -> int:

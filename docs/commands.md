@@ -68,16 +68,16 @@ for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.co
 
 ## Your first project
 
-A project need not start with a thread. It is either one piece of work (the default) or a heading over separate pieces. A party tag from the Parties table in `System/context.md` is optional: it is an index, not a wall. The commands below use `acme`, which exists in the demo workspace; on your own install, use one of your own tags. From the workspace root:
+A project need not start with a thread. It is one job (the default) or separate jobs. In one job, the hub holds the resume point and every thread uses the project's `Sources/` and `Deliverables/`. In separate jobs, each thread has its own resume point and its own papers, and the hub holds none. A party tag from the Parties table in `System/context.md` is optional: it is an index, not a wall. The commands below use `acme`, which exists in the demo workspace; on your own install, use one of your own tags. From the workspace root:
 
 ```sh
 python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme
 ```
 
-This creates `Zones/Work/Acme/`, with its hub note, `Sources/` and `Deliverables/`. The project is one piece of work: the hub holds the `### Resume here` block, and there is no `Threads/` folder until a thread is added. Add `--thread "Pricing"` to make the first thread at the same time, at `Zones/Work/Acme/Threads/Pricing/Pricing.md`, listed in the hub. A project that is a heading over separate pieces of work takes `--heading`:
+This creates `Zones/Work/Acme/`, with its hub note, `Sources/` and `Deliverables/`. The project is one job: the hub holds the `### Resume here` block, and there is no `Threads/` folder until a thread is added. Add `--thread "Pricing"` to make the first thread at the same time, at `Zones/Work/Acme/Threads/Pricing/Pricing.md`, listed in the hub. A project of separate jobs takes `--separate`:
 
 ```sh
-python3 System/tools/scaffold.py project --zone Work --name "Marketing" --heading
+python3 System/tools/scaffold.py project --zone Work --name "Marketing" --separate
 ```
 
 Its hub says `layout: thread-first`, holds no resume point and has no `Sources/` or `Deliverables/` of its own. It lists its threads, and may be made empty: the check does not warn that it has none. A later thread in the same project:
@@ -86,33 +86,28 @@ Its hub says `layout: thread-first`, holds no resume point and has no `Sources/`
 python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Supplier Audit"
 ```
 
-In a project that is one piece of work, a thread is asked one question: does it keep its own papers, or use the project's? The project's is the default: the thread folder holds its note and working notes, and what it makes goes in the project's `Deliverables/`. `--papers own` gives the thread a `Sources/` and a `Deliverables/` of its own, and its own ledger once something is published:
+A thread is asked nothing about its papers: the project decides. In one job the thread folder holds its note and working notes, and what it makes goes in the project's `Deliverables/`. In separate jobs the thread has a `Sources/` and a `Deliverables/` of its own, and its own ledger once something is published. Its own papers are storage, not a wall: sibling threads can still read and link what it keeps. A thread has no choice of its own: a request that names a papers choice for a thread, to `scaffold.py thread` or `scaffold.py layout`, is refused with a sentence that names the project's switch.
+
+### Changing one job or separate jobs later
+
+`scaffold.py layout` switches a project that exists, both ways, and carries the files. `--split` makes it separate jobs; `--join` makes it one job. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and a commit that is refused leaves every file and row where it was.
 
 ```sh
-python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Side Deal" --papers own
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --split --check
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --split --check --json
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --split
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --join --check
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --join --resume-from "Pricing"
 ```
 
-A heading asks nothing, because every thread under it keeps its own papers. Its own papers are storage, not a wall: sibling threads can still read and link what it keeps.
+- **Split into separate jobs:** each top-level file goes to the one thread that names it, with its ledger rows, and the hub gets `layout: thread-first`.
+- **Join into one job:** each thread's `Sources/` and `Deliverables/` move into the project's, with their ledger rows and the links to them. The hub gets a Resume here block back, opening with the Next action of the thread you name with `--resume-from`; without it, the thread touched last. The other threads' Next actions stay in `Todo.md` as they are.
 
-### Changing a choice later
+A Join is the reverse of a Split. A file whose name is already taken in the project's folder moves nothing for that file: it is listed for you to place, and is never renamed or overwritten. The same Join mends a project that is one job but has a thread keeping papers of its own: the check reports it, and the move puts those papers in the project's.
 
-`scaffold.py layout` changes it for a project that exists, and carries the files. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and a commit that is refused leaves every file and row where it was.
+The [Garrick App](extras/status-page.md) makes the same change from a card, and the Ask box offers it. A project's card offers exactly one action: *Split into separate jobs…* on a project that is one job, and *Join into one job…* on one that is separate jobs. No thread's card offers one. Choosing it runs `--check` and shows its plan in a dialog: what moves and where, and the files listed for you. A Join also lists each thread's Next action, with the thread touched last chosen, for the hub's Resume here block. Nothing is written until you press *Move them*, which makes the change in one commit through the zone's wall check, with Undo; *Cancel* does nothing. The result line says what moved and that it was committed, or why nothing moved, and the tool's own text sits under *Details*, closed. For the files a Split lists for you, the dialog shows the project's threads to choose from and a button that hands the file and the thread to your assistant as a request; the dialog never places one itself. Ask the Ask box "split Acme into separate jobs" or "join Acme into one job" and it answers with a button that opens the same dialog with the plan. The box never runs the change: only your click on *Move them* does.
 
-```sh
-python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own --check
-python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own --check --json
-python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own
-python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers project
-python3 System/tools/scaffold.py layout --zone Work --project "Acme" --heading
-```
-
-- **A thread to its own papers:** the project's `Sources/` and `Deliverables/` files that only this thread's note names move into the thread, with their ledger rows.
-- **A thread back to the project's papers:** its files and rows move up.
-- **A project to a heading:** each top-level file goes to the one thread that names it, and the hub gets `layout: thread-first`.
-
-The [Garrick App](extras/status-page.md) makes the same change from a card, and the Ask box offers it. On a project's card, *Make a heading…* is the third change; on a thread's card, *Own papers…* and *Project's papers…* are the first two. Each is offered only where it applies: a heading offers none, a thread that already uses the project's papers offers only *Own papers…*, and a thread with papers of its own offers *Project's papers…*. Choosing one runs `--check` and shows its plan in a dialog: what moves and where, and the files listed for you. Nothing is written until you press *Move them*, which makes the change in one commit through the zone's wall check; *Cancel* does nothing. The result line says what moved and that it was committed, or why nothing moved, and the tool's own text sits under *Details*, closed. A refused commit leaves every file and row where it was. For the files listed for you, the dialog shows the project's threads to choose from and a button that hands the file and the thread to your assistant as a request; the dialog never places one itself. Ask the Ask box "make Acme a heading" or "give Pricing its own papers" and it answers with a button that opens the same dialog with the plan. The box never runs the change: only your click on *Move them* does.
-
-A file moves only when exactly one thread note names it, and no other note of the project does. Files that no thread names, or that two notes name, are listed for you to place: Garrick does not guess a thread for them. A file on a share keeps its destination: only the local path in its ledger row changes, so `drift.py` keeps watching it. Links to a moved file follow it. Every move stays inside the project, so inside its zone. Nothing runs on an update: a project that exists keeps its layout and its files until you ask.
+A Split moves a file only when exactly one thread note names it, and no other note of the project does. Files that no thread names, or that two notes name, are listed for you to place: Garrick does not guess a thread for them. A file on a share keeps its destination: only the local path in its ledger row changes, so `drift.py` keeps watching it. Links to a moved file follow it. Every move stays inside the project, so inside its zone. Nothing runs on an update: a project that exists keeps its layout and its files until you ask.
 
 The script checks names before it creates anything: letters and digits, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, nothing a folder could not hold or the spoken grammar already uses, and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken. A name that does not say how it is said, such as "Q4 Planning", is made and then asked about, so its note can carry the form to hear for it in `spoken:`; `--spoken "fourth quarter planning"` gives it straight away.
 
@@ -145,7 +140,7 @@ python3 System/tools/scaffold.py label --zone Work --project Acme --add birch --
 python3 System/tools/scaffold.py label --zone Work --project Acme --thread Pricing --remove birch --yes
 ```
 
-Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill asks the one question the script takes as a flag, one piece of work or a heading, and for a thread in a piece of work whether it keeps its own papers; a request that cannot be asked takes the defaults, one piece of work and the project's papers. It resolves the request, runs the script and commits for you. Naming a project in a request follows the same split: for a piece of work its name alone is enough, and "open Acme" opens the hub's resume point and lists its threads; for a heading its name does not say which piece of work is meant, so "open Marketing" asks which thread, naming them, and a question about a heading searches every thread under it and says which thread each part of the answer comes from. If the party doesn't exist yet, it offers to add a row to `System/context.md` first. A party is an index: a wall belongs to a zone, so work that must stay apart goes in separate walled zones. On the status page, *New project* needs only a name; the party (or *New party…*, which adds it and commits its row on its own first) and the first thread (none unless one is named) are optional.
+Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill asks the one question the script takes as a flag, "One job or separate jobs?", for a new project, and nothing about papers for a new thread; a request that cannot be asked takes the default, one job. It resolves the request, runs the script and commits for you. Naming a project in a request follows the same split: for one job its name alone is enough, and "open Acme" opens the hub's resume point and lists its threads; for separate jobs its name does not say which job is meant, so "open Marketing" asks which thread, naming them, and a question about it searches every thread under it and says which thread each part of the answer comes from. If the party doesn't exist yet, it offers to add a row to `System/context.md` first. A party is an index: a wall belongs to a zone, so work that must stay apart goes in separate walled zones. On the status page, *New project* needs only a name; the party (or *New party…*, which adds it and commits its row on its own first) and the first thread (none unless one is named) are optional.
 
 ## Another zone
 
@@ -238,7 +233,7 @@ The check covers:
 - a zone or the Wikis repository whose own hooks git skips, because `core.hooksPath` points somewhere else (a warning);
 - names that will not work as names, a name that does not say how it is said and whose note gives no `spoken:` form (a warning), or siblings that sound alike;
 - project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (active, parked or done), or a `created` or `updated` date not written YYYY-MM-DD; a hub or thread note renamed `-v2`;
-- a hub that does not link one of its threads, or lists a finished one outside `## Finished`, and a thread-first project with a folder outside its threads (warnings);
+- a hub that does not link one of its threads, or lists a finished one outside `## Finished`, a project of separate jobs with a folder outside its threads, and a project that is one job with a thread keeping `Sources/` or `Deliverables/` of its own (warnings; `scaffold.py layout --join` moves the last one's papers up);
 - deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);
 - a deliverable of an anonymous project that names another party of its zone, one of their people, or a name its hub keeps out, Word, Excel and PowerPoint files included (a warning);
 - a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere (a file in code checked out inside the project counts as there, and a path under `System/generated/` is not checked), or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
@@ -266,7 +261,7 @@ A hub's frontmatter can change what is checked in its project:
 
 | Key | Means |
 |---|---|
-| `layout: thread-first` | The project is a heading over separate pieces of work: everything sits inside the threads, each with its own `Sources/` and `Deliverables/`; nothing but `Threads/` at the project's top, and no resume point in the hub. `scaffold.py project --heading` makes one |
+| `layout: thread-first` | The project is separate jobs: everything sits inside the threads, each with its own `Sources/` and `Deliverables/`; nothing but `Threads/` at the project's top, and no resume point in the hub. `scaffold.py project --separate` makes one, and `scaffold.py layout --split` or `--join` switches a project |
 | `anonymous: true` | The project makes things that name nobody: its deliverables are read for the other parties of its zone, their people, aliases and domains. A list, such as `anonymous: [Cedar Labs]`, adds names to keep out |
 | `share: <folder>` | The project's files also live on a shared drive. A path in its resume points that is not here is not reported |
 

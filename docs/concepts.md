@@ -20,11 +20,11 @@ A side of your life or work, such as Work or Personal, in `Zones/<Zone>/`. Each 
 
 ### Project
 
-One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. A project is one of two kinds. One piece of work keeps its resume point in its hub, and its threads, if any, sit beside it. A heading over separate pieces of work has no resume point and no papers of its own: each thread under it is a piece of work. A project needs no thread to start with. `scaffold.py project` makes either kind: see [Your first project](commands.md#your-first-project).
+One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. A project is one job or separate jobs. In one job, the hub keeps the resume point and every thread uses the project's papers. In separate jobs, the hub has no resume point and no papers of its own: each thread has its own resume point and papers. A project needs no thread to start with. `scaffold.py project` makes either kind, and `scaffold.py layout` switches it later, both ways: see [Your first project](commands.md#your-first-project).
 
 ### Thread
 
-One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. A thread divides a project's work, or, under a heading, is a piece of work of its own. It either uses its project's `Sources/` and `Deliverables/`, or keeps its own: a thread's own papers are storage, not a wall, and the check and the ledger read them whatever the layout. Every thread has one resume point, in its note. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
+One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. A thread divides a project's work, or, in a project of separate jobs, is a job of its own. The project decides where its papers are: in one job a thread uses the project's `Sources/` and `Deliverables/`, and in separate jobs it keeps its own. A thread's own papers are storage, not a wall, and the check and the ledger read them whatever the layout. Every thread has one resume point, in its note. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
 
 ### Piece of work
 
@@ -36,7 +36,7 @@ The `spoken:` line in a hub or thread note's frontmatter: how a name that does n
 
 ### Hub note
 
-The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. A project that is one piece of work also keeps its resume point here, in a `### Resume here` block, for as long as the main line goes on, and its threads sit beside it. *Your work* and the briefings read the hub's block next to each thread's. The owner closes it as an `### Outcome` when the main line ends. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
+The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. A project that is one job also keeps its resume point here, in a `### Resume here` block, for as long as the main line goes on, and its threads sit beside it. *Your work* and the briefings read the hub's block next to each thread's. The owner closes it as an `### Outcome` when the main line ends. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
 
 ## Picking a thread back up
 
@@ -301,7 +301,7 @@ When you changed a file that Garrick has changed too, the update leaves yours as
 
 ### Deliverable
 
-Anything made for someone else: a deck, a workbook, a brief, a draft. It lives in a project's `Deliverables/`, or a thread's own in a project whose hub says `layout: thread-first`.
+Anything made for someone else: a deck, a workbook, a brief, a draft. It lives in a project's `Deliverables/`, or a thread's own in a project of separate jobs, whose hub says `layout: thread-first`.
 
 ### The `YYMMDD -` prefix
 

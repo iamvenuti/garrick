@@ -146,10 +146,10 @@ process.stdout.write(JSON.stringify(ctx.out));
 """
 
 PROJECT = {"n": "Harbour", "kl": "project", "z": "Work", "p": "", "t": ["acme"], "d": 1, "s": 0, "h": 1, "hp": 0, "tn": 3, "pp": ["Work", "Harbour"],
-           "mg": ["Work", "Harbour", "", [], [], ["Quay"], ["heading"]], "dk": ["Work", "Harbour", ""], "live": "idle", "f": "/w/Harbour",
+           "mg": ["Work", "Harbour", "", [], [], ["Quay"], ["split"]], "dk": ["Work", "Harbour", ""], "live": "idle", "f": "/w/Harbour",
            "u": "file:///w/Harbour/Harbour.md", "w": "Harbour"}
 THREAD = {"n": "Quay", "kl": "thread", "z": "Work", "p": "Harbour", "t": ["acme"], "d": 3, "s": 0, "r": 1, "rd": 3, "pa": ["Work", "Harbour/Threads/Quay/Quay.md"],
-          "mg": ["Work", "Harbour", "Quay", [], [], [], ["own"]], "u": "file:///w/Quay.md", "w": "Quay"}
+          "mg": ["Work", "Harbour", "Quay", [], [], [], []], "u": "file:///w/Quay.md", "w": "Quay"}
 
 
 class RowCard(unittest.TestCase):
@@ -172,7 +172,7 @@ class RowCard(unittest.TestCase):
     def test_a_project_reads_header_open_in_actions_then_delete(self):
         row, graph = self.run_card(PROJECT)
         self.order(row, 'class="phead"', 'class="pl pl1"', 'class="pl pl2"', 'class="gacts popen"', 'class="pmenu"', 'class="psep"', "Delete…")
-        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', "Close session", "Park</button>", 'class="psep"', 'data-manage="delete"')
+        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-split"', "Close session", "Park</button>", 'class="psep"', 'data-manage="delete"')
         self.assertTrue(row.rstrip().endswith("Delete…</button></div>"))                      # Delete is the last row
         self.assertEqual(1, row.count('data-manage="delete"'))
         self.assertIn("project · Work", graph)                                               # the graph's panel keeps kind, zone and project
@@ -207,12 +207,12 @@ class RowCard(unittest.TestCase):
 
     def test_every_verb_and_handler_is_kept(self):
         row, _ = self.run_card(PROJECT)
-        for need in ('data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-heading"', 'data-manage="delete"', 'data-mg="',
+        for need in ('data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-split"', 'data-manage="delete"', 'data-mg="',
                      '"verb":"close"' if False else 'data-act=', 'data-expect="none:/w/Harbour"', 'data-expect="parked:Work/Harbour/Harbour.md"'):
             self.assertIn(need, row)
         thread, _ = self.run_card(THREAD)
         self.assertIn('data-manage="move"', thread)
-        self.assertIn('data-manage="layout-own"', thread)
+        self.assertNotIn('data-manage="layout', thread)               # a thread has no layout of its own (#632)
         self.assertNotIn('data-manage="new-thread"', thread)
         self.assertNotIn("Close session", self.run_card(dict(PROJECT, live=None, dk=None))[0])      # only with a session open
 

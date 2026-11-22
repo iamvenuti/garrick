@@ -1084,30 +1084,25 @@ def _extra_module(root: Path, name: str):
     return _MODS[key]
 
 
+def _records(folder: Path) -> list:
+    """The records of one project folder, from the one reader of the piece of work (System/tools/work.py)."""
+    import garrick_lib
+    return garrick_lib.work.project_pieces(folder.parent.parent.parent, folder.parent, folder)
+
+
 def _live_threads(folder: Path, only_active: bool = False) -> List[str]:
     """The thread folders of a project that have a note. With `only_active`, those whose status is `active`: parked and
     done threads are not live, and a question that settles to the one live thread counts none of them."""
-    out = []
-    threads = folder / "Threads"
-    if threads.is_dir():
-        for t in sorted(p for p in threads.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
-            note = t / (t.name + ".md")
-            if note.is_file() and (not only_active or str(parse_frontmatter(note).get("status") or "").strip().lower() == "active"):
-                out.append(t.name)
-    return out
+    return [r.thread for r in _records(folder) if r.thread and (not only_active or r.status == "active")]
 
 
 def _hub_kind(folder: Path) -> str:
     """What a project's hub says about the project: `heading` (layout thread-first: a heading over separate pieces
     of work), `resume` (a piece of work whose hub keeps its own `### Resume here`), or `plain`."""
-    hub = folder / (folder.name + ".md")
-    try:
-        text = hub.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return "plain"
-    if str(parse_frontmatter(hub).get("layout") or "").strip().lower() == "thread-first":
-        return "heading"
-    return "resume" if re.search(r"(?mi)^###[ \t]+Resume here[ \t]*$", text) else "plain"
+    for r in _records(folder):
+        if r.thread is None:
+            return "heading" if r.kind == "heading" else "resume" if r.keeps_resume else "plain"
+    return "plain"
 
 
 def _said(project: str, thread: Optional[str]) -> str:

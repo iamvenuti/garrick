@@ -207,15 +207,17 @@ class Shadow(unittest.TestCase):
         self.assertIn("Mixed/Mixed.md", got)
         self.assertNotIn("Done/Done.md", got)
 
-    def test_intake_agrees_except_the_named(self):
-        old = {p.name: self.it._hub_kind(p) for p in self.zone.iterdir() if p.is_dir() and (p / (p.name + ".md")).is_file()}
-        new = intake_view(self.records)
-        # A hub that is neither own nor beside has no record, and its kind is plain in either.
-        for project in old:
-            new.setdefault(project, "plain")
-        self.assertEqual({p for p in old if old[p] != new[p]}, {"Spaced"})
-        self.assertEqual(old["Spaced"], "resume")
-        self.assertEqual(new["Spaced"], "plain")
+    def test_intake_reads_the_reader(self):
+        """intake now takes a hub's kind from the reader. Before, `###   Resume here` (extra spaces) was a resume
+        block to intake alone: Spaced is plain now, as it is to every other reader."""
+        got = {p.name: self.it._hub_kind(p) for p in self.zone.iterdir() if p.is_dir() and (p / (p.name + ".md")).is_file()}
+        self.assertEqual(got["Spaced"], "plain")
+        self.assertEqual({k: got[k] for k in ("Heading", "HeadingBlock", "HeadingThreads")}, {k: "heading" for k in ("Heading", "HeadingBlock", "HeadingThreads")})
+        self.assertEqual({k for k, v in got.items() if v == "resume"}, {"Done", "EmptyDir", "Mixed", "Parked", "Single", "Untyped"})
+        self.assertEqual(self.it._live_threads(self.zone / "Mixed"), ["Delta", "Epsilon"])
+        self.assertEqual(self.it._live_threads(self.zone / "Mixed", True), ["Delta"])
+        self.assertEqual(self.it._live_threads(self.zone / "Ragged"), ["Real"])
+        self.assertEqual(self.it._live_threads(self.zone / "Single"), [])
 
     def test_work_name_agrees(self):
         new = work_name_view(self.records)

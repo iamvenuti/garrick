@@ -85,7 +85,7 @@ class ActionCase(unittest.TestCase):
         # for to know they are in one. Nothing here uses the thread template.
         (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for tool in ("scaffold.py", "garrick_lib.py", "operations.py"):
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "work.py"):
             shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook

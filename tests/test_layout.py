@@ -730,6 +730,14 @@ class TestThePage(LayoutCase):
             self.act(verb="new-project", zone="Work", name="Cedar", heading="maybe")
         self.assertFalse((self.work / "Cedar").exists())
 
+    def test_the_separate_option_of_a_command_line_makes_separate_jobs(self):
+        args = pa.command_parser().parse_args(["new-project", "--zone", "Work", "--name", "Cedar", "--separate", "yes"])
+        req = pa.session_request(self.root, args)
+        self.assertNotIn("separate", req)
+        self.assertIn(req["heading"], ("yes", True))
+        self.act(**req)
+        self.assertIn("layout: thread-first", self.hub_text("Cedar"))
+
     def test_a_thread_in_one_job_uses_the_projects_papers_and_a_papers_choice_is_refused(self):
         self.act(verb="new-project", zone="Work", name="Acme")
         self.act(verb="new-thread", zone="Work", project="Acme", name="Pricing")

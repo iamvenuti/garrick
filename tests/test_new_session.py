@@ -276,6 +276,7 @@ default: print("?")
     def test_a_link_must_have_its_keys_path_and_query_names_only(self):
         for text in ("claude://code/other?folder=%2FWs&q=x",                  # another route
                      "claude://code/new/more?folder=%2FWs&q=x",
+                     "claude://code/new/?folder=%2FWs&q=x",                   # a trailing slash
                      "claude://code/new?folder=%2FWs",                        # a name missing
                      "claude://code/new?folder=%2FWs&q=x&extra=1",            # a name added
                      "claude://code/new?folder=%2FWs&folder=%2FOther&q=x",    # a name twice

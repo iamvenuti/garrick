@@ -44,6 +44,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 import time
 import types
@@ -477,8 +478,28 @@ def deny_reply(reason, decision):
 # ------------------------------------------------------------------ connector results
 
 
+def mode_of(lib, root):
+    """The connector filter's mode: `enforce` or `warn`. A settings file that is there and cannot be read is `enforce`:
+    the filter cannot tell it was not On, and a result it passed unchecked cannot be taken back. The read checks keep
+    `read_guard_mode()`, which reads such a file as `warn`, as before."""
+    try:
+        if not lib.settings_readable(root):
+            return "enforce"
+    except Exception:
+        return "enforce"
+    return lib.read_guard_mode(root)
+
+
 def note_tool(folder, tool):
-    """Remember the name of a connector tool the session used, and nothing else about the call."""
+    """Remember the name of a connector tool the session used, and nothing else about the call. The note is a
+    convenience for the check: a folder that cannot be written never stops a result being judged."""
+    try:
+        _note_tool(folder, tool)
+    except OSError:
+        pass
+
+
+def _note_tool(folder, tool):
     path = os.path.join(folder, "tools-seen.json")
     try:
         with open(path, encoding="utf-8") as fh:
@@ -748,6 +769,80 @@ def judge_block(lib, ctx, scope, suggest, block, error):
     return ([] if text is None else [dict(block, text=text)]), gone
 
 
+def removal_reply():
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                   "updatedMCPToolOutput": [{"type": "text", "text": WALL_REFUSAL}]}}
+
+
+def cannot_decide(folder, tool, zone, mode):
+    """The filter cannot read the Parties table (or the intake script that matches an address), so it cannot tell which
+    result belongs behind which wall. On: every result of the tool goes, and the wall sentence stands alone, once.
+    Watch only: nothing is removed, and one line says it could not decide. The line names no path, party, title or
+    count. A scheduled job is logged and never refused, as everywhere else."""
+    log(folder, tool, "undecided", zone, tool, "no-parties")
+    if mode != "enforce" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    return removal_reply()
+
+
+def failed_closed(event):
+    """What the hook says when it failed on a connector result: under On, the result is removed, since a result that
+    could not be judged is not one to pass. None for anything else, which goes through as it always did."""
+    if event.get("hook_event_name") != "PostToolUse" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    tool = str(event.get("tool_name") or "")
+    if not tool.startswith("mcp__") or event.get("tool_response") is None:
+        return None
+    root, lib = open_workspace(event)
+    if root is None:
+        return None
+    if mode_of(lib, root) != "enforce" or not lib.tool_matches(lib.connector_patterns(root), tool):
+        return None
+    try:
+        scope = session_scope(lib, root, event, str(lib.read_guard_dir()))
+    except Exception:
+        scope = None
+    if scope is not None and scope.get("kind") == "root":
+        return None
+    return removal_reply()
+
+
+def failed_closed_plain(event):
+    """The same answer as `failed_closed`, for when Garrick's own tools cannot be loaded (`garrick_lib` fails to import, say,
+    after a half-applied update). It needs only the standard library: the settings file read as plain JSON from the
+    workspace root `zone_guard` finds. A file that is there and does not read counts as On. A session opened at the root and
+    a tool on neither the settings' list nor the default one go through. With no workspace root found, nothing can be known
+    and the result goes through."""
+    import fnmatch
+    if event.get("hook_event_name") != "PostToolUse" or os.environ.get("GARRICK_HEADLESS") == "1":
+        return None
+    tool = str(event.get("tool_name") or "")
+    if not tool.startswith("mcp__") or event.get("tool_response") is None:
+        return None
+    home = home_of(event)
+    root = zg.workspace_root(home) if home else None
+    if root is None or os.path.realpath(root) == home:
+        return None
+    patterns = ["mcp__*Gmail*", "mcp__*Calendar*"]
+    try:
+        with open(os.path.join(root, "System", "garrick-settings.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        if data.get("read-guard") != "enforce":
+            return None
+        listed = data.get("connector-tools")
+        if isinstance(listed, list) and listed and all(isinstance(p, str) and p.strip() for p in listed):
+            patterns = [p.strip() for p in listed]
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        pass                                                  # there and unreadable: On, with the default list
+    if any(fnmatch.fnmatchcase(tool.lower(), p.lower()) for p in patterns):
+        return removal_reply()
+    return None
+
+
 def post(event, lib, root, ctx, scope, folder):
     tool = str(event.get("tool_name") or "")
     if not tool.startswith("mcp__"):
@@ -758,9 +853,14 @@ def post(event, lib, root, ctx, scope, folder):
     response = event.get("tool_response")
     if response is None:
         return None
-    mode = lib.read_guard_mode(root)
+    mode = mode_of(lib, root)
     zone = scope["zone"] or scope["kind"]
-    suggest = load_suggest(root)
+    if lib.connector_filter_problem(root, ctx):
+        return cannot_decide(folder, tool, zone, mode)
+    try:
+        suggest = load_suggest(root)
+    except Exception:
+        return cannot_decide(folder, tool, zone, mode)
     blocks = blocks_of(response)
     error = is_error(event, response)
     extra = response.get("structuredContent") if isinstance(response, dict) else None
@@ -802,7 +902,7 @@ def handle(event):
         return None
     scope = session_scope(lib, root, event, folder)
     if scope is None:
-        return None
+        return failed_closed(event) if stage == "PostToolUse" else None
     if stage == "PostToolUse":
         # The tools seen are noted for every session, the root's too, so the check can name one on no list.
         return post(event, lib, root, lib.load_context(root), scope, folder)
@@ -831,6 +931,15 @@ def main():
             log(str(garrick_lib.read_guard_dir()), event.get("tool_name") or event.get("hook_event_name"), "error", "", "error")
         except Exception:
             pass
+        try:
+            reply = failed_closed(event)
+        except Exception:
+            try:
+                reply = failed_closed_plain(event)
+            except Exception:
+                reply = None
+        if reply:
+            print(json.dumps(reply, ensure_ascii=False))
         return 0
     if reply:
         print(json.dumps(reply, ensure_ascii=False))
@@ -872,26 +981,122 @@ def registered(path, wants):
     return problems
 
 
+def assistants(home):
+    """Each assistant with a folder in `home`: (name, folder, settings file, what the read guard needs there). `wants` is
+    [(event, matcher, [tools the matcher must cover])]; `check_lines()` reads it and `register()` writes it."""
+    return (("Claude Code", os.path.join(home, ".claude"), "settings.json",
+             [("SessionStart", "", ["startup"]), ("PreToolUse", "|".join(READ_TOOLS + ("Bash",)), list(READ_TOOLS) + ["Bash"]),
+              ("PostToolUse", "mcp__.*", ["mcp__claude_ai_Gmail__search_threads"])]),
+            ("Codex", os.path.join(home, ".codex"), "hooks.json",
+             [("SessionStart", "", ["startup"]), ("PreToolUse", "Bash", ["Bash"])]))
+
+
 def check_lines(home=None):
     """(lines, ok) for the read guard: one line for each assistant found. The zone guard's --check prints these
     beside its own; they never change its exit code, since the read guard is optional."""
     home = home or os.path.expanduser("~")
-    places = (("Claude Code", os.path.join(home, ".claude"), "settings.json",
-               [("SessionStart", ["startup"]), ("PreToolUse", list(READ_TOOLS) + ["Bash"]),
-                ("PostToolUse", ["mcp__claude_ai_Gmail__search_threads"])]),
-              ("Codex", os.path.join(home, ".codex"), "hooks.json",
-               [("SessionStart", ["startup"]), ("PreToolUse", ["Bash"])]))
     lines, ok = [], True
-    for name, folder, settings, wants in places:
+    for name, folder, settings, wants in assistants(home):
         if not os.path.isdir(folder):
             continue
-        problems = registered(os.path.join(folder, settings), wants)
+        problems = registered(os.path.join(folder, settings), [(e, tools) for e, _, tools in wants])
         if problems:
             ok = False
             lines.append("%s: the read guard is not registered. %s." % (name, "; ".join(problems)))
         else:
-            lines.append("%s: the read guard is registered on %s." % (name, " and ".join(e for e, _ in wants)))
+            lines.append("%s: the read guard is registered on %s." % (name, " and ".join(e for e, _, _ in wants)))
     return lines, ok
+
+
+class RegisterError(Exception):
+    """Why the hooks could not be registered or taken out; `kind` says which of the ways it went wrong."""
+
+    def __init__(self, kind, text):
+        super().__init__(text)
+        self.kind = kind
+
+
+def _runs_us(hook):
+    command = hook.get("command", "") if isinstance(hook, dict) else ""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    return any(w.endswith("read_guard.py") for w in words)
+
+
+def register(script, home=None, install=True):
+    """Put the read guard in each assistant's hooks, or take it out (`install` false), the way extras/hooks/README.md
+    says to by hand: for each assistant with a folder in `home`, the events and matchers of `assistants()`, run with
+    `python3 <script>`. Every other hook is kept as it is, and an entry of ours that points anywhere is replaced.
+    A settings file that does not read is never changed. Returns the assistants it wrote to, by name. Raises
+    RegisterError: `none` when no assistant has a folder, `script` when the hook file is not there, `read` when a
+    settings file does not read or its hooks are not in the shape the assistant keeps them, `write` when one cannot be written."""
+    home = home or os.path.expanduser("~")
+    found = [a for a in assistants(home) if os.path.isdir(a[1])]
+    if not found:
+        raise RegisterError("none", "no Claude Code or Codex folder in %s" % home)
+    if install and not os.path.isfile(script):
+        raise RegisterError("script", "%s is not there" % script)
+    command = "python3 %s" % shlex.quote(script)
+    plans = []
+    for name, folder, settings, wants in found:
+        path = os.path.join(folder, settings)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            if not install:
+                continue                # nothing to take out of a file that is not there
+            data = {}
+        except (OSError, ValueError) as exc:
+            raise RegisterError("read", "%s does not read: %s" % (path, exc))
+        if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+            raise RegisterError("read", "%s has a hooks block that is not an object" % path)
+        table = data.setdefault("hooks", {})
+        for event, matcher, _ in wants:
+            entries = table.get(event, [])
+            if not isinstance(entries, list):
+                raise RegisterError("read", "%s has hooks.%s that is not a list" % (path, event))
+            keep = []
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                    rest = [h for h in entry["hooks"] if not _runs_us(h)]
+                    if len(rest) != len(entry["hooks"]):
+                        if rest:
+                            keep.append(dict(entry, hooks=rest))
+                        continue
+                keep.append(entry)
+            if install:
+                entry = {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
+                if matcher:
+                    entry = dict(entry, matcher=matcher)
+                keep.append(entry)
+            if keep:
+                table[event] = keep
+            else:
+                table.pop(event, None)
+        if not table:
+            data.pop("hooks", None)
+        plans.append((name, path, data))
+    done = []
+    for name, path, data in plans:
+        try:
+            target = os.path.realpath(path)             # a settings file linked into a dotfiles folder stays a link
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            temporary = "%s.%d.tmp" % (target, os.getpid())
+            with open(temporary, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+                fh.write("\n")
+            try:
+                shutil.copymode(target, temporary)      # and keeps the mode it had
+            except OSError:
+                pass
+            os.replace(temporary, target)
+        except OSError as exc:
+            raise RegisterError("write", "%s could not be written: %s" % (path, exc))
+        done.append(name)
+    return done
 
 
 def check():

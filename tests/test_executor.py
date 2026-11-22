@@ -318,10 +318,11 @@ class TestTheCallerIsNamed(ExecutorCase):
         self.session("park", "--zone", "Work", "--project", "Acme", "--thread", "Freight")
         self.session("wake", "--zone", "Work", "--project", "Acme", "--thread", "Pricing")           # refused: active already
         with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "memory-preview"}))), \
-                contextlib.redirect_stdout(io.StringIO()):
+                mock.patch.object(pa, "page_route", return_value=True), contextlib.redirect_stdout(io.StringIO()):
             pa.main(["--workspace", str(self.root), "--via", "page"])                                                  # a read
         with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "wake", "zone": "Work", "project": "Acme",
                                                               "thread": "Freight"}))), \
+                mock.patch.object(pa, "page_route", return_value=True), \
                 mock.patch.object(self.lib, "detach", return_value=True), contextlib.redirect_stdout(io.StringIO()):
             pa.main(["--workspace", str(self.root), "--via", "page"])                                                  # as the app sends it
         lines = self.log()

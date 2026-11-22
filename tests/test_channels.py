@@ -1029,6 +1029,100 @@ class TestBoundedRunFixes(EngineCase):
                 self.assertTrue(seen["message"] and "/" not in seen["message"] and "Pricing" not in seen["message"], seen)
 
 
+class TestTheBinaryIsFound(EngineCase):
+    """#628: the engine finds `claude` as the Ask process does, and a command that cannot start is a plain sentence. The binary
+    is a stand-in in a temporary home folder: nothing here runs, or looks for, a real assistant."""
+
+    SAID = "The background assistant could not be started, so this goes to a visible one."
+
+    def setUp(self):
+        super().setUp()
+        self.rel = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        self.home = self.root.parent / "home"
+        (self.home / ".local" / "bin").mkdir(parents=True)
+        self.fake = self.home / ".local" / "bin" / "claude"
+        self.fake.write_bytes(b"#!/usr/bin/env node\n")       # a node script is the CLI itself, never a wrapper
+        self.fake.chmod(0o755)
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}        # what launchd gives an app
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_CLAUDE", None)
+        self.channels._HANDOFF = None
+
+    def nowhere(self):
+        self.channels.claude_path()                        # loads the shared resolver once
+        self.fake.unlink()
+        patch = mock.patch.object(self.channels._HANDOFF, "CLAUDE_PLACES", ())
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_command_is_found_in_the_users_local_bin_with_a_bare_path(self):
+        self.assertEqual(str(self.fake.resolve()), self.channels.claude_path())
+        self.assertEqual(str(self.fake.resolve()), self.channels.binary("claude"))
+
+    def test_the_engine_builds_its_command_from_that_resolver(self):
+        planned = {"prompt": "p", "tier": "haiku", "effort": "low"}
+        cmd, _ = self.engine.build(self.root, "ask", "Work", planned, "act", {"id": "x"}, self.root.parent / "eng", self.cap_ok)
+        self.assertEqual(str(self.fake.resolve()), cmd[0])
+
+    def test_with_no_command_anywhere_a_bounded_run_is_unavailable_and_touches_nothing(self):
+        self.nowhere()
+        before = git(self.work, "rev-parse", "HEAD").strip()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", None, self.cap_ok)
+        self.assertEqual((False, True), (got["ok"], got.get("unavailable")))
+        self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
+        self.assertNotIn("exit", got["say"])
+
+    def test_a_cached_ok_does_not_stand_where_the_command_cannot_be_found(self):
+        self.channels.capability(self.root, probe=lambda: HELP_OK, guard=True)
+        self.assertTrue(self.channels.capability(self.root)["ok"])
+        self.nowhere()
+        cap = self.channels.capability(self.root)
+        self.assertFalse(cap["ok"])
+        self.assertIn("binary", cap["failed"])
+        self.assertEqual("read", self.channels.effective(self.root, "ask", cap)["autonomy"])
+
+    def test_a_kept_no_from_before_the_command_was_found_is_asked_again(self):
+        path = self.channels.jobs_dir() / "channels-capability.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"ok": False, "failed": ["resume"], "said": ["x"], "assistant": "claude"}), encoding="utf-8")
+        with mock.patch.object(self.channels, "probe_help", lambda *a: HELP_OK), mock.patch.object(self.channels, "guard_works", lambda ws: True):
+            cap = self.channels.capability(self.root)
+        self.assertTrue(cap["ok"])
+        self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["ok"])
+
+    def test_a_check_with_no_command_to_ask_is_not_kept(self):
+        self.nowhere()
+        path = self.channels.jobs_dir() / "channels-capability.json"
+        if path.exists():
+            path.unlink()
+        with mock.patch.object(self.channels, "guard_works", lambda ws: True):
+            cap = self.channels.capability(self.root)
+        self.assertFalse(cap["ok"])
+        self.assertFalse(path.exists())
+
+    def test_a_command_that_exits_126_or_127_is_the_plain_sentence_and_nothing_is_kept(self):
+        for code in (126, 127):
+            before = git(self.work, "rev-parse", "HEAD").strip()
+            got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", lambda *a, c=code: (c, {}), self.cap_ok)
+            self.assertEqual((False, True, self.SAID), (got["ok"], got.get("unavailable"), got["say"]), code)
+            self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
+            self.assertEqual("", git(self.work, "status", "--porcelain", "--", "Acme Review").strip())
+
+    def test_a_missing_file_when_the_command_starts_is_the_same_sentence(self):
+        with mock.patch.object(self.engine.agent_lib(), "run_prepared", side_effect=FileNotFoundError("claude")):
+            got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.engine.default_runner, self.cap_ok)
+        self.assertEqual((False, True, self.SAID), (got["ok"], got.get("unavailable"), got["say"]))
+
+    def test_the_ask_process_and_the_engine_share_one_resolver(self):
+        ask_src = (STATUS / "ask.py").read_text(encoding="utf-8")
+        self.assertIn("handoff().find_claude()", ask_src)
+        engine_src = (STATUS / "engine.py").read_text(encoding="utf-8")
+        self.assertNotIn('shutil.which("claude")', engine_src)
+        self.assertGreaterEqual(engine_src.count("channels.claude_path()"), 3)      # build(), the held action, and the check before a run
+
+
 class TestASendIsHeld(EngineCase):
     def asking(self, cmd, env):
         """The assistant, told by a record to forward something: the only way out it has is hold."""

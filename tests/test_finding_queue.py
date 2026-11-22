@@ -1443,6 +1443,47 @@ class TestHandoffMemoryAndBoundedAnswers(unittest.TestCase):
             self.assertEqual(0, done.returncode, done.stderr)
 
 
+class TestPagesOutsideAZoneOrWiki(unittest.TestCase):
+    """#623: an answer is offered only where its verb takes it. A page under System/ is in no zone or wiki."""
+
+    SYSTEM = "System/Setup Notes/Setup Notes.md"
+    PLAIN = ("note-long", "resume-long", "todo-long", "meeting-long")
+
+    def asked(self, plain, path):
+        it = KINDS[plain]
+        return fq.question(dict(it, path=path), "Zones/Work")
+
+    def test_a_resume_long_page_under_system_offers_shorten_with_its_phrase_and_no_request_and_no_keep(self):
+        q = self.asked("resume-long", self.SYSTEM)
+        ids = [a["id"] for a in q["answers"]]
+        self.assertEqual(["shorten", "later"], ids)
+        shorten = q["answers"][0]
+        self.assertEqual("handoff", shorten["action"])
+        self.assertIn(self.SYSTEM, shorten["phrase"])
+        self.assertNotIn("req", shorten)
+        self.assertEqual("shorten", q["recommended"])
+        data = json.loads(htmllib.unescape(re.search(r'data-id="shorten" data-fa="([^"]+)"', fq.question_html(q)).group(1)))
+        self.assertNotIn("req", data)
+
+    def test_no_answer_of_any_plain_kind_reaches_a_verb_that_refuses_its_path(self):
+        for plain in self.PLAIN + ("fix-failed",):
+            it = KINDS[plain] if plain in KINDS else item("mechanical", "x", self.SYSTEM, "%(p)s: fixed (held: refused by the wall check)")
+            q = fq.question(dict(it, path=self.SYSTEM), "Zones/Work")
+            for a in q["answers"]:
+                self.assertNotEqual("keep", a["action"], plain)
+                if a["id"] in fq.BOUNDED.get(plain, ()):
+                    self.assertNotIn("req", a, plain)
+                    self.assertTrue(a["phrase"], plain)
+                req = a.get("req") or {}
+                self.assertNotIn(req.get("answer"), ("keep", "shorten", "fix-now", "take-out"), plain)
+
+    def test_the_same_finding_on_a_zone_page_behaves_as_before(self):
+        q = fq.question(KINDS["resume-long"], "Zones/Work")
+        self.assertEqual(["shorten", "keep", "later"], [a["id"] for a in q["answers"]])
+        self.assertEqual({"verb": "finding", "kind": "resume-long", "path": q["path"], "answer": "shorten"}, q["answers"][0]["req"])
+        self.assertEqual("keep", q["answers"][1]["req"]["answer"])
+
+
 class TestRefusedAnswerOnTheQueue(unittest.TestCase):
     """#540: a refused answer is disabled, Skip for now moves on, and a reload keeps neither."""
 

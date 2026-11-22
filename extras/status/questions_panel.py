@@ -193,7 +193,7 @@ def read_decision(ws: Path, lib, rel: str, link: Callable) -> Optional[dict]:
             "href": link(path)}
 
 
-def build(ws: Path, C: Optional[dict], today: dt.date, link: Callable) -> Optional[dict]:
+def build(ws: Path, C: Optional[dict], today: dt.date, link: Callable, collect: Optional[list] = None) -> Optional[dict]:
     """Everything the Context card asks of the wikis, or None where the workspace has
     nothing to build it from (no garrick_lib that reads the zones, or no
     zone)."""
@@ -249,6 +249,8 @@ def build(ws: Path, C: Optional[dict], today: dt.date, link: Callable) -> Option
             if wiki == "Knowledge":
                 if q["status"] == "answered":
                     answered_k += 1
+                    if collect is not None:
+                        collect.append(("Knowledge", "Knowledge", rel, q["asked"]))
                 elif q["shown"]:
                     knowledge.append(q)
                 continue
@@ -257,6 +259,8 @@ def build(ws: Path, C: Optional[dict], today: dt.date, link: Callable) -> Option
                     continue
                 if q["status"] == "answered":
                     buckets[key]["answered"] += 1
+                    if collect is not None:
+                        collect.append((key, wiki, rel, q["asked"]))     # the nightly run works them in one at a time (#629)
                 elif q["shown"]:
                     buckets[key]["questions"].append(q)
     # A decision page is placed as a question is: by its zone, through the view's one test.

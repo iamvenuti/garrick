@@ -1140,7 +1140,7 @@ class TestWikiQuestions(CheckCase):
     def test_closed_and_done_are_not_statuses_the_home_reads(self):
         box = self.acme / "Threads" / "Pricing" / "Needs you"
         write(box / "a.md", wiki_question(status="closed"))
-        self.assertEqual(["`status` is 'closed'; the home reads open, answered, later"],
+        self.assertEqual(["`status` is 'closed'; Garrick reads open, answered, later"],
                          self.messages("Zones/Work/Acme Review/Threads/Pricing/Needs you/a.md"))
 
     def test_an_answered_question_with_no_raw_answer_warns(self):

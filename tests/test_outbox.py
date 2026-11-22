@@ -373,6 +373,59 @@ class Replay(OutboxCase):
         self.assertFalse(out["ok"])                                             # it waits to be applied: not held
         self.assertTrue(req.exists())
 
+    def hold(self):
+        """One held request in Work's outbox, as the server leaves it; the id."""
+        req = self.queue()
+        pa.perform(self.root, {"verb": "todo-edit", "zone": "Work", "file": "Todo.md", "key": self.key(LINE_A), "text": "Other words"},
+                   self.ops, "page")
+        outbox.replay(self.root)
+        return req.stem
+
+    def drop(self, rid, via="page"):
+        return pa.perform(self.root, {"verb": "outbox-drop", "zone": "Work", "id": rid}, self.ops, via)[0]
+
+    def test_drop_it_works_on_a_roaming_machine_and_the_page_shows_it_gone(self):
+        rid = self.hold()
+        self.role("roaming", name="laptop", server="mini")
+        self.assertEqual(1, len(outbox.held_requests(self.root, "Work")))
+        before, commits = self.todo(), self.commits(self.work)
+        out = self.drop(rid)
+        self.assertTrue(out["ok"], out)
+        self.assertEqual("Dropped. Nothing was changed in Work.", out["say"])
+        self.assertEqual([], outbox.held_requests(self.root, "Work"))
+        self.assertEqual([], self.outbox())
+        self.assertEqual((before, commits), (self.todo(), self.commits(self.work)))      # no line, no commit
+        link = status.Links(self.root)
+        lists = status.todo_list(self.root, link, dt.date(2026, 10, 5))
+        self.assertNotIn("held", [z for z in lists if z["zone"] == "Work"][0])
+        self.assertNotIn('data-outbox="drop"', status.todo_list_card(lists, dt.date(2026, 10, 5), True, {}, link, {}))
+
+    def test_on_a_roaming_machine_it_removes_only_a_held_file_and_only_for_the_page(self):
+        rid = self.hold()
+        self.role("roaming", name="laptop", server="mini")
+        self.assertFalse(self.drop(rid, via="session")["ok"])
+        self.assertTrue((self.work / "Inbox" / ".outbox" / (rid + ".held.json")).is_file())
+        self.assertFalse(self.drop("0" * 16)["ok"])                                       # no such request
+        self.assertFalse(self.drop("../../Todo")["ok"])                                   # not an id
+        pending = self.queue()
+        self.role("roaming", name="laptop", server="mini")
+        self.assertFalse(self.drop(pending.stem)["ok"])                                   # it waits to be applied: not held
+        self.assertTrue(pending.exists())
+
+    def test_roaming_still_refuses_every_other_write(self):
+        self.role("roaming", name="laptop", server="mini")
+        out = pa.perform(self.root, {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"}, self.ops, "page")[0]
+        self.assertFalse(out["ok"])
+        self.assertIn("only receives", out["say"])
+
+    def test_drop_it_on_a_server_and_on_one_computer(self):
+        rid = self.hold()                                                       # the server's own page
+        self.assertTrue(self.drop(rid)["ok"])
+        self.assertEqual([], outbox.held_requests(self.root, "Work"))
+        self.role("solo")                                                       # one computer: nothing is ever held, nothing to drop
+        self.assertFalse(self.drop(rid)["ok"])
+        self.assertEqual("no held request has that id in Work", self.drop(rid)["say"])
+
     def envelope(self, request, folder=None, **more):
         folder = folder or self.work
         rid = "a1b2c3d4e5f60718"
@@ -534,7 +587,12 @@ class Page(OutboxCase):
         self.assertNotIn("anyway", card.lower())
         self.assertIn('data-outbox="drop"', card)
         self.assertIn("laptop", card)
-        self.role("roaming", name="laptop")                                     # the laptop's page does not ask
+        self.role("roaming", name="laptop")                                     # the laptop's page asks too (#621): the held file syncs back
+        card = self.build()[1]
+        self.assertIn('data-outbox="drop"', card)
+        self.assertIn("was not changed on the server", card)
+        self.assertNotIn("was not changed here", card)
+        self.role("solo")
         self.assertNotIn('data-outbox="drop"', self.build()[1])
 
     def test_a_server_build_applies_the_outbox_and_a_roaming_build_queues_a_hand_tick(self):

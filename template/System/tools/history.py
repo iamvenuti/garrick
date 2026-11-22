@@ -504,9 +504,15 @@ def read_history(path: Path, note: Path, quarter: str) -> Tuple[List[str], List[
     lines = text.split("\n")
     shut = body_start(lines)
     fm = lines[:shut]
-    if (not fm or "type: history" not in fm or 'parent: "%s"' % note_link(note) not in fm
+    # The parent link is the note's, in the form this tool writes now or in the plain form its first version wrote (#627): the
+    # note's own name and no other. A file in the old form gets its one `parent:` line rewritten to the current form.
+    now, old = 'parent: "%s"' % note_link(note), 'parent: "[[%s]]"' % note.stem
+    if (not fm or "type: history" not in fm or (now not in fm and old not in fm)
             or any(l.startswith("status:") for l in fm)):
         raise Skip("%s exists and is not a history file of this note" % path.name)
+    if now not in fm:
+        lines = [now if (i < shut and l == old) else l for i, l in enumerate(lines)]
+        fm = lines[:shut]
     title = "# %s: history, %s" % (note.stem, quarter)
     at = next((i for i in range(shut, len(lines)) if lines[i].strip()), None)
     if at is None or lines[at] != title:

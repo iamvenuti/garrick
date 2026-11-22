@@ -239,7 +239,7 @@ DECLARED: Dict[str, Op] = {
     # reads, or opened in the app the Mac uses for a .md file.
     "note-read": _op(("path",), ("path",), "none", retry="safe"),
     "note-open": _op(("path",), ("path",), "machine"),
-    # The simple home (#175). A Needs you question answered by one of its
+    # A Needs you question (#175), listed in Waiting on you now, answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.
     # `text` is an answer in the user's own words, for a question whose
@@ -283,7 +283,6 @@ DECLARED: Dict[str, Op] = {
     # a yes making Garrick's record of the work, committed in its zone; a
     # first look written from the work's files; the record put away under the
     # zone's archive/ and brought back. None of them writes in the folder.
-    "discover": _op(("folder",), ("folder",), "workspace"),
     # `owner` answers whose work it is, where the work's zone has no party yet.
     "suggestion": _op(("id", "answer", "name", "zone", "party", "owner"), ("id", "answer", "name"), "zone", True),
     "start": _op(("zone", "file"), ("file",), "zone", True),
@@ -330,6 +329,10 @@ DECLARED: Dict[str, Op] = {
     "operations": _op((), (), "none", retry="safe"),
     # A request held in a zone's outbox, taken out of it unapplied (#612): only the app's bridge.
     "outbox-drop": _op(("zone", "id"), ("zone", "id"), "zone", retry="safe"),
+    # Settings (#621): this computer's role, written outside the workspace; and the read guard, whose hook is registered in
+    # the assistants' own settings and whose four choices are kept in the workspace's settings file. Only the app's bridge.
+    "machine-role": _op(("role", "name", "server"), (), "machine", retry="safe"),
+    "read-guard": _op(("mode", "cross", "tools", "skip"), (), "workspace", retry="safe"),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since

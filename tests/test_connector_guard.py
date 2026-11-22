@@ -187,6 +187,144 @@ class WarnOnly(FilterCase):
         self.assertEqual("unparsed", self.log_lines()[-1]["kind"])
 
 
+class BrokenIntake(FilterCase):
+    """The filter cannot read the Parties table (or the intake script that matches an address): on, it removes every
+    result of the tool and says the wall sentence once; watch only, it removes nothing and logs that it could not decide."""
+
+    HEADER_ONLY = "# Context\n\n## Parties\n\n| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n"
+
+    def break_it(self, how):
+        context = self.root / "System" / "context.md"
+        if how == "missing table":
+            context.write_text("# Context\n\n## Me\n\nJo Example.\n", encoding="utf-8")
+        elif how == "no rows":
+            context.write_text(self.HEADER_ONLY, encoding="utf-8")
+        elif how == "unreadable":
+            context.unlink()
+            context.mkdir()                     # a folder where the file should be: reading it fails
+        elif how == "no intake script":
+            skills = self.root / "System" / "skills"
+            skills.unlink()
+            (skills / "intake").mkdir(parents=True)
+        elif how == "intake does not load":
+            skills = self.root / "System" / "skills"
+            skills.unlink()
+            (skills / "intake").mkdir(parents=True)
+            (skills / "intake" / "intake.py").write_text("raise RuntimeError('broken')\n", encoding="utf-8")
+        else:
+            raise AssertionError(how)
+
+    HOWS = ("missing table", "no rows", "unreadable", "no intake script", "intake does not load")
+
+    def test_on_every_result_goes_and_the_sentence_stands_alone_once(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                self.setUp()
+                self.break_it(how)
+                got = self.replaced(self.after(response({"threads": THREADS, "resultSizeEstimate": 7})))
+                self.assertEqual([{"type": "text", "text": SENTENCE}], got)
+
+    def test_watch_only_removes_nothing_and_logs_that_it_could_not_decide(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                self.setUp()
+                self.settings(**{"connector-tools": ["mcp__fakemail__*"]})
+                self.break_it(how)
+                self.assertIsNone(self.after(response({"threads": THREADS})))
+                [line] = self.log_lines()
+                self.assertEqual(("undecided", TOOL), (line["decision"], line["tool"]))
+                self.assertEqual({"t", "tool", "decision", "zone", "id", "kind"}, set(line))
+                text = self.log_text()
+                for word in ("acme", "Acme", "birch", "Pallet", "stranger", "Hello"):
+                    self.assertNotIn(word, text.replace(line["t"], ""), word)
+
+    def test_a_scheduled_job_is_logged_and_never_refused(self):
+        self.break_it("no rows")
+        self.assertIsNone(self.after(response({"threads": THREADS}), headless=True))
+        self.assertEqual("undecided", self.log_lines()[-1]["decision"])
+
+    def test_a_session_at_the_root_is_not_filtered_and_a_tool_on_no_list_is_left_alone(self):
+        self.break_it("no rows")
+        self.assertIsNone(self.after(response({"threads": THREADS}), home=self.root))
+        self.assertIsNone(self.after(response({"threads": THREADS}), tool=OTHER))
+
+    def test_the_tools_name_alone_reaches_the_log(self):
+        self.break_it("missing table")
+        self.after(response({"threads": THREADS}))
+        self.assertEqual(["undecided"], [l["decision"] for l in self.log_lines()])
+
+
+class SettingsAndStateUnreadable(FilterCase):
+    """A settings file that is there and cannot be read is On; the guard's own folder never switches the filter off."""
+
+    def test_a_settings_file_that_does_not_parse_is_on(self):
+        (self.root / "System" / "garrick-settings.json").write_text("{not json", encoding="utf-8")
+        blocks = self.replaced(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+        data, ids = self.kept(blocks)
+        self.assertEqual(["t1", "t3"], ids)     # the same filtering On does; the tools list falls back to the default
+
+    def test_a_settings_file_that_cannot_be_read_is_on(self):
+        path = self.root / "System" / "garrick-settings.json"
+        path.unlink()
+        path.mkdir()
+        self.assertIsNotNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_no_settings_file_is_what_it_was_watch_only(self):
+        (self.root / "System" / "garrick-settings.json").unlink()
+        self.assertIsNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_the_guards_own_folder_not_being_writable_still_filters(self):
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        self.state.write_text("a file where the folder should be", encoding="utf-8")
+        data, ids = self.kept(self.replaced(self.after(response({"threads": THREADS}))))
+        self.assertEqual(["t1", "t3"], ids)
+
+    def test_a_result_the_filter_fails_on_is_removed_when_on_and_passes_when_watching(self):
+        deep = "[" * 100000 + "]" * 100000          # json.loads raises RecursionError: a fault inside the filter
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after(response(deep, as_text=False))))
+        self.settings(**{"connector-tools": ["mcp__fakemail__*"]})
+        self.assertIsNone(self.after(response(deep, as_text=False)))
+
+
+class GarricksToolsCannotLoad(FilterCase):
+    """S3: a half-applied update leaves garrick_lib broken. Under On the result is still removed, from the settings file
+    read as plain JSON; under Watch only, and with no settings file, it passes as before."""
+
+    def setUp(self):
+        super().setUp()
+        link = self.root / "System" / "tools"
+        link.unlink()
+        link.mkdir()
+        (link / "garrick_lib.py").write_text("def broken(:\n", encoding="utf-8")
+
+    def test_on_removes_the_result_of_a_listed_tool(self):
+        self.assertEqual([{"type": "text", "text": SENTENCE}], self.replaced(self.after(response({"threads": THREADS}))))
+
+    def test_a_tool_on_no_list_goes_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), tool=OTHER))
+
+    def test_the_default_list_holds_when_the_settings_name_none(self):
+        self.settings(**{"read-guard": "enforce"})
+        self.assertIsNotNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_watch_only_and_no_file_let_it_through(self):
+        self.settings(**{"read-guard": "warn", "connector-tools": ["mcp__fakemail__*"]})
+        self.assertIsNone(self.after(response({"threads": THREADS})))
+        (self.root / "System" / "garrick-settings.json").unlink()
+        self.assertIsNone(self.after(response({"threads": THREADS})))
+
+    def test_a_settings_file_that_does_not_read_counts_as_on(self):
+        (self.root / "System" / "garrick-settings.json").write_text("{not json", encoding="utf-8")
+        self.assertIsNotNone(self.after(response({"threads": THREADS}), tool="mcp__claude_ai_Gmail__search_threads"))
+
+    def test_a_session_at_the_root_and_a_scheduled_job_go_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), home=self.root))
+        self.assertIsNone(self.after(response({"threads": THREADS}), headless=True))
+
+    def test_with_no_workspace_found_the_result_goes_through(self):
+        self.assertIsNone(self.after(response({"threads": THREADS}), home=self.home))
+
+
 class ToolsSeen(FilterCase):
     """A connector tool the session used that is on no list is named by check.py, not filtered silently."""
 

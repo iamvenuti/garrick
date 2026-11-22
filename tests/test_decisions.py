@@ -543,3 +543,42 @@ class TestConnectorDecisions(GuardCase):
         guard = load_read_guard()
         scope = guard.derive(lib, str(self.root), str(self.root))
         self.assertEqual("root", scope["kind"])
+
+
+class TestConnectorFilterFailsClosed(GuardCase):
+    """The connector filter when it cannot read the Parties table: no result is passed unchecked while the guard is
+    On. One row per way the table can be unusable and per mode. `removed` is every result of a listed tool replaced by
+    the wall sentence, once; `kept` is the result as it came, with one `undecided` line in the log."""
+
+    TOOL = "mcp__fakemail__search"
+    RESULT = [{"type": "text", "text": json.dumps({"threads": [{"id": "t1", "from": "Dana <dana@acme.example>"},
+                                                                   {"id": "t2", "from": "Theo <theo@birch.example>"}]})}]
+    TABLES = {
+        "missing": "# Context\n\n## Me\n\nJo Example.\n",
+        "no rows": "# Context\n\n## Parties\n\n| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n",
+    }
+    ROWS = [
+        # (table, read-guard setting, headless, outcome)
+        ("missing", "enforce", False, "removed"),
+        ("no rows", "enforce", False, "removed"),
+        ("missing", "warn", False, "kept"),
+        ("no rows", "warn", False, "kept"),
+        ("missing", "enforce", True, "kept"),
+    ]
+
+    def test_every_row(self):
+        from read_guard_case import SENTENCE
+        for table, mode, headless, outcome in self.ROWS:
+            with self.subTest(table=table, mode=mode, headless=headless):
+                (self.root / "System" / "context.md").write_text(self.TABLES[table], encoding="utf-8")
+                self.settings(**{"read-guard": mode, "connector-tools": ["mcp__fakemail__*"]})
+                if (self.state / "read-guard.log").exists():
+                    (self.state / "read-guard.log").unlink()
+                reply = self.run_hook({"session_id": "d1", "hook_event_name": "PostToolUse", "tool_name": self.TOOL,
+                                       "cwd": str(self.acme), "tool_input": {}, "tool_response": self.RESULT},
+                                      project_dir=self.acme, headless=headless)
+                if outcome == "removed":
+                    self.assertEqual([{"type": "text", "text": SENTENCE}], reply["hookSpecificOutput"]["updatedMCPToolOutput"])
+                else:
+                    self.assertIsNone(reply)
+                    self.assertEqual(["undecided"], [line["decision"] for line in self.log_lines()])

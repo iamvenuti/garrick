@@ -443,6 +443,43 @@ class Guards(Fixture):
         os.symlink(str(target), str(self.a.parent / "history" / "Pricing history 2025-Q1.md"))
         self.assertIn("link", history.apply(self.root, self.a, TODAY).skipped)
 
+    # ---- #627: the parent link the first version of this tool wrote ----------------------------------------------------
+    def history_file(self):
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 400]))
+        self.assertTrue(history.apply(self.root, self.a, TODAY).done)
+        (path,) = list((self.a.parent / "history").glob("*.md"))
+        return path
+
+    def again(self):
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 401]))
+        return history.apply(self.root, self.a, TODAY)
+
+    def test_a_move_into_a_file_with_the_first_versions_parent_succeeds_and_leaves_the_current_form(self):
+        path = self.history_file()
+        now = 'parent: "[[Northwind/Threads/Pricing/Pricing|Pricing]]"'
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(now, text)
+        path.write_text(text.replace(now, 'parent: "[[Pricing]]"'), encoding="utf-8")
+        res = self.again()
+        self.assertTrue(res.done, res.error)
+        out = path.read_text(encoding="utf-8")
+        self.assertIn(now, out)
+        self.assertNotIn('parent: "[[Pricing]]"', out)
+        self.assertEqual(1, out.count("parent:"))
+        self.assertEqual(2, out.count("\n**"))
+
+    def test_a_file_with_another_notes_parent_in_either_form_or_a_status_is_still_refused(self):
+        path = self.history_file()
+        now = 'parent: "[[Northwind/Threads/Pricing/Pricing|Pricing]]"'
+        text = path.read_text(encoding="utf-8")
+        for bad in ('parent: "[[Beds]]"', 'parent: "[[Garden/Threads/Beds/Beds|Beds]]"', now + "\nstatus: active"):
+            path.write_text(text.replace(now, bad), encoding="utf-8")
+            snap = path.read_bytes()
+            res = self.again()
+            self.assertFalse(res.done, bad)
+            self.assertIn("not a history file of this note", res.skipped, bad)
+            self.assertEqual(snap, path.read_bytes(), bad)
+
     def test_identical_entries_on_one_date_all_reach_the_history_file(self):
         text = thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5])
         old = "**%s.** Parked.\n\n**%s.** Parked.\n\n**%s.** Woken.\n" % ((stamp(day(400)),) * 3)

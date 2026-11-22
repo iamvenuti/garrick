@@ -105,14 +105,18 @@ enum GarrickLink {
 // falls back when the app does not take it. No state, and no app is touched here: the opener, the app and
 // the clipboard are passed in, so a test stubs them.
 enum GarrickSession {
-	// The scheme and host each key's link must have.
-	static let routes = ["claude-new": (scheme: "claude", host: "code"), "codex-new": (scheme: "codex", host: "threads")]
+	// The scheme, host, path and query names each key's link must have.
+	static let routes = [
+		"claude-new": (scheme: "claude", host: "code", path: "/new", names: ["folder", "q"]),
+		"codex-new": (scheme: "codex", host: "threads", path: "/new", names: ["path", "prompt"])]
 
-	// The link, when its scheme and host are its key's own and it carries nothing else but the route and a query;
-	// nil for anything else, a link to any other app or host included.
+	// The link, when its scheme, host and path are its key's own, its query names exactly that key's two, each once,
+	// and it carries nothing else; nil for anything else, a link to any other app, host or route included.
 	static func link(key: String, text: String) -> URL? {
 		guard let route = routes[key], let url = URL(string: text), url.scheme == route.scheme, url.host == route.host,
-		      url.user == nil, url.password == nil, url.port == nil, url.fragment == nil else { return nil }
+		      url.path == route.path, url.user == nil, url.password == nil, url.port == nil, url.fragment == nil,
+		      let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+		      items.map({ $0.name }).sorted() == route.names.sorted() else { return nil }
 		return url
 	}
 

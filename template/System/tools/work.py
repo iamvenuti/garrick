@@ -44,8 +44,6 @@ returns that zone's alone. Nothing inside a zone is followed out of it: a link t
 folder that resolves outside the zone is left out. Nothing here adds two zones into
 one figure.
 """
-from __future__ import annotations
-
 import importlib.util
 import re
 import sys

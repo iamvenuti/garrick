@@ -195,14 +195,17 @@ class Shadow(unittest.TestCase):
         # only when it says so: Untyped (own_needs_type).
         self.assertEqual({p for p in new if new[p] != old.get(p)}, {"Untyped"})
 
-    def test_todo_sweep_agrees_except_the_named(self):
-        old = {str(n.relative_to(self.zone)) for n in self.ts.thread_notes(self.zone)}
-        new = todo_sweep_view(self.records)
-        self.assertEqual(sorted(old - new), ["Heading/Heading.md", "Inbox/Inbox.md", "Parked/Threads/Iota/Iota.md",
-                                              "ParkedBare/Threads/Lambda/Lambda.md"])
-        # EmptyDirBare: a thread folder with no note, and a hub with no resume block, was no piece of work to the
-        # sweep; it is its own thread, with no Next action to quote.
-        self.assertEqual(new - old, {"EmptyDirBare/EmptyDirBare.md"})
+    def test_todo_sweep_reads_the_reader(self):
+        """The sweep now takes its notes from the reader. Before, it also took a heading's hub, the Inbox folder and the
+        threads of a parked project, and dropped a hub with a thread folder and no thread note (EmptyDirBare); the
+        frozen list is what it reads now."""
+        got = sorted(str(n.relative_to(self.zone)) for n in self.ts.thread_notes(self.zone))
+        self.assertEqual(got, sorted(todo_sweep_view(self.records)))
+        for gone in ("Heading/Heading.md", "Inbox/Inbox.md", "Parked/Threads/Iota/Iota.md", "ParkedBare/Threads/Lambda/Lambda.md"):
+            self.assertNotIn(gone, got)
+        self.assertIn("EmptyDirBare/EmptyDirBare.md", got)
+        self.assertIn("Mixed/Mixed.md", got)
+        self.assertNotIn("Done/Done.md", got)
 
     def test_intake_agrees_except_the_named(self):
         old = {p.name: self.it._hub_kind(p) for p in self.zone.iterdir() if p.is_dir() and (p / (p.name + ".md")).is_file()}
@@ -334,6 +337,11 @@ class Reader(unittest.TestCase):
         self.assertNotIn("Work/Untyped", {r.identity for r in got})
         self.assertIn("Work/Single", {r.identity for r in got})
         self.assertEqual(len(got), len(FROZEN) - 1)
+
+    def test_the_file_loads_under_a_name_of_its_own(self):
+        """Callers outside System/tools load work.py by its path; a dataclass must survive that."""
+        other = load("garrick_work_elsewhere", TOOLS / "work.py")
+        self.assertTrue(other.pieces(self.root))
 
     def test_hub_keeps_resume(self):
         block = "# P\n\n### Resume here\n\nGoing.\n"

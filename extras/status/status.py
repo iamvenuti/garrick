@@ -675,32 +675,22 @@ def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: 
             "heading": as_text(pfm.get("layout")).strip().lower() == "thread-first"}
 
 
-def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
-    """Does a hub hold the project's own resume point beside its threads: a `### Resume here` block, and no
-    `layout: thread-first`? An `### Outcome` in its place ends it. The same reading as garrick_lib's."""
-    try:
-        text = hub.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
-    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
-    lib = workspace_lib(hub.parent.parent.parent.parent)
-    if lib is not None and callable(getattr(lib, "hub_keeps_resume", None)):
-        try:
-            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
-        except Exception:
-            pass
-    lines = text.splitlines()
-    front = {}
-    if lines and lines[0].strip() == "---":
-        for l in lines[1:]:
-            if l.strip() == "---":
-                break
-            if l.lower().startswith("layout:"):
-                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
-    if str(front.get("layout") or "").strip().lower() == "thread-first":
-        return False
-    return any(l.strip().lower() == "### resume here" for l in lines)
+def work_reader(ws: Path):
+    """work.py, the one reader of the piece of work: the workspace's own copy in System/tools, else the one beside this
+    extra (an installed System/status sits next to System/tools), else the clone's template."""
+    for tools in (ws / "System" / "tools", Path(__file__).resolve().parent.parent / "tools",
+                  Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools"):
+        src = tools / "work.py"
+        if src.is_file():
+            if src not in _WORKS:
+                spec = importlib.util.spec_from_file_location("garrick_work_status", str(src))
+                _WORKS[src] = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_WORKS[src])
+            return _WORKS[src]
+    raise FileNotFoundError("System/tools/work.py")
+
+
+_WORKS: dict = {}
 
 
 def threads(ws: Path) -> Dict[str, dict]:
@@ -722,48 +712,45 @@ def threads(ws: Path) -> Dict[str, dict]:
     hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
+    reader = work_reader(ws)
     for zone in visible_dirs(ws / "Zones"):
         rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
-        for project in visible_dirs(zone):
-            if project.name == "Inbox":
-                continue
-            hub = project / (project.name + ".md")
-            pfm = frontmatter(hub, ws)
-            hub_state = as_text(pfm.get("status")).strip().lower() if hub.is_file() else ""
+        for (_, name_), found in reader.by_project(reader.pieces(ws, zone=zone.name)).items():
+            project = zone / name_
+            hub = found[0].hub
+            hub_path = project / (project.name + ".md")
+            pfm = frontmatter(hub, ws) if hub else {}
+            hub_state = as_text(pfm.get("status")).strip().lower() if hub else ""
             hub_parked = hub_state in PARKED
             if hub_parked:
                 asleep.append(project.name)
-            found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
-            own = False
-            heading = as_text(pfm.get("layout")).strip().lower() == "thread-first"     # no piece of work of its own
-            if not any(n.is_file() for _, n in found) and hub.is_file() and not heading and \
-                    as_text(pfm.get("type")).strip().lower() == "project":
-                found, own = [(project.name, hub)], True
-            if hub.is_file() or any(n.is_file() for _, n in found):
-                projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
-                                          "hub": hub if hub.is_file() else None, "party": tags(pfm.get("party"))}
-            for name, note in found:
-                fm = pfm if note == hub else frontmatter(note, ws)
+            heading = any(r.kind == "heading" for r in found)     # no piece of work of its own
+            # The page shows a hub as its project's single thread only when it says `type: project`.
+            shown = reader.own_needs_type(found)
+            own = any(r.own for r in shown)
+            notes = [(r.thread or project.name, r.note) for r in shown if r.thread or r.own]
+            projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
+                                      "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
+                                      "hub": hub, "party": tags(pfm.get("party"))}
+            for name, note in notes:
+                fm = pfm if note == hub_path else frontmatter(note, ws)
                 state = as_text(fm.get("status")).strip().lower()
                 if state in DONE:
                     done += 1
-                    if note.is_file():
-                        finished.append({"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                                         "hub": hub if hub.is_file() else None, "status": "done",
-                                         "party": tags(fm.get("party") or pfm.get("party")),
-                                         "updated": as_date(fm.get("updated")), "spoken": as_text(fm.get("spoken")).strip()})
+                    finished.append({"zone": zone.name, "project": project.name, "thread": name, "note": note,
+                                     "hub": hub, "status": "done",
+                                     "party": tags(fm.get("party") or pfm.get("party")),
+                                     "updated": as_date(fm.get("updated")), "spoken": as_text(fm.get("spoken")).strip()})
                     continue
-                held = hub_parked and note != hub          # parked with its project, whatever its own status
+                held = hub_parked and note != hub_path          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
-                row = thread_row(ws, zone, project, name, note, hub, pfm, fm, state)
+                row = thread_row(ws, zone, project, name, note, hub_path, pfm, fm, state)
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
             # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
-            if not own and hub.is_file() and not hub_parked and hub_state not in DONE and hub_keeps_resume(hub, pfm) \
-                    and any(n.is_file() for _, n in found):
-                hubs.append(thread_row(ws, zone, project, project.name, hub, hub, pfm, pfm, hub_state))
+            if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
+                hubs.append(thread_row(ws, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state))
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
@@ -6113,8 +6100,8 @@ def work_name_for(r: dict) -> str:
     if r["note"] == r["hub"]:
         return r["project"]
     project = r["note"].parents[2]
-    threads = [t for t in (project / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    if len(threads) <= 1 and not (r["hub"] and hub_keeps_resume(r["hub"], None)):
+    found = work_reader(project.parent.parent.parent).project_pieces(project.parent.parent.parent, project.parent, project)
+    if len([x for x in found if x.thread]) <= 1 and not any(x.beside for x in found):
         return r["project"]
     return "%s, %s" % (r["project"], r["thread"])
 

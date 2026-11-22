@@ -1132,27 +1132,23 @@ class HubBesideThreads(unittest.TestCase):
             self.assertIn(("Acme Review", None), rows)
             self.assertTrue([r for r in rows if r[1]], "its threads are still there")
 
-    def test_two_hashes_is_no_resume_point_in_all_five_readings(self):
+    def test_two_hashes_is_no_resume_point_in_every_reading(self):
         self.keep(HUB_BLOCK.replace("### Resume here", "## Resume here"))
         self.assertNotIn(("Acme Review", None), self.next_up_rows())
         self.assertNotIn(("Acme Review", None), self.briefing_rows())
         T = status.threads(self.root)
         self.assertEqual([], [r for r in T["Work"]["hubs"] if r["project"] == "Acme Review"])
-        self.assertFalse(status.hub_keeps_resume(self.hub, None))
         self.assertFalse(self.keeps())
         # and the same without the workspace's garrick_lib, which both fall back from
         (self.root / "System" / "tools" / "garrick_lib.py").unlink()
         status._LIBS.clear()
-        self.assertFalse(status.hub_keeps_resume(self.hub, None))
         self.assertFalse(self.keeps())
         self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("## Resume here", "### Resume here"), encoding="utf-8")
-        self.assertTrue(status.hub_keeps_resume(self.hub, None))
         self.assertTrue(self.keeps())
 
     def test_layout_is_read_from_the_front_matter_only(self):
         self.keep(HUB_BLOCK + "\nlayout: thread-first\n")                      # a body line is not the layout
         self.assertTrue(self.keeps())
-        self.assertTrue(status.hub_keeps_resume(self.hub, None))
         self.assertIn(("Acme Review", None), self.next_up_rows())
 
     def test_an_outcome_in_its_place_ends_it(self):

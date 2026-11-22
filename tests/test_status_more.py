@@ -844,6 +844,9 @@ class TestReplacedWhileBuilding(StatusCase):
     def test_a_build_whose_code_is_replaced_during_its_settle_wait_draws_with_the_new_code(self):
         copy = self.root / "System" / "status"
         shutil.copytree(REPO / "extras" / "status", copy, ignore=shutil.ignore_patterns("app", "__pycache__"))
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        for tool in ("garrick_lib.py", "work.py"):
+            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         script = copy / "status.py"
         self.assertEqual(1, script.read_text(encoding="utf-8").count(self.OLD_NAME))
         home = self.root.parent / "home"

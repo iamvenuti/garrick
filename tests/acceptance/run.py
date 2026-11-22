@@ -23,6 +23,8 @@ and says so, when that one failed:
     resume    the Resume here block and the Next action are what the wrap wrote
     correct   "that's wrong, it's Y": every live copy changes, the record does not
     update    install the previous tag, update it to the candidate
+    names     a workspace of v0.76.0 with a grown context.md, updated and then given the yes (--names): People and
+              Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
 
@@ -60,7 +62,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 ASK_SET = HERE / "ask_set.json"
 
-STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "refused", "ask")
+STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "refused", "ask")
 # The demo's thread this run wraps, the call it files, and the fact it corrects.
 ZONE, PROJECT, THREAD = "Birch", "Birch Entry", "Launch Plan"
 SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-northern-lane-for-birch"
@@ -517,6 +519,69 @@ class Run:
         s.note("installed %s, updated it to %s; check.py is clean afterwards (stamp: %s to %s)"
                % (tag, self.commit, last.get("from"), last.get("to")))
 
+    NAMES_FROM = "v0.76.0"      # the last release that keeps People and Aliases in System/context.md
+
+    def step_names(self, s):
+        """#653: a grown context.md (about 90 people and some aliases) of a workspace installed from v0.76.0, updated to the
+        candidate and then given the yes (`--names --apply`). Every People and Aliases row stands in exactly one of
+        System/context.md and System/names.md afterwards, names.md holds both tables, and context.md is under 8,000
+        characters. Without the yes the update moves nothing."""
+        old = self.tag_tree(self.NAMES_FROM, "names-previous")
+        target = self.tmp / "names-ws"
+        sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
+           env=self.env, cwd=old, timeout=900)
+        ctx = target / "System" / "context.md"
+        text = ctx.read_text(encoding="utf-8")
+        first = ["Ada", "Bruno", "Carla", "Dario", "Edith", "Fabio", "Giulia", "Hugo", "Irene", "Jonas"]
+        last = ["Aldous", "Brandt", "Corvin", "Delmar", "Estrin", "Farrow", "Gantry", "Holm", "Ibsen"]
+        people = ["| %s %s | `%s` | %s |" % (f, l, "acme" if (i % 2) else "birch", "Contact %d at the client; leads one workstream of the supply-chain review and signs off its notes" % i)
+                  for i, (f, l) in enumerate((f, l) for f in first for l in last)]
+        aliases = ["| %s | %s %s |" % (("%s %s" % (f, l)).lower().replace("a", "ah", 1), f, l) for f, l in ((first[i], last[i % len(last)]) for i in range(8))]
+        if "\n## People\n" not in text or "\n## Aliases\n" not in text:
+            raise Fail("%s has no People or Aliases section in its context.md" % self.NAMES_FROM)
+        def grow(txt, heading, rows):
+            i = txt.index("\n## %s\n" % heading)
+            j = txt.find("\n## ", i + 4)
+            j = len(txt) if j < 0 else j
+            return txt[:j].rstrip("\n") + "\n" + "\n".join(rows) + "\n" + txt[j:]
+        text = grow(grow(text, "People", people), "Aliases", aliases)
+        ctx.write_text(text, encoding="utf-8")
+        def rows_of(txt):
+            out, on = [], False
+            for line in txt.split("\n"):
+                if line.startswith("## "):
+                    on = line.strip() in ("## People", "## Aliases")
+                elif on and line.startswith("|") and not re.match(r"^\|[-| ]+\|\s*$", line) and line.split("|")[1].strip() not in ("Name", "Heard"):
+                    out.append(line.rstrip())
+            return out
+        before = rows_of(text)
+        if len(before) < 90 or len(text) < 8000:
+            raise Fail("the grown context.md is not grown enough: %d rows, %d characters" % (len(before), len(text)))
+        sh(["git", "-C", target, "add", "-A"], env=self.env, check=False)
+        sh(["git", "-C", target, "commit", "-qm", "grow context.md"], env=self.env, check=False)
+        sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand, timeout=900)
+        if (target / "System" / "names.md").is_file() and rows_of((target / "System" / "names.md").read_text(encoding="utf-8")):
+            raise Fail("the update moved People and Aliases without the yes")
+        sh([sys.executable, self.cand / "install.py", "--update", target, "--names", "--apply"], env=self.env, cwd=self.cand, timeout=900)
+        names = target / "System" / "names.md"
+        if not names.is_file():
+            raise Fail("System/names.md does not exist after --names --apply")
+        in_names = rows_of(names.read_text(encoding="utf-8"))
+        in_context = rows_of(ctx.read_text(encoding="utf-8"))
+        every = {}
+        for row in in_names + in_context:
+            every[row] = every.get(row, 0) + 1
+        lost = [r for r in before if every.get(r, 0) != 1]
+        if lost or len(in_names) != len(before) or in_context:
+            raise Fail("%d row(s) are not in exactly one file (first: %s); names.md holds %d of %d, context.md still holds %d"
+                       % (len(lost), (lost or [""])[0][:80], len(in_names), len(before), len(in_context)))
+        size = len(ctx.read_text(encoding="utf-8"))
+        if size >= 8000:
+            raise Fail("context.md is %d characters after the move, not under 8,000" % size)
+        self.check(target)
+        s.note("a v0.76.0 workspace with %d People and Aliases rows: the update alone moved none; after --names --apply names.md holds all %d once, "
+               "context.md holds none and is %d characters; check.py is clean" % (len(before), len(in_names), size))
+
     def step_refused(self, s):
         root = self.demo
         note = self.thread_note(root)
@@ -689,7 +754,7 @@ class Run:
             return
         titles = {"install": "Install from the zip", "demo": "Build the demo", "file": "File one conversation",
                   "brief": "Ask for a brief", "wrap": "Wrap a thread", "restart": "Restart the page builder",
-                  "resume": "Resume the thread", "correct": "Correct one fact", "update": "Update from the previous tag",
+                  "resume": "Resume the thread", "correct": "Correct one fact", "update": "Update from the previous tag", "names": "Move People and Aliases to names.md",
                   "refused": "A refused save", "ask": "The fixed Ask set"}
         needs = {"file": "demo", "brief": "demo", "wrap": "demo", "restart": "demo", "resume": "wrap", "correct": "demo",
                  "refused": "demo", "ask": "demo"}

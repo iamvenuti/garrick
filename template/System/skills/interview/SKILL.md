@@ -34,7 +34,7 @@ All paths are relative to the workspace root.
 |---|---|
 | The interview record | `System/interviews/YYMMDD - <Topic>.md` |
 | Me, Zones, Parties | `System/context.md` |
-| People, Aliases | `System/names.md` |
+| People, Aliases | `System/names.md`, or `System/context.md` until the update has moved them |
 | The zones | the folders under `Zones/` |
 | New zones, projects and threads | `System/tools/scaffold.py`, as the `threads` skill's *New zone* and *New* procedures run it |
 | Open actions | `Zones/<Zone>/Todo.md` |
@@ -162,7 +162,7 @@ step 7, and another session may have changes of its own in any repository.
    skill's *New zone* procedure, before anything names them, and each
    zone's flag, with `scaffold.py zone --name <Zone> --walled` or `--open`.
 2. **Parties, People, Aliases.** Re-read `System/context.md` and
-   `System/names.md` right before editing them, then add the rows: Parties in
+   `System/names.md` (if there is one) right before editing them, then add the rows: Parties in
    the first, People and Aliases in the second. Commit them alone in the
    workspace root's repository:
    ```sh

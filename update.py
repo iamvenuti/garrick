@@ -362,14 +362,17 @@ def plan(root, zones=None):
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
             "recorded": recorded, "listed": listed, "extras": extras,
-            "allowlist": allowlist(root, zones), "names": names_study(root),
+            "allowlist": allowlist(root, zones), "names": names_study(root, actions),
             "renames": old_jobs(root) if "jobs" in extras and on_mac() else []}
 
 
-def names_study(root):
-    """The held step that moves People and Aliases to System/names.md (#653), read only: its state and a sentence."""
+def names_study(root, actions=None):
+    """The held step that moves People and Aliases to System/names.md (#653), read only: its state and a sentence.
+    The tools that read the file come first: they count as new when this run writes them."""
     import names_move       # beside this file, from the same Garrick
-    return names_move.study(root)
+    lib_path = "System/tools/garrick_lib.py"
+    follow = bool(actions) and any(lib_path in actions[k] for k in ("replace", "add"))
+    return names_move.study(root, tools_follow=follow)
 
 
 def ever_committed(root, path, history):
@@ -532,9 +535,13 @@ def report(p, applied=None):
             "%s (%s)" % (names[n][0], ", ".join(dest for _, dest, _ in names[n][1])) for n in p["extras"]))
     lines += say_allowlist(p.get("allowlist"))
     names = p.get("names") or {}
-    if names.get("said") and names.get("state") in ("waiting", "unreadable", "both"):
-        lines += ["", names["said"] + (" To move them, say yes, then run the update again with --names, and with --apply."
-                                       if names["state"] == "waiting" else "")]
+    if names.get("said") and names.get("state") in ("waiting", "unreadable", "both", "tools"):
+        more = ""
+        if names["state"] == "waiting":
+            more = (" To move them, apply this update, say yes, then run the update again with --names, and with --apply."
+                    if names.get("after_update") else
+                    " To move them, say yes, then run the update again with --names, and with --apply.")
+        lines += ["", names["said"] + more]
     steps = p.get("then") or []
     if steps:
         lines += ["", "Then%s:" % (", with --apply" if applied is None else "")]

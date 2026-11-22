@@ -42,7 +42,7 @@ All paths are relative to the workspace root.
 | Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Meetings/dormant/wiki/`, `Wikis/Meetings/archive/wiki/` |
 | Log | `Wikis/Meetings/wiki/log.md` |
 | Zones (with their flag), Parties (with their mail domains) | `System/context.md` |
-| People, Aliases | `System/names.md` |
+| People, Aliases | `System/names.md`, or `System/context.md` until the update has moved them |
 | A zone's open actions | `Zones/<Zone>/Todo.md` |
 | Helper scripts | `System/skills/meetings/ingest.py`, `System/skills/intake/intake.py` |
 
@@ -96,7 +96,7 @@ One meeting at a time, even when several files are waiting.
    `scaffold.py party` writes one.
 4. **People.** For each person in the transcript other than the owner (`## Me`
    in `System/context.md`), match them against the People table (and
-   Aliases) in `System/names.md`. A name not there: ask which party they
+   Aliases) in `System/names.md` (`System/context.md` until moved). A name not there: ask which party they
    belong to, if any, and add the People row, with its Learned cell, `<today>,
    user`, then either way run
    `python3 System/skills/meetings/ingest.py person --name "<Name>" --zone <zone> [--party <tag>]`.
@@ -448,7 +448,7 @@ writes a file only when the user asks to save the brief (step 7). A brief
 made for a project ends by offering that, in one question; a brief with no
 project behind it offers nothing.
 
-1. **Resolve X**, against Parties in `System/context.md`, and People and Aliases in `System/names.md`:
+1. **Resolve X**, against Parties in `System/context.md`, and People and Aliases in `System/names.md` (`System/context.md` until moved):
    a party directly, or a person through their party. A project, or "this
    project", stands for its hub's `party` where it has one, and is the project step 2 needs.
    Close to two entries: ask, naming the candidates. Never guess. Two

@@ -1418,7 +1418,7 @@ def session_for(ws: Path):
 def heard_names(named, ctx: dict) -> str:
     """The command session's `<names>` block: each name the request holds,
     as it was heard, and what ask_scope.mentions() settled it to, from the
-    list and System/context.md's Parties, People and Aliases. The session
+    list, System/context.md's Parties and System/names.md's People and Aliases. The session
     is sealed and loads no context, so this is how a mangled name, an alias
     or a person reaches it. Names, kinds and zones only: never a role, a
     domain or anything from a note."""

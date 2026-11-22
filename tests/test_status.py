@@ -908,7 +908,7 @@ class TestGuide(StatusCase):
     def test_every_page_in_reading_order(self):
         guide = self.pages(self.page())
         pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md")
-                       if not p.relative_to(REPO / "docs").as_posix().startswith("assets/"))
+                       if not p.relative_to(REPO / "docs").as_posix().startswith(("assets/", "decisions/")))   # decision notes are for those who change Garrick
         ids = re.findall(r'<article class="gd-page" id="([^"]+)"', guide)
         self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
         self.assertEqual(["Start here", "Understand", "Do", "Extras", "Look up"], re.findall(r'<div class="gd-sec"><h3>([^<]+)</h3>', guide))

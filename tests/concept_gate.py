@@ -48,13 +48,34 @@ def clean_line(line: str) -> str:
     return PREFIX.sub("", line, count=1) if PREFIX.match(line) else line
 
 
+def join_html_headings(lines: list) -> list:
+    """The lines with an HTML heading that spans lines (`<h2>`, the text, `</h2>`) joined into one, outside code blocks."""
+    out, fence, i = [], None, 0
+    while i < len(lines):
+        line, m = lines[i], FENCE.match(lines[i])
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+        elif m:
+            fence = m.group(1)
+        elif re.search(r"<h[1-6]\b", line, re.I) and not re.search(r"</h[1-6]\s*>", line, re.I):
+            for j in range(i + 1, min(i + 12, len(lines))):
+                if re.search(r"</h[1-6]\s*>", lines[j], re.I):
+                    line = " ".join(l.strip() for l in lines[i:j + 1])
+                    i = j
+                    break
+        out.append(line)
+        i += 1
+    return out
+
+
 def sections(text: str) -> dict:
     """{heading text: [first block under it, ...]}, a heading met more than once keeping every first block.
 
     Code blocks hold no heading. ATX headings of any level, Setext headings, and HTML headings count, in a
     quote or a list too, so a concept cannot hide a level down or in markup. Windows line endings read as Unix.
     """
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = join_html_headings(text.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
     out: dict = {}
     current = None            # the key whose first block is being read
     block: list = []          # its first block so far
@@ -212,6 +233,10 @@ def check(event_name: str, event_path: str, cwd: Path = REPO) -> tuple:
             raise Unreadable("The pull request's details could not be read (%s: %s)." % (type(err).__name__, err))
         if not isinstance(body, str) or not isinstance(base, str) or not isinstance(head, str):
             raise Unreadable("The pull request's details are not text.")
+        if not SHA.match(base) or not SHA.match(head):
+            raise Unreadable("The pull request's commit is not a commit name.")
+        # Against where the pull request branched, not the tip of the base: a change made on the base since is not its own.
+        base = git("merge-base", base, head, cwd=cwd).strip()
         need = triggered(show(base, CONCEPTS, cwd), show(head, CONCEPTS, cwd))
     except Unreadable as err:
         return False, "Concept check failed: %s" % err

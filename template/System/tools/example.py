@@ -7,7 +7,7 @@
 
 The example is someone else's ordinary work, laid down so Garrick can be tried
 on it: a zone of its own, its shared drive in the workspace's top folder, and
-its party and people in System/context.md. The zone names all three in its
+its party in System/context.md and its people in System/names.md. The zone names all three in its
 `.example.json`.
 
 `archive` moves the zone, the drive and those rows of context.md into one

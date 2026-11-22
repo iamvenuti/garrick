@@ -164,7 +164,7 @@ class TheAlwaysLoadedFiles(unittest.TestCase):
         return (REPO / "template" / rel).read_text(encoding="utf-8")
 
     def test_rules_and_context_name_names_md(self):
-        self.assertIn("`System/names.md`", self.read("System/rules.md"))
+        self.assertIn("`names.md`", self.read("System/rules.md"))
         context = self.read("System/context.md")
         self.assertIn("System/names.md", context)
         self.assertIn("Read it before acting on a name you cannot place", context)
@@ -174,8 +174,16 @@ class TheAlwaysLoadedFiles(unittest.TestCase):
         for skill in ("threads", "intake", "meetings", "nurture", "interview"):
             text = self.read("System/skills/%s/SKILL.md" % skill)
             self.assertRegex(text, r"People, Aliases\s*\| `System/names.md`|People and Aliases\)? in `System/names.md`|`System/names.md`", skill)
-        self.assertIn("Look it up in Aliases** (`System/names.md`)", self.read("System/skills/threads/SKILL.md"))
+        self.assertIn("Look it up in Aliases** (`System/names.md`, or `System/context.md` until the update has moved them)", self.read("System/skills/threads/SKILL.md"))
         self.assertIn("People and Aliases of `System/names.md`", self.read("System/skills/intake/SKILL.md"))
+
+    def test_a_workspace_not_yet_moved_is_told_both_places(self):
+        """C2: after an update and before the yes, People and Aliases are still in context.md."""
+        self.assertIn("`names.md`, else `context.md` until moved", self.read("System/rules.md"))
+        for skill in ("threads", "intake", "meetings", "nurture", "interview"):
+            self.assertIn("System/context.md", self.read("System/skills/%s/SKILL.md" % skill))
+            self.assertRegex(" ".join(self.read("System/skills/%s/SKILL.md" % skill).split()),
+                             r"`System/names\.md`[^`]{0,20}`System/context\.md`[^`]{0,4}until", skill)
 
     def test_no_skill_still_sends_a_person_or_an_alias_to_context_md(self):
         for path in sorted((REPO / "template" / "System" / "skills").rglob("*.md")):
@@ -350,6 +358,40 @@ class TheMove(Legacy):
         self.assertEqual(self.before, (self.root / CONTEXT).read_text())
         names = [p["name"] for p in lib.load_context(self.root)["people"]]
         self.assertEqual({"Alex Birch", "Dana Whitlock", "Theo Marsh"}, set(names))
+
+    def test_the_move_waits_while_the_workspaces_own_tools_cannot_read_names_md(self):
+        """W1: with 0.76's garrick_lib the move would leave every reader of People seeing nobody."""
+        lib_path = "System/tools/garrick_lib.py"
+        (self.root / lib_path).write_text("# the tools of 0.76, which read no names.md\n")
+        self.commit(self.root, "old tools, not in the stamp as Garrick wrote them")
+        state = names_move.study(self.root)
+        self.assertEqual("tools", state["state"])
+        self.assertIn("Update the tools first", state["said"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        self.assertFalse((self.root / NAMES).exists())
+        self.assertEqual(self.before, (self.root / CONTEXT).read_text())
+        self.assertIn("Update the tools first", update.report(self.plan()))
+        self.assertNotIn("say yes", update.report(self.plan()))
+
+    def test_the_report_offers_the_move_after_the_update_when_the_update_writes_the_tools(self):
+        lib_path = "System/tools/garrick_lib.py"
+        self.as_if_older(lib_path, "# older tools\n")
+        p = self.plan()
+        self.assertIn(lib_path, p["actions"]["replace"])
+        self.assertEqual("waiting", p["names"]["state"])
+        self.assertTrue(p["names"]["after_update"])
+        self.assertIn("apply this update, say yes", update.report(p))
+
+    def test_a_names_md_of_the_users_own_is_never_written_over(self):
+        """S2: any file with text in it is left as it is, whatever it holds."""
+        (self.root / NAMES).write_text("# my own notes\nimportant\n")
+        self.commit(self.root, "my names.md")
+        self.assertEqual("both", names_move.study(self.root)["state"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        self.assertEqual("# my own notes\nimportant\n", (self.root / NAMES).read_text())
+        self.assertEqual(self.before, (self.root / CONTEXT).read_text())
 
     def test_it_refuses_a_file_with_changes_not_committed(self):
         (self.root / CONTEXT).write_text(self.before + "\nA note of mine.\n")

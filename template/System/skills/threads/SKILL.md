@@ -44,7 +44,7 @@ All paths are relative to the workspace root.
 | Project hub | `Zones/<Zone>/<Project>/<Project>.md` |
 | Open actions | `Zones/<Zone>/Todo.md` |
 | Zones (the walled flag), Parties | `System/context.md` |
-| People, Aliases | `System/names.md` |
+| People, Aliases | `System/names.md`, or `System/context.md` until the update has moved them |
 | Meeting pages | `Wikis/Meetings/wiki/sources/`, people in `wiki/people/` |
 
 A thread note is the `.md` file whose name matches its folder. Other files in the
@@ -108,7 +108,7 @@ dictation, so resolve before acting, and never guess.
 
 1. **Normalise what was heard.** Ignore case, punctuation, "the", and the words
    "thread" and "project". Treat "and" and "&" as the same.
-2. **Look it up in Aliases** (`System/names.md`). A heard form listed there
+2. **Look it up in Aliases** (`System/names.md`, or `System/context.md` until the update has moved them). A heard form listed there
    means what the table says it means.
 3. **Match, in this order, and stop at the first step that finds anything:**
    - a thread name, or the `spoken:` form in its note where the name does not

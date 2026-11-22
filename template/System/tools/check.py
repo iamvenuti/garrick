@@ -2017,11 +2017,25 @@ MIXED_SPLIT = "; these threads look like separate jobs, so split the project int
 
 
 def keeps_papers(folder: Path) -> bool:
-    """Does the folder hold a file of its own, anything but a `.gitkeep`? An empty folder is no papers: Join has
-    nothing to move for it, so the check must not name it."""
+    """Does the folder hold a file of its own that a Join would move? Only files git tracks count, and not a
+    `.gitkeep`, a `.DS_Store`, or a `published.md` ledger with no row: the files `scaffold.py layout --join` never moves
+    (N1). An empty folder is no papers, so the check must not name it. extras/status/status.py's `mixed_papers`
+    applies the same test."""
     if not folder.is_dir():
         return False
-    return any(p.is_file() and p.name != ".gitkeep" for p in folder.rglob("*"))
+    listing = _git(["ls-files", "-z", "--", "."], folder) or ""
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        base = Path(name).name
+        if base in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables" and not any(
+                l.strip().startswith("|") and len(cells := [c.strip() for c in l.strip().strip("|").split("|")]) > 1
+                and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date"
+                for l in (read_text(path) or "").splitlines()):
+            continue
+        return True
+    return False
 
 
 def check_mixed_papers(ws: Workspace) -> List[Finding]:

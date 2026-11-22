@@ -6,7 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
-- The Garrick App page's pictures are new, taken on 0.76.0 and the demo workspace. The Overview with *Waiting on you now* and *Your work*, the Threads card with a thread's card open, and Explore's graph with a thread selected replace the 0.10.0 pictures, which showed the look before 0.67.0.
+- The Garrick App page's pictures are new, taken on 0.76.0 and the demo workspace. The Overview with *Waiting on you now* and *Your work*, and the Threads card with a thread's card open, both as the Mac app draws them, and Explore's graph with a thread selected replace the 0.10.0 pictures, which showed the look before 0.67.0.
 
 ## [0.76.0] - 2026-11-22
 

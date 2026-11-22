@@ -1698,9 +1698,10 @@ def ledger_rows_of(ledger, folder):
 
 
 def thread_dirs_of(project_dir):
-    """The project's threads that have a note, as folders."""
+    """The project's threads that have a note, as folders. A thread folder that is a link is no thread of the project:
+    the layout change would make or remove folders through it, in whatever the link points at."""
     found = [project_dir / "Threads" / n for n in children(project_dir / "Threads")]
-    return [t for t in found if (t / f"{t.name}.md").is_file()]
+    return [t for t in found if not t.is_symlink() and (t / f"{t.name}.md").is_file()]
 
 
 def next_action_of(text):

@@ -413,6 +413,44 @@ class TestLayout(LayoutFiles):
         self.assertTrue(hub.is_symlink())
 
 
+class TestALinkedThreadFolder(LayoutFiles):
+    """S7: a thread folder that is a link is no thread of the project; a layout change never acts through it."""
+
+    def linked(self):
+        self.make("project", "--zone", "Work", "--name", "Acme")
+        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing")
+        outside = self.base / "elsewhere" / "Linked"
+        outside.mkdir(parents=True)
+        (outside / "Linked.md").write_text("---\ntype: thread\n---\n")
+        (outside / "Sources").mkdir()
+        (outside / "Sources" / ".gitkeep").write_text("")
+        (self.work / "Acme" / "Threads" / "Linked").symlink_to(outside, target_is_directory=True)
+        self.commit("a linked thread folder")
+        return outside
+
+    def test_split_makes_no_folder_through_a_link(self):
+        outside = self.linked()
+        before = sorted(p.name for p in outside.rglob("*"))
+        r = self.layout("--split")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, sorted(p.name for p in outside.rglob("*")))
+        self.assertFalse((outside / "Deliverables").exists())
+
+    def test_join_removes_nothing_through_a_link(self):
+        outside = self.linked()
+        (self.work / "Acme" / "Threads" / "Pricing" / "Sources").mkdir(exist_ok=True)
+        (self.work / "Acme" / "Threads" / "Pricing" / "Sources" / "brief.txt").write_text("brief")
+        self.commit("papers in a real thread")
+        r = self.layout("--join")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((outside / "Sources" / ".gitkeep").is_file())
+
+    def test_the_link_is_not_listed_as_a_thread(self):
+        self.linked()
+        names = [t.name for t in sc.thread_dirs_of(self.work / "Acme")]
+        self.assertEqual(["Pricing"], names)
+
+
 class TestJoin(LayoutFiles):
     """scaffold.py layout --join: separate jobs made one job, the threads' papers moved up, and the switch back."""
 

@@ -18,6 +18,7 @@ from fixtures import build_workspace, write  # noqa: E402
 from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402
+import garrick_lib as gl  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -1112,6 +1113,11 @@ class HubBesideThreads(unittest.TestCase):
     def keep(self, block):
         self.hub.write_text(self.hub.read_text(encoding="utf-8") + block, encoding="utf-8")
 
+    def keeps(self):
+        """Does the one reader find a resume point of its own in the hub?"""
+        found = [r for r in gl.work.project_pieces(self.root, self.work, self.work / "Acme Review") if r.thread is None]
+        return bool(found) and found[0].keeps_resume
+
     def next_up_rows(self):
         return [(r["project"], r["thread"]) for r in nu.threads(self.root) if r["project"] == "Acme Review"]
 
@@ -1133,19 +1139,19 @@ class HubBesideThreads(unittest.TestCase):
         T = status.threads(self.root)
         self.assertEqual([], [r for r in T["Work"]["hubs"] if r["project"] == "Acme Review"])
         self.assertFalse(status.hub_keeps_resume(self.hub, None))
-        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        self.assertFalse(self.keeps())
         # and the same without the workspace's garrick_lib, which both fall back from
         (self.root / "System" / "tools" / "garrick_lib.py").unlink()
         status._LIBS.clear()
         self.assertFalse(status.hub_keeps_resume(self.hub, None))
-        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        self.assertFalse(self.keeps())
         self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("## Resume here", "### Resume here"), encoding="utf-8")
         self.assertTrue(status.hub_keeps_resume(self.hub, None))
-        self.assertTrue(pa.hub_keeps_resume(self.hub))
+        self.assertTrue(self.keeps())
 
     def test_layout_is_read_from_the_front_matter_only(self):
         self.keep(HUB_BLOCK + "\nlayout: thread-first\n")                      # a body line is not the layout
-        self.assertTrue(pa.hub_keeps_resume(self.hub))
+        self.assertTrue(self.keeps())
         self.assertTrue(status.hub_keeps_resume(self.hub, None))
         self.assertIn(("Acme Review", None), self.next_up_rows())
 

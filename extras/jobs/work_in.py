@@ -248,6 +248,17 @@ def question_key(scope: str, wiki: str, rel: str) -> str:
     return hashlib.sha1(("%s\0%s\0%s" % (scope, wiki, rel)).encode("utf-8", "surrogatepass")).hexdigest()[:12]
 
 
+STOP_DAYS = 7        # a held question is tried again after this many days, whatever its file holds (C8)
+
+
+def question_hash(ws: Path, wiki: str, rel: str) -> str:
+    """A short hash of what a question file holds now, so that a question changed since it was held is tried again (C8)."""
+    try:
+        return hashlib.sha1((ws / "Wikis" / wiki / rel).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
 def read_stopped(ws: Path) -> Dict[str, dict]:
     """For each question whose call was stopped at the step's limit, how many runs stopped it and the day of the last (#629)."""
     try:
@@ -255,7 +266,7 @@ def read_stopped(ws: Path) -> Dict[str, dict]:
     except (OSError, ValueError):
         return {}
     found = data.get("stopped") if isinstance(data, dict) else None
-    return {k: {"n": int(v["n"]), "day": str(v.get("day") or "")} for k, v in (found or {}).items()
+    return {k: {"n": int(v["n"]), "day": str(v.get("day") or ""), "h": str(v.get("h") or "")} for k, v in (found or {}).items()
             if isinstance(v, dict) and re.fullmatch(r"[0-9a-f]{12}", str(k)) and isinstance(v.get("n"), int) and v["n"] > 0} \
         if isinstance(found, dict) else {}
 
@@ -322,8 +333,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     for scope in [s for s in held if s not in {i[0] for i in items}]:
         del held[scope]                               # nothing waits there any more
     stops = read_stopped(ws)
-    for key in [k for k in stops if k not in {question_key(i[0], i[2], i[3]) for i in items}]:
+    now_hash = {question_key(i[0], i[2], i[3]): question_hash(ws, i[2], i[3]) for i in items}
+    for key in [k for k in stops if k not in now_hash]:
         del stops[key]                                # answered or gone: no longer counted
+    for key in list(stops):
+        try:
+            old = (today - datetime.date.fromisoformat(stops[key]["day"])).days > STOP_DAYS
+        except ValueError:
+            old = True
+        if old or (stops[key].get("h") and stops[key]["h"] != now_hash[key]):
+            del stops[key]                            # held a week, or the question changed since: tried again (C8)
     total = 0
     del STOPPED[:]
     LEFT_ALONE.clear()
@@ -343,7 +362,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 stopped_before = len(STOPPED)
                 why, worked = work_place(ws, scope, place, wiki, rel, args.tier, deadline)
                 if len(STOPPED) > stopped_before:     # this question's call was stopped while it ran
-                    stops[key] = {"n": stops.get(key, {}).get("n", 0) + 1, "day": today.isoformat()}
+                    stops[key] = {"n": stops.get(key, {}).get("n", 0) + 1, "day": today.isoformat(), "h": now_hash.get(key, "")}
                     if stops[key]["n"] >= STOP_LIMIT:
                         why = "long"
                 elif why in (None, "held"):

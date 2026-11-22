@@ -220,7 +220,7 @@ class TestOneCallForEachAnswer(Case):
     def wiki(self, name):
         return self.ws / "Wikis" / "Meetings" / "wiki" / name
 
-    def timed(self, spend, runs, places=FOUR, limit="480"):
+    def timed(self, spend, runs, places=FOUR, limit="480", today=None):
         """main() with a clock the calls move on: `spend` seconds for each call. Returns (exit code, prompts, the lines printed)."""
         import contextlib
         import io
@@ -236,7 +236,7 @@ class TestOneCallForEachAnswer(Case):
         out = io.StringIO()
         with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake), \
                 mock.patch.object(work_in.time, "time", lambda: now[0]), contextlib.redirect_stdout(out):
-            code = work_in.main(["--workspace", str(self.ws), "--limit", limit, "--today", DAY.isoformat()])
+            code = work_in.main(["--workspace", str(self.ws), "--limit", limit, "--today", (today or DAY).isoformat()])
         return code, calls, out.getvalue()
 
     def log(self):
@@ -452,6 +452,27 @@ class TestAQuestionStoppedTwice(TestOneCallForEachAnswer):
         self.assertIn("`questions/q2.md`", calls[0])
         self.assertIn("Work: 1 worked in, 1 left (long)", said)
         self.assertEqual({"Zones/Work": {"why": "long", "day": "2026-11-13"}}, self.held())
+
+    def held_long(self):
+        write(self.ws / "Wikis" / "Meetings" / "questions" / "q1.md", "A question.\n")
+        one = [("Zones/Work", "Work", 1)]
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=one)
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=one)
+        self.assertEqual([2], [v["n"] for v in self.stops().values()])
+        self.assertEqual(0, len(self.timed([10], [], places=one, today=DAY + dt.timedelta(days=1))[1]))          # held: not called
+        return one
+
+    def test_a_held_question_is_tried_again_when_its_file_changes_c8(self):
+        one = self.held_long()
+        write(self.ws / "Wikis" / "Meetings" / "questions" / "q1.md", "A question, reworded.\n")
+        code, calls, said = self.timed([10], [(0, DONE, "Wikis/Meetings/wiki/a9.md")], places=one, today=DAY + dt.timedelta(days=1))
+        self.assertEqual(1, len(calls))
+        self.assertEqual({}, self.stops())
+
+    def test_a_held_question_is_tried_again_after_a_week_c8(self):
+        one = self.held_long()
+        code, calls, said = self.timed([10], [(0, DONE, "Wikis/Meetings/wiki/a9.md")], places=one, today=DAY + dt.timedelta(days=8))
+        self.assertEqual(1, len(calls))
 
     def test_the_file_holds_a_hash_and_nothing_that_names_the_question(self):
         self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=[("Zones/Work", "Work", 1)])

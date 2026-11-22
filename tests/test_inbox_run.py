@@ -724,6 +724,15 @@ class TestStarting(RunCase):
         got = pa.perform(self.root, {"verb": "inbox-run", "folder": "/tmp"}, ops, via="page")[0]
         self.assertFalse(got["ok"])                                           # a field it does not declare
 
+    def test_a_stale_visible_request_is_cleared_when_the_run_is_entered_again_and_when_the_act_cannot_start_c9(self):
+        swift = (STATUS / "app" / "Garrick.swift").read_text()
+        run = swift[swift.index("func runInbox("):]
+        run = run[:run.index("\n\t}\n")]
+        self.assertLess(run.index("inboxFallback = nil"), run.index("inboxFallback = visible"))
+        act = swift[swift.index("\tfunc act(_ request: [String: Any]) {"):]
+        guard = act[:act.index("let script =")]
+        self.assertIn('request["verb"] as? String == "inbox-run" { inboxFallback = nil }', guard)
+
     def test_the_app_and_the_page_fall_back_to_the_visible_session_only_on_an_unavailable_reply(self):
         swift = (STATUS / "app" / "Garrick.swift").read_text()
         self.assertIn('act(["verb": "inbox-run"])', swift)

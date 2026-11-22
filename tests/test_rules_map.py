@@ -128,7 +128,7 @@ MAP = [
     ("voice: rename and delete", "**\"Rename X to Y\"** moves the note and every link to it; **\"delete X\"**, for what should never have existed, lists what would go and acts only on the name said again.", "threads"),
     ("voice: where am I", "**\"Where am I\" or \"what's open\"**: name the live threads, most recent first; at most five when the user is listening.", "threads"),
     ("voice: fade", "**\"Fade the meetings\"**, **\"fade the library\"** or **\"what would fade\"**: write the list of wiki pages that would leave working memory, go to the archive or come back, and why, and move nothing. The first fade on a wiki stops there; after it, one yes applies exactly that list. **\"Keep X\"** keeps a wiki page in working memory for good, and proposes bringing it back if it has faded.", "nurture"),
-    ("voice: mangled", "**Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting.", "rules"),
+    ("voice: mangled", "**Names arrive mangled.** Match each name against Parties (`System/context.md`), People and Aliases (`names.md`, else `context.md` until moved) before acting.", "rules"),
     ("voice: mangled, ask", "If a heard name is close to two entries, ask.", "rules"),  # tighter: folded into the ambiguity bullet, see below
     ("voice: aliases", "**Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.", "rules"),
     ("voice: that's wrong", "**\"That's wrong, it's Y\"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy and on one yes fixes them all", "rules"),

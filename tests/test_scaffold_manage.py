@@ -265,7 +265,7 @@ class TestRename(ManageCase):
         self.assertIn("Acme, Pricing: renamed Renewal", self.git("log", "-1", "--format=%s").stdout)
         self.assertIn("Renamed from Pricing.", self.git("log", "-1", "--follow", "-p", "--format=", "--",
                                                         "Acme/Threads/Renewal/Renewal.md").stdout)
-        context = (self.root / "System" / "context.md").read_text()
+        context = (self.root / "System" / "names.md").read_text()
         # The alias a rename leaves is a learned row, and says it came from the user.
         self.assertIn("| pricing | Renewal | 2027-01-01, user |", context)
         self.assertIn("| Heard | Means | Learned |", context)
@@ -1123,9 +1123,9 @@ class TestARenameFromThePageFinishes(ManageCase):
             self.skipTest("this workspace has no repository of its own")
         out = self.act(verb="rename", zone="Work", project="Acme", to="Apex")
         self.assertEqual("Renamed Acme to Apex.", out["say"])
-        self.assertIn("| acme | Apex |", (self.root / "System" / "context.md").read_text())
-        self.assertEqual(["System/context.md"], self.root_git("show", "--name-only", "--format=", "HEAD").split())
-        self.assertNotIn("context.md", self.root_git("status", "--porcelain"))
+        self.assertIn("| acme | Apex |", (self.root / "System" / "names.md").read_text())
+        self.assertEqual(["System/names.md"], self.root_git("show", "--name-only", "--format=", "HEAD").split())
+        self.assertNotIn("names.md", self.root_git("status", "--porcelain"))
         self.assertEqual({"Zones/Work/Acme": "Zones/Work/Apex"}, self.moved())
         self.act(verb="rename", zone="Work", project="Apex", thread="Pricing", to="Renewal")
         self.assertEqual({"Zones/Work/Acme": "Zones/Work/Apex", "Zones/Work/Apex/Threads/Pricing": "Zones/Work/Apex/Threads/Renewal"},
@@ -1141,12 +1141,12 @@ class TestARenameFromThePageFinishes(ManageCase):
     def test_a_context_with_other_changes_is_left_for_its_own_commit(self):
         if not (self.root / ".git").exists():
             self.skipTest("this workspace has no repository of its own")
-        context = self.root / "System" / "context.md"
+        context = self.root / "System" / "names.md"
         context.write_text(context.read_text() + "\nA line another session has not committed.\n")
         head = self.root_git("rev-parse", "HEAD")
         out = self.act(verb="rename", zone="Work", project="Acme", to="Apex")
         self.assertTrue(out["say"].startswith("Renamed Acme to Apex. Its old name is added as a heard one in "
-                                              "System/context.md, which had other changes not committed"), out["say"])
+                                              "System/names.md, which had other changes not committed"), out["say"])
         self.assertEqual(head, self.root_git("rev-parse", "HEAD"))
         self.assertIn("A line another session has not committed.", context.read_text())
 

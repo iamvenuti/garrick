@@ -12,7 +12,7 @@ them all, in the places a session reads as fact:
 
 - the assistant's memory entries, in the folders `memory` names in
   System/garrick-checks.json (none when it is not set), their index included;
-- System/context.md;
+- System/context.md and System/names.md;
 - every hub and thread note, in the zones and in System/;
 - each zone's Todo.md;
 - the pages of both wikis, under `wiki/`, and the faded ones under `dormant/wiki/`
@@ -216,9 +216,10 @@ def places(root: Path, memory: Optional[List[Path]] = None) -> List[Tuple[str, P
             for path in sorted(Path(folder).rglob("*.md")):
                 if path.is_file() and not any(p.startswith(".") for p in path.relative_to(folder).parts):
                     out.append(("memory", path))
-    context = root / "System" / "context.md"
-    if context.is_file():
-        out.append(("context", context))
+    for name in ("context.md", "names.md"):
+        context = root / "System" / name
+        if context.is_file():
+            out.append(("context", context))
     for zone in _visible(root / "Zones"):
         for project in _visible(zone):
             if project.name.lower() != INBOX.lower():

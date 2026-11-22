@@ -1689,6 +1689,9 @@ class ExtrasCase(Case):
 
     def setUp(self):
         super().setUp()
+        # The page waits for the view model (System/tools/view.py); a stand-in keeps these tests about what they test.
+        if not (self.root / "System/tools/view.py").is_file():
+            (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
         for patch in (mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
                       mock.patch.object(update, "app_folders", lambda: [self.base / "Applications"]),
                       mock.patch.object(update, "on_mac", lambda: False)):
@@ -2785,6 +2788,12 @@ class TestExtrasWaitForTheReader(Case):
     PAGE = "System/status/status.py"
     SWEEP = "System/jobs/todo_sweep.py"
 
+    def setUp(self):
+        super().setUp()
+        # The page also waits for the view model (System/tools/view.py); a stand-in is in place so only work.py is in question.
+        if not (self.root / "System/tools/view.py").is_file():
+            (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
+
     def older(self):
         self.as_if_older(self.PAGE, "# status, older\n")
 
@@ -2816,6 +2825,53 @@ class TestExtrasWaitForTheReader(Case):
         self.assertTrue((self.root / self.TOOL).is_file())
         self.assertEqual((REPO / "extras" / "status" / "status.py").read_text(), (self.root / self.PAGE).read_text())
         self.assertNotIn(self.PAGE, dict(result["skipped"]))
+
+
+class TestStatusWaitsForTheViewModel(Case):
+    """The status page builds its cards through System/tools/view.py, so an update holds System/status/ back while the
+    tool is missing from the workspace and from what the update ships. A fake template has or lacks view.py."""
+
+    TOOL = "System/tools/view.py"
+    PAGE = "System/status/status.py"
+
+    def older(self):
+        self.as_if_older(self.PAGE, "# status, older\n")
+
+    def run_with(self, has_view):
+        """An update of a workspace with no view.py, from a template that has it or lacks it, whatever the real one does."""
+        self.older()
+        if (self.root / self.TOOL).exists():
+            (self.root / self.TOOL).unlink()
+        self.commit(self.root, "no view tool")
+        stamp = self.stamp()
+        stamp["files"].pop(self.TOOL, None)
+        self.set_stamp(stamp)
+        real = update.shipped
+
+        def fake(zones):
+            files = dict(real(zones))
+            files.pop(self.TOOL, None)
+            if has_view:
+                files[self.TOOL] = (b"# view model\n", 0o644)
+            return files
+
+        with mock.patch.object(update, "shipped", fake):
+            p = self.plan()
+            self.assertEqual(has_view, self.TOOL in p["actions"]["add"])
+            return update.apply(self.root, p)
+
+    def test_the_page_waits_when_view_py_is_in_neither_place(self):
+        result = self.run_with(False)
+        held = dict(result["skipped"])
+        self.assertIn(self.PAGE, held)
+        self.assertIn(self.TOOL, held[self.PAGE])
+        self.assertEqual("# status, older\n", (self.root / self.PAGE).read_text())
+
+    def test_the_page_is_written_in_the_step_that_adds_view_py(self):
+        result = self.run_with(True)
+        self.assertTrue((self.root / self.TOOL).is_file())
+        self.assertNotIn(self.PAGE, dict(result["skipped"]))
+        self.assertNotEqual("# status, older\n", (self.root / self.PAGE).read_text())
 
 
 if __name__ == "__main__":

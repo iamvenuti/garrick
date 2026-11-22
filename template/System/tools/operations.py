@@ -228,7 +228,7 @@ DECLARED: Dict[str, Op] = {
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
     "settings": _op(("launchers", "default", "zones", "graph", "notifications", "memory",
-                     "desk-agent", "release-notice", "release-notice-every", "ask", "channels"), (), "workspace"),
+                     "desk-agent", "release-notice", "release-notice-every", "ask", "channels", "usage-counts"), (), "workspace"),
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.
     "release-check": _op((), (), "workspace", retry="safe"),
@@ -241,6 +241,9 @@ DECLARED: Dict[str, Op] = {
     # reads, or opened in the app the Mac uses for a .md file.
     "note-read": _op(("path",), ("path",), "none", retry="safe"),
     "note-open": _op(("path",), ("path",), "machine"),
+    # A new session in the Claude or Codex desktop app (#652): the page names a key and a folder, the reply
+    # carries the link the app opens. It only reads.
+    "session-url": _op(("key", "folder"), ("key", "folder"), "none", retry="safe"),
     # A Needs you question (#175), listed in Waiting on you now, answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.
@@ -344,6 +347,10 @@ DECLARED: Dict[str, Op] = {
     # The wrap (#645): the assistant's words in `input`, one JSON object, handed to System/tools/wrap.py, which does the lock,
     # the writes and the commit in the zone and answers with its receipt. A second run writes a second dated entry.
     "wrap": _op(("zone", "project", "thread", "input"), ("project", "thread"), "zone", True),
+    # Which card of the App was opened (#651): one id from view.CARDS, added to that day's count in
+    # System/garrick-usage.json. Only the app's bridge. It commits nothing and keeps no record here, as it is no
+    # operation on the work; the settings say whether it counts at all.
+    "count-card": _op(("card",), ("card",), "workspace", False, "safe"),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since

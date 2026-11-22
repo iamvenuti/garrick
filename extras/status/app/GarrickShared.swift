@@ -99,3 +99,34 @@ enum GarrickLink {
 		return (app, folder)
 	}
 }
+
+// A new session in the Claude or Codex desktop app (#652). The link comes from page_action.py's session-url,
+// built from the folder the workspace holds; the app opens it only when it is the one its key allows, and
+// falls back when the app does not take it. No state, and no app is touched here: the opener, the app and
+// the clipboard are passed in, so a test stubs them.
+enum GarrickSession {
+	// The scheme, host, path and query names each key's link must have.
+	static let routes = [
+		"claude-new": (scheme: "claude", host: "code", path: "/new", names: ["folder", "q"]),
+		"codex-new": (scheme: "codex", host: "threads", path: "/new", names: ["path", "prompt"])]
+
+	// The link, when its scheme, host and path are its key's own, its query names exactly that key's two, each once,
+	// and it carries nothing else; nil for anything else, a link to any other app, host or route included.
+	static func link(key: String, text: String) -> URL? {
+		guard let route = routes[key], let url = URL(string: text), url.scheme == route.scheme, url.host == route.host,
+		      let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.path == route.path,
+		      url.user == nil, url.password == nil, url.port == nil, url.fragment == nil,
+		      let items = parts.queryItems,
+		      items.map({ $0.name }).sorted() == route.names.sorted() else { return nil }
+		return url
+	}
+
+	// Opens the link. When the app does not take it, opens the app instead, puts the prompt on the clipboard,
+	// and says false, so the caller tells the user in one sentence. Opens nothing twice.
+	static func open(_ url: URL, prompt: String, opener: (URL) -> Bool, openApp: () -> Void, copy: (String) -> Void) -> Bool {
+		if opener(url) { return true }
+		copy(prompt)
+		openApp()
+		return false
+	}
+}

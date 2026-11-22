@@ -1241,6 +1241,51 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// A new session in the Claude or Codex desktop app, in the work's folder, with "open <name>" filled in and
+	// not sent (#652). page_action.py's session-url built the link from the folder the workspace holds; the page
+	// sent only a key and a folder to find the work by. Neither app documents the route, so this opens the link
+	// only when it is the one this key allows (scheme and host), and falls back, when the app does not take it,
+	// to opening the app and putting the prompt on the clipboard, with one sentence that says so. A cold Claude is
+	// started first and waited for, as startClaude() does, since it drops a link that comes while its window loads.
+	func openNewSession(_ request: [String: Any], _ said: [String: Any]) {
+		menuActed = true
+		guard said["ok"] as? Bool == true else {
+			return toast(said["say"] as? String ?? "That did not work.")
+		}
+		let apps = ["claude-new": (claudeBundle, "Claude"), "codex-new": (codexBundle, "Codex")]
+		guard let key = request["key"] as? String, let (bundle, app) = apps[key],
+		      let url = GarrickSession.link(key: key, text: said["url"] as? String ?? "") else {
+			return toast("That did not open a new session. Nothing was opened.")
+		}
+		guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
+			toast("\(app) is not installed here any more. Rebuilding the page without it.")
+			return freshen(force: true)
+		}
+		let prompt = said["prompt"] as? String ?? ""
+		let fallback = said["fallback"] as? String ?? "\(app) did not open a new session."
+		let send = {
+			let took = GarrickSession.open(url, prompt: prompt, opener: { NSWorkspace.shared.open($0) },
+				openApp: { NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, _ in } },
+				copy: { self.copyText($0) })
+			self.toast(took ? "Opened a new session in \(app) with “\(prompt)” typed in. Press Enter to send it." : fallback,
+			           alsoNotify: !took)
+		}
+		guard bundle == claudeBundle, NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty else { return send() }
+		let from = claudeLogSize()
+		toast(startingClaude("a new session"))
+		let cfg = NSWorkspace.OpenConfiguration()
+		cfg.activates = true
+		NSWorkspace.shared.openApplication(at: appURL, configuration: cfg) { _, error in
+			DispatchQueue.main.async {
+				guard error == nil else { return self.toast(fallback) }
+				DispatchQueue.global(qos: .userInitiated).async {
+					_ = awaitClaudeWindow(from: from)
+					DispatchQueue.main.async { send() }
+				}
+			}
+		}
+	}
+
 	// Whether the page says the desk opens cmux here: the cmux extra, cmux
 	// itself, as its menu's `dk` says.
 	func deskReady() -> Bool {
@@ -1299,10 +1344,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// the page, with no toast and no rebuild, or asking would rebuild the page
 	// it asks from.
 	func reading(_ request: [String: Any]) -> Bool {
+		// A card opened is counted ("count-card", #651) without a word and without a rebuild: the page is already showing it.
+		if request["verb"] as? String == "count-card" { return true }
 		// A layout dialog's plan (#604) only shows what a change would do: no toast, and no rebuild under the dialog.
 		// Only the JSON boolean true counts: the number 1 bridges to Bool in Swift, and the page's rule is `is True`.
 		if request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,
 		   CFGetTypeID(flag) == CFBooleanGetTypeID(), flag.boolValue { return true }
+		if request["verb"] as? String == "session-url" { return true }       // opens an app: no toast of its own, no rebuild under the page
 		return ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")
 	}
 
@@ -1321,6 +1369,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			inboxFallback = nil
 			if said["unavailable"] as? Bool == true { return openInbox(visible) }
 		}
+		if request["verb"] as? String == "session-url" { openNewSession(request, said) }
 		if toasting && !reading(request) {
 			let line = bandLine(said)
 			toast(line.sentence, detail: line.detail)

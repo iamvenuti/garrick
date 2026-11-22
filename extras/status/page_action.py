@@ -147,6 +147,10 @@ zone's repository, as the skills would:
                 `blob` is the file as that look read it: if the file has changed, nothing is
                 written. Only the app's bridge (`via: page`): the ask box and a session are
                 refused, and the command line has no verb for it
+    count-card  one card of the page opened (#651): {"card"}, an id from view.py's CARDS, added to today's count in
+                System/garrick-usage.json when the setting `usage-counts` is on. Nothing else is kept; any other value is
+                refused and nothing is written. Only the app's bridge (`via: page`). It commits nothing and keeps no
+                operations record
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -239,6 +243,15 @@ zone's repository, as the skills would:
                 note that is not there. It only reads
     note-open   that note opened in the app the Mac uses for a .md file:
                 {"path"}; the same checks, and nothing written
+    session-url a new session in the Claude or Codex desktop app (#652):
+                {"key": "claude-new" or "codex-new", "folder"}. The folder only
+                names the project or thread, and is checked as an open by
+                folder is. The reply carries the link the app opens ("url"),
+                built here from the folder the workspace holds and "open
+                <name>", the name the threads skill says; nothing in the
+                request is ever part of it. It only reads
+                Only the app's bridge sends it (PAGE_ONLY): a session is refused,
+                so it cannot ask whether another zone's project exists
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -335,6 +348,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -359,11 +373,12 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "outbox-drop",
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
-         "wrap")
+         "count-card",
+         "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
-LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")
+LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new")
 DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmuxlib's AGENTS
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
@@ -1775,7 +1790,7 @@ def save_settings(ws: Path, req: dict) -> str:
     if "home" in req:                   # Settings has no Home choice any more (#503): the app opens on the full page, and a stored value is ignored
         raise Refused("there is no home to choose: Garrick opens on the full page")
     if not {"launchers", "zones", "graph", "notifications", "memory", "desk-agent",
-            "release-notice", "release-notice-every", "ask", "channels"} & set(req):
+            "release-notice", "release-notice-every", "ask", "channels", "usage-counts"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
@@ -1784,6 +1799,10 @@ def save_settings(ws: Path, req: dict) -> str:
         if not isinstance(req["ask"], bool):
             raise Refused("Ask is on or off")
         new["ask"] = req["ask"]
+    if "usage-counts" in req:           # Settings › About Garrick: whether the App counts which cards are opened (#651)
+        if not isinstance(req["usage-counts"], bool):
+            raise Refused("counting which cards are opened is on or off")
+        new["usage-counts"] = req["usage-counts"]
     if "channels" in req:               # Settings › Channels (#571): each channel's tier, effort and autonomy
         try:
             kept = prefs().read(ws).get("channels")
@@ -2132,6 +2151,48 @@ def cmux_folder(ws: Path, req: dict) -> tuple:
     if not (folder / (folder.name + ".md")).is_file():
         raise Refused("no %s called %s in %s" % ("project" if len(names) == 1 else "thread", names[-1], zone.name))
     return folder, ", ".join(names)
+
+
+# A new session in a desktop app (#652): the link each app takes. Neither route is documented by its vendor.
+# key: (scheme, the link's host and path, the query's name for the folder, for the prompt, the app as the page says it)
+NEW_SESSION = {"claude-new": ("claude", "code/new", "folder", "q", "Claude"),
+               "codex-new": ("codex", "threads/new", "path", "prompt", "Codex")}
+
+
+def spoken_name(ws: Path, req: dict, long: str) -> str:
+    """The name to say for the work the request names, as the threads skill says it: ask.py's spoken(), the
+    thread alone, else the project, else with the zone. `long` is cmux_folder's "project, thread", for a workspace
+    whose ask.py is not beside this file."""
+    path = HERE / "ask.py"
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_ask_names", str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        thread = req.get("thread") if req.get("thread") not in (None, "", "-") else None
+        return mod.spoken(mod.scan(ws), req["zone"], req["project"], thread)
+    except Exception:                       # no ask.py, or one that does not read: the long form is still unique
+        return long
+
+
+def session_url(ws: Path, req: dict) -> dict:
+    """The link that opens a new session in the Claude or Codex desktop app, in the work's folder, with "open
+    <name>" filled in and not sent. The page names a key and a folder and nothing else: a folder only finds the
+    project or thread, by_folder() refuses anything outside the workspace, a link out of it, or what is neither,
+    and the link is built here from the folder the workspace holds, the query encoded. Nothing is opened here."""
+    key = req.get("key")
+    if key not in NEW_SESSION:
+        raise Refused("not a way to open a new session")
+    scheme, route, folder_key, prompt_key, app = NEW_SESSION[key]
+    work = dict(folder=req.get("folder"))
+    if by_folder(ws, work) is not None:
+        raise Refused("a new session opens only in a project or thread")
+    folder, long = cmux_folder(ws, work)
+    prompt = "open " + spoken_name(ws, work, long)
+    url = "%s://%s?%s" % (scheme, route, urllib.parse.urlencode(
+        [(folder_key, str(folder)), (prompt_key, prompt)], quote_via=urllib.parse.quote))
+    return {"say": "Opening a new session in %s" % app, "url": url, "prompt": prompt, "app": app,
+            "fallback": "%s did not open a new session. Opened %s instead; the clipboard now holds “%s”. Paste it into a new session."
+                        % (app, app, prompt)}
 
 
 def by_folder(ws: Path, req: dict) -> Optional[str]:
@@ -2797,10 +2858,11 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     the move is kept for the effort history (effort.py's moved.json), so the
     page's Time and Cost follow the new name. One line, and the zone's commit for Undo."""
     old = thread or project
-    context = ws / "System" / "context.md"
     root_repo = (ws / ".git").exists()
-    held = root_repo and context.is_file() and uncommitted(ws, context)
-    before = context.read_bytes() if context.is_file() else None
+    # The heard name goes to System/names.md once the workspace has it, else to System/context.md (#653).
+    files = [ws / "System" / n for n in ("context.md", "names.md")]
+    held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
+    before = {f: f.read_bytes() if f.is_file() else None for f in files}
     said = scaffold(ws, "rename", *which, "--to", to)
     code, head = git(zone, "rev-parse", "--short", "HEAD")
     made = head.strip() if code == 0 else ""
@@ -2811,16 +2873,17 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
         keep_move(ws, rel_old, rel_new)
     except OSError:
         note += " The page's time and cost for it start afresh under the new name."
-    added = context.is_file() and context.read_bytes() != before
-    if added and root_repo and not held:
-        try:
-            commit(ws, context, before or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
-                   wall=wall_refusal(ws))
-        except Refused as e:
-            note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
-    elif added and held:
-        note += (" Its old name is added as a heard one in System/context.md, which had other changes not committed, "
-                 "so it is left for you to commit.")
+    for context in files:
+        added = context.is_file() and context.read_bytes() != before[context]
+        if added and root_repo and not held[context]:
+            try:
+                commit(ws, context, before[context] or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
+                       wall=wall_refusal(ws))
+            except Refused as e:
+                note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
+        elif added and held[context]:
+            note += (" Its old name is added as a heard one in System/%s, which had other changes not committed, "
+                     "so it is left for you to commit." % context.name)
     if "Links written [[" in said:
         note += " Links that name only %s were left alone: another note in %s has that name too." % (old, zone.name)
     return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
@@ -6122,6 +6185,39 @@ def wrap_thread(ws: Path, req) -> dict:
     return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
 
 
+_USAGE = None
+
+
+def usage_counts():
+    """usage_counts.py, beside this file: the App's count of which cards are opened (#651)."""
+    global _USAGE
+    if _USAGE is None:
+        spec = importlib.util.spec_from_file_location("garrick_usage_counts", str(HERE / "usage_counts.py"))
+        _USAGE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_USAGE)
+    return _USAGE
+
+
+def count_card(ws: Path, req) -> dict:
+    """`count-card` (#651): add one to a card's count for today, in System/garrick-usage.json. The card must be one of the
+    page's own, by id; anything else is refused and nothing is written. With the setting `usage-counts` off nothing is
+    written and the reply says so. It commits nothing and keeps no operations record, and the reply is only read: no toast,
+    no rebuild."""
+    mod = usage_counts()
+    try:
+        settings = prefs().read(ws)
+    except Exception:
+        settings = {}
+    try:
+        with held("usage-counts.lock", wait=5, strict=False):
+            did = mod.record(ws, req.get("card"), settings=settings)
+    except mod.Refused as e:
+        raise Refused(str(e))
+    except OSError:
+        raise Refused("the count could not be kept")
+    return {"say": "Counted." if did == "counted" else "Counting is off."}
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or a reply whose
     "say" comes with what the caller reads back."""
@@ -6149,6 +6245,8 @@ def act(ws: Path, req, today=None, now=None):
         return release_update(ws, req.get("held"))
     if req["verb"] == "note-read":
         return note_read(ws, req)
+    if req["verb"] == "session-url":
+        return session_url(ws, req)
     if req["verb"] == "note-open":
         return note_open(ws, req)
     if req["verb"] in ("park", "wake"):
@@ -6173,6 +6271,8 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "count-card":
+        return count_card(ws, req)
     if req["verb"] == "inbox-run":
         return inbox_run_start(ws)
     if req["verb"] == "intake-answer":
@@ -6231,7 +6331,9 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "layout",
              "outbox-drop",
              "inbox-run", "intake-answer",
-             "machine-role", "read-guard")
+             "machine-role", "read-guard",
+             "count-card",
+             "session-url")
 
 
 # ---- The page's own route (#618 leftover) -------------------------------------------------

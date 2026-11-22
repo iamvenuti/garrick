@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(27, html.count("</script>"))         # (#503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(28, html.count("</script>"))         # (#651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -908,7 +908,7 @@ class TestGuide(StatusCase):
     def test_every_page_in_reading_order(self):
         guide = self.pages(self.page())
         pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md")
-                       if not p.relative_to(REPO / "docs").as_posix().startswith("assets/"))
+                       if not p.relative_to(REPO / "docs").as_posix().startswith(("assets/", "decisions/")))   # decision notes are for those who change Garrick
         ids = re.findall(r'<article class="gd-page" id="([^"]+)"', guide)
         self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
         self.assertEqual(["Start here", "Understand", "Do", "Extras", "Look up"], re.findall(r'<div class="gd-sec"><h3>([^<]+)</h3>', guide))
@@ -1940,7 +1940,8 @@ class TestLaunchers(StatusCase):
         self.app(apps, "Codex", "com.openai.codex")                      # installed, no launcher in it
         self.assertEqual(("finder",), status.launchers_installed([apps]))
         self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_CODEX_CLI,
-                          "claude": status.NOT_INSTALLED}, status.launcher_state([apps]))
+                          "claude": status.NOT_INSTALLED, "claude-new": status.NOT_INSTALLED,
+                          "codex-new": status.NO_NEW_SESSION % "Codex"}, status.launcher_state([apps]))
         for rel in status.CODEX_CLI:                                     # any of the three it may carry will do
             shutil.rmtree(apps)
             self.app(apps, "Codex", "com.openai.codex", cli=rel)
@@ -1988,13 +1989,15 @@ class TestLaunchers(StatusCase):
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
         dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
-        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
+        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+                         re.findall(r'data-launcher="([a-z-]+)"', dialog))
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
-        self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+                         re.findall(r'name="garrick-default" value="([a-z-]+)"', dialog))
         self.assertIn('<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
                       '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
-        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
-        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
+        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new']", status.PANEL_JS)
+        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)

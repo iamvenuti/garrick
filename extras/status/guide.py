@@ -382,9 +382,9 @@ def page_id(rel: str, heading: str = "") -> str:
 
 
 def doc_pages(docs: Path) -> List[str]:
-    """Every page in the docs folder outside assets/, as the installer ships them, by its path from there."""
+    """Every page in the docs folder outside assets/ and decisions/ (notes for those who change Garrick), as the installer ships them, by its path from there."""
     return sorted(rel for rel in (p.relative_to(docs).as_posix() for p in docs.rglob("*.md") if p.is_file())
-                  if not rel.startswith("assets/") and not any(part.startswith(".") for part in rel.split("/")))
+                  if not rel.startswith(("assets/", "decisions/")) and not any(part.startswith(".") for part in rel.split("/")))
 
 
 def contents(docs: Path, pages: List[str]) -> List[Tuple[str, List[str]]]:

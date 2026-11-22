@@ -446,14 +446,14 @@ def content_files(project_name, values):
 # --------------------------------------------------------------------------- context.md
 
 
-def table_rows(lines, heading):
+def table_rows(lines, heading, file="context.md"):
     start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## " + heading.lower()), None)
     if start is None:
-        raise BuildError("System/context.md has no `## %s` table." % heading)
+        raise BuildError("System/%s has no `## %s` table." % (file, heading))
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
     if len(rows) < 2:
-        raise BuildError("System/context.md's `## %s` section has no table." % heading)
+        raise BuildError("System/%s's `## %s` section has no table." % (file, heading))
     header = [c.strip().lower() for c in lines[rows[0]].strip().strip("|").split("|")]
     return header, rows
 
@@ -461,18 +461,23 @@ def table_rows(lines, heading):
 def add_rows(root, data):
     """The party and its people, at the end of their tables, in the columns
     each table has. Garrick writes them, so they carry no Learned cell."""
-    path = root / "System" / "context.md"
-    lines = path.read_text(encoding="utf-8").split("\n")
     party = data["party"]
     wanted = {"Parties": [{"party": party["name"], "what it is": party["what"], "zone": data["zone"],
                            "tag": "`%s`" % party["tag"], "walled": "no" if party.get("walled") is False else "yes", "domains": ", ".join(party.get("domains", []))}],
               "People": [{"name": p["name"], "party": "`%s`" % party["tag"], "role": p["role"]}
                          for p in data["people"]]}
+    # People are in System/names.md once the workspace has it (#653), in context.md before.
+    texts = {}
     for heading, rows in wanted.items():
-        header, at = table_rows(lines, heading)
+        file = "names.md" if heading == "People" and (root / "System" / "names.md").is_file() else "context.md"
+        if file not in texts:
+            texts[file] = (root / "System" / file).read_text(encoding="utf-8").split("\n")
+        lines = texts[file]
+        header, at = table_rows(lines, heading, file)
         new = ["| " + " | ".join(row.get(col, "") for col in header) + " |" for row in rows]
         lines[at[-1] + 1:at[-1] + 1] = new
-    path.write_text("\n".join(lines), encoding="utf-8")
+    for file, lines in texts.items():
+        (root / "System" / file).write_text("\n".join(lines), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- adding it
@@ -524,7 +529,8 @@ def add(root, today=None, quiet=False):
     d = dates(today)
     values = fields(d)
     zone_dir = root / "Zones" / data["zone"]
-    root_files = ["System/context.md", "System/garrick-version.json", ".claude/settings.json",
+    root_files = ["System/context.md"] + (["System/names.md"] if (root / "System" / "names.md").is_file() else []) + [
+                  "System/garrick-version.json", ".claude/settings.json",
                   "System/garrick-settings.json"]
     was_clean = {r: not git_quiet(root, "status", "--porcelain", "--", r).stdout.strip() for r in root_files}
 

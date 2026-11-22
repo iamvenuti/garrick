@@ -47,7 +47,8 @@ PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
 
 # What of docs/ a workspace gets, in System/garrick-docs/: every page outside
-# docs/assets/, and the images those pages show. A file a page only links to
+# docs/assets/ and docs/decisions/ (the notes behind the concepts, for
+# contributors), and the images those pages show. A file a page only links to
 # stays on GitHub, where the Guide sends that link.
 DOC_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
 DOC_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.S)
@@ -59,7 +60,7 @@ def shipped_docs(names, read):
     installer, update.py's shipped() and its release_hashes() all ask this,
     so the three agree on what Garrick writes."""
     names = set(names)
-    pages = sorted(n for n in names if n.endswith(".md") and not n.startswith("assets/"))
+    pages = sorted(n for n in names if n.endswith(".md") and not n.startswith(("assets/", "decisions/")))
     out = set(pages)
     for page in pages:
         for target in DOC_IMAGE.findall(DOC_CODE.sub("", read(page))):
@@ -489,7 +490,7 @@ def zone_walled(zone, parties):
 
 
 def render_context(template_text, cfg):
-    """Replace the example rows of the template's context.md with the owner's own."""
+    """Replace the example rows of the template's context.md, or of its names.md, with the owner's own."""
     owner = cfg["owner"]
     rows = {
         "Zones": [[z["name"], z["holds"] or f"<What {z['name']} holds>", "yes" if zone_walled(z, cfg["parties"]) else "no"]
@@ -741,9 +742,11 @@ def install(cfg, target, force=False, quiet=False):
     # The root: entry point and system folder.
     w.copy_file(TEMPLATE / "AGENTS.md", root / "AGENTS.md")
     w.mkdir(root / "System")
-    w.copy_tree(TEMPLATE / "System", root / "System", skip=("context.md",))
+    w.copy_tree(TEMPLATE / "System", root / "System", skip=("context.md", "names.md"))
     w.write(root / "System" / "context.md",
             render_context((TEMPLATE / "System" / "context.md").read_text(encoding="utf-8"), cfg))
+    w.write(root / "System" / "names.md",
+            render_context((TEMPLATE / "System" / "names.md").read_text(encoding="utf-8"), cfg))
     # The release notes of this Garrick, which the status page shows without fetching anything.
     if (REPO / "CHANGELOG.md").is_file():
         w.copy_file(REPO / "CHANGELOG.md", root / "System" / "garrick-changelog.md")
@@ -830,8 +833,8 @@ def install(cfg, target, force=False, quiet=False):
     say("  Two memories, Meetings and Knowledge, under Wikis, both empty for now.")
     say("  Each zone has an Inbox folder: drop mail or any file there, and say \"process the inbox\".")
     walled = [p for p in cfg["parties"] if p["walled"]]
-    say(f"  {count(cfg['parties'], 'party', 'parties')} ({len(walled)} walled) "
-        f"and {count(cfg['people'], 'person', 'people')} in System/context.md.")
+    say(f"  {count(cfg['parties'], 'party', 'parties')} ({len(walled)} walled) in System/context.md "
+        f"and {count(cfg['people'], 'person', 'people')} in System/names.md.")
     for warning in merge_hook_warnings:
         say(f"  {warning}")
     if wiki_hook_warning:

@@ -1150,6 +1150,8 @@ WORD_BUDGET_OTHER = 1000
 # System/rules.md is loaded into every session, on every request. Procedure
 # that only one kind of request needs belongs in the skill that runs it.
 RULES_CHAR_BUDGET = 8000
+# So is System/context.md (#653): the people and the heard names are in System/names.md, read when a name needs them.
+CONTEXT_CHAR_BUDGET = 8000
 COPY_MIN_CHARS = 80
 # The heading under which the update's split leaves what it could not place.
 SPLIT_REVIEW_RE = re.compile(r"^## From your earlier .+, to review\s*$")
@@ -1394,6 +1396,26 @@ CONTEXT_EFFECT = {
 }
 
 
+def context_budget_finding(text: str, path: str, moved: bool) -> Finding:
+    """System/context.md is loaded into every session (#653): above its budget, name the section that grew."""
+    sizes = {}
+    heading = "the opening"
+    for line in text.splitlines(keepends=True):
+        if line.startswith("## "):
+            heading = line[3:].strip()
+        sizes[heading] = sizes.get(heading, 0) + len(line)
+    biggest, size = max(sizes.items(), key=lambda kv: kv[1])
+    move = ""
+    if biggest in ("People", "Aliases") and not moved:
+        move = "; the update moves People and Aliases to System/names.md on your yes"
+    elif biggest == "Parties":
+        move = "; shorten its What it is column"
+    return Finding(WARNING, "context", path,
+                   "%d characters, above the %d it is allowed: it is loaded into every session. The section that grew "
+                   "most is %s, with %d characters%s" % (len(text), CONTEXT_CHAR_BUDGET, biggest, size, move),
+                   "The context file has grown past its budget")
+
+
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
@@ -1472,7 +1494,10 @@ def check_context(ws: Workspace) -> List[Finding]:
         if listed and zone.name not in listed:
             out.append(Finding(WARNING, "context", ctx_path, "zone %s is not in the Zones table" % zone.name,
                                "The %s zone is missing from the context file" % zone.name))
-    if not re.search(r"(?m)^## Aliases\s*$", text):
+    names_text = read_text(ws.root / "System" / "names.md") or "" if ws.context.get("names_file") else ""
+    if len(text) > CONTEXT_CHAR_BUDGET:
+        out.append(context_budget_finding(text, ctx_path, bool(names_text)))
+    if not re.search(r"(?m)^## Aliases\s*$", text + "\n" + names_text):
         out.append(Finding(WARNING, "context", ctx_path,
                            "no `## Aliases` table (| Heard | Means |); names that arrive mangled by dictation have nothing to match",
                            "The context file has no aliases table"))
@@ -1510,11 +1535,12 @@ def check_memory(ws: Workspace) -> List[Finding]:
             continue
         date, sources = read
         if not date or not sources or not all(is_origin(s) for s in sources):
-            out.append(Finding(WARNING, "memory", ctx_path,
+            out.append(Finding(WARNING, "memory", "System/" + entry.get("file", "context.md"),
                                "%s has a Learned cell that does not read as `YYYY-MM-DD, source`: `%s`" % (where, entry["cell"]),
                                "A learned row in the context file does not say where it came from"))
         elif inbound_only(sources):
-            out.append(Finding(WARNING, "memory", ctx_path, "%s is learned, and %s" % (where, INBOUND_FIX),
+            out.append(Finding(WARNING, "memory", "System/" + entry.get("file", "context.md"),
+                               "%s is learned, and %s" % (where, INBOUND_FIX),
                                "A row in the context file came only from a mail, a transcript or a page"))
     return out
 
@@ -4831,6 +4857,7 @@ class QuoteIndex:
 # Garrick feature tends to borrow their wording, on whichever side of a wall
 # it sits.
 SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
+                "System/names.md",
                 "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
                 "System/garrick-changelog.md")
 

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited: the concept check reads the description, so editing it runs the check again.
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
@@ -128,20 +130,32 @@ jobs:
           GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
         run: $PY tests/shard.py ${{ matrix.shard }}/4 --jobs 3
 
+  concept:
+    # #654: a pull request that adds a concept to docs/concepts.md links the decision behind it.
+    # Pure Python, and it reads the description from the event, never from the shell.
+    name: Concept check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: python3 tests/concept_gate.py
+
   tests:
     # The one result to wait for, and the one for branch protection to name: it fails if the
     # branch job or any shard did, and passes when one of them ran and the other was skipped.
     name: Tests
-    needs: [plan, branch, test]
+    needs: [plan, branch, test, concept]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Everything that ran passed
         run: |
-          plan="${{ needs.plan.result }}"; branch="${{ needs.branch.result }}"; test="${{ needs.test.result }}"
-          echo "plan=$plan branch=$branch shards=$test"
+          plan="${{ needs.plan.result }}"; branch="${{ needs.branch.result }}"; test="${{ needs.test.result }}"; concept="${{ needs.concept.result }}"
+          echo "plan=$plan branch=$branch shards=$test concept=$concept"
           if [ "$plan" != success ]; then echo "The plan failed."; exit 1; fi
-          for r in "$branch" "$test"; do
+          for r in "$branch" "$test" "$concept"; do
             case "$r" in success|skipped) ;; *) echo "A job did not pass: $r."; exit 1 ;; esac
           done
           if [ "$branch" != success ] && [ "$test" != success ]; then echo "Nothing ran."; exit 1; fi

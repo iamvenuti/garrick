@@ -746,7 +746,7 @@ def pin_version(root, dated):
 
 
 def add_alias(root, heard, means):
-    path = root / "System" / "context.md"
+    path = root / "System" / ("names.md" if (root / "System" / "names.md").is_file() else "context.md")
     lines = path.read_text(encoding="utf-8").splitlines()
     start = lines.index("## Aliases")
     end = start + 1

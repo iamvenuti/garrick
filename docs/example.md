@@ -40,7 +40,7 @@ The example lives in a zone of its own, Example, with its own history, so nothin
 python3 System/tools/example.py archive
 ```
 
-puts the zone, the drive and the example's people in `System/context.md` away in `.archive/Example/`, a folder no history records. Your own zones, people and files are not touched. To bring it back exactly as it was:
+puts the zone, the drive and the example's people in `System/context.md` and `System/names.md` away in `.archive/Example/`, a folder no history records. Your own zones, people and files are not touched. To bring it back exactly as it was:
 
 ```sh
 python3 System/tools/example.py restore

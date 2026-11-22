@@ -60,7 +60,7 @@ ALLOW = ["Read", "Grep", "Glob", "Edit", "Write"] \
     + ["Bash(python3 System/skills/intake/intake.py %s:*)" % sub for sub in INTAKE_SUBS] \
     + ["Bash(python3 System/skills/meetings/ingest.py %s:*)" % sub for sub in INGEST_SUBS]
 # What the run must leave as it found it: the files that decide a wall and the code a run could change under itself.
-WATCHED_FILES = ("context.md", "rules.md", "rules.local.md")           # in System/
+WATCHED_FILES = ("context.md", "names.md", "rules.md", "rules.local.md")           # in System/
 ROOT_FILES = ("AGENTS.md", "AGENTS.local.md")                           # in the workspace root
 WATCHED_TREES = ("skills", "tools")                                     # under System/
 SAY_BUSY = "The inbox is being processed already. Nothing new was started."
@@ -101,7 +101,7 @@ def allowed(rel: str) -> bool:
 
 
 def system_hash(ws: Path) -> str:
-    """One hash over the files that decide a wall and the code a run could change under itself: `System/context.md`, the rules
+    """One hash over the files that decide a wall and the code a run could change under itself: `System/context.md` and `names.md`, the rules
     files, and every file under `System/skills` and `System/tools`. A run that leaves a different hash was not a run that only
     files (S1)."""
     h = hashlib.sha1()

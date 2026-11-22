@@ -74,7 +74,7 @@ python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sourc
 - `--scope S` may name the session's own scope and no other (a session at the
   root may name any). There is no `--project`: the scope is never a folder you choose.
 - `stats` shows your scope's index and how many files it holds.
-- A word that is a party, a person or a heard alias in `System/context.md` is
+- A word that is a party, a person or a heard alias in `System/names.md` or `System/context.md` is
   searched in every spelling, with and without spaces; a near misspelling of a
   word the notes have is found too.
 

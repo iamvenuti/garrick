@@ -100,15 +100,19 @@ The table in `System/context.md` that lists every party: its name, what it is, i
 
 ### People
 
-The table in `System/context.md` of the people who come up, one row per person, by name. The Party cell is context and may be empty. It holds names for voice input; no check reads it as a wall.
+The table in `System/names.md` of the people who come up, one row per person, by name. The Party cell is context and may be empty. It holds names for voice input; no check reads it as a wall.
 
 ### Aliases
 
-The table in `System/context.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it. See [Voice](../template/System/rules.md#voice) in the rules.
+The table in `System/names.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it. See [Voice](../template/System/rules.md#voice) in the rules.
+
+### `System/names.md`
+
+The file that holds People and Aliases, so that [`System/context.md`](#systemcontextmd), which every session loads, stays short ([#653](https://github.com/iamvenuti/garrick/issues/653)). See [People and Aliases](updating.md#people-and-aliases).
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones and Parties. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 
@@ -205,6 +209,10 @@ Each of Garrick's instruction files has a local file beside it for your own text
 
 The entry point any assistant reads, at the workspace root, in each zone, in `Wikis/` and in each wiki. The root one sends the assistant to `rules.md` and `context.md`, and each zone's or wiki's adds what holds only there. They are Garrick's, as shipped; never create a `CLAUDE.md` in the workspace, since Claude Code stops reading every `AGENTS.md` once one exists.
 
+### Decision note
+
+The short written decision behind a concept: the concept in one sentence, the concepts it touches, what was measured (or why nothing could be), and what would show it is wrong. A pull request that adds a heading to this page, or changes the first sentence under one, must link its decision note in its description, and a check refuses the merge without one. It is for people who change Garrick, not for those who use it. Decided in [#654](https://github.com/iamvenuti/garrick/issues/654). See [A decision note](../CONTRIBUTING.md#a-decision-note).
+
 ## Tools and assistants
 
 ### Skill
@@ -258,6 +266,14 @@ Optional tools the repository ships in `extras/` for a workspace to take on, suc
 ### The Garrick App
 
 The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as the state chip on a card that parks or wakes a thread, or the box that ticks a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
+
+### View model
+
+The one JSON document the core builds of your workspace, and the only thing the Garrick App draws from: your pieces of work with their state, what each may do, and the queues of files and questions that wait. It reads and never writes, it keeps each zone's records apart, and it lives in `System/tools/view.py`, so that what a card means can be tested without drawing a page. Decided in [#650](https://github.com/iamvenuti/garrick/issues/650). See [The view model](architecture.md#the-view-model).
+
+### Usage counts
+
+The Mac app's count of which cards you open: a card's name, a day and a number, on this Mac only, with no path, name, zone or text, and no copy anywhere else. A setting turns it off, and `System/tools/usage.py` prints it. Decided in [#651](https://github.com/iamvenuti/garrick/issues/651). See [Counting which cards you open](extras/status-page.md#counting-which-cards-you-open).
 
 ### The Mac app
 

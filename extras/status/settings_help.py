@@ -52,6 +52,14 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'data-launcher="claude"', "launch-claude", "Open in Claude",
      "Adds Open in Claude to the cards. It opens the project's folder in the Claude app. Pick it if you work in Claude. "
      "Default makes a click on a thread's name do it."),
+    (r'data-launcher="claude-new"', "launch-claude-new", "New session in Claude",
+     "Adds New session in Claude to the cards. It starts a new session in the Claude app, in the project's folder, with the "
+     "first message typed in. You press Enter to send it. Pick it if you work in Claude. "
+     "Default makes a click on a thread's name do it."),
+    (r'data-launcher="codex-new"', "launch-codex-new", "New session in Codex",
+     "Adds New session in Codex to the cards. It starts a new session in the Codex app, in the project's folder, with the "
+     "first message typed in. You press Enter to send it. Pick it if you work in Codex. "
+     "Default makes a click on a thread's name do it."),
     # Explore
     (r'id="graph-follow"', "follow", "Follow the zone in view",
      "On, the graph switches to the zone you are reading on the Threads card. Off, it stays on the zone you chose. "
@@ -167,6 +175,9 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'id="rel-on"', "rel-on", "Check for a newer Garrick",
      "Looks once in a while at Garrick's public release page to see whether a newer version is out, and tells you. Nothing "
      "about your work is sent. Turn it on if you want to hear about updates."),
+    (r'id="usage-on"', "usage-on", "Count which cards I open",
+     "Keeps a count of which cards you open, and on which day, on this Mac only. Nothing else is kept: no name, no note, no "
+     "text, and nothing is sent anywhere. It helps decide which cards are worth their space. Turn it off and nothing is counted."),
 ]
 SLUG = re.compile(r"[^a-z0-9]+")
 

@@ -1344,7 +1344,7 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     filtered after the search.
 
     Names are expanded before the query: a word that settles to a party,
-    person or alias in `System/context.md` is searched in every spelling the
+    person or alias in `System/names.md` or `System/context.md` is searched in every spelling the
     tables give, with and without spaces; a word the scope's rows do not have is
     widened to near spellings through a trigram table where SQLite carries one.
 

@@ -358,7 +358,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "chase",
          "outbox-drop",
          "inbox-run", "intake-answer",
-         "machine-role", "read-guard")
+         "machine-role", "read-guard",
+         "wrap")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -6091,6 +6092,36 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     raise Refused("not an answer Garrick offers for this finding")
 
 
+def wrap_thread(ws: Path, req) -> dict:
+    """The wrap (#645): the words the assistant wrote, as one JSON object in `input`, handed to System/tools/wrap.py, which
+    does the lock, the writes, the commit through the zone's hooks and the finish record. The page never invents the words:
+    a session writes them. Its receipt is the reply: a saved wrap answers ok, and a wrap the hook refused, another session
+    moved under, or that failed answers with the tool's own sentence."""
+    tool = ws / "System" / "tools" / "wrap.py"
+    if not tool.is_file():
+        raise Refused("this workspace has no wrap tool yet; update Garrick first")
+    data = req.get("input")
+    if not isinstance(data, dict):
+        raise Refused("a wrap needs the words of the wrap, as an object, in input")
+    data = dict(data)
+    for key in ("zone", "project", "thread"):
+        if req.get(key) is not None:
+            if data.get(key) not in (None, req[key]):
+                raise Refused("the wrap's words name another %s than the request does" % key)
+            data[key] = req[key]
+    try:
+        done = subprocess.run([sys.executable, "-B", str(tool), "--root", str(ws), "--json"], input=json.dumps(data),
+                              capture_output=True, text=True, timeout=600)
+        got = json.loads(done.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        raise Refused("the wrap did not answer; look at git status in the zone before trying again")
+    if not isinstance(got, dict) or got.get("outcome") not in ("saved", "refused", "conflict", "failed") or not isinstance(got.get("say"), str):
+        raise Refused("the wrap did not answer in words this page reads")
+    if got["outcome"] != "saved":
+        raise Refused(got["say"])
+    return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or a reply whose
     "say" comes with what the caller reads back."""
@@ -6158,6 +6189,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_machine_role(ws, req)
     if req["verb"] == "read-guard":
         return set_read_guard(ws, req)
+    if req["verb"] == "wrap":
+        return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
         return answer_suggestion(ws, req)
     if req["verb"] == "start":
@@ -6187,7 +6220,8 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
-               "todo-retire")
+               "todo-retire",
+               "wrap")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session", "outbox")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).

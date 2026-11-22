@@ -46,15 +46,14 @@ edits: the thread note for park and wake, `Todo.md` for a Todo verb. An edit of
 your own still waiting in that file would be swept into its commit under the
 wrong message. Before the call, look: `git -C "Zones/<Zone>" status --porcelain
 -- <that file>`. If it lists the file, commit your edit first, staging by name;
-or, as Wrap step 8 does for ticks, make the executor call first and the hand
-edit after.
+or make the executor call first and the hand edit after.
 
 **Check for it first**: `test -f System/status/page_action.py`. Where it is
 there, use it for these verbs and do not also run `scaffold.py` or commit by
 hand for them: it has done both. Where it is not there (no status page), each
 section's steps below are the way, exactly as before: the scaffolding script
-and a commit by hand. Everything else a wrap
-writes is by hand either way.
+and a commit by hand. A wrap is neither: the wrap tool
+writes and commits it (*Wrap*).
 
 ## Finish: "finish X", "X is done"
 
@@ -112,7 +111,7 @@ stay exactly where they are.
    ```sh
    python3 System/tools/history.py apply "Zones/Work/Acme/Threads/Pricing/Pricing.md" --commit "Acme, Pricing: older entries moved to history"
    ```
-   It is the wrap's move (*Wrap*, step 12): entries older than `history-months`,
+   It is the wrap tool's move (*Wrap*): entries older than `history-months`,
    then the oldest until the note fits `note-max-words`, the newest five kept,
    committed on its own through the wall check. The Resume here block stays as
    it is. A note with nothing to move, or one it cannot read for certain,

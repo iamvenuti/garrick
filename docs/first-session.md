@@ -53,7 +53,7 @@ Check the brief against the source. The assistant applies the walls you have dec
 
 > The next action is [your actual next action], due [date]. Wrap it, and run the workspace check. Explain any problem in plain language.
 
-The assistant updates the resume note and saves changes to the appropriate local git repositories. It may ask you to approve commands; [the commands it asks to approve](first-steps.md#the-commands-it-asks-to-approve) says what each one does and how to allow them once. “Commit” here means saving local history; Garrick's rules require separate approval to publish or send.
+The assistant writes the new resume point, the dated entry and your actions, and one command, `System/tools/wrap.py`, does the rest: it saves the changes in the appropriate local git repository and answers with a receipt, *saved* when the commit was made, or *refused*, *conflict* or *failed* with the reason, in which case nothing was changed. It may ask you to approve commands; [the commands it asks to approve](first-steps.md#the-commands-it-asks-to-approve) says what each one does and how to allow them once. “Commit” here means saving local history; Garrick's rules require separate approval to publish or send.
 
 ## 5. Open a fresh chat and resume
 

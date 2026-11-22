@@ -1261,8 +1261,9 @@ describe('the one slot', () => {
     const lockCall = w.ran.findIndex(r => r[0] === 'python3' && r[2] === 'start')
     expect(lockCall).toBeGreaterThanOrEqual(0)
     expect(w.ran[lockCall]![1]).toBe(`${ROOT}/System/tools/wrap_lock.py`)
-    expect(w.submitted[0]).toContain('The band has taken the wrap lock: do not take it')
-    expect(w.submitted[0]).toContain('wrap_lock.py end --abandon')                  // a failed wrap releases the lock without a record
+    expect(w.submitted[0]).toContain('The band has taken the wrap lock: pass')
+    expect(w.submitted[0]).toContain('"lock": "held"')                  // the tool releases it, and writes a record only after a saved commit
+    expect(w.submitted[0]).not.toContain('wrap_lock.py end')
   })
 
   test('without the script the prompt tells the wrap to take the lock', async ($, on) => {
@@ -1271,8 +1272,8 @@ describe('the one slot', () => {
     const { band } = await w.keys()
     await band.press({ key: 'wrap' })
     expect(w.ran.some(r => r[0] === 'python3')).toBe(false)
-    expect(w.submitted[0]).toContain('Take the wrap lock first')
-    expect(w.submitted[0]).toContain('`end --abandon` when the wrap failed')
+    expect(w.submitted[0]).toContain('takes the wrap lock and releases it')
+    expect(w.submitted[0]).not.toContain('wrap_lock.py start')
   })
 
   test('a prompt that is refused leaves no Wrapping behind', async ($, on) => {

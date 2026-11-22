@@ -488,3 +488,38 @@ class RetiredWallModelsTest(unittest.TestCase):
             self.assertIn('data-tab="%s">%s' % (data_tab, label), built, label)
         self.assertIn('data-tab="questions">Context', panel)
         self.assertIn('data-tab="todo">Todo', built)
+
+
+class WrapAsACommandTest(unittest.TestCase):
+    """The wrap is one command that does the steps (#645): no page under docs/ describes it as steps the assistant runs by
+    hand, and the pages that describe it say who carries the steps out."""
+
+    BY_HAND = (
+        re.compile(r"(?i)\bthe wrap runs `?python3 System/tools/history\.py"),
+        re.compile(r"(?i)before it commits it runs `?todo\.py archive"),
+        re.compile(r"(?i)\bwrap\b[^.]{0,80}\bruns? `?(python3 )?(System/tools/)?wrap_lock\.py"),
+        re.compile(r"(?i)\bwrap\b[^.]{0,80}\bstages? [^.]{0,40}by name only"),
+        re.compile(r"(?i)\bsteps? (1|one) to (12|13|twelve|thirteen)\b"),
+        re.compile(r"(?i)\bthe assistant (takes|releases) the (wrap )?lock\b"),
+    )
+
+    def test_no_page_under_docs_describes_the_wrap_as_steps_the_assistant_runs_by_hand(self):
+        found = []
+        for page, text in documents():
+            if not page.startswith("docs/"):
+                continue
+            flat = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+            for rule in self.BY_HAND:
+                hit = rule.search(flat)
+                if hit:
+                    found.append("%s: %s" % (page, hit.group(0)))
+        self.assertEqual([], found)
+
+    def test_the_commands_and_first_session_pages_and_concepts_say_one_command_carries_the_steps(self):
+        for page in ("docs/commands.md", "docs/first-session.md", "docs/concepts.md"):
+            flat = " ".join((REPO / page).read_text(encoding="utf-8").split())
+            self.assertIn("System/tools/wrap.py", flat, page)
+        commands = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("The steps did not change; only who carries them out.", commands)
+        for word in ("*saved*", "*refused*", "*conflict*", "*failed*"):
+            self.assertIn(word, commands)

@@ -598,6 +598,13 @@ RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "
     for name in ("open", "wrap", "lifecycle", "correct", "catch-up", "wall-check"))
 
 
+# The threads skill calls System/tools/wrap.py (#645): a workspace holds the skill back until the tool is in place, so that the
+# wrap is never described by words that call a command the workspace does not have.
+WRAP_TOOL = "System/tools/wrap.py"
+WRAP_SKILL = "System/skills/threads/"
+WRAP_HELD = "its tool (%s) is not in this workspace yet, so the skill that calls it waits; update again once the tool is there" % WRAP_TOOL
+
+
 def uncommitted_files(root, p):
     """The files `apply` would skip for changes not committed, as the dry run
     lists them: [{"path": from the top of the workspace, "repo": the repository
@@ -699,6 +706,11 @@ def apply(root, p, only=None, today=None):
                 skipped.append((path, "a file is there now"))
                 continue
             todo.append((kind, path, dest, data, mode))
+
+    if not (root / WRAP_TOOL).is_file() and WRAP_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
+        for kind, path, _, _, _ in [item for item in todo if item[1].startswith(WRAP_SKILL) and item[0] != "merge"]:
+            skipped.append((path, WRAP_HELD))
+        todo = [item for item in todo if item[0] == "merge" or not item[1].startswith(WRAP_SKILL)]
 
     if any(path == RULES and kind == "replace" for kind, path, _, _, _ in todo):
         written_now = {path for kind, path, _, _, _ in todo if kind != "merge"}

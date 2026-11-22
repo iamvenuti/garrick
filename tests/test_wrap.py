@@ -181,10 +181,10 @@ class SkillTest(unittest.TestCase):
             self.assertNotIn(gone, self.text, gone)
         self.assertNotRegex(self.text, r'"verb": "(interrupt|back|stack)"')
 
-    def test_the_wrap_asks_nothing_before_it_takes_the_lock(self):
+    def test_the_wrap_asks_nothing_before_it_makes_its_call(self):
         wrap = self.wrap
         self.assertIn("**Ask nothing.**", wrap)
-        self.assertLess(wrap.index("**Ask nothing.**"), wrap.index("wrap_lock.py start"))
+        self.assertLess(wrap.index("**Ask nothing.**"), wrap.index("python3 System/tools/wrap.py <<'EOF'"))
         self.assertNotIn("Anything only in your head", wrap)
         self.assertNotIn("Ask the one question", wrap)
         self.assertNotIn("the answer to the question", wrap)
@@ -199,17 +199,18 @@ class SkillTest(unittest.TestCase):
 
     def test_the_background_brief_carries_the_walls(self):
         wrap = self.wrap
-        brief = " ".join(wrap[wrap.index("Brief the subagent"):wrap.index("The last act of the wrap")].split())
+        brief = " ".join(wrap[wrap.index("Brief the subagent"):wrap.index("**What you decide, in order.**")].split())
         for needed in ("the project's zone and whether it is walled", "Walled column of the Zones table in `System/context.md`", 'named only as "held back"',
-                       "wall check (*The wall check*, step 4 above) before it writes anything",
+                       "wall check (*The wall check*, below) before it writes anything",
                        "write nothing it cannot place", "The foreground run needs none of this"):
             self.assertIn(needed, brief)
 
-    def test_the_wrap_takes_and_releases_the_lock(self):
-        wrap = self.wrap
-        self.assertIn("wrap_lock.py start", wrap)
-        self.assertIn("wrap_lock.py end", wrap)
+    def test_the_tool_takes_and_releases_the_lock(self):
+        wrap = " ".join(self.wrap.split())
+        self.assertIn("**The lock is the tool's.**", wrap)
         self.assertIn("ten minutes", wrap)
+        self.assertIn('send `"lock": "held"`', wrap)
+        self.assertNotIn("wrap_lock.py start", wrap)
 
     def test_back_goes_by_the_notes_modification_time(self):
         back = self.back
@@ -276,7 +277,7 @@ class FailedWrapTest(unittest.TestCase):
         self.assertEqual("resume", band_slot(wl.finished(self.done), 2000.0))
         wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
         self.assertIn("there was nothing to commit because the note was already current", wrap)
-        self.assertIn("once the commit has succeeded or there was nothing to commit", BAND.read_text(encoding="utf-8"))
+        self.assertIn("only once the commit has succeeded", BAND.read_text(encoding="utf-8"))
 
     def test_the_command_line_abandon_writes_no_record(self):
         import io
@@ -294,23 +295,22 @@ class FailedWrapTest(unittest.TestCase):
                      "return s.doneMs >= s.turnMs ? 'resume' : 'wrap'"):
             self.assertIn(line, text, line)
 
-    def test_the_skill_records_the_finish_only_after_the_commit_and_abandons_on_failure(self):
+    def test_the_skill_leaves_the_finish_record_and_the_abandon_to_the_tool(self):
         wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
-        step = wrap[wrap.index("13. **Release the lock**"):wrap.index("Spoken, when the wrap runs in the background")]
-        self.assertIn("**The commit succeeded, or there was nothing to commit because the note was already current:** `end` removes the lock and writes the time the wrap finished", step)
-        self.assertIn("**Anything else:** the commit was refused or failed, the save failed", step)
-        self.assertIn("`end --abandon` removes the lock and writes no record, and leaves an earlier record as it was", step)
-        self.assertIn("python3 System/tools/wrap_lock.py end --abandon", step)
-        self.assertIn("Never use `end` to clean up after a failure", step)
-        self.assertIn("the record is written only after step 12's commit has succeeded", wrap)
-        self.assertNotIn("**Remove the lock**, whatever happened above", wrap)
-        self.assertLess(wrap.index("12. **Commit in the zone's repository.**"), wrap.index("13. **Release the lock**"))
+        self.assertIn("A wrap that failed or was refused releases the lock and writes no finish record", wrap)
+        self.assertIn("Do not do the steps by hand", wrap)
+        self.assertIn("never run `wrap_lock.py` yourself except as the request says", wrap)
+        self.assertIn("python3 System/tools/wrap_lock.py end --abandon", wrap)       # the one recovery, for a wrap that was killed
+        self.assertNotIn("13. **Release the lock**", wrap)
 
-    def test_the_bands_own_prompts_release_the_lock_the_same_way(self):
+    def test_the_bands_own_prompts_leave_the_lock_to_the_wrap_tool(self):
         text = BAND.read_text(encoding="utf-8")
-        self.assertNotIn("and remove it as the last step", text)
-        self.assertIn("wrap_lock.py end --abandon ${n.rel}", text)             # the lock the band took
-        self.assertIn("end --abandon\\` when the wrap failed or the commit was refused", text)   # the lock the wrap takes
+        self.assertNotIn("wrap_lock.py end", text.split("export function wrapPrompt", 1)[1].split("// Close ends", 1)[0])
+        prompt = text.split("export function wrapPrompt", 1)[1].split("// Close ends", 1)[0]
+        self.assertNotIn("wrap_lock.py start", prompt)
+        self.assertNotIn("wrap_lock.py end", prompt)
+        self.assertIn('pass `"lock": "held"` to the wrap tool', prompt)       # the lock the band took
+        self.assertIn("takes the wrap lock and releases it", prompt)          # the lock the tool takes
 
 
 class WordsTest(unittest.TestCase):

@@ -360,6 +360,53 @@ class Run:
         s.note("the records for the brief hold the Birch-side call and not the Acme-side call, which sits in another walled zone")
         s.note("the brief itself was not written: no model ran (skipped (stub))")
 
+    def seed_old_entries(self, root, note):
+        """Seven dated entries from long ago, committed, so that a wrap has something to move to history."""
+        text = note.read_text(encoding="utf-8")
+        old = "".join("\n**%d January 2025.** An old entry from the acceptance run, number %d.\n" % (d, d) for d in range(2, 9))
+        note.write_text(text.rstrip("\n") + "\n" + old, encoding="utf-8")
+        self.commit_in(root, "Zones/" + ZONE, "%s, %s: older entries, for the history step" % (PROJECT, THREAD))
+
+    def wrap_as(self, root, harness, entry, todo):
+        """One wrap through the tool, as `harness` runs it: the assistant's words as JSON on standard input, the harness named
+        in the environment, and its own memory folder for the pointer. Checks the receipt, the Resume here block, the commit
+        and the pointer."""
+        note = self.thread_note(root)
+        rel = note.relative_to(root).as_posix()
+        memory = self.home / (".claude/projects/acceptance/memory" if harness == "claude" else ".codex/memories")
+        memory.mkdir(parents=True, exist_ok=True)
+        pointer = memory / "launch-plan.md"
+        words = {"zone": ZONE, "project": PROJECT, "thread": THREAD,
+                 "resume": {"stands": "The board has decided; timing and budget are filled in and the outline waits for the distributor questions.",
+                            "rows": {"Live artifact": "`Threads/Launch Plan/Outline.md`, the outline", "Rebuild with": "The sizing memo for the numbers",
+                                     "Next action": NEXT_ACTION, "Keep in mind": "nothing", "Waiting on": "nobody", "Deadline": "none"}},
+                 "entry": entry, "message": "%s, %s: wrapped through the tool as %s" % (PROJECT, THREAD, harness),
+                 "memory": {"path": str(pointer), "text": "%s, %s (%s zone). Resume from %s, the Resume here block." % (PROJECT, THREAD, ZONE, rel)}}
+        if todo:
+            words["todo"] = {"add": ["[[%s]]: %s" % (THREAD, NEXT_ACTION)]}
+        before = self.git(root, "Zones/" + ZONE, "rev-parse", "HEAD").stdout.strip()
+        r = sh([sys.executable, root / "System" / "tools" / "wrap.py", "--json"], env=dict(self.env, GARRICK_HARNESS=harness), cwd=root,
+               stdin=json.dumps(words), check=False)
+        try:
+            receipt = json.loads(r.stdout)
+        except ValueError:
+            raise Fail("the wrap as %s answered no receipt: %s" % (harness, (r.stderr or r.stdout).strip()[:160]))
+        if r.returncode != 0 or receipt.get("outcome") != "saved":
+            raise Fail("the wrap as %s was not saved: %s" % (harness, receipt.get("say")))
+        after = self.git(root, "Zones/" + ZONE, "rev-parse", "HEAD").stdout.strip()
+        if after == before or receipt.get("commit") != self.git(root, "Zones/" + ZONE, "rev-parse", "--short", "HEAD").stdout.strip():
+            raise Fail("the wrap as %s made no commit that its receipt names" % harness)
+        text = note.read_text(encoding="utf-8")
+        if text.count("### Resume here") != 1 or "| Next action | %s |" % NEXT_ACTION not in text or entry not in text:
+            raise Fail("the wrap as %s left the note without its Resume here block or its dated entry" % harness)
+        if not pointer.is_file() or "source: file:%s" % rel not in pointer.read_text(encoding="utf-8"):
+            raise Fail("the wrap as %s left no memory pointer with its source in %s" % (harness, memory.name))
+        if harness == "claude":
+            moved_to = list((note.parent / "history").glob("*.md"))
+            changed = self.git(root, "Zones/" + ZONE, "show", "--name-only", "--format=", "HEAD").stdout
+            if not moved_to or "/history/" not in changed:
+                raise Fail("the first wrap did not move old entries to history in its commit")
+
     def step_wrap(self, s):
         root = self.demo
         note = self.thread_note(root)
@@ -369,27 +416,12 @@ class Run:
         if self.model == "claude":
             self.model_run("Wrap %s in the Birch zone. The next action is: %s" % (THREAD, NEXT_ACTION), root)
         else:
-            sh([sys.executable, root / "System" / "tools" / "wrap_lock.py", "start", rel], env=self.env, cwd=root)
-            try:
-                text = note.read_text(encoding="utf-8")
-                start = text.index("**Where it stands,")
-                end = text.index("\n---\n", start)
-                block = ("**Where it stands, %s.** The board has decided; timing and budget are filled in and the outline waits for the "
-                         "distributor questions.\n\n| | |\n|---|---|\n| Live artifact | `Threads/Launch Plan/Outline.md`, the outline |\n"
-                         "| Rebuild with | The sizing memo for the numbers |\n| Next action | %s |\n| Waiting on | nobody |\n"
-                         "| Deadline | none |\n" % (said, NEXT_ACTION))
-                text = text[:start] + block + text[end:]
-                text = text.replace("\n---\n", "\n---\n\n**%s.** Wrapped by the acceptance run.\n" % said, 1)
-                text = re.sub(r"(?m)^updated: .*$", "updated: %s" % today.isoformat(), text, count=1)
-                note.write_text(text, encoding="utf-8")
-                todo = root / "Zones" / ZONE / "Todo.md"
-                t = todo.read_text(encoding="utf-8")
-                t = t.replace("\n## Done", "- [ ] [[%s]]: %s\n\n## Done" % (THREAD, NEXT_ACTION), 1) if "\n## Done" in t else t
-                todo.write_text(t, encoding="utf-8")
-                self.commit_in(root, "Zones/" + ZONE, "%s, %s: wrapped" % (PROJECT, THREAD))
-            finally:
-                sh([sys.executable, root / "System" / "tools" / "wrap_lock.py", "end", rel], env=self.env, cwd=root, check=False)
-            s.note("the wrap was written by a stand-in: no model chose its words (skipped (stub))")
+            self.seed_old_entries(root, note)
+            self.wrap_as(root, "claude", "Wrapped by the acceptance run, as Claude Code would.", todo=True)
+            self.wrap_as(root, "codex", "Wrapped by the acceptance run, as Codex would.", todo=False)
+            s.note("the wrap ran twice through System/tools/wrap.py, as Claude Code and as Codex: each left a receipt of saved, a commit, the Resume here "
+                   "block and a memory pointer in its own assistant's folder; the first moved old entries to history in the same commit")
+            s.note("the words of the wraps were written by a stand-in: no model chose them (skipped (stub))")
         done = list((root / "System" / "generated").glob("wrap-*.done"))
         if self.model != "claude" and not done:
             raise Fail("the wrap left no finished record in System/generated/")

@@ -501,40 +501,14 @@ def as_date(value) -> Optional[dt.date]:
 
 DONE = {"done", "closed", "archived", "complete", "completed"}
 PARKED = {"parked", "dormant", "paused", "on-hold"}
-RESUME = re.compile(r"^#{1,6}\s+Resume here\b", re.I)
-MONTH = {m.lower(): i + 1 for i, m in enumerate(("January February March April May June July August September "
-                                                  "October November December").split())}
-SPOKEN_DATE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})\b")
-
-
-def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
-    """Whether a thread note has its `### Resume here` block, as the threads
-    skill writes it, and the date the block gives itself: the first date on
-    its "Where it stands" line, or anywhere in the block before its table.
-    The full page reads nothing else of the block, and nothing of it reaches
-    that page; Your work reads the rest through resume_read()."""
-    found = resume_read(note)
-    return found["block"], found["date"]
-
-
-RESUME_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$")
-ENTRY_LINE = re.compile(r"^\*\*(?:[A-Z][a-z]+ \d\d:\d\d, )?(\d{1,2} [A-Za-z]{3,9}\.? \d{4})\.\*\*\s*(.*\S)\s*$")
 PLACEHOLDER = re.compile(r"^<[^>]*>$")
 
 
-def said_date(text: str) -> Optional[dt.date]:
-    """The first date in `text`, ISO or spoken ("3 October 2026")."""
-    iso = re.search(r"\b(\d{4}-\d\d-\d\d)\b", text)
-    if iso and as_date(iso.group(1)):
-        return as_date(iso.group(1))
-    for day, month, year in SPOKEN_DATE.findall(text):
-        number = MONTH.get(month.lower()) or next((n for m, n in MONTH.items() if m[:3] == month.lower()[:3]), None)
-        try:
-            if number:
-                return dt.date(int(year), number, int(day))
-        except ValueError:
-            continue
-    return None
+def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
+    """Whether a thread note has its `### Resume here` block, as the threads skill writes it, and the date the block
+    gives itself. Read by the view model (view.resume_read); nothing of the block reaches the page from here."""
+    found = view_reader().resume_read(note)
+    return found["block"], found["date"]
 
 
 def filled(text: Optional[str]) -> str:
@@ -543,102 +517,10 @@ def filled(text: Optional[str]) -> str:
     return "" if not text or PLACEHOLDER.match(text) else text
 
 
-def resume_read(note: Path) -> dict:
-    """A thread note's resume point, read once: `block`, whether it has a
-    `### Resume here` block, and `date`, the date the block gives itself (see
-    resume_point()). Also `where`, its Where it stands
-    line; `rows`, its table by row name (Next action, Waiting on, …), each
-    as written and "" where it is still the template's placeholder; `entry`,
-    the newest dated entry below it, (its date, its words); and `about`, the
-    note's opening sentence under its title."""
-    out = {"block": False, "date": None, "where": "", "rows": {}, "entry": None, "about": ""}
-    try:
-        lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return out
-    title = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
-    if title is not None:
-        para = []
-        for l in lines[title + 1:]:
-            if l.startswith("#") or (para and not l.strip()):
-                break
-            if l.strip():
-                para.append(l.strip())
-        out["about"] = filled(" ".join(para))
-    for i, line in enumerate(lines):
-        if not RESUME.match(line):
-            continue
-        out["block"] = True
-        lead: List[str] = []
-        for text in lines[i + 1:i + 12]:
-            if text.startswith(("#", "|", "---")):
-                break
-            if text.strip():
-                lead.append(text.strip())
-            if out["date"] is None:
-                out["date"] = said_date(text)
-        out["where"] = filled(re.sub(r"^\*\*Where it stands,?[^*]*\*\*\s*", "", " ".join(lead)).replace("**", ""))
-        end = len(lines)
-        for j in range(i + 1, len(lines)):
-            if lines[j].startswith("#") or lines[j].strip() == "---":
-                end = j
-                break
-            m = RESUME_ROW.match(lines[j])
-            if m and m.group(1) and not set(m.group(1)) <= set("-: "):
-                out["rows"][m.group(1)] = filled(m.group(2).replace("\\|", "|"))
-        for l in lines[end:end + 40]:
-            m = ENTRY_LINE.match(l.strip())
-            if m:
-                out["entry"] = (said_date(m.group(1)), filled(m.group(2)))
-                break
-            if l.startswith("## "):
-                break
-        break
-    return out
-
-
-# The checkpoint beside a resume point: `### Checkpoint` under Resume here,
-# what a session recorded as the work happened and has not wrapped yet. Only
-# its comment line is read here, which carries when it was written and the
-# hash of the resume point it was written against; no content of the block
-# reaches the page, as resume_point() promises of the block above it. The page
-# gets no button either: confirming a checkpoint is a wrap, and a wrap needs an
-# assistant that knows the session.
-CHECKPOINT_MARK = re.compile(r"(?m)^<!--[ \t]*garrick-checkpoint[ \t]([^\n]*?)-->[ \t]*$")
-CHECKPOINT_FIELD = re.compile(r"(\w+)=(\S+)")
-MONTH_NAMES = tuple(m.capitalize() for m in sorted(MONTH, key=MONTH.get))
-
-
 def checkpoint_mark(note: Path, ws: Optional[Path]) -> Optional[dict]:
-    """The unwrapped checkpoint in a note, as its comment line carries it:
-    `at`, when it was written, `said` and `full`, that time short and long, and
-    `stale`, whether the resume point has moved since. None where the note has
-    no checkpoint. Stale needs the workspace's own `resume_hash`, so without
-    `garrick_lib.py` a block reads as current: the time it carries is true
-    either way, and only the second claim would be a guess."""
-    try:
-        body = note.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    m = CHECKPOINT_MARK.search(body)
-    if m is None:
-        return None
-    fields = dict(CHECKPOINT_FIELD.findall(m.group(1)))
-    try:
-        when = dt.datetime.fromisoformat(fields.get("at") or "")
-    except ValueError:
-        when = None
-    lib = workspace_lib(ws)
-    base = None
-    if lib is not None and callable(getattr(lib, "resume_hash", None)):
-        try:
-            base = lib.resume_hash(body)
-        except Exception:
-            base = None
-    said = "%02d:%02d" % (when.hour, when.minute) if when else "an unreadable time"
-    full = "%s on %d %s %d" % (said, when.day, MONTH_NAMES[when.month - 1], when.year) if when else said
-    return {"at": when, "said": said, "full": full,
-            "stale": bool(base and fields.get("base") and fields["base"] != base)}
+    """The unwrapped checkpoint in a note: the view model's reading of its comment line (view.checkpoint_mark)."""
+    mod = view_reader(ws)
+    return mod.checkpoint_mark(note, mod.can_judge(ws) if ws is not None else False)
 
 
 def checkpoint_chip(r: dict) -> str:
@@ -656,23 +538,6 @@ def checkpoint_chip(r: dict) -> str:
     return '<span class="chip" title="%s">unwrapped since %s</span>' % (
         E("Work recorded at %s that no wrap has folded in yet. Open the thread to read it: "
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
-
-
-def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: Path, pfm: dict, fm: dict, state: str) -> dict:
-    """One row of threads(): a thread note's, or a hub's own."""
-    read = resume_read(note)
-    has_block, resumed = read["block"], read["date"]
-    mark = checkpoint_mark(note, ws)
-    updated = as_date(fm.get("updated"))
-    when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
-    return {"zone": zone.name, "project": project.name, "thread": name, "note": note,
-            "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
-            "party": tags(fm.get("party") or pfm.get("party")),
-            "updated": updated, "status": state,
-            "resume": has_block, "resumed": resumed,
-            "checkpoint": mark, "touched": max(when) if when else None,
-            "spoken": as_text(fm.get("spoken")).strip(), "read": read,
-            "heading": as_text(pfm.get("layout")).strip().lower() == "thread-first"}
 
 
 def work_reader(ws: Path):
@@ -693,76 +558,77 @@ def work_reader(ws: Path):
 _WORKS: dict = {}
 
 
-def threads(ws: Path) -> Dict[str, dict]:
-    """Per zone: every live thread's project, name, party and the date its
-    note was last updated, read from frontmatter like "what's open"; and
-    whether the note has a Resume here block, with that block's own date
-    (resume_point), and its unwrapped checkpoint read from the comment line
-    alone (checkpoint_mark), with `touched`, the later of `updated:` and that
-    checkpoint's day: this afternoon's unwrapped work is newer than the last
-    wrap, and the views that order by what moved last say so. A project
-    with no thread note is its own single thread, read from its hub, as in a
-    workspace laid out before Garrick gave every project a Threads/ folder.
-    A project whose hub says parked holds every live thread in it parked
-    too, each marked `held`; `held` per zone names those projects.
+def view_reader(ws: Optional[Path] = None):
+    """view.py, the view model (#650): the workspace's own copy in System/tools, else the one beside this extra (an
+    installed System/status sits next to System/tools), else the clone's template."""
+    homes = ([ws / "System" / "tools"] if ws is not None else []) + [
+        Path(__file__).resolve().parent.parent / "tools", Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools"]
+    for tools in homes:
+        src = tools / "view.py"
+        if src.is_file():
+            if src not in _VIEWS:
+                spec = importlib.util.spec_from_file_location("garrick_view_status", str(src))
+                _VIEWS[src] = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_VIEWS[src])
+            return _VIEWS[src]
+    raise FileNotFoundError("System/tools/view.py")
 
-    For the Threads card's search (#140), names only: each row's `spoken:`
-    form, `finished` per zone, the threads `done` counts, with their
-    project, name and note, and `projects`, each project by name with its
-    hub's status (live, parked or done), its spoken form and whether it is
+
+_VIEWS: dict = {}
+
+
+def piece_day(text) -> Optional[dt.date]:
+    return dt.date.fromisoformat(text) if text else None
+
+
+def piece_row(ws: Path, p: dict) -> dict:
+    """One piece of the view model as the Threads card's row has it: paths and dates restored."""
+    note = ws / p["note"]
+    hub = ws / p["hub"] if p["hub"] else None
+    if p["shown"] == "done":
+        return {"zone": p["zone"], "project": p["project"], "thread": p["thread"], "note": note, "hub": hub, "status": "done",
+                "party": list(p["party"]), "updated": piece_day(p["updated"]), "spoken": p["spoken"]}
+    read, mark = p["read"], p["checkpoint"]
+    row = {"zone": p["zone"], "project": p["project"], "thread": p["thread"], "note": note, "rel": p["rel"], "hub": hub,
+           "party": list(p["party"]), "updated": piece_day(p["updated"]), "status": p["state"],
+           "resume": p["resume"], "resumed": piece_day(p["resumed"]),
+           "checkpoint": dict(mark, at=dt.datetime.fromisoformat(mark["at"]) if mark["at"] else None) if mark else None,
+           "touched": piece_day(p["touched"]), "spoken": p["spoken"],
+           "read": dict(read, date=piece_day(read["date"]), rows=dict(read["rows"]),
+                        entry=(piece_day(read["entry"][0]), read["entry"][1]) if read["entry"] else None),
+           "heading": p["heading"]}
+    if p["held"]:
+        row["held"] = True
+    return row
+
+
+def threads(ws: Path) -> Dict[str, dict]:
+    """Per zone, what the Threads card and Your work draw: every live thread's project, name, party and the date its
+    note was last updated; whether the note has a Resume here block, with that block's own date, and its unwrapped
+    checkpoint, with `touched`, the later of `updated:` and that checkpoint's day (#650: all of it decided by the
+    view model, System/tools/view.py, which reads the notes; this page only draws it). A project with no thread note
+    is its own single thread, read from its hub. A project whose hub says parked holds every live thread in it
+    parked too, each marked `held`; `held` per zone names those projects.
+
+    For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
+    `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
-    out = {}
     try:
-        reader = work_reader(ws)
+        model = view_reader(ws).build(ws)
     except FileNotFoundError:
-        # A half-finished update: this page is new and System/tools has no work.py yet. The page builds and says so.
+        # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
                             "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
-    for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
-        for (_, name_), found in reader.by_project(reader.pieces(ws, zone=zone.name)).items():
-            project = zone / name_
-            hub = found[0].hub
-            hub_path = project / (project.name + ".md")
-            pfm = frontmatter(hub, ws) if hub else {}
-            hub_state = as_text(pfm.get("status")).strip().lower() if hub else ""
-            hub_parked = hub_state in PARKED
-            if hub_parked:
-                asleep.append(project.name)
-            heading = any(r.kind == "heading" for r in found)     # no piece of work of its own
-            # The page shows a hub as its project's single thread only when it says `type: project`.
-            shown = reader.own_needs_type(found)
-            own = any(r.own for r in shown)
-            notes = [(r.thread or project.name, r.note) for r in shown if r.thread or r.own]
-            projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                      "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
-                                      "hub": hub, "party": tags(pfm.get("party"))}
-            for name, note in notes:
-                fm = pfm if note == hub_path else frontmatter(note, ws)
-                state = as_text(fm.get("status")).strip().lower()
-                if state in DONE:
-                    done += 1
-                    finished.append({"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                                     "hub": hub, "status": "done",
-                                     "party": tags(fm.get("party") or pfm.get("party")),
-                                     "updated": as_date(fm.get("updated")), "spoken": as_text(fm.get("spoken")).strip()})
-                    continue
-                held = hub_parked and note != hub_path          # parked with its project, whatever its own status
-                state = "parked" if state in PARKED or held else state
-                row = thread_row(ws, zone, project, name, note, hub_path, pfm, fm, state)
-                if held:
-                    row["held"] = True
-                (parked if state == "parked" else rows).append(row)
-            # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
-            if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
-                hubs.append(thread_row(ws, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state))
-        # By name, as you would look for one; the freshness bar carries the age.
-        by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
-        rows.sort(key=by_name)
-        parked.sort(key=by_name)
-        finished.sort(key=by_name)
-        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
-                          "finished": finished, "projects": projects, "hubs": hubs}
+    out = {}
+    for z in model["zones"]:
+        work = z["work"]
+        out[z["name"]] = {"rows": [piece_row(ws, p) for p in work if p["shown"] == "row"],
+                          "parked": [piece_row(ws, p) for p in work if p["shown"] == "parked"],
+                          "done": z["done"], "folder": ws / "Zones" / z["name"], "held": list(z["held"]),
+                          "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
+                          "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
+                                       for name, v in z["projects"].items()},
+                          "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
     return out
 
 

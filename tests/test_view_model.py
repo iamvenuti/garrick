@@ -13,10 +13,6 @@ v0.76.0 had them, and the view model are compared field by field. Every differen
     An `Inbox` that is a link to a folder outside its zone:    The count must be of one zone. The view model leaves an
     the old read counted that folder's files.                  Inbox out whose real path is outside the zone it sits in.
 
-    A workspace with no System/tools/garrick_lib.py: the old   The core always has its own `resume_hash`, so the view model
-    read could not hash a resume point, so a checkpoint never  can tell a checkpoint written against an older resume point
-    read as out of date.                                       from a current one (TestNamedDifferences).
-
 Nothing else differs: pieces, their order, their states, resume points, checkpoints, parties, dates and counts match the
 old reads exactly. The display rules (what "late" means, what a chip says) are the page's and are not in the view model.
 
@@ -34,6 +30,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -195,6 +192,37 @@ FROZEN_WORK = [
 ]
 
 
+class TestPageThreads(Case):
+    """Section 1, the Threads card's data: the page's `threads()` now takes it from the view model, and must give what
+    the old read gave, row for row."""
+
+    def test_the_page_reads_the_same_threads_as_the_old_read(self):
+        self.assertEqual(self.old["threads"](self.root), status.threads(self.root))
+
+    def test_the_page_reads_the_notes_through_the_view_alone(self):
+        calls = []
+        real = view.build
+        with mock.patch.object(view, "build", lambda *a, **k: calls.append(a) or real(*a, **k)), \
+                mock.patch.object(status, "view_reader", lambda ws=None: view):
+            status.threads(self.root)
+        self.assertEqual(1, len(calls))
+
+    def test_a_workspace_with_no_view_module_yet_builds_a_page_that_says_so(self):
+        with mock.patch.object(status, "view_reader", mock.Mock(side_effect=FileNotFoundError("System/tools/view.py"))):
+            got = status.threads(self.root)
+        self.assertEqual({"Garden", "Home", "Linked", "Personal", "Work"}, set(got))
+        for data in got.values():
+            self.assertTrue(data["needs_update"])
+            self.assertEqual([], data["rows"])
+
+    def test_the_resume_helpers_the_tests_and_the_page_still_call_give_the_view_models_answer(self):
+        note = self.root / "Zones" / "Home" / "Cedar" / "Threads" / "Fence" / "Fence.md"
+        self.assertEqual((True, dt.date(2026, 3, 1)), status.resume_point(note))
+        self.assertEqual(view.checkpoint_mark(note), status.checkpoint_mark(note, self.root))
+        for text in (None, "", "<next step>", " a real line ", "<a> and <b>"):
+            self.assertEqual(view.filled(text), status.filled(text))
+
+
 class TestShadowInbox(Case):
     def test_inbox_matches_the_old_read_except_the_named_differences(self):
         old = {name: (folder, n) for name, folder, n in self.old["inboxes"](self.root)}
@@ -212,15 +240,19 @@ class TestShadowInbox(Case):
         self.assertNotIn("Garden", counts)
 
 
-class TestNamedDifferences(unittest.TestCase):
-    def test_a_checkpoint_is_out_of_date_where_the_old_read_had_no_library_to_hash_with(self):
+class TestDisplayRules(unittest.TestCase):
+    """A display rule kept from the old page, named: a workspace with no System/tools/garrick_lib.py of its own judges no
+    checkpoint, whatever the core could say, as the old read could not hash a resume point."""
+
+    def test_a_checkpoint_is_never_out_of_date_in_a_workspace_with_no_library_of_its_own(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_workspace(Path(tmp).resolve() / "W", tools=False)
             old = old_reads(status)["threads"](root)
             fence = next(r for r in old["Home"]["rows"] if r["thread"] == "Fence")
             new = next(p for p in view.build(root)["zones"][1]["work"] if p["thread"] == "Fence")
             self.assertFalse(fence["checkpoint"]["stale"])
-            self.assertTrue(new["checkpoint"]["stale"])
+            self.assertFalse(new["checkpoint"]["stale"])
+            self.assertEqual(old["Home"]["rows"], status.threads(root)["Home"]["rows"])
 
 
 class TestWalls(Case):

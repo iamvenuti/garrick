@@ -222,11 +222,12 @@ def resume_read(note: Path) -> dict:
     return out
 
 
-def checkpoint_mark(note: Path) -> Optional[dict]:
+def checkpoint_mark(note: Path, judge: bool = True) -> Optional[dict]:
     """The unwrapped checkpoint in a note, as its comment line carries it: `at`, when it was written, `said` and `full`,
     that time short and long, and `stale`, whether the resume point has moved since. None where the note has no
-    checkpoint. Stale needs `resume_hash` of the core library, so without it a block reads as current: the time it
-    carries is true either way, and only the second claim would be a guess."""
+    checkpoint. Stale needs `resume_hash` of the core library, so where `judge` is False (a workspace with no library
+    of its own, `can_judge()`) a block reads as current: the time it carries is true either way, and only the second
+    claim would be a guess."""
     try:
         body = note.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -241,7 +242,7 @@ def checkpoint_mark(note: Path) -> Optional[dict]:
         when = None
     lib = _lib()
     base = None
-    if callable(getattr(lib, "resume_hash", None)):
+    if judge and callable(getattr(lib, "resume_hash", None)):
         try:
             base = lib.resume_hash(body)
         except Exception:
@@ -253,6 +254,13 @@ def checkpoint_mark(note: Path) -> Optional[dict]:
 
 
 # --------------------------------------------------------------------------- the pieces of work
+
+def can_judge(root: Path) -> bool:
+    """Whether the workspace has the core library of its own, which tells a checkpoint written against an older resume
+    point from a current one. A workspace with none (an update that stopped half way) judges nothing, as the page always
+    did: a display rule, kept."""
+    return (Path(root) / "System" / "tools" / "garrick_lib.py").is_file()
+
 
 def actions_for(shown: str, state: str) -> List[str]:
     """The declared verbs that apply to a piece: a live piece may be parked, a parked one woken, and a done one
@@ -291,7 +299,7 @@ def _read_json(read: dict) -> dict:
             "entry": [_iso(entry[0]), entry[1]] if entry else None, "about": read["about"]}
 
 
-def _piece(root: Path, zone: Path, project: Path, name: str, note: Path, hub_path: Path, pfm: dict, fm: dict,
+def _piece(root: Path, judge: bool, zone: Path, project: Path, name: str, note: Path, hub_path: Path, pfm: dict, fm: dict,
            state: str, shown: str, held: bool, hub: Optional[Path], deep: bool) -> dict:
     """One piece of work as the page's row reads it. `deep` reads the note's resume point and checkpoint; a done
     piece is not read, as it never was."""
@@ -303,7 +311,7 @@ def _piece(root: Path, zone: Path, project: Path, name: str, note: Path, hub_pat
            "actions": actions_for(shown, state)}
     if deep:
         read = resume_read(note)
-        mark = checkpoint_mark(note)
+        mark = checkpoint_mark(note, judge)
         updated = as_date(fm.get("updated"))
         when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
         out.update({"resume": read["block"], "resumed": _iso(read["date"]), "checkpoint": _checkpoint_json(mark),
@@ -317,6 +325,7 @@ def _zone_work(root: Path, zone: Path) -> dict:
     lib = _lib()
     rows, parked, finished, hubs, asleep, projects = [], [], [], [], [], {}
     done = 0
+    judge = can_judge(root)
     for (_, name_), found in reader.by_project(reader.pieces(root, zone=zone.name)).items():
         project = zone / name_
         hub = found[0].hub
@@ -339,16 +348,16 @@ def _zone_work(root: Path, zone: Path) -> dict:
             state = as_text(fm.get("status")).strip().lower()
             if state in DONE:
                 done += 1
-                finished.append(_piece(root, zone, project, name, note, hub_path, pfm, fm, "done", "done", False, hub, False))
+                finished.append(_piece(root, judge, zone, project, name, note, hub_path, pfm, fm, "done", "done", False, hub, False))
                 continue
             held = hub_parked and note != hub_path          # parked with its project, whatever its own status
             state = "parked" if state in PARKED or held else state
-            piece = _piece(root, zone, project, name, note, hub_path, pfm, fm, state,
+            piece = _piece(root, judge, zone, project, name, note, hub_path, pfm, fm, state,
                            "parked" if state == "parked" else "row", held, hub_path if hub_path.is_file() else None, True)
             (parked if state == "parked" else rows).append(piece)
         # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
         if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
-            hubs.append(_piece(root, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state, "hub", False,
+            hubs.append(_piece(root, judge, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state, "hub", False,
                                hub_path if hub_path.is_file() else None, True))
     # By name, as you would look for one; the freshness bar carries the age.
     by_name = lambda p: (p["thread"].casefold(), p["project"].casefold())  # noqa: E731

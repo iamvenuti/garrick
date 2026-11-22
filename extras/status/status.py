@@ -2978,7 +2978,17 @@ def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Op
     return data
 
 
-def inbox_act(state: Optional[dict], ws: Path) -> Tuple[str, str]:
+def inbox_said(state: dict, only=None) -> str:
+    """The run's result sentence for the places in `only` alone (W4): the row lists some places, and shows nothing of another. A
+    state from before the sentence was kept by place gives its own, which names none."""
+    try:
+        import inbox_run
+        return inbox_run.sentence(state, None if only is None else set(only))
+    except Exception:
+        return str(state.get("say") or "")
+
+
+def inbox_act(state: Optional[dict], ws: Path, only=None) -> Tuple[str, str]:
     """(the row's button, its result sentence) for Process the Inbox (#634). The main button starts the background run in the
     Mac app (`inbox-run`); a browser, and the app when no background assistant is there, get the visible request. While a run
     goes the button waits; a run that failed, or an item that no zone may hold a question about, offers the visible session."""
@@ -2989,10 +2999,11 @@ def inbox_act(state: Optional[dict], ws: Path) -> Tuple[str, str]:
         request_button("Process the Inbox", "process the inbox", ws, cls="act webonly")
     if state is None:
         return start, ""
+    said = inbox_said(state, only)
     if state["state"] == "failed":
-        return visible, str(state.get("say") or "")
+        return visible, said
     needs = sum(int(v.get("needs") or 0) for v in (state.get("places") or {}).values() if isinstance(v, dict))
-    return (visible if needs else start), str(state.get("say") or "")       # the sentence already says "1 item needs you", place by place
+    return (visible if needs else start), said       # the sentence already says "1 item needs you", place by place
 
 
 def check_file(out: Path) -> Path:
@@ -8683,9 +8694,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         # zone the row does not name (W4). With one zone the link is that inbox, as it was; with several, the attention list's own
         # link is the card, since no single inbox is the row.
         attn.append(("warning", said_inbox, link(full[0][1]) if len(full) == 1 else "#waiting-now"))
-        inbox_button, inbox_said = inbox_act(inbox_state(ws, now), ws)
+        inbox_button, inbox_said_text = inbox_act(inbox_state(ws, now), ws, [name for name, _ in full])
         detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
-                              "act": inbox_button, "late": inbox_said,
+                              "act": inbox_button, "late": inbox_said_text,
                               "links": [(name, link(f)) for name, f in full] if len(full) > 1 else []}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)

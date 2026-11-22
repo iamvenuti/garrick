@@ -1254,7 +1254,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// request gets a reply on the page, a failed one too: the page shows a
 	// request running until its reply comes.
 	func act(_ request: [String: Any]) {
-		guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
+		guard let data = try? JSONSerialization.data(withJSONObject: request) else {
+			if request["verb"] as? String == "inbox-run" { inboxFallback = nil }          // no reply will come to clear it (C9)
+			return
+		}
 		let script = builder.deletingLastPathComponent().appendingPathComponent("page_action.py")
 		guard FileManager.default.fileExists(atPath: script.path) else {
 			return acted(request, ["ok": false, "say": "This page's actions need page_action.py beside status.py."])
@@ -2051,6 +2054,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// says the background run is not available; page_action.py's reply names that case, and nothing else opens a session.
 	var inboxFallback: [String: String]? = nil
 	func runInbox(_ visible: [String: String]) {
+		inboxFallback = nil                    // an earlier press that got no reply must not open its request now (C9)
 		inboxFallback = visible
 		act(["verb": "inbox-run"])
 	}

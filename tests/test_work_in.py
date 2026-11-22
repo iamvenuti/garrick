@@ -162,6 +162,16 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         self.assertIn("Answers worked in for Work", git(self.ws / "Wikis", "log", "-1", "--format=%s"))
         self.assertEqual("", git(self.ws / "Wikis", "status", "--porcelain").strip())
 
+    def test_a_file_named_with_a_glob_is_committed_by_its_literal_name_and_never_takes_a_dirty_file_beside_it(self):
+        wiki = self.ws / "Wikis"
+        write(wiki / "Meetings" / "wiki" / "ab.md", "# Mine\n")
+        git(wiki, "add", "-A")
+        git(wiki, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "ab")
+        (wiki / "Meetings" / "wiki" / "ab.md").write_text("# Mine, edited and not committed\n")
+        self.run_main(TWO_PLACES[:1], [(0, DONE, "Wikis/Meetings/wiki/a*.md")])
+        self.assertEqual(["Meetings/wiki/a*.md"], git(wiki, "show", "--name-only", "--format=", "HEAD").split("\n")[:1])
+        self.assertEqual(" M Meetings/wiki/ab.md", git(wiki, "status", "--porcelain").rstrip())
+
     def test_a_refused_commit_puts_the_files_back_in_the_index_and_the_place_is_left(self):
         hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
         write(hook, "#!/bin/sh\nexit 1\n")
@@ -210,7 +220,7 @@ class TestOneCallForEachAnswer(Case):
     def wiki(self, name):
         return self.ws / "Wikis" / "Meetings" / "wiki" / name
 
-    def timed(self, spend, runs, places=FOUR, limit="480"):
+    def timed(self, spend, runs, places=FOUR, limit="480", today=None):
         """main() with a clock the calls move on: `spend` seconds for each call. Returns (exit code, prompts, the lines printed)."""
         import contextlib
         import io
@@ -226,7 +236,7 @@ class TestOneCallForEachAnswer(Case):
         out = io.StringIO()
         with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake), \
                 mock.patch.object(work_in.time, "time", lambda: now[0]), contextlib.redirect_stdout(out):
-            code = work_in.main(["--workspace", str(self.ws), "--limit", limit, "--today", DAY.isoformat()])
+            code = work_in.main(["--workspace", str(self.ws), "--limit", limit, "--today", (today or DAY).isoformat()])
         return code, calls, out.getvalue()
 
     def log(self):
@@ -442,6 +452,27 @@ class TestAQuestionStoppedTwice(TestOneCallForEachAnswer):
         self.assertIn("`questions/q2.md`", calls[0])
         self.assertIn("Work: 1 worked in, 1 left (long)", said)
         self.assertEqual({"Zones/Work": {"why": "long", "day": "2026-11-13"}}, self.held())
+
+    def held_long(self):
+        write(self.ws / "Wikis" / "Meetings" / "questions" / "q1.md", "A question.\n")
+        one = [("Zones/Work", "Work", 1)]
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=one)
+        self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=one)
+        self.assertEqual([2], [v["n"] for v in self.stops().values()])
+        self.assertEqual(0, len(self.timed([10], [], places=one, today=DAY + dt.timedelta(days=1))[1]))          # held: not called
+        return one
+
+    def test_a_held_question_is_tried_again_when_its_file_changes_c8(self):
+        one = self.held_long()
+        write(self.ws / "Wikis" / "Meetings" / "questions" / "q1.md", "A question, reworded.\n")
+        code, calls, said = self.timed([10], [(0, DONE, "Wikis/Meetings/wiki/a9.md")], places=one, today=DAY + dt.timedelta(days=1))
+        self.assertEqual(1, len(calls))
+        self.assertEqual({}, self.stops())
+
+    def test_a_held_question_is_tried_again_after_a_week_c8(self):
+        one = self.held_long()
+        code, calls, said = self.timed([10], [(0, DONE, "Wikis/Meetings/wiki/a9.md")], places=one, today=DAY + dt.timedelta(days=8))
+        self.assertEqual(1, len(calls))
 
     def test_the_file_holds_a_hash_and_nothing_that_names_the_question(self):
         self.timed([100], [(agent.EXIT_TIMEOUT, "", None)], places=[("Zones/Work", "Work", 1)])

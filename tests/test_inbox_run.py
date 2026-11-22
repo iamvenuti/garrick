@@ -156,15 +156,17 @@ class TestTheRun(RunCase):
         # the call is the background one: no visible session, the deny profile, and the tools named
         cmd, env = self.last
         self.assertIn("--settings", cmd)
-        self.assertTrue(Path(cmd[cmd.index("--settings") + 1]).name == "headless-settings.json")
+        self.assertEqual("settings.json", Path(cmd[cmd.index("--settings") + 1]).name)       # the deny profile plus the run's own guard (S3)
         self.assertEqual("1", env["GARRICK_BACKGROUND"])
+        self.assertEqual(str(self.root), env["GARRICK_INBOX_WS"])
         self.assertEqual(ir.ALLOW, cmd[cmd.index("--allowedTools") + 1:])
         self.assertEqual(out["state"], ir.read_state(self.root)["state"])
         rows = status.question_needs(self.root, dt.date(2026, 11, 3))              # the one question is a row of Waiting on you now, in Work
         self.assertEqual(["Work"], [r["zone"] for r in rows])
         self.assertEqual("Acme Review or Birch Entry?", rows[0]["text"])
 
-    def test_a_write_outside_the_allowed_paths_changes_nothing_and_the_items_stay(self):
+    def test_a_write_outside_the_allowed_paths_keeps_that_repository_exactly_as_it_is_and_commits_nothing_there(self):
+        # S2: a changed path outside allowed() is reported, never deleted or reverted; the repository is kept whole
         self.drop("Work", "a.eml")
         self.drop("Work", "b.eml")
         hub = self.acme / "Acme Review.md"
@@ -177,12 +179,104 @@ class TestTheRun(RunCase):
             write(self.home / "Garden" / "Plan.md", "A plan.\n")                                        # another zone's project file
         out = self.run_with(act)
         self.assertEqual("failed", out["state"])
-        self.assertEqual(ir.SAY_REFUSED, out["say"])
-        self.assertEqual(was, hub.read_text())
-        self.assertFalse((self.home / "Garden" / "Plan.md").exists())
-        self.assertFalse((self.acme / "Sources" / "a.eml").exists())
-        self.assertEqual(["a.eml", "b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
-        self.assertEqual(before, self.heads())                                  # no commit anywhere, not in the repository that was fine
+        self.assertTrue(out["refused"])
+        self.assertEqual(["Personal", "Work"], out["kept"])
+        self.assertIn("Personal, Work", out["say"])
+        self.assertNotIn("Plan.md", out["say"])                                 # a place, never a file
+        self.assertIn("Added by the call", hub.read_text())                     # nothing deleted or reverted
+        self.assertEqual("A plan.\n", (self.home / "Garden" / "Plan.md").read_text())
+        self.assertTrue((self.acme / "Sources" / "a.eml").exists())
+        self.assertEqual(["b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
+        self.assertEqual(before, self.heads())                                  # no commit anywhere
+
+    def test_a_repository_the_call_did_not_touch_outside_the_allowed_paths_is_still_committed(self):
+        self.drop("Work", "a.eml")
+        hub = self.acme / "Acme Review.md"
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(self.wikis / "Meetings" / "wiki" / "sources" / "261102-acme-call.md", meeting_page("Work", "[acme]", "Acme call"))
+            hub.write_text(hub.read_text() + "\nAdded.\n")
+        before = self.heads()
+        out = self.run_with(act)
+        self.assertEqual(["Work"], out["kept"])
+        self.assertEqual(before["Work"], self.heads()["Work"])
+        self.assertNotEqual(before["Wikis"], self.heads()["Wikis"])             # the wiki's own paths were all the call's own and allowed
+
+    def test_another_writer_loses_nothing_a_clean_file_edited_and_a_new_note_added_during_a_run_that_fails(self):
+        self.drop("Work", "a.eml")
+        hub = self.acme / "Acme Review.md"
+        note = self.acme / "Notes" / "my-new-note.md"
+        edited = hub.read_text() + "\nMy edit while the run went.\n"
+
+        def runner(cmd, tier, cwd, env):
+            hub.write_text(edited)                                  # someone else, mid-run
+            write(note, "A note I wrote.\n")
+            shutil.move(str(self.work / "Inbox" / "a.eml"), str(self.acme / "Sources" / "a.eml"))
+            return 1, {"text": ""}
+        out = ir.run(self.root, None, runner=runner, cap=self.cap, jobs=self.jobs)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(edited, hub.read_text())
+        self.assertEqual("A note I wrote.\n", note.read_text())
+        self.assertEqual(["Work"], out["kept"])
+        self.assertIn("Work", out["say"])
+
+    def test_another_writer_loses_nothing_when_the_run_is_refused_for_what_it_wrote(self):
+        self.drop("Work", "a.eml")
+        note = self.acme / "Notes" / "my-new-note.md"
+        hub = self.acme / "Acme Review.md"
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(note, "A note I wrote.\n")
+            hub.write_text(hub.read_text() + "\nMy edit.\n")
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual("A note I wrote.\n", note.read_text())
+        self.assertIn("My edit.", hub.read_text())
+
+    def test_a_head_that_moved_during_the_run_keeps_every_file_and_commits_nothing_there(self):
+        self.drop("Work", "a.eml")
+        self.drop("Work", "b.eml")
+
+        def act():
+            shutil.move(str(self.work / "Inbox" / "a.eml"), str(self.acme / "Sources" / "a.eml"))
+            write(self.work / "Other" / "theirs.md", "Committed by someone else.\n")        # another session commits in the zone
+            git(self.work, "add", "--", "Other/theirs.md")
+            git(self.work, "commit", "-q", "-m", "someone else")
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(["Work"], out["kept"])
+        self.assertEqual("Committed by someone else.\n", (self.work / "Other" / "theirs.md").read_text())
+        self.assertEqual("someone else", git(self.work, "log", "-1", "--format=%s").strip())      # no commit of ours on top
+        self.assertTrue((self.acme / "Sources" / "a.eml").exists())                             # kept, uncommitted
+        self.assertIn("Sources/a.eml", git(self.work, "status", "--porcelain", "--untracked-files=all"))
+        self.assertEqual(["b.eml"], sorted(p.name for p in (self.work / "Inbox").iterdir() if p.name != ".gitkeep"))
+
+    def test_a_change_in_a_zone_the_run_filed_nothing_in_keeps_that_zone_as_it_is_w1(self):
+        self.drop("Work", "a.eml")
+        before = self.heads()
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()                                              # a Work item leaves ...
+            write(self.home / "Garden" / "Sources" / "a.eml", mail("a.eml"))                      # ... and lands in a Personal project
+        out = self.run_with(act)
+        self.assertEqual("failed", out["state"])
+        self.assertEqual(["Personal"], out["kept"])
+        self.assertEqual(before["Personal"], self.heads()["Personal"])
+        self.assertTrue((self.home / "Garden" / "Sources" / "a.eml").exists())
+
+    def test_put_back_touches_only_paths_inside_the_allowed_set(self):
+        snap = ir.Snapshot(self.root)
+        theirs = self.acme / "Acme Review.md"
+        was = theirs.read_text()
+        theirs.write_text(was + "\nTheirs.\n")
+        new = self.acme / "Notes" / "new.md"
+        write(new, "New.\n")
+        left = ir.put_back(snap, self.work, ["Acme Review/Acme Review.md", "Acme Review/Notes/new.md"])
+        self.assertEqual(["Acme Review/Acme Review.md", "Acme Review/Notes/new.md"], left)
+        self.assertIn("Theirs.", theirs.read_text())
+        self.assertTrue(new.exists())
 
     def test_a_question_file_the_call_wrote_by_hand_that_names_another_walled_zone_is_not_kept(self):
         self.drop("Work", "a.eml")
@@ -284,11 +378,80 @@ class TestTheRun(RunCase):
         text = " ".join(cmd[cmd.index("--allowedTools"):])
         for word in ("send", "reply", "forward", "share", "trash", "mcp__", "WebFetch", "curl"):
             self.assertNotIn(word, text)
-        self.assertEqual(["Read", "Grep", "Glob", "Edit", "Write", "Bash(python3 System/skills/intake/intake.py:*)",
-                          "Bash(python3 System/skills/meetings/ingest.py:*)"], ir.ALLOW)
+        self.assertEqual(["Read", "Grep", "Glob", "Edit", "Write"] +
+                         ["Bash(python3 System/skills/intake/intake.py %s:*)" % s for s in
+                          ("list", "parse", "file-conversation", "file-reading", "file-to-project", "extract-attachment", "skip", "ask")] +
+                         ["Bash(python3 System/skills/meetings/ingest.py %s:*)" % s for s in ("land", "index", "log", "link")], ir.ALLOW)
         deny = json.loads(Path(cmd[cmd.index("--settings") + 1]).read_text())["permissions"]["deny"]
         self.assertIn("mcp__claude_ai_Gmail__send_message", deny)
         self.assertIn("mcp__claude_ai_Google_Drive__share_file", deny)
+
+    def test_no_rule_lets_the_call_run_a_subcommand_that_writes_the_rules_of_the_walls(self):
+        # S1: a bare script rule would let a mail make the call run `learn` or `person`; each rule names its subcommand
+        for rule in ir.ALLOW:
+            self.assertNotRegex(rule, r"(intake|ingest)\.py:\*", rule)
+        text = " ".join(ir.ALLOW)
+        for sub in ("learn", "person", "move-to-zone", "file-note", "process-notes", "split"):
+            self.assertNotIn(".py %s:" % sub, text)
+        # and the skill's unattended section lists exactly the subcommands the rules allow
+        skill = (REPO / "template" / "System" / "skills" / "intake" / "SKILL.md").read_text()
+        section = skill.split("## Running unattended")[1].split("## A note to yourself")[0]
+        for sub in ir.INTAKE_SUBS + ir.INGEST_SUBS:
+            self.assertIn("`%s`" % sub, section)
+        for sub in ("learn", "person", "move-to-zone"):
+            self.assertIn("`%s`" % sub, section)          # named as refused
+
+    def test_a_run_that_changes_the_context_file_or_the_rules_is_refused_and_says_so(self):
+        for name, text in (("context.md", None), ("rules.md", "# Rules\n"), ("rules.local.md", None)):
+            with self.subTest(name):
+                target = self.root / "System" / name
+                write(target, text or (CONTEXT if name == "context.md" else "# Mine\n"))
+                self.drop("Work", "a-%s.eml" % name)
+                was = target.read_text()
+                before = self.heads()
+
+                def act():
+                    (self.work / "Inbox" / ("a-%s.eml" % name)).unlink()
+                    write(self.acme / "Sources" / "kept.txt", "filed\n")
+                    target.write_text(was + "\n| Evil | x | Work | `evil` | yes | evil.example |\n")
+                out = self.run_with(act)
+                self.assertEqual("failed", out["state"])
+                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue(out.get("system"))
+                self.assertEqual(before, self.heads())                       # nothing committed
+                self.assertFalse((self.acme / "Sources" / "kept.txt").exists())   # the run's own allowed change is put back
+                self.assertTrue((self.work / "Inbox" / ("a-%s.eml" % name)).exists())
+                self.assertNotEqual(was, target.read_text())                 # the file itself is left as it is, not guessed at
+                target.write_text(was)
+
+    def test_a_run_that_changes_a_root_file_or_a_share_link_is_refused_c3(self):
+        for name in ("AGENTS.md", "AGENTS.local.md", "Zones/.shared/newlink"):
+            with self.subTest(name):
+                target = self.root / name
+                if not name.endswith("newlink"):
+                    write(target, "x\n")
+                self.drop("Work", "c.eml")
+
+                def act():
+                    (self.work / "Inbox" / "c.eml").unlink()
+                    if name.endswith("newlink"):
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        os.symlink("/tmp", str(target))
+                    else:
+                        target.write_text("changed\n")
+                out = self.run_with(act)
+                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue((self.work / "Inbox" / "c.eml").exists())
+                if target.is_symlink():
+                    target.unlink()
+
+    def test_a_run_that_leaves_the_rules_and_tools_as_they_were_is_not_refused(self):
+        self.drop("Work", "a.eml")
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
 
     def test_the_call_goes_through_run_prepared_under_its_own_ledger_name(self):
         seen = {}
@@ -300,6 +463,130 @@ class TestTheRun(RunCase):
         with mock.patch.object(agent, "run_prepared", prepared):
             ir.default_runner(["claude"], ir.TIER, self.root, {})
         self.assertEqual(("inbox", ir.TIMEOUT, self.root), (seen["job"], seen["timeout"], seen["cwd"]))
+
+
+class TestThePathGuard(RunCase):
+    """S3: a file write outside the allowed set is refused before it happens, by a hook registered for this run's call alone."""
+
+    def event(self, path, tool="Write"):
+        return json.dumps({"tool_name": tool, "tool_input": {"file_path": str(path)}, "cwd": str(self.root)})
+
+    def guard(self, path, tool="Write", zone=""):
+        import subprocess
+        env = dict(os.environ, GARRICK_INBOX_WS=str(self.root), GARRICK_INBOX_ZONE=zone)
+        return subprocess.run([sys.executable, str(STATUS / "inbox_guard.py")], input=self.event(path, tool), capture_output=True,
+                              text=True, env=env)
+
+    def test_the_call_loads_a_settings_file_with_the_guard_before_every_write_tool_and_the_deny_list(self):
+        cmd, env = ir.build(self.root, "x", "Work")
+        data = json.loads(Path(cmd[cmd.index("--settings") + 1]).read_text())
+        hook = data["hooks"]["PreToolUse"][0]
+        self.assertEqual("Edit|Write|MultiEdit|NotebookEdit", hook["matcher"])
+        self.assertIn("inbox_guard.py", hook["hooks"][0]["command"])
+        self.assertIn("mcp__claude_ai_Gmail__send_message", data["permissions"]["deny"])
+        self.assertEqual("Work", env["GARRICK_INBOX_ZONE"])
+
+    def test_a_write_in_the_home_folder_a_nested_repository_and_an_ignored_path_is_refused_before_it_happens(self):
+        nested = self.work / "Acme Review" / "tools" / "x.py"
+        ignored = self.root / "Zones" / "Projects" / "Garrick" / "Repo" / "x.py"
+        for path in (Path(os.environ["HOME"]) / ".zshrc", nested, ignored, self.root / "System" / "context.md",
+                     self.work / "Acme Review" / "Acme Review.md", self.root / "AGENTS.md", self.work / ".git" / "config"):
+            for tool in ("Write", "Edit"):
+                r = self.guard(path, tool)
+                self.assertEqual(2, r.returncode, (path, tool, r.stdout))
+                self.assertIn("deny", r.stdout)
+                self.assertFalse(path.exists() and path.name == ".zshrc")
+
+    def test_a_write_that_leads_out_through_a_link_is_refused_and_one_in_the_allowed_set_is_not(self):
+        outside = Path(self._tmp.name) / "elsewhere"
+        outside.mkdir()
+        os.symlink(str(outside), str(self.acme / "Sources" / "out"))
+        self.assertEqual(2, self.guard(self.acme / "Sources" / "out" / "x.md").returncode)
+        for ok in (self.acme / "Sources" / "a.pdf", self.work / "Inbox" / "a.eml", self.work / "Todo.md",
+                   self.wikis / "Meetings" / "wiki" / "sources" / "a.md", self.root / "Inbox" / "a.eml"):
+            r = self.guard(ok)
+            self.assertEqual(0, r.returncode, (ok, r.stdout, r.stderr))
+
+    def test_an_answer_run_is_bound_to_its_zone(self):
+        self.assertEqual(0, self.guard(self.acme / "Sources" / "a.pdf", zone="Work").returncode)
+        self.assertEqual(2, self.guard(self.home / "Garden" / "Sources" / "a.pdf", zone="Work").returncode)
+
+    def test_a_guard_that_cannot_read_its_event_refuses(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(STATUS / "inbox_guard.py")], input="not json", capture_output=True, text=True,
+                           env=dict(os.environ, GARRICK_INBOX_WS=str(self.root)))
+        self.assertEqual(2, r.returncode)
+
+
+class TestLiteralPaths(RunCase):
+    def test_a_filed_file_named_with_a_glob_is_committed_alone_and_never_takes_a_dirty_file_beside_it_s4(self):
+        mine = self.acme / "Sources" / "ab.md"
+        write(mine, "mine\n")
+        commit_all(self.work, "ab")
+        mine.write_text("mine, edited and not committed\n")
+        self.drop("Work", "a.eml")
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+            write(self.acme / "Sources" / "a*.md", "filed\n")
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
+        self.assertEqual(["Acme Review/Sources/a*.md"], git(self.work, "show", "--name-only", "--format=", "HEAD").split("\n")[:1])
+        left = git(self.work, "status", "--porcelain").strip().splitlines()
+        self.assertEqual(1, len(left))
+        self.assertTrue(left[0].startswith("M ") and left[0].endswith('ab.md"'), left)
+
+
+class TestTheBackupFolder(RunCase):
+    def test_a_folder_an_earlier_run_left_is_cleared_at_the_start_and_the_runs_own_is_private_s5(self):
+        stale = self.jobs / "inbox-run" / "999999" / "Work"
+        write(stale / "old.eml", "an old item\n")
+        self.drop("Work", "a.eml")
+        seen = {}
+
+        def act():
+            mine = self.jobs / "inbox-run" / str(os.getpid())
+            seen["mode"] = (mine.parent.stat().st_mode & 0o777, mine.stat().st_mode & 0o777, (mine / "Work").stat().st_mode & 0o777)
+            seen["stale"] = stale.exists()
+            (self.work / "Inbox" / "a.eml").unlink()
+        self.run_with(act)
+        self.assertFalse(seen["stale"])
+        self.assertEqual((0o700, 0o700, 0o700), seen["mode"])
+        self.assertFalse((self.jobs / "inbox-run" / str(os.getpid())).exists())
+
+
+class TestTheWordsOfAQuestion(RunCase):
+    def test_the_name_of_the_item_in_the_question_file_is_not_a_word_of_the_question_c5(self):
+        self.drop("Work", "Maple Studio invoice.eml")             # a party of another walled zone, in an item's own file name
+
+        def act():
+            intake.ask_question(self.root, self.work / "Inbox" / "Maple Studio invoice.eml", "Acme Review or Birch Entry?",
+                                [("Acme Review", "File it in Acme Review"), ("Birch Entry", "File it in Birch Entry")], "2026-11-02")
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
+        self.assertEqual(1, out["places"]["Work"]["questions"])
+
+
+class TestTheAnswerArgument(RunCase):
+    def test_a_label_that_starts_with_a_dash_reaches_the_run_as_the_label_c6(self):
+        spawned = []
+        label = "-Keep both"
+        with mock.patch.object(ir, "available", return_value=True):
+            ir.start(self.root, {"zone": "Work", "file": "261102 - ask a.md", "label": label}, spawn=lambda a, fd: spawned.append(a))
+        args = spawned[0]
+        self.assertEqual(1, len([a for a in args if a.startswith("--answer-json=")]))
+        got = {}
+
+        def fake_run(ws, answer=None, **kw):
+            got["answer"] = answer
+            return {"state": "done"}
+        with mock.patch.object(ir, "run", fake_run):
+            self.assertEqual(0, ir.main([a for a in args[2:] if a != "--lock-fd" and not a.isdigit()]))
+        self.assertEqual({"zone": "Work", "file": "261102 - ask a.md", "label": label}, got["answer"])
+
+    def test_an_answer_that_does_not_read_fails_the_run_and_says_so(self):
+        self.assertEqual(1, ir.main(["run", "--workspace", str(self.root), "--answer-json=[1]"]))
+        self.assertEqual("failed", ir.read_state(self.root)["state"])
 
 
 class TestAnswering(RunCase):
@@ -439,6 +726,15 @@ class TestStarting(RunCase):
         got = pa.perform(self.root, {"verb": "inbox-run", "folder": "/tmp"}, ops, via="page")[0]
         self.assertFalse(got["ok"])                                           # a field it does not declare
 
+    def test_a_stale_visible_request_is_cleared_when_the_run_is_entered_again_and_when_the_act_cannot_start_c9(self):
+        swift = (STATUS / "app" / "Garrick.swift").read_text()
+        run = swift[swift.index("func runInbox("):]
+        run = run[:run.index("\n\t}\n")]
+        self.assertLess(run.index("inboxFallback = nil"), run.index("inboxFallback = visible"))
+        act = swift[swift.index("\tfunc act(_ request: [String: Any]) {"):]
+        guard = act[:act.index("let script =")]
+        self.assertIn('request["verb"] as? String == "inbox-run" { inboxFallback = nil }', guard)
+
     def test_the_app_and_the_page_fall_back_to_the_visible_session_only_on_an_unavailable_reply(self):
         swift = (STATUS / "app" / "Garrick.swift").read_text()
         self.assertIn('act(["verb": "inbox-run"])', swift)
@@ -485,6 +781,26 @@ class TestTheRow(unittest.TestCase):
         button, said = self.status.inbox_act(self.state(state="running"), self.ws)
         self.assertIn("disabled", button)
         self.assertEqual("Processing the inbox…", said)
+
+    def test_the_row_shows_only_the_places_it_lists_w4(self):
+        both = self.state(say="Personal: filed 1; Work: filed 7 \u00b7 2 questions", places={"Work": {"filed": 7, "questions": 2, "needs": 0},
+                          "Personal": {"filed": 1, "questions": 0, "needs": 0}},
+                          lines={"Work": "filed 7 \u00b7 2 questions", "Personal": "filed 1"}, tail="", kept=["Personal"])
+        _, said = self.status.inbox_act(both, self.ws, ["Work"])
+        self.assertEqual("Work: filed 7 \u00b7 2 questions", said)
+        self.assertNotIn("Personal", said)
+        _, said = self.status.inbox_act(both, self.ws, ["Personal"])
+        self.assertIn("Personal: filed 1", said)
+        self.assertNotIn("Work", said)
+        self.assertIn("nothing was committed or put back in Personal", said)
+        _, said = self.status.inbox_act(both, self.ws)                               # no list: the whole sentence
+        self.assertIn("Work: filed 7", said)
+        self.assertIn("Personal: filed 1", said)
+
+    def test_a_place_the_row_does_not_list_is_not_named_by_a_kept_repository_either_w4(self):
+        state = self.state(state="failed", say="x", lines={}, tail=ir.SAY_FAILED, kept=["Personal"])
+        _, said = self.status.inbox_act(state, self.ws, ["Work"])
+        self.assertEqual(ir.SAY_FAILED, said)
 
     def test_a_run_that_died_is_not_shown_as_going_and_an_old_result_is_not_shown(self):
         with tempfile.TemporaryDirectory() as tmp:

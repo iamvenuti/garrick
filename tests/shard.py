@@ -75,6 +75,7 @@ TOUCH_MAP = {
     "extras/status/engine.py": ["test_channels", "test_ask", "test_ask_agent"],
     "extras/status/engine_guard.py": ["test_channels"],
     "extras/status/inbox_run.py": ["test_inbox_run", "test_page_action", "test_decisions"],
+    "extras/status/inbox_guard.py": ["test_inbox_run"],
     "extras/status/engine_cmd.py": ["test_channels"],
     "extras/status/hold.py": ["test_channels"],
     "extras/status/hold_tools.py": ["test_channels"],

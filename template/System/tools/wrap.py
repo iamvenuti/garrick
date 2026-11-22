@@ -85,6 +85,7 @@ if str(HERE) not in sys.path:
 import garrick_lib as gl  # noqa: E402
 import history as hist  # noqa: E402
 import wrap_lock as wl  # noqa: E402
+import work  # noqa: E402
 
 OUTCOMES = ("saved", "refused", "conflict", "failed")
 ROWS = ("Live artifact", "Rebuild with", "Next action", "Keep in mind", "Waiting on", "Deadline")
@@ -206,18 +207,16 @@ def has_resume(text: str) -> bool:
 
 def resume_note(root: Path, zone: str, project: str, thread: Optional[str]) -> Optional[Path]:
     """The note that holds the Resume here block of what is being wrapped: the thread's own note, or the hub of
-    a project that keeps its resume point there. The one place this tool decides it, so that a change of rule is
-    a change of this function."""
-    base = root / "Zones" / zone / project
-    hub = base / (project + ".md")
+    a project that keeps its resume point there. The one place this tool decides it, and it asks the one reader of the
+    piece of work (`work.py`), so a change to the unit of work is made there."""
+    found = [w for w in work.pieces(root, zone=zone) if w.project == project and w.kind == "piece"]
     if thread:
-        note = base / "Threads" / thread / (thread + ".md")
-        if note.is_file() and has_resume(note.read_text(encoding="utf-8", errors="replace")):
-            return note
-    if hub.is_file():
-        text = hub.read_text(encoding="utf-8", errors="replace")
-        if gl.hub_keeps_resume(text, gl.parse_frontmatter_text(text)):
-            return hub
+        for w in found:
+            if w.thread == thread and has_resume(w.note.read_text(encoding="utf-8", errors="replace")):
+                return w.note
+    for w in found:
+        if w.thread is None and w.keeps_resume:
+            return w.note
     return None
 
 

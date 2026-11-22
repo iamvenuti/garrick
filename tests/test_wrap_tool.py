@@ -107,7 +107,7 @@ class Base(unittest.TestCase):
         build(self.root)
         tools = self.root / "System" / "tools"
         tools.mkdir(parents=True, exist_ok=True)
-        for name in ("check.py", "garrick_lib.py", "wrap.py", "wrap_lock.py", "history.py"):
+        for name in ("check.py", "garrick_lib.py", "wrap.py", "wrap_lock.py", "history.py", "work.py"):
             shutil.copy2(TOOLS / name, tools / name)
         shutil.copytree(str(REPO / "template" / "System" / "skills" / "todo"), str(self.root / "System" / "skills" / "todo"))
         for zone, (project, thread, party) in CASES.items():
@@ -221,6 +221,15 @@ class Saved(Base):
     def test_the_note_is_found_by_one_function(self):
         self.assertEqual(self.thread, wrap.resume_note(self.root, "Work", "Northwind", "Pricing"))
         self.assertIsNone(wrap.resume_note(self.root, "Work", "Northwind", "Nothing"))
+
+    def test_a_heading_has_no_resume_point_and_is_not_wrapped(self):
+        hub = self.work / "Northwind" / "Northwind.md"
+        write(hub, hub.read_text(encoding="utf-8").replace("status: active", "status: active\nlayout: thread-first") + "\n## State of play\n\n### Resume here\n\nx\n")
+        shutil.rmtree(self.work / "Northwind" / "Threads")
+        commit_all(self.work, "a heading")
+        got = self.run_wrap({k: v for k, v in payload().items() if k != "thread"})
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertTrue(self.clean())
 
     def test_a_note_with_no_rule_gets_one(self):
         text = self.thread.read_text(encoding="utf-8").split("\n---\n\n**1 March")[0] + "\n"

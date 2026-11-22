@@ -1410,6 +1410,18 @@ class TestEveryBoundedAnswer(ActionCase):
             self.assertEqual((True, True), (got["ok"], got.get("unavailable")), env)
             self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
 
+    def test_with_ask_at_read_or_another_assistant_a_to_do_line_and_a_correction_are_unavailable_too(self):
+        todo_rel, _ = self.long_todo()
+        corr = self.correction_setup()
+        for env, cap in (({"GARRICK_HARNESS": "other"}, self.cap), ({}, self.eng.channels.evaluate(self.root, "", True))):
+            with mock.patch.dict(os.environ, env), mock.patch.object(self.eng.channels, "capability", return_value=cap), \
+                    mock.patch.object(self.eng.channels, "claude_path", return_value="/x/claude"):
+                before = git(self.work, "rev-parse", "HEAD").strip()
+                for req in (dict(kind="todo-long", answer="shorten", path=todo_rel), corr):
+                    got = self.ask(**req)
+                    self.assertEqual((True, True), (got["ok"], got.get("unavailable")), (env, req["kind"]))
+            self.assertEqual(before, git(self.work, "rev-parse", "HEAD").strip())
+
     def test_the_guard_lets_a_new_note_into_the_one_folder_and_nothing_else(self):
         guard = self.eng.engine_guard if hasattr(self.eng, "engine_guard") else __import__("engine_guard")
         ws = str(self.root.resolve())

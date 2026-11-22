@@ -47,12 +47,14 @@ The shape, with one piece of work and one inbox:
 {"api": 1,
  "zones": [{"name": "Work", "linked": false, "done": 0, "held": [],
             "projects": {"Acme": {"status": "live", "spoken": "", "own": false, "heading": false,
-                                  "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"]}},
+                                  "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"],
+                                  "files": 4, "layout": ["split"]}},
+            "open_links": [["Pricing"]],
             "work": [{"id": "Work/Acme/Pricing", "zone": "Work", "project": "Acme", "thread": "Pricing",
                       "shown": "row", "state": "active", "held": false,
                       "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md", "rel": "Acme/Threads/Pricing/Pricing.md",
                       "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"], "updated": "2026-11-02", "spoken": "",
-                      "heading": false, "resume": true, "resumed": "2026-11-02", "checkpoint": null,
+                      "heading": false, "files": 3, "open": 1, "resume": true, "resumed": "2026-11-02", "checkpoint": null,
                       "touched": "2026-11-02",
                       "read": {"block": true, "date": "2026-11-02", "where": "Drafting.", "rows": {}, "entry": null, "about": ""},
                       "actions": ["park", "rename", "move", "delete", "continue", "open", "close"]}]}],
@@ -60,7 +62,7 @@ The shape, with one piece of work and one inbox:
  "left": ["jobs folder state", "operations journal", "..."]}
 ```
 
-`shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
+`files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
 
 #### What the App counts
 

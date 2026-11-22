@@ -99,6 +99,18 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     return root
 
 
+def bare(threads: dict) -> dict:
+    """The page's threads with the manage data section 3 added taken off, which the old read did not have."""
+    out = {}
+    for name, data in threads.items():
+        data = {k: v for k, v in data.items() if k != "open_links"}
+        data["projects"] = {n: {k: v for k, v in p.items() if k not in ("files", "layout")} for n, p in data["projects"].items()}
+        for key in ("rows", "parked", "finished", "hubs"):
+            data[key] = [{k: v for k, v in r.items() if k not in ("files", "open")} for r in data[key]]
+        out[name] = data
+    return out
+
+
 def as_row(root: Path, p: dict) -> dict:
     """A piece of the view model as the page's old row has it: paths and dates restored."""
     day = lambda s: dt.date.fromisoformat(s) if s else None  # noqa: E731
@@ -152,7 +164,8 @@ class TestShadowThreads(Case):
             z = self.zone(name)
             self.assertEqual(data["done"], z["done"], name)
             self.assertEqual(data["held"], z["held"], name)
-            self.assertEqual({k: dict(v, hub=self.root / v["hub"] if v["hub"] else None) for k, v in z["projects"].items()},
+            self.assertEqual({k: dict({a: b for a, b in v.items() if a not in ("files", "layout")},
+                                      hub=self.root / v["hub"] if v["hub"] else None) for k, v in z["projects"].items()},
                              data["projects"], name)
 
     def test_the_fixture_covers_what_the_brief_names(self):
@@ -197,7 +210,7 @@ class TestPageThreads(Case):
     the old read gave, row for row."""
 
     def test_the_page_reads_the_same_threads_as_the_old_read(self):
-        self.assertEqual(self.old["threads"](self.root), status.threads(self.root))
+        self.assertEqual(self.old["threads"](self.root), bare(status.threads(self.root)))
 
     def test_the_page_reads_the_notes_through_the_view_alone(self):
         calls = []
@@ -205,6 +218,16 @@ class TestPageThreads(Case):
         with mock.patch.object(view, "build", lambda *a, **k: calls.append(a) or real(*a, **k)), \
                 mock.patch.object(status, "view_reader", lambda ws=None: view):
             status.threads(self.root)
+        self.assertEqual(1, len(calls))
+
+    def test_a_page_is_drawn_from_one_build_of_the_view(self):
+        calls = []
+        real = view.build
+        with mock.patch.object(view, "build", lambda *a, **k: calls.append(a) or real(*a, **k)), \
+                mock.patch.object(status, "view_reader", lambda ws=None: view):
+            with tempfile.TemporaryDirectory() as jobs:
+                with mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": jobs}):
+                    status.build(self.root, now=dt.datetime(2026, 11, 22, 12), folder=Path(jobs))
         self.assertEqual(1, len(calls))
 
     def test_a_workspace_with_no_view_module_yet_builds_a_page_that_says_so(self):
@@ -221,6 +244,77 @@ class TestPageThreads(Case):
         self.assertEqual(view.checkpoint_mark(note), status.checkpoint_mark(note, self.root))
         for text in (None, "", "<next step>", " a real line ", "<a> and <b>"):
             self.assertEqual(view.filled(text), status.filled(text))
+
+
+class TestShadowManageData(Case):
+    """Section 3, what the Threads card's Rename, Move and Delete dialogs say: the files a delete would take, the open lines it
+    would remove, and the layout change a project offers. The page asked the folders itself; the view model holds them."""
+
+    def setUp(self):
+        super().setUp()
+        # Open lines that link notes, by their names, one naming two threads, one with an alias and a heading.
+        write(self.root / "Zones" / "Home" / "Todo.md",
+              "# Home\n\n## Inbox\n\n- [ ] Call about [[Fence]] today\n- [ ] Both [[Fence]] and [[Gate|the gate]]\n"
+              "- [ ] Heading [[Cedar/Threads/Latch/Latch#Next|Latch]]\n- [x] Done [[Fence]]\n- [ ] No link here\n")
+        write(self.root / "Zones" / "Home" / "Cedar" / "Threads" / "Fence" / "Deliverables" / "260301 - memo.md", "x\n")
+        write(self.root / "Zones" / "Home" / "Cedar" / "Threads" / "Fence" / ".hidden", "x\n")
+        self.model = view.build(self.root)
+
+    def test_a_threads_files_and_open_lines_are_what_the_old_read_counted(self):
+        for z in self.model["zones"]:
+            for p in z["work"]:
+                if p["shown"] in ("row", "parked"):
+                    note = self.root / p["note"]
+                    if p["note"] == p["hub"]:
+                        self.assertNotIn("files", p, p["id"])
+                        continue
+                    self.assertEqual(self.old["files_in"](note.parent), p["files"], p["id"])
+                    self.assertEqual(self.old["open_naming"](note.parents[3], {p["thread"]}), p["open"], p["id"])
+
+    def test_open_lines_are_counted_once_each_and_only_while_open(self):
+        home = self.zone("Home")
+        by = {p["thread"]: p["open"] for p in home["work"] if p["shown"] in ("row", "parked")}
+        self.assertEqual({"Fence": 2, "Latch": 1, "Leaf": 0, "Bark": 0}, by)
+        self.assertEqual([["Fence"], ["Fence", "Gate"], ["Latch"]], home["open_links"])
+
+    def test_naming_several_threads_counts_a_line_once(self):
+        zone = self.root / "Zones" / "Home"
+        for names in ({"Fence"}, {"Fence", "Gate"}, {"Gate", "Latch", "Cedar"}, {"Fence", "Cedar", "Latch"}, set(), {"Nobody"}):
+            self.assertEqual(self.old["open_naming"](zone, names), view.open_naming(self.zone("Home")["open_links"], names), names)
+
+    def test_a_projects_files_and_layout_offer_match_the_old_read(self):
+        for z in self.model["zones"]:
+            for name, project in z["projects"].items():
+                folder = self.root / "Zones" / z["name"] / name
+                if project["hub"] is None or not (folder / (name + ".md")).is_file():
+                    self.assertNotIn("files", project, name)
+                    continue
+                self.assertEqual(self.old["files_in"](folder), project["files"], name)
+                self.assertEqual(self.old["layout_offers"](folder, project["heading"], True), project["layout"], name)
+
+    def test_the_layout_offers_the_old_page_made_for_each_shape(self):
+        work = self.zone("Work")["projects"]
+        self.assertEqual(["join"], work["Heading"]["layout"])
+        self.assertEqual(["split"], work["Single"]["layout"])
+        self.assertEqual(["split"], work["Mixed"]["layout"])
+
+    def test_the_page_card_data_is_unchanged(self):
+        """The row's and the project's `mg`, as the page builds them, against the old functions."""
+        T = status.threads(self.root)
+        for z, data in T.items():
+            for r in data["rows"] + data["parked"]:
+                if r["note"] == r["hub"]:
+                    continue
+                want = [r["zone"], r["project"], r["thread"], self.old["files_in"](r["note"].parent),
+                        self.old["open_naming"](r["note"].parents[3], {r["thread"]}), [],
+                        self.old["layout_offers"](r["note"].parent, bool(r.get("heading")), r["hub"] is not None)]
+                got = json.loads(status.thread_card(r, {(r["zone"], r["project"], r["thread"]): r["thread"]}, lambda p: "x", 1)).get("mg")
+                self.assertEqual(want, got, r["thread"])
+
+    def test_the_helpers_the_tests_still_call_on_the_page_answer_as_the_view_does(self):
+        folder = self.root / "Zones" / "Work" / "Mixed"
+        self.assertEqual(view.layout_offers(folder, False, True), status.layout_offers(folder, False, True))
+        self.assertEqual(view.mixed_papers(folder), status.mixed_papers(folder))
 
 
 class TestShadowInbox(Case):
@@ -266,7 +360,7 @@ class TestDisplayRules(unittest.TestCase):
             new = next(p for p in view.build(root)["zones"][1]["work"] if p["thread"] == "Fence")
             self.assertFalse(fence["checkpoint"]["stale"])
             self.assertFalse(new["checkpoint"]["stale"])
-            self.assertEqual(old["Home"]["rows"], status.threads(root)["Home"]["rows"])
+            self.assertEqual(old["Home"]["rows"], bare(status.threads(root))["Home"]["rows"])
 
 
 class TestWalls(Case):

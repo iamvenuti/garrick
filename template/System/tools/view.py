@@ -22,10 +22,12 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "done": 1,                         # how many threads are done
             "held": ["Acme"],                  # projects parked as a whole
             "projects": {"Acme": PROJECT},
+            "open_links": [["Pricing"]],       # for each open Todo line that links a note, the notes it links
             "work": [PIECE, ...]}              # live, then parked, then done, then hubs; each by name
 
     PROJECT {"status": "live" | "parked" | "done", "spoken": "", "own": false, "heading": false,
-             "hub": "Zones/Work/Acme/Acme.md" | null, "party": ["acme"]}
+             "hub": "Zones/Work/Acme/Acme.md" | null, "party": ["acme"],
+             "files": 4, "layout": ["split"]}      # the last two: only with a hub file; what its dialogs say
 
     PIECE  {"id": "Work/Acme/Pricing",         # "Zone/Project" for a hub, "Zone/Project/Thread" for a thread
             "zone": "Work", "project": "Acme", "thread": "Pricing",
@@ -36,6 +38,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "rel": "Acme/Threads/Pricing/Pricing.md",                # from the zone
             "hub": "Zones/Work/Acme/Acme.md" | null,
             "party": ["acme"], "updated": "2026-11-02" | null, "spoken": "", "heading": false,
+            "files": 3, "open": 1,                                   # a thread's own: files a delete takes, open lines naming it
             "resume": true, "resumed": "2026-11-02" | null,          # None of these for a done piece
             "checkpoint": {"at": "...", "said": "09:30", "full": "...", "stale": false} | null,
             "touched": "2026-11-02" | null,
@@ -55,7 +58,9 @@ check's kept result, the waiting sessions, the settings.
 """
 import datetime as dt
 import importlib.util
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -265,6 +270,95 @@ def can_judge(root: Path) -> bool:
     return (Path(root) / "System" / "tools" / "garrick_lib.py").is_file()
 
 
+# --------------------------------------------------------------------------- what a card's manage dialogs need
+
+def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
+    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
+    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
+    project where a thread holds papers of its own; a thread offers none, since
+    the project's switch decides for every thread under it. A project with no hub offers none."""
+    if not hub or folder.parent.name == "Threads":
+        return []
+    if heading:
+        return ["join"]
+    return ["mend"] if mixed_papers(folder) else ["split"]
+
+
+def _keeps_papers(folder: Path) -> bool:
+    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
+    `.DS_Store` or a `published.md` ledger with no row."""
+    if not folder.is_dir():
+        return False
+    try:
+        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
+                                 text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables":
+            rows = 0
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for l in lines:
+                if l.strip().startswith("|"):
+                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
+                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
+                        rows += 1
+            if not rows:
+                continue
+        return True
+    return False
+
+
+def mixed_papers(project: Path) -> bool:
+    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
+    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
+    names is the Join, not the Split (#632)."""
+    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
+    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
+    if not holding or len(holding) == len(threads):
+        return False
+    try:
+        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
+
+
+def files_in(folder: Path) -> int:
+    """How many files deleting a folder would take, for the warning."""
+    return sum(len([f for f in fs if not f.startswith(".")]) for d, _, fs in os.walk(folder) if ".git" not in Path(d).parts)
+
+
+def open_links(zone: Path) -> List[List[str]]:
+    """For each open line of the zone's Todo.md that links to a note, the names of the notes it links to (the last part
+    of each link, without an alias or a heading). Names only: no line's words are kept."""
+    try:
+        text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        if not re.match(r"\s*- \[ \]", line):
+            continue
+        targets = [t.split("|")[0].split("#")[0].rsplit("/", 1)[-1] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
+        if targets:
+            out.append(targets)
+    return out
+
+
+def open_naming(links: List[List[str]], names: set) -> int:
+    """How many open lines of a zone's Todo.md link to one of `names`, as scaffold.py's delete would remove them.
+    `links` is the zone's `open_links`."""
+    return sum(1 for targets in links if any(t in names for t in targets))
+
+
+
 def actions_for(shown: str, state: str) -> List[str]:
     """The declared verbs that apply to a piece: a live piece may be parked, a parked one woken, and a done one
     only renamed, moved or deleted. Each is in operations.DECLARED, so a verb the table lacks is never offered."""
@@ -302,7 +396,7 @@ def _read_json(read: dict) -> dict:
             "entry": [_iso(entry[0]), entry[1]] if entry else None, "about": read["about"]}
 
 
-def _piece(root: Path, judge: bool, zone: Path, project: Path, name: str, note: Path, hub_path: Path, pfm: dict, fm: dict,
+def _piece(root: Path, judge: bool, links: List[List[str]], zone: Path, project: Path, name: str, note: Path, hub_path: Path, pfm: dict, fm: dict,
            state: str, shown: str, held: bool, hub: Optional[Path], deep: bool) -> dict:
     """One piece of work as the page's row reads it. `deep` reads the note's resume point and checkpoint; a done
     piece is not read, as it never was."""
@@ -319,6 +413,9 @@ def _piece(root: Path, judge: bool, zone: Path, project: Path, name: str, note: 
         when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
         out.update({"resume": read["block"], "resumed": _iso(read["date"]), "checkpoint": _checkpoint_json(mark),
                     "touched": _iso(max(when)) if when else None, "read": _read_json(read)})
+        if note != hub_path:
+            # what the card's Rename, Move and Delete dialogs say: the files a delete would take, and the open lines it would remove
+            out.update({"files": files_in(note.parent), "open": open_naming(links, {name})})
     return out
 
 
@@ -329,6 +426,7 @@ def _zone_work(root: Path, zone: Path) -> dict:
     rows, parked, finished, hubs, asleep, projects = [], [], [], [], [], {}
     done = 0
     judge = can_judge(root)
+    links = open_links(zone)
     for (_, name_), found in reader.by_project(reader.pieces(root, zone=zone.name)).items():
         project = zone / name_
         hub = found[0].hub
@@ -346,21 +444,23 @@ def _zone_work(root: Path, zone: Path) -> dict:
         projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
                                   "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
                                   "hub": _rel(hub, root), "party": tags(pfm.get("party"))}
+        if hub_path.is_file():           # what the project card's dialogs say: its files, and the layout change it offers
+            projects[project.name].update({"files": files_in(project), "layout": layout_offers(project, heading, True)})
         for name, note in notes:
             fm = pfm if note == hub_path else (lib.parse_frontmatter(note) or {})
             state = as_text(fm.get("status")).strip().lower()
             if state in DONE:
                 done += 1
-                finished.append(_piece(root, judge, zone, project, name, note, hub_path, pfm, fm, "done", "done", False, hub, False))
+                finished.append(_piece(root, judge, links, zone, project, name, note, hub_path, pfm, fm, "done", "done", False, hub, False))
                 continue
             held = hub_parked and note != hub_path          # parked with its project, whatever its own status
             state = "parked" if state in PARKED or held else state
-            piece = _piece(root, judge, zone, project, name, note, hub_path, pfm, fm, state,
+            piece = _piece(root, judge, links, zone, project, name, note, hub_path, pfm, fm, state,
                            "parked" if state == "parked" else "row", held, hub_path if hub_path.is_file() else None, True)
             (parked if state == "parked" else rows).append(piece)
         # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
         if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
-            hubs.append(_piece(root, judge, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state, "hub", False,
+            hubs.append(_piece(root, judge, links, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state, "hub", False,
                                hub_path if hub_path.is_file() else None, True))
     # By name, as you would look for one; the freshness bar carries the age.
     by_name = lambda p: (p["thread"].casefold(), p["project"].casefold())  # noqa: E731
@@ -368,7 +468,7 @@ def _zone_work(root: Path, zone: Path) -> dict:
     parked.sort(key=by_name)
     finished.sort(key=by_name)
     return {"name": zone.name, "linked": False, "done": done, "held": asleep, "projects": projects,
-            "work": rows + parked + finished + hubs}
+            "open_links": links, "work": rows + parked + finished + hubs}
 
 
 def _visible_dirs(folder: Path) -> List[Path]:
@@ -399,7 +499,7 @@ def build(root, scope: Optional[List[str]] = None) -> dict:
             continue
         if zone.name not in real:
             # A link is no zone: it has no work, and its Inbox would be another folder's.
-            zones.append({"name": zone.name, "linked": True, "done": 0, "held": [], "projects": {}, "work": []})
+            zones.append({"name": zone.name, "linked": True, "done": 0, "held": [], "projects": {}, "open_links": [], "work": []})
             continue
         zones.append(_zone_work(root, zone))
         q = _queue_inbox(zone.name, "zone", zone / "Inbox", zone.resolve(), root)

@@ -9,14 +9,16 @@ the view model should keep is written into the shadow test as a named display ru
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
 def old_reads(status):
     """The old functions, bound to the page module `status`, as a namespace."""
-    g = {"dt": dt, "re": re, "Path": Path, "Dict": Dict, "List": List, "Optional": Optional, "Tuple": Tuple}
+    g = {"dt": dt, "re": re, "os": os, "subprocess": subprocess, "Path": Path, "Dict": Dict, "List": List, "Optional": Optional, "Tuple": Tuple}
     for name in ("frontmatter", "as_text", "tags", "as_date", "visible_dirs", "work_reader", "workspace_lib", "PARKED", "DONE"):
         g[name] = getattr(status, name)
     exec(compile(SOURCE, "old_status_reads", "exec"), g)
@@ -244,4 +246,80 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
             n = sum(1 for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
             out.append((name, folder, n))
     return out
+
+_OPEN: Dict[Path, List[str]] = {}
+
+def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
+    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
+    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
+    project where a thread holds papers of its own; a thread offers none, since
+    the project's switch decides for every thread under it. A project with no hub offers none."""
+    if not hub or folder.parent.name == "Threads":
+        return []
+    if heading:
+        return ["join"]
+    return ["mend"] if mixed_papers(folder) else ["split"]
+
+def _keeps_papers(folder: Path) -> bool:
+    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
+    `.DS_Store` or a `published.md` ledger with no row."""
+    if not folder.is_dir():
+        return False
+    try:
+        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
+                                 text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for name in (n for n in listing.split("\0") if n):
+        path = folder / name
+        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
+            continue
+        if name == "published.md" and folder.name == "Deliverables":
+            rows = 0
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for l in lines:
+                if l.strip().startswith("|"):
+                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
+                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
+                        rows += 1
+            if not rows:
+                continue
+        return True
+    return False
+
+def mixed_papers(project: Path) -> bool:
+    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
+    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
+    names is the Join, not the Split (#632)."""
+    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
+    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
+    if not holding or len(holding) == len(threads):
+        return False
+    try:
+        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
+
+def files_in(folder: Path) -> int:
+    """How many files deleting a folder would take, for the warning."""
+    return sum(len([f for f in fs if not f.startswith(".")]) for d, _, fs in os.walk(folder) if ".git" not in Path(d).parts)
+
+def open_naming(zone: Path, names: set) -> int:
+    """How many open lines of the zone's Todo.md link to one of `names`, as
+    scaffold.py's delete would remove them."""
+    if zone not in _OPEN:
+        try:
+            text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        _OPEN[zone] = [l for l in text.splitlines() if re.match(r"\s*- \[ \]", l)]
+    n = 0
+    for line in _OPEN[zone]:
+        targets = [t.split("|")[0].split("#")[0] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
+        n += any(t.rsplit("/", 1)[-1] in names for t in targets)
+    return n
 '''

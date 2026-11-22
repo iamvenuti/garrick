@@ -597,12 +597,22 @@ def piece_row(ws: Path, p: dict) -> dict:
            "read": dict(read, date=piece_day(read["date"]), rows=dict(read["rows"]),
                         entry=(piece_day(read["entry"][0]), read["entry"][1]) if read["entry"] else None),
            "heading": p["heading"]}
+    if "files" in p:
+        row["files"], row["open"] = p["files"], p["open"]
     if p["held"]:
         row["held"] = True
     return row
 
 
-def threads(ws: Path) -> Dict[str, dict]:
+def view_model(ws: Path) -> Optional[dict]:
+    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet."""
+    try:
+        return view_reader(ws).build(ws)
+    except FileNotFoundError:
+        return None
+
+
+def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     """Per zone, what the Threads card and Your work draw: every live thread's project, name, party and the date its
     note was last updated; whether the note has a Resume here block, with that block's own date, and its unwrapped
     checkpoint, with `touched`, the later of `updated:` and that checkpoint's day (#650: all of it decided by the
@@ -613,9 +623,8 @@ def threads(ws: Path) -> Dict[str, dict]:
     For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
     `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
-    try:
-        model = view_reader(ws).build(ws)
-    except FileNotFoundError:
+    model = model or view_model(ws)
+    if model is None:
         # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
                             "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
@@ -628,6 +637,7 @@ def threads(ws: Path) -> Dict[str, dict]:
                           "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
                           "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
                                        for name, v in z["projects"].items()},
+                          "open_links": [list(x) for x in z["open_links"]],
                           "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
     return out
 
@@ -2795,14 +2805,13 @@ var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function()
 """
 
 
-def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
+def inboxes(ws: Path, model: Optional[dict] = None) -> List[Tuple[str, Path, int]]:
     """Files waiting to be filed: each zone's Inbox and the Meetings inbox, as the view model counts them (#650): one
     zone or one wiki per row, and none for a zone that is a link or an Inbox that leads out of its zone."""
-    try:
-        queue = view_reader(ws).build(ws)["queues"]["inbox"]
-    except FileNotFoundError:
+    model = model or view_model(ws)
+    if model is None:
         return []                 # a half-finished update: the Threads card says so
-    return [(q["place"], ws / q["folder"], q["count"]) for q in queue]
+    return [(q["place"], ws / q["folder"], q["count"]) for q in model["queues"]["inbox"]]
 
 
 INBOX_STATE = ("System", "generated", "status-inbox.json")
@@ -4379,9 +4388,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     if actions:
         card["oc"] = [r["zone"], r["rel"]]     # what Open in Claude continues (#180), parked or not
     if r["note"] != r["hub"]:
-        card["mg"] = [r["zone"], r["project"], r["thread"], files_in(r["note"].parent),
-                      open_naming(r["note"].parents[3], {r["thread"]}), [],
-                      layout_offers(r["note"].parent, bool(r.get("heading")), r["hub"] is not None)]
+        card["mg"] = [r["zone"], r["project"], r["thread"], r["files"], r["open"], [], []]      # a thread offers no layout change
     if drive:
         card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
     live = session_in(desk, r["note"].parent)
@@ -4391,85 +4398,14 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 
 def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
-    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
-    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
-    project where a thread holds papers of its own; a thread offers none, since
-    the project's switch decides for every thread under it. A project with no hub offers none."""
-    if not hub or folder.parent.name == "Threads":
-        return []
-    if heading:
-        return ["join"]
-    return ["mend"] if mixed_papers(folder) else ["split"]
-
-
-def _keeps_papers(folder: Path) -> bool:
-    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
-    `.DS_Store` or a `published.md` ledger with no row."""
-    if not folder.is_dir():
-        return False
-    try:
-        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
-                                 text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    for name in (n for n in listing.split("\0") if n):
-        path = folder / name
-        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
-            continue
-        if name == "published.md" and folder.name == "Deliverables":
-            rows = 0
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                lines = []
-            for l in lines:
-                if l.strip().startswith("|"):
-                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
-                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
-                        rows += 1
-            if not rows:
-                continue
-        return True
-    return False
+    """The change of layout a project's card offers (view.layout_offers): `split`, `join` or `mend`, or none."""
+    return view_reader().layout_offers(folder, heading, hub)
 
 
 def mixed_papers(project: Path) -> bool:
-    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
-    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
-    names is the Join, not the Split (#632)."""
-    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
-    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
-    if not holding or len(holding) == len(threads):
-        return False
-    try:
-        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
-
-
-def files_in(folder: Path) -> int:
-    """How many files deleting a folder would take, for the warning."""
-    return sum(len([f for f in fs if not f.startswith(".")]) for d, _, fs in os.walk(folder) if ".git" not in Path(d).parts)
-
-
-_OPEN: Dict[Path, List[str]] = {}
-
-
-def open_naming(zone: Path, names: set) -> int:
-    """How many open lines of the zone's Todo.md link to one of `names`, as
-    scaffold.py's delete would remove them."""
-    if zone not in _OPEN:
-        try:
-            text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        _OPEN[zone] = [l for l in text.splitlines() if re.match(r"\s*- \[ \]", l)]
-    n = 0
-    for line in _OPEN[zone]:
-        targets = [t.split("|")[0].split("#")[0] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
-        n += any(t.rsplit("/", 1)[-1] in names for t in targets)
-    return n
+    """Is this one-job project mixed (view.mixed_papers): a thread holds papers of its own, and the threads do not look
+    like separate jobs."""
+    return view_reader().mixed_papers(project)
 
 
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
@@ -8575,7 +8511,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws)
-    T, IB, C, R, W = (threads(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
+    model = view_model(ws)                                 # the one document of the workspace this page draws from (#650)
+    T, IB, C, R, W = (threads(ws, model), inboxes(ws, model), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
@@ -8788,8 +8725,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             c["pp"] = [zone, project]        # what Park and Wake act on: the hub, and with it every thread
         if hub:
             subs = sorted({r["thread"] for r in items if r["note"] != r["hub"]})
-            c["mg"] = [zone, project, "", files_in(hub.parent), open_naming(hub.parent.parent, set(subs) | {project}),
-                       subs, layout_offers(hub.parent, bool(T[zone].get("projects", {}).get(project, {}).get("heading")), True)]
+            kept = T[zone].get("projects", {}).get(project, {})
+            c["mg"] = [zone, project, "", kept["files"], view_reader(ws).open_naming(T[zone]["open_links"], set(subs) | {project}),
+                       subs, kept["layout"]]
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
         if DK:

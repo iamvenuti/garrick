@@ -56,6 +56,7 @@ SENTINEL = "END OF WORK-IN"
 COUNTS = re.compile(r"^WORKED (\d+) HELD (\d+)\s*$", re.M)
 EXIT_NO_PANEL = 64
 STOPPED: List[str] = []      # the places whose call was stopped at its time limit, in this run
+LEFT_DIRTY: Dict[str, int] = {}       # how many listed pages were already changed before the call and not by it, by place (#640)
 LEFT_ALONE: Dict[str, int] = {}      # how many other changed paths in the wiki the commits left as they were, by place (W6)
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
@@ -184,12 +185,42 @@ def changes(repo: Path, rel: str) -> Set[str]:
     return {entry[3:] for entry in out.split("\0") if len(entry) > 3}
 
 
-def restore(repo: Path, before: Set[str], rel: str) -> None:
-    """Put back what a call changed: tracked paths as the last commit has them, files it created moved out. A path that
-    was already changed before the call is never touched. The call is not the only writer while it runs (the user, a
-    mail fetch), so nothing is lost: each path is first copied, as it is now, into the repository's own `.git`
+def digest(repo: Path, paths) -> Dict[str, str]:
+    """A short hash of what each path holds now, '' for a path that is not a file: how a page that was changed before the call
+    is told from one the call changed (#640)."""
+    out = {}
+    for p in paths:
+        try:
+            out[p] = hashlib.sha1((repo / p).read_bytes()).hexdigest()
+        except OSError:
+            out[p] = ""
+    return out
+
+
+def own_changes(repo: Path, before: Set[str], rel: str, listed, seen: Optional[Dict[str, str]] = None) -> List[str]:
+    """The paths this call changed that its list allows, sorted. A path in the list that was changed before the call counts only
+    when what it holds differs from `seen`, its hash from before the call. `listed` None means the list could not be made: then
+    it is every path that changed during the call and was clean before (today's reading, for the put-back only)."""
+    now = changes(repo, rel)
+    fresh = now - before
+    if listed is None:
+        return sorted(fresh)
+    mine = {p for p in fresh if p in listed}
+    dirty = {p for p in now & before if p in listed}
+    if dirty and seen is not None:
+        after = digest(repo, dirty)
+        mine |= {p for p in dirty if after[p] != seen.get(p)}
+    return sorted(mine)
+
+
+def restore(repo: Path, before: Set[str], rel: str, listed=None) -> None:
+    """Put back what a call changed, and only its own: the pages `question-work` listed for it. Tracked paths as the last commit
+    has them, files it created moved out. Another writer's edit made while the call ran (the user, a mail fetch) is neither put
+    back nor committed, and a path that was already changed before the call is never put back. With no list at all, every path
+    that changed during the call and was clean before is put back, as before.
+    Nothing is lost: each path is first copied, as it is now, into the repository's own `.git`
     (`.git/garrick-put-back/<time>/`), which no commit carries and which stays in that repository's place."""
-    paths = sorted(changes(repo, rel) - before)
+    paths = own_changes(repo, before, rel, listed)
     if not paths:
         return
     keep = repo / ".git" / "garrick-put-back" / time.strftime("%Y%m%d-%H%M%S")
@@ -214,22 +245,27 @@ def restore(repo: Path, before: Set[str], rel: str) -> None:
                 pass
 
 
-def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int, listed=None) -> Optional[str]:
+def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int, listed=None, seen: Optional[Dict[str, str]] = None) -> Optional[str]:
     """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why. With
     `listed` (the paths `question-work` named for this answer), only those are committed; any other path the wiki holds changed
-    is left exactly as it is, and counted for the step's summary line (W6)."""
-    paths = sorted(changes(repo, rel) - before)
+    is left exactly as it is, and counted for the step's summary line (W6). A listed page that was already changed before the
+    call is committed only when the call changed it (`seen` holds what it held before); otherwise it is left as it is and counted
+    for the summary line (#640)."""
+    now = changes(repo, rel)
+    paths = own_changes(repo, before, rel, listed, seen)
     if listed is not None:
-        others = [p for p in paths if p not in listed]
-        paths = [p for p in paths if p in listed]
+        others = [p for p in sorted(now - before) if p not in listed]
         if others:
             LEFT_ALONE[place] = LEFT_ALONE.get(place, 0) + len(others)
+        untouched = [p for p in sorted(now & before) if p in listed and p not in paths]
+        if untouched:
+            LEFT_DIRTY[place] = LEFT_DIRTY.get(place, 0) + len(untouched)
     if not paths:
         return None
     git(repo, "add", "-A", "--", *paths)
     c = git(repo, "commit", "-q", "-m", "Answers worked in for %s: %d question%s" % (place, worked, "" if worked == 1 else "s"), "--", *paths)
     if c.returncode != 0:
-        restore(repo, before, rel)
+        restore(repo, before, rel, listed)
         return "commit"
     return None
 
@@ -292,25 +328,26 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
         return "assistant", 0
     before = changes(repo, folder)
     listed = listed_paths(ws, wiki, rel, repo)
+    seen = digest(repo, [p for p in before if listed is not None and p in listed])      # what the listed pages that were dirty held
     extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
     code, text = agent.run(tier, prompt_for(scope, place, wiki, rel), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_TIMEOUT:
         STOPPED.append(place)
     if listed is None:
-        restore(repo, before, folder)                 # which pages this answer may change cannot be told: nothing is kept (W6)
+        restore(repo, before, folder, None)           # which pages this answer may change cannot be told: nothing is kept (W6)
         return "incomplete", 0
     if code == agent.EXIT_CAP:
-        restore(repo, before, folder)
+        restore(repo, before, folder, listed)
         return "cap", 0
     found = counts(text) if code == 0 else None
     if found is None:
-        restore(repo, before, folder)
+        restore(repo, before, folder, listed)
         return ("assistant" if code else "incomplete"), 0
     worked, held = found
     if worked + held == 0:
-        restore(repo, before, folder)                 # a call that worked nothing in and held nothing back did not finish (#629)
+        restore(repo, before, folder, listed)         # a call that worked nothing in and held nothing back did not finish (#629)
         return "incomplete", 0
-    why = commit(repo, before, folder, place, worked, listed)
+    why = commit(repo, before, folder, place, worked, listed, seen)
     if why:
         return why, 0
     return ("held" if held else None), worked
@@ -346,6 +383,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     total = 0
     del STOPPED[:]
     LEFT_ALONE.clear()
+    LEFT_DIRTY.clear()
     deadline = time.time() + args.limit if args.limit else None
     for scope, group in itertools.groupby(items, key=lambda i: i[0]):
         group = list(group)
@@ -373,10 +411,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 reason = reason or why
         n_left = len(group) - worked_in
-        print("work_in: %s: %d worked in, %d left%s%s%s" % (
+        print("work_in: %s: %d worked in, %d left%s%s%s%s" % (
             place, worked_in, n_left, " (%s)" % reason if reason else "", ", a call was stopped at its time limit" if place in STOPPED else "",
             ", %d other changed path%s in the wiki left as %s" % (LEFT_ALONE[place], "" if LEFT_ALONE[place] == 1 else "s",
-                                                              "it is" if LEFT_ALONE[place] == 1 else "they are") if LEFT_ALONE.get(place) else ""))
+                                                              "it is" if LEFT_ALONE[place] == 1 else "they are") if LEFT_ALONE.get(place) else "",
+            ", %d listed page%s already changed before the call left as %s" % (LEFT_DIRTY[place], "" if LEFT_DIRTY[place] == 1 else "s",
+                                                                           "it is" if LEFT_DIRTY[place] == 1 else "they are") if LEFT_DIRTY.get(place) else ""))
         if reason is None:
             held.pop(scope, None)
         else:

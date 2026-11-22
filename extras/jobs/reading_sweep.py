@@ -12,8 +12,8 @@ ask, so it waits in the Inbox for the next session. The rest go to one
 assistant call per zone, which runs the knowledge skill's Ingest on each
 (`intake.py file-reading`, then the source page, its concepts and entities,
 the index and the log) or takes it out with `intake.py skip --reason`. Then
-one commit in the Knowledge wiki's repository, of the files the call wrote,
-by name, through its hooks.
+one commit in the Knowledge wiki's repository, of the files the call reported
+it wrote (`WROTE <path>` lines), by name, through its hooks.
 
 Run it through job.py:
 
@@ -30,7 +30,9 @@ commit; 64 for an unknown zone or a workspace without the intake skill.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -46,6 +48,8 @@ import agent  # noqa: E402
 SENTINEL = "END OF READING"
 EXIT_INCOMPLETE = 3
 COUNTS = re.compile(r"^FILED (\d+) SKIPPED (\d+)\s*$", re.M)
+WROTE = re.compile(r"^WROTE (.+?)\s*$", re.M)
+SHOWN = 5                       # the most paths a summary line names
 INTAKE = ("System", "skills", "intake", "intake.py")
 
 
@@ -99,6 +103,8 @@ def prompt_for(zone: str, files: List[str]) -> str:
         "- if it is too thin to keep (a one-line promotion, an empty notice, a receipt), take it out with "
         "`python3 System/skills/intake/intake.py skip --file <it> --reason \"<a few words>\"`.\n"
         "Write only in Wikis/Knowledge/. Never file anything in Meetings or a project, never commit, never send.\n\n"
+        "Then write one line for each file you wrote, changed or filed in Wikis/Knowledge/, exactly: WROTE <its path from "
+        "the workspace root>. Only the files you list are committed; nothing else is.\n"
         "Then write one line exactly: FILED <n> SKIPPED <n>, and after it one line that says exactly %s"
         % (zone, listing, SENTINEL))
 
@@ -124,19 +130,66 @@ def changes(repo: Path, rel: str) -> Set[str]:
     return {entry[3:] for entry in out.split("\0") if len(entry) > 3}
 
 
-def commit(workspace: Path, before: Set[str], top: Path, rel: str, filed: int, skipped: int) -> Optional[str]:
-    """Commit what the call wrote in Knowledge, by name. None when done or
-    nothing to commit, else why not."""
-    paths = sorted(changes(top, rel) - before)
+def reported(text: str, workspace: Path, top: Path, rel: str) -> List[str]:
+    """The paths the run says it wrote (`WROTE <path>` lines), as git names them from the top of the repository. A path
+    that is not under the Knowledge wiki is not taken."""
+    out: List[str] = []
+    for raw in WROTE.findall(text or ""):
+        full = Path(os.path.normpath(str(workspace / raw.strip().strip("`")))) if not raw.strip().startswith("/") else Path(os.path.normpath(raw.strip()))
+        try:
+            got = full.resolve().relative_to(top.resolve()).as_posix()
+        except (ValueError, OSError):
+            continue
+        if (rel in (".", "") or got == rel or got.startswith(rel.rstrip("/") + "/")) and got not in out:
+            out.append(got)
+    return out
+
+
+def digest(top: Path, paths) -> dict:
+    out = {}
+    for p in paths:
+        try:
+            out[p] = hashlib.sha1((top / p).read_bytes()).hexdigest()
+        except OSError:
+            out[p] = ""
+    return out
+
+
+def named(paths: List[str]) -> str:
+    shown = ", ".join(paths[:SHOWN])
+    return shown + (" and %d more" % (len(paths) - SHOWN) if len(paths) > SHOWN else "")
+
+
+def commit(workspace: Path, before: Set[str], top: Path, rel: str, filed: int, skipped: int, wrote: Optional[List[str]] = None,
+           seen: Optional[dict] = None) -> Tuple[Optional[str], str]:
+    """Commit what the call reported it wrote in Knowledge, by name. Returns (None when done or nothing to commit, else why
+    not; a note for the summary line). Only a reported path that changed during the call is committed: a path the wiki holds
+    changed that the run did not report (another writer's edit) is left as it is and named, and a reported path that was
+    already changed before the call is committed only if the call changed it (#640). A run that reports none commits nothing."""
+    now = changes(top, rel)
+    before_hash = seen or {}
+    after = digest(top, now & before)
+    wrote = wrote or []
+    paths = sorted(p for p in wrote if p in now and (p not in before or after.get(p) != before_hash.get(p)))
+    notes = []
+    stale = sorted(p for p in wrote if p in now and p in before and p not in paths)
+    other = sorted(p for p in now if p not in paths and p not in stale and p not in before)
+    if not wrote:
+        notes.append("nothing was reported as filed, so nothing was committed")
+    if stale:
+        notes.append("%s was already changed before the call, so it was left as it is" % named(stale))
+    if other:
+        notes.append("%s changed during the call and was left as %s" % (named(other), "it is" if len(other) == 1 else "they are"))
+    note = "; ".join(notes)
     if not paths:
-        return None
+        return None, note
     git(top, "add", "-A", "--", *paths)
     c = git(top, "commit", "-q", "-m", "Knowledge: reading swept; %d filed, %d skipped" % (filed, skipped), "--", *paths)
     if c.returncode != 0:
         git(top, "reset", "-q", "--", *paths)
         why = (c.stderr or c.stdout).strip().splitlines()
-        return why[-1] if why else "git refused"
-    return None
+        return (why[-1] if why else "git refused"), note
+    return None, note
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -165,6 +218,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("%s: nothing to read" % zone.name)
             continue
         before = changes(top, rel)
+        seen = digest(top, before)
         code, text = agent.run(args.tier, prompt_for(zone.name, mine), cwd=workspace,
                                allow=["Read", "Grep", "Glob", "Edit", "Write",
                                       "Bash(python3 System/skills/intake/intake.py:*)"])
@@ -175,8 +229,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             worst = worst or code
             continue
         filed, skipped = found
-        why = commit(workspace, before, top, rel, filed, skipped)
-        print("%s: %d filed, %d skipped%s" % (zone.name, filed, skipped, "; not committed: " + why if why else ""))
+        why, note = commit(workspace, before, top, rel, filed, skipped, reported(text, workspace, top, rel), seen)
+        print("%s: %d filed, %d skipped%s%s" % (zone.name, filed, skipped, "; not committed: " + why if why else "",
+                                                " (%s)" % note if note else ""))
         if why:
             worst = worst or 1
         total += filed + skipped

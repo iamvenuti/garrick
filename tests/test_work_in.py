@@ -162,6 +162,16 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         self.assertIn("Answers worked in for Work", git(self.ws / "Wikis", "log", "-1", "--format=%s"))
         self.assertEqual("", git(self.ws / "Wikis", "status", "--porcelain").strip())
 
+    def test_a_file_named_with_a_glob_is_committed_by_its_literal_name_and_never_takes_a_dirty_file_beside_it(self):
+        wiki = self.ws / "Wikis"
+        write(wiki / "Meetings" / "wiki" / "ab.md", "# Mine\n")
+        git(wiki, "add", "-A")
+        git(wiki, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "ab")
+        (wiki / "Meetings" / "wiki" / "ab.md").write_text("# Mine, edited and not committed\n")
+        self.run_main(TWO_PLACES[:1], [(0, DONE, "Wikis/Meetings/wiki/a*.md")])
+        self.assertEqual(["Meetings/wiki/a*.md"], git(wiki, "show", "--name-only", "--format=", "HEAD").split("\n")[:1])
+        self.assertEqual(" M Meetings/wiki/ab.md", git(wiki, "status", "--porcelain").rstrip())
+
     def test_a_refused_commit_puts_the_files_back_in_the_index_and_the_place_is_left(self):
         hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
         write(hook, "#!/bin/sh\nexit 1\n")

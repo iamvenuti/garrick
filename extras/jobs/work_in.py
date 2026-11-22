@@ -165,7 +165,7 @@ def counts(text: str) -> Optional[Tuple[int, int]]:
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=300,
+    return subprocess.run(["git", "--literal-pathspecs", *args], cwd=str(repo), capture_output=True, text=True, timeout=300,
                           stdin=subprocess.DEVNULL, env=agent.own_repo_env())
 
 

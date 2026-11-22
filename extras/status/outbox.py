@@ -586,6 +586,18 @@ def hand_ticks(ws: Path, now: Optional[dt.datetime] = None) -> int:
 # --------------------------------------------------------------------------- command line
 
 
+def summary(done: dict) -> str:
+    """The one line `replay` prints: what it applied, and what it kept back and why."""
+    line = "Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done
+    if done.get("retry"):
+        line += " %d wait for the next run." % done["retry"]
+    if done.get("journal"):
+        line += " The journal could not be read, so nothing was applied; the queued requests are kept."
+    if done.get("gone"):
+        line += " %d not applied again, because their record is gone: %s." % (len(done["gone"]), ", ".join(done["gone"]))
+    return line
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="The outbox of a roaming machine's Todo actions.")
     ap.add_argument("command", choices=("replay", "list"))
@@ -603,8 +615,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("This machine only receives the workspace; the server applies the outbox.", file=sys.stderr)
         return 1
     done = replay(ws)
-    print("Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done
-          + (" %d wait for the next run." % done["retry"] if done.get("retry") else ""))
+    print(summary(done))
     return 0
 
 

@@ -44,6 +44,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 
 FOLDER = (("Inbox", ".outbox"))
+DROP_VERB = "outbox-drop"          # the page's *Drop it*: allowed on every role, since it only removes a file from the drop folder
 VERBS = ("todo-done", "todo-undo", "todo-edit", "todo-add")       # operations.OUTBOX_VERBS, which page_action.py checks it against
 ENVELOPE = ("id", "made", "machine", "line", "request")
 HELD_ENVELOPE = ENVELOPE + ("held", "held_at")
@@ -54,6 +55,7 @@ LEDGER = "outbox-applied.json"
 KEEP_APPLIED = 5000
 LINE_MAX = 300
 WAITS = "waits for the server"
+READ_GUARD_HOME = "the read guard is set on the home server, since this machine only receives the workspace"
 ONLY_RECEIVES = ("this machine only receives the workspace, so %s waits until you are on the server")
 TRANSIENT = ("try again in a moment", "cannot take the lock in", "git took longer than", "git did not run",
              "wall check was still running")      # page_action.py's words for a busy lock, a timeout and a missing git
@@ -188,7 +190,11 @@ def queue(ws: Path, req: dict) -> dict:
     ops = pa.ops_lib(ws)
     verb = req.get("verb")
     spec = ops.DECLARED.get(verb) if ops is not None else None
+    if verb == DROP_VERB:
+        return None         # Drop it takes a held file out of the drop folder, the one place a laptop copy may write (#621)
     if verb not in VERBS:
+        if verb == "read-guard":
+            raise Refused(READ_GUARD_HOME)
         if spec is not None and spec.scope in ("zone", "workspace"):
             raise Refused(ONLY_RECEIVES % "this")
         return None

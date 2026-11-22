@@ -1242,7 +1242,7 @@ class TestZoneColours(StatusCase):
         write(self.root / "Zones" / "Work" / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] Book the room\n")
         html = self.page()
         icon = status.zone_icon("briefcase")
-        self.assertIn('<h3 class="zc zc-teal">%sWork</h3>' % icon, html)                   # the Threads card
+        self.assertIn('<h3><span class="zic zc zc-teal">%s</span>Work</h3>' % icon, html)   # the Threads card: the colour on the icon alone (#619)
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
@@ -1494,15 +1494,16 @@ class TestParkAProject(StatusCase):
         html = self.page()
         acme, birch = project_cards(html)["Acme Review"], project_cards(html)["Birch Entry"]
         pricing = cards(html)[("Acme Review", "Pricing")]
-        wake, park, held = panel(True, ("head", acme), ("head", birch), ("head", pricing))
+        wake, park, held, held_card = panel(True, ("menu", acme), ("menu", birch), ("menu", pricing), ("head", pricing))
         self.assertIn('data-act="{"verb":"wake","zone":"Work","project":"Acme Review"}"', wake)
         self.assertIn('data-expect="active:Work/Acme Review/Acme Review.md"', wake)
-        self.assertIn('title="Wake the project and every thread in it">Wake</button>', wake)
+        self.assertIn('title="Wake the project and every thread in it">', wake)
+        self.assertTrue(wake.endswith("Wake</button></div>"))
         self.assertIn('data-act="{"verb":"park","zone":"Work","project":"Birch Entry"}"', park)
         self.assertIn('data-expect="parked:Work/Birch Entry/Birch Entry.md"', park)
         self.assertNotIn("pflip", held)                                    # parked with its project: no button of its own
-        self.assertIn("Parked with its project", held)
-        browser = panel(False, ("head", dict(birch, pp=None)))[0]
+        self.assertIn("Parked with its project", held_card)
+        browser = panel(False, ("menu", dict(birch, pp=None)))[0]
         self.assertIn('data-copy="park Birch Entry"', browser)               # elsewhere it copies the phrase
 
 
@@ -1561,9 +1562,9 @@ class TestTheThreadsList(StatusCase):
         row, graph = panel(True, ("head", card, 1), ("head", card))
         self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the row above the project
         self.assertNotIn('<div class="muted">', row)
-        self.assertIn('<span class="chip" style="margin:0 4px 0 0">acme</span>', row)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span></div>', row)
         self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
-        self.assertIn("tc.innerHTML=Panel.head(o,1)+Panel.acts(o)", status.JS)
+        self.assertIn("tc.innerHTML=Panel.card(o,1);", status.JS)
 
     def test_the_live_dot_keeps_its_distance(self):
         self.assertIn(".thread .t a+.live{margin-left:.4em}", status.CSS)
@@ -2334,7 +2335,7 @@ const ctx = { JSON, String, Array, Object, Math, Date, performance: { now: () =>
                                                        : k === "querySelector" ? (s) => s === ".gzsel" ? sel
                                                          : (s.match(/^\.glegend \[data-k="(\d+)"\]$/) || [])[1] ? kinds.filter((c) => s.indexOf('"' + c.dataset.k + '"') > 0)[0] : any
                                                        : any }),
-              Panel: { esc: (s) => String(s), head: (o) => "<h4>" + o.n + "</h4>", acts: () => "" },
+              Panel: { esc: (s) => String(s), head: (o) => "<h4>" + o.n + "</h4>", acts: () => "", card: (o) => "<h4>" + o.n + "</h4>" },
               requestAnimationFrame: () => 0, setTimeout: () => 0, addEventListener: () => {},
               matchMedia: () => ({ matches: true }), IntersectionObserver: any, ResizeObserver: any, MutationObserver: any,
               getComputedStyle: () => any, location: any, navigator: any, innerWidth: 800, innerHeight: 600, devicePixelRatio: 1 };
@@ -2888,7 +2889,7 @@ class TestWhereTheChoicesLive(StatusCase):
         self.assertEqual(prefs.lib(self.root).PREFERENCES_FILE, prefs.FILE)
         self.assertEqual("System/garrick-settings.json", prefs.FILE)
         html = self.page()
-        self.assertIn("<code>System/garrick-settings.json</code>", html)          # Settings says where they are kept
+        self.assertNotIn("<code>System/garrick-settings.json</code>", html)       # a help text names no file (#621): kept with the workspace
         self.assertNotIn("status-settings.json", html)
 
     def test_every_reader_reads_the_same_file(self):
@@ -2909,14 +2910,14 @@ class TestWhereTheChoicesLive(StatusCase):
         write(self.root / "System" / "generated" / "status-settings.json",
               json.dumps({"zones": {"Work": {"color": "Teal", "icon": "briefcase"}},
                           "launchers": ["note", "claude"], "default": "claude"}))
-        self.assertIn('<h3 class="zc zc-teal">', self.build_main())          # the page shows them either way
+        self.assertIn('<h3><span class="zic zc zc-teal">', self.build_main())          # the page shows them either way
         kept = json.loads((self.root / self.SETTINGS).read_text(encoding="utf-8"))
         self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}}, kept["zones"])
         self.assertEqual(["note", "claude"], kept["launchers"])
         # Deleting the generated folder and rebuilding keeps every choice.
         shutil.rmtree(str(self.root / "System" / "generated"))
         html = self.build_main()
-        self.assertIn('<h3 class="zc zc-teal">', html)
+        self.assertIn('<h3><span class="zic zc zc-teal">', html)
         self.assertEqual({"launchers": ["note", "claude"], "default": "claude"},
                          json.loads(re.search(r'id="launch-settings">(.*?)</script>', html, re.S).group(1)))
 
@@ -3234,7 +3235,7 @@ class TestWhatALaunchSays(StatusCase):
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_open_in_claude_on_a_thread_is_continue_where_the_cli_is_here(self):
         """#180: where the build found Claude Code's command-line tool, Open
-        in Claude on a thread sends the simple home's Continue request, and
+        in Claude on a thread sends Continue's request, and
         the working card says it is opening; without the tool it is the deep
         link, as before, and so is a card with no note to continue."""
         self.assertNotIn("data-cli", self.page(launchers=("claude",)))           # unsaid: the deep link

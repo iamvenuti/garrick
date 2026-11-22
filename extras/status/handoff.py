@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """handoff.py: opening a piece of work in Claude's desktop app, already oriented.
 
-The simple home's Continue and Ask something (status.py) hand the work over
+Continue and Ask something (status.py) hand the work over
 to Claude's desktop app, where the conversation happens. page_action.py's
 `continue` and `ask-desktop` verbs do it with what is here; status.py reads
 the record this keeps, to say when the desktop app cannot open work on this

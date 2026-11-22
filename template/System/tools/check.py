@@ -204,6 +204,7 @@ CHECKS = [
     ("updates", "Updates to merge"),
     ("connectors", "Connector tools"),
     ("machines", "Machines"),
+    ("home", "Home setting"),
 ]
 
 # How a group of findings is said aloud when there is more than one.
@@ -242,6 +243,7 @@ EAR_GROUP = {
     "review": "the review record has {n} entries outside its fixed form",
     "connectors": "{n} connector tools the assistant used are on no list of the read guard",
     "machines": "{n} things need fixing for the machines the workspace lives on",
+    "home": "the check settings still hold a Home setting the Garrick App no longer reads",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -3220,8 +3222,8 @@ def own_answer(record: Path, question: Path, qfm: dict) -> bool:
 
 def check_questions(ws: Workspace) -> List[Finding]:
     """A Needs you question (#175) is a file in the folder of the work it
-    blocks, `Needs you/<YYMMDD> - <slug>.md`, which the status page's simple
-    home reads and answers. A wiki question (#224) is the same file in the
+    blocks, `Needs you/<YYMMDD> - <slug>.md`, which the status page's
+    Waiting on you now card lists and answers. A wiki question (#224) is the same file in the
     wiki's own `questions/`, for what an ingest or a lint found that only the
     user can settle, and belongs to no thread. Both are held to what
     question_findings() asks. A Meetings question also carries the `zone`
@@ -3236,7 +3238,7 @@ def check_questions(ws: Workspace) -> List[Finding]:
             for f in sorted(box.glob("*.md")):
                 if f.name.startswith((".", "_")):
                     continue
-                out += question_findings(ws, f, "the home", "A Needs you question the home cannot read")
+                out += question_findings(ws, f, "Garrick", "A Needs you question Garrick cannot read")
     for wiki in visible_dirs(ws.root / "Wikis"):
         for f in wiki_questions(wiki):
             out += question_findings(ws, f, "Garrick", "A %s question Garrick cannot read" % wiki.name,
@@ -6775,6 +6777,17 @@ def launchd_labels() -> List[str]:
     return sorted(l for l in loaded if l.startswith("garrick.") or l in ours)
 
 
+def check_home_setting(ws: Workspace) -> List[Finding]:
+    """The Garrick App opens on the full page only (#503). A `"home"` key left in the settings file does nothing:
+    one warning, with the fix. `update.py` takes the key out."""
+    if "home" not in read_settings(ws.root):
+        return []
+    return [Finding(WARNING, "home", "System/garrick-settings.json",
+                    "holds a `home` setting. The Garrick App opens on the full page only and no longer reads it; "
+                    "delete the line, or run the update, which takes it out",
+                    "a setting the Garrick App no longer reads")]
+
+
 def check_machines(ws: Workspace) -> List[Finding]:
     """What the machine's role asks of the workspace (#612). On `solo`, the default, nothing: no file is read but
     machine.json, and no finding is made."""
@@ -6841,6 +6854,7 @@ ALL_CHECKS = [
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates, check_connector_tools,
     check_machines,
+    check_home_setting,
 ]
 
 

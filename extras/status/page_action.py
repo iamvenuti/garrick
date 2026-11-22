@@ -186,8 +186,7 @@ zone's repository, as the skills would:
     later       "Not now": {"zone", "file", "until"?}; the question put off
                 to tomorrow, or to the day `until` names, and committed
     continue    a piece of work opened in Claude's desktop app, already
-                oriented: {"zone", "file"}, its note. The simple home's
-                Continue and, since #180, every Open in Claude on a thread
+                oriented: {"zone", "file"}, its note. Continue and, since #180, every Open in Claude on a thread
                 (the Threads card, the graph's panel, the app's menu and
                 panel). Its own record is committed, a headless `claude -p`
                 asks "Where am I on <it>?" (say_name()), and that session
@@ -348,14 +347,15 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "layout",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
-         "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
+         "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
          "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
          "commit-files",
          "todo-edit",
          "todo-retire",
          "chase",
-         "outbox-drop")
+         "outbox-drop",
+         "machine-role", "read-guard")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -380,7 +380,7 @@ ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart",
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
           "name", "party", "new_party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
-          "do", "id", "answer", "suggested", "path", "version", "agent", "wiki")       # never "token"
+          "do", "id", "answer", "suggested", "path", "version", "agent", "wiki", "role", "server", "mode", "cross")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1853,6 +1853,169 @@ def save_settings(ws: Path, req: dict) -> str:
     return "Settings saved"
 
 
+# ---- Settings: this computer's role and the read guard (#621) ---------------------------------------------------------
+# Two actions only the app's bridge sends. Each says what it did in one sentence, and when it could not, one sentence
+# that names its row of FAILURES, with the tool's own words under Details (#511).
+ROLE_WORDS = {"solo": "One computer", "server": "Home server", "roaming": "Laptop copy"}
+MACHINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
+TOOL_PATTERN = re.compile(r"[A-Za-z0-9_.*?-]{1,100}")        # a tool name or a pattern for one: never a path or a space
+GUARD_MODES = ("off", "warn", "enforce")
+GUARD_CROSS = ("deny", "ask")
+GUARD_WORDS = {"off": "Off", "warn": "Watch only", "enforce": "On"}
+GUARD_KEYS = {"warn": "warn", "enforce": "enforce", "off": "warn"}      # Off is no registration, and the mode stays warn
+MAX_PATTERNS = 40
+
+
+def fails(code: str, text: str):
+    """A refusal that names its row of FAILURES: the plain sentence and its one next step come from the table, and `text`,
+    the tool's own words, goes under Details."""
+    e = Refused(text)
+    e.reply = {"failure": code}
+    return e
+
+
+def machine_lib(ws: Path):
+    """System/tools/machine.py, found as outbox.py finds it: the workspace's, else the one beside this folder, else a clone's."""
+    box = outbox_lib()
+    return box._machine(ws) if box is not None else None
+
+
+def set_machine_role(ws: Path, req: dict) -> dict:
+    """Settings › This machine: write the role of this computer, as `machine.py set` does, no more. `role` is one of
+    solo, server, roaming; `name` is this computer's name and `server` the home server's, both optional except that a
+    laptop copy needs the server's. What an earlier file named is kept: its peers, its workspace path, and its name when the
+    dialog sends none. Nothing leaves this computer, and no file
+    in the workspace changes."""
+    mod = machine_lib(ws)
+    role, name, server = req.get("role"), req.get("name") or "", req.get("server") or ""
+    if not isinstance(role, str) or role not in ROLE_WORDS:
+        raise fails("role-name", "the role is %s" % ", ".join("%s (%s)" % (k, v) for k, v in ROLE_WORDS.items()))
+    for value in (name, server):
+        if not isinstance(value, str) or (value.strip() and not MACHINE_NAME.fullmatch(value.strip())):
+            raise fails("role-name", "%r is not a name this machine can use" % (value,))
+    name, server = name.strip(), server.strip()
+    if role == "roaming" and not server:
+        raise fails("role-server", "a laptop copy needs the home server's name, and none was given")
+    if role != "roaming":
+        server = ""                     # only a laptop copy has a server to name
+    if mod is None or not callable(getattr(mod, "write", None)):
+        raise fails("role-tool", "System/tools/machine.py is not there, or is older than this page")
+    try:
+        kept = mod.read()
+        where = mod.write(role, name or kept.get("name") or "", server, kept.get("workspace") or "", kept.get("peers") or [])
+    except OSError as e:
+        raise fails("role-write", "%s: %s" % (type(e).__name__, e))
+    except ValueError as e:
+        raise fails("role-name", str(e))
+    say = {"solo": "This computer is now one computer.", "server": "This computer is now the home server.",
+           "roaming": "This computer is now a laptop copy of %s." % server}[role]
+    return {"say": say, "logged": "%s (%s)" % (say, where)}
+
+
+def guard_hooks():
+    """read_guard.py from where Garrick keeps it: `extras/hooks/` in a clone, or beside a Garrick hook the assistants'
+    settings already point at (`settings_guard.hook_folders()`). It is the one `read_guard.py --check` reports on and the
+    one that writes the registration. (None, None) when no copy is found: the workspace carries none of its own."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        folders = found.hook_folders()
+    except Exception:
+        return None, None
+    for folder in folders:
+        try:
+            return found.load_hook(folder, "garrick_read_guard_register")
+        except Exception:
+            continue
+    return None, None
+
+
+def guard_version_differs() -> bool:
+    """True when a folder the assistants' settings name holds both hook files, and they are another version's. Fails closed:
+    anything unreadable is False, so the plainer guard-file sentence stands."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        return bool(found.other_version())
+    except Exception:
+        return False
+
+
+def clean_patterns(value, what: str, needs_one: bool = False) -> list:
+    """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
+    path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
+    and calendar tools with none would switch the filter off with the guard still On. Refused whole when one is not."""
+    if not isinstance(value, list) or len(value) > MAX_PATTERNS or (needs_one and not value):
+        raise fails("guard-value", "%s is a list of at most %d tool names%s" % (what, MAX_PATTERNS, ", and not empty" if needs_one else ""))
+    out = []
+    for item in value:
+        item = item.strip() if isinstance(item, str) else item
+        if not isinstance(item, str) or not TOOL_PATTERN.fullmatch(item) or ".." in item or not item.strip("*?"):
+            raise fails("guard-value", "%r is not a tool name or a pattern for one" % (item,))
+        if item.lower() not in [x.lower() for x in out]:
+            out.append(item)
+    return out
+
+
+def set_read_guard(ws: Path, req: dict) -> dict:
+    """Settings › Walls › Read guard. `mode`: `off` takes the hook out of each assistant's settings and leaves the mode on
+    `warn`; `warn` (Watch only) and `enforce` (On) put it in, the way extras/hooks/README.md says, and set the mode. `cross`
+    is `deny` (Refuse) or `ask` (Ask me). `tools` and `skip` are the two lists of tool name patterns. The settings go in
+    System/garrick-settings.json through the page's own save (prefs). A registration is confirmed by `read_guard.py --check`
+    before it is called done; anything less is a refusal, and nothing shows as saved."""
+    new = {}
+    mode = req.get("mode")
+    if mode is not None and mode not in GUARD_MODES:
+        raise fails("guard-value", "the read guard is off, watch only or on, not %r" % (mode,))
+    if "cross" in req:
+        if req["cross"] not in GUARD_CROSS:
+            raise fails("guard-value", "across a wall is refuse or ask me, not %r" % (req["cross"],))
+        new["read-guard-cross-zone"] = req["cross"]
+    if "tools" in req:
+        new["connector-tools"] = clean_patterns(req["tools"], "the mail and calendar tools", needs_one=True)
+    if "skip" in req:
+        new["connector-tools-skip"] = clean_patterns(req["skip"], "the tools with nothing to check")
+    if mode is None and not new:
+        raise Refused("nothing to save")
+    keep = prefs()
+    registered = None
+    if mode is not None:
+        guard, src = guard_hooks()
+        if guard is None:
+            if guard_version_differs():
+                raise fails("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
+            raise fails("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
+        home = str(Path.home())
+        try:
+            guard.register(str(src), home, install=mode != "off")
+        except guard.RegisterError as e:
+            raise fails({"none": "guard-assistant", "script": "guard-file", "read": "guard-read", "write": "guard-write"}.get(
+                e.kind, "guard-write"), str(e))
+        lines, _ = guard.check_lines(home)
+        registered = all("is registered" in l for l in lines) if mode != "off" else not any("is registered" in l for l in lines)
+        if not lines or not registered:
+            raise fails("guard-check", "read_guard.py --check says: %s" % " ".join(lines or ["no assistant found."]))
+        new["read-guard"] = GUARD_KEYS[mode]
+    try:
+        keep.migrate(ws)
+        keep.save(ws, new)
+    except (OSError, ValueError, keep.NoAccessor) as e:
+        raise fails("guard-save", "%s: %s" % (type(e).__name__, e))
+    bits = []
+    if mode is not None:
+        bits.append("The read guard is %s." % GUARD_WORDS[mode].lower() if mode == "off" else
+                    "The read guard is %s, and its hook shows as registered." % GUARD_WORDS[mode].lower())
+    if "read-guard-cross-zone" in new:
+        bits.append("A read across a wall is now: %s." % ("ask me" if new["read-guard-cross-zone"] == "ask" else "refuse"))
+    if "connector-tools" in new:
+        bits.append("The mail and calendar tools list is saved.")
+    if "connector-tools-skip" in new:
+        bits.append("The list of tools with nothing to check is saved.")
+    return {"say": " ".join(bits), "logged": " ".join(bits)}
+
+
 _CHANNELS = None
 
 
@@ -2760,7 +2923,7 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
         raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
 
 
-# ---- the simple home (#175): Needs you, Continue, Ask something, the example ----
+# ---- Needs you, Continue, Ask something, the example (#175) ----
 # Needs you is a record, not a view: one file per question Garrick asked, in
 # the folder of the work it blocks, `Needs you/<YYMMDD> - <slug>.md`,
 # committed with the zone. `status: open`, `answered` or `later`; each option
@@ -4228,7 +4391,7 @@ def example(ws: Path, req: dict) -> str:
         raise Refused(said[-1] if said else "example.py refused")
     return said[-1].rstrip(".") if said else ("The example is archived. Nothing of yours was touched" if do == "archive"
                                               else "The example is back")
-# ---- end of the simple home ------------------------------------------------------
+# ---- end of Needs you, Continue and the example ------------------------------------------------------
 
 
 # ---- your own work (#182): a folder you already keep, read and never written ----
@@ -4246,7 +4409,6 @@ def example(ws: Path, req: dict) -> str:
 # of the folder its sessions start in, and by `--settings` on every headless
 # call; a shell command, approved or run by Auto mode, is covered by neither.
 _YW = None
-FOLDER_MAX = 1024
 FIRST_LOOK_TIMEOUT = 360          # seconds for the call that reads a piece of work's files for the first time
 TOOL_TIMEOUT = 300                # for discover.py, which lists a folder that may be a large cloud drive
 EXTRACT_TIMEOUT = 180             # for extract.py, on one piece of work's Office files
@@ -4290,31 +4452,6 @@ def context_of(ws: Path) -> dict:
         return lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
     except Exception:
         return {}
-
-
-def picked_folder(req: dict) -> str:
-    """The folder the picker gave: an absolute path, on one line."""
-    folder = req.get("folder")
-    if not isinstance(folder, str) or not folder.strip() or "\n" in folder or len(folder) > FOLDER_MAX:
-        raise Refused("no folder given")
-    folder = os.path.expanduser(folder.strip())
-    if not os.path.isabs(folder):
-        raise Refused("not a folder Garrick can read: %s" % folder)
-    return folder
-
-
-def discover_folder(ws: Path, req: dict) -> dict:
-    """Add your own work: the picked folder looked through by discover.py,
-    names and dates only, and its proposals kept for the page to show."""
-    out = tool_json(ws, "discover.py", "scan", picked_folder(req))
-    top, more = out.get("top") or [], out.get("more") or []
-    name = out.get("name") or os.path.basename(out.get("folder") or "")
-    if top:
-        said = "Found %d piece%s of work in %s. Nothing in it was changed" % (
-            len(top) + len(more), "" if len(top) + len(more) == 1 else "s", name)
-    else:
-        said = "Nothing new in %s looks like a piece of work. Nothing in it was changed" % name
-    return {"say": said, "view": your_work().view_id(out.get("folder") or "")}
 
 
 def suggestion(ws: Path, pid) -> tuple:
@@ -5850,8 +5987,10 @@ def act(ws: Path, req, today=None, now=None):
         return chase(ws, req)
     if req["verb"] == "outbox-drop":
         return outbox_lib().drop(ws, req.get("zone"), req.get("id"))
-    if req["verb"] == "discover":
-        return discover_folder(ws, req)
+    if req["verb"] == "machine-role":
+        return set_machine_role(ws, req)
+    if req["verb"] == "read-guard":
+        return set_read_guard(ws, req)
     if req["verb"] == "suggestion":
         return answer_suggestion(ws, req)
     if req["verb"] == "start":
@@ -5877,6 +6016,7 @@ def act(ws: Path, req, today=None, now=None):
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
+               "machine-role", "read-guard",
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
@@ -5888,7 +6028,68 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
              "chase",
              "layout",
-             "outbox-drop")
+             "outbox-drop",
+             "machine-role", "read-guard")
+
+
+# ---- The page's own route (#618 leftover) -------------------------------------------------
+# `--via page` is a word on a command line: a session's shell can type it. So a request that says it comes from the page
+# is believed only when the process that started this one is Garrick.app itself, which the app's bridge is (act() runs
+# page_action.py as its child). The check reads what the kernel says about the parent, never an argument, a variable
+# or a file the session can write alone. It is a function, so a test replaces it in this process, and nothing outside
+# the process can switch it off.
+APP_BUNDLE_ID = "local.garrick.status"      # make-app.sh's APP_ID for an installed app (a scratch build has another)
+APP_EXECUTABLE = "Garrick"
+PAGE_REFUSED = "this is the page's own button; it is not for the ask box or a session"
+
+
+def _parent_executable():
+    """The real path of the program that started this process, as the kernel names it (proc_pidpath), or None where it
+    cannot be read. macOS only: elsewhere there is no app, so no page."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = ctypes.create_string_buffer(4096)
+        n = lib.proc_pidpath(os.getppid(), buf, ctypes.sizeof(buf))
+        return Path(os.fsdecode(buf.value)) if n > 0 else None
+    except Exception:
+        return None
+
+
+def page_route(ws: Path) -> bool:
+    """Whether this request really came through Garrick.app's bridge: the parent process is the app's own executable,
+    in an app bundle in an Applications folder (the user's or the Mac's) whose Info.plist carries Garrick's bundle
+    identifier and names this workspace. A lookup that fails says no. A person who builds and signs a look-alike app
+    in their own Applications folder can still pass it; nothing outside the process can, which is the line this draws."""
+    try:
+        exe = _parent_executable()
+        if exe is None or not exe.is_absolute() or exe.resolve() != exe:
+            return False
+        bundle = exe.parent.parent.parent
+        if exe.name != APP_EXECUTABLE or exe.parent.name != "MacOS" or exe.parent.parent.name != "Contents" \
+                or bundle.suffix != ".app":
+            return False
+        homes = {(Path.home() / "Applications").resolve(), Path("/Applications")}
+        if bundle.parent.resolve() not in homes:
+            return False
+        import plistlib
+        with (bundle / "Contents" / "Info.plist").open("rb") as f:
+            info = plistlib.load(f)
+        if info.get("CFBundleIdentifier") != APP_BUNDLE_ID:
+            return False
+        named = info.get("GarrickWorkspace")
+        return isinstance(named, str) and Path(named).resolve() == Path(ws).resolve()
+    except Exception:
+        return False
+
+
+def caller(declared, ws: Path) -> str:
+    """Who the command line's `--via` says is asking, as far as it can be believed. A shell is a session. `page` holds
+    only when page_route() agrees; `ask` and `outbox` are in-process callers, never a command line, so a declared one is
+    a session too. Anything else is a session."""
+    return "page" if declared == "page" and page_route(ws) else "session"
 
 
 # The answers of the verb `finding` that only the page's own button sends, by their name before any `-<which>`.
@@ -5925,6 +6126,31 @@ FAILURES = (
      "Open the page and choose Refresh."),
     ("noreply", "This was not saved: the action stopped before it finished.", "Try again", "retry", "Open the page and choose Try again."),
     ("handoff", "Claude did not open.", "Try again", "retry", "Choose Try again on the page."),
+    # Settings: this computer's role and the read guard (#621, #511). Each is a refusal that says what was not changed.
+    ("role-server", "The role was not changed: a laptop copy needs the name of the home server.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("role-name", "The role was not changed: a computer's name is letters, numbers, dots, dashes and underscores.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("role-tool", "The role was not changed: this Garrick has no tool to set it. Update Garrick, then try again.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("role-write", "The role was not changed: this computer's settings folder could not be written.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("guard-value", "The read guard was not changed: one of its choices is not one it takes.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("guard-assistant", "The read guard was not changed: no assistant is set up on this computer.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("guard-file", "The read guard was not changed: Garrick could not find its hook file on this computer.", "Show why", "why",
+     "Register the zone guard from the Garrick download you keep, as the hooks page says, then choose the read guard again."),
+    ("guard-version", "The read guard was not changed: the hook files in the Garrick download you keep are from another version. Replace that download with this version, then choose again.", "Show why", "why",
+     "Open Settings and choose Show why."),
+    ("guard-read", "The read guard was not changed: your assistant's settings could not be read, so they were left as they are.",
+     "Show why", "why", "Open Settings and choose Show why."),
+    ("guard-write", "The read guard was not changed: your assistant's settings could not be written.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("guard-check", "The read guard was not changed: it did not show as registered afterwards.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("guard-save", "The read guard's setting was not saved: the workspace's settings could not be written.", "Try again", "retry",
+     "Open Settings and choose Try again."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)
@@ -5936,6 +6162,8 @@ def failure_code(out: dict, req) -> str:
     say = str(out.get("say") or "")
     if say.startswith("A wall holds "):
         return "wall"
+    if out.get("failure") in FAILURE_CODES:
+        return out["failure"]           # a refusal that names its own row, as the two Settings actions do
     if isinstance(req, dict) and req.get("verb") == "continue":
         return "handoff"
     outcome = out.get("outcome")
@@ -5966,7 +6194,7 @@ def with_plain(out: dict, req, ops) -> dict:
             # No record of it (a verb outside operations.OPS): the app says its fallback, except for the two codes the
             # reply itself settles: the rules' wall sentence, which stands alone, and a hand-off that did not open.
             code = failure_code(out, req)
-            if code in ("wall", "handoff"):
+            if code in ("wall", "handoff") or out.get("failure") == code:
                 return dict(out, plain=plain_failure(code, str(out.get("say") or "")))
             return out
         return dict(out, plain=plain_failure(failure_code(out, req), str(out.get("say") or "")))
@@ -6031,11 +6259,11 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             if isinstance(req, dict) and req.get("verb") in PAGE_ONLY and via != "page":
                 # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
                 # never reach it, and the command line has no verb for it.
-                raise Refused("this is the page's own button; it is not for the ask box or a session")
+                raise Refused(PAGE_REFUSED)
             if via != "page" and page_only_answer(req):
                 # Leaving a finding as it is, taking that back, and marking a decision as still holding are the user's own press:
                 # the ask box and a session never send them.
-                raise Refused("this is the page's own button; it is not for the ask box or a session")
+                raise Refused(PAGE_REFUSED)
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
                     run, joined = start_record(ops, req, via)
@@ -6062,7 +6290,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
             outcome, why = "crashed", "%s: %s" % (type(e).__name__, e)
         if run is not None and outcome is not None:
+            named = out.get("failure") if isinstance(out, dict) else None
             out = run.finish(outcome, req, why=why, said=out["say"] if outcome == "saved" else "")
+            if named:
+                out["failure"] = named          # the row of FAILURES the refusal named, which the record's reply drops
         if builds_page(req):
             if outcome == "saved" and ask_for_page(ws):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
@@ -6202,7 +6433,7 @@ def main(argv=None) -> int:
     args = command_parser().parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
     cli = args.verb is not None
-    via = args.via or "session"          # S9: only an explicit --via page is the page
+    via = caller(args.via, ws)           # a declared `page` is believed only from Garrick.app's own bridge
     req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
@@ -6224,7 +6455,8 @@ def main(argv=None) -> int:
     except Exception as e:              # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
     out = with_plain(out, req, ops_lib(ws))
-    audit(req if req is not None else {}, out["ok"], logged or out["say"], via=via)
+    named = via if args.via in (None, via) else "%s; --via %s did not come from the app" % (via, args.via)
+    audit(req if req is not None else {}, out["ok"], logged or out["say"], via=named)
     if cli:                             # a session reads the sentence, not JSON
         undo = ("\nTo undo: python3 System/status/page_action.py undo --zone %s --commit %s" % (args.zone, out["commit"])
                 if out.get("ok") and out.get("commit") else "")

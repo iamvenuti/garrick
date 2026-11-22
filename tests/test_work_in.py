@@ -43,6 +43,12 @@ DONE = "WORKED 1 HELD 0\n" + work_in.SENTINEL
 TWO_PLACES = [("Zones/Work", "Work", 1), ("Wikis/Knowledge", "the Knowledge wiki", 2)]
 
 
+def expand(places):
+    """(scope, place, how many answers) as the one entry each answer has: the scope, the place, its wiki and its question file."""
+    return [(scope, place, "Knowledge" if scope == work_in.KNOWLEDGE else "Meetings", "questions/q%d.md" % (i + 1))
+            for scope, place, n in places for i in range(n)]
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -71,28 +77,32 @@ class Case(unittest.TestCase):
             if wrote:
                 write(self.ws / wrote, "# Answered\n")
             return code, text
-        with mock.patch.object(work_in, "waiting", return_value=places), mock.patch.object(agent, "run", fake):
+        with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake):
             code = work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
         return code, calls
 
 
 class TestTheNightlyWorksInWhatIsWaiting(Case):
-    def test_one_call_for_each_place_that_holds_an_answer_and_each_names_its_own_place_only(self):
-        code, calls = self.run_main(TWO_PLACES, [(0, DONE, "Wikis/Meetings/wiki/a.md"), (0, DONE, "Wikis/Knowledge/wiki/b.md")])
+    def test_one_call_for_each_answer_and_each_names_its_own_question_and_place_only(self):
+        code, calls = self.run_main(TWO_PLACES, [(0, DONE, "Wikis/Meetings/wiki/a.md"), (0, DONE, "Wikis/Knowledge/wiki/b.md"),
+                                                 (0, DONE, "Wikis/Knowledge/wiki/c.md")])
         self.assertEqual(0, code)
-        self.assertEqual(2, len(calls))
-        self.assertTrue(calls[0].startswith("work in the answers in Work.\n"))
-        self.assertTrue(calls[1].startswith("work in the answers in the Knowledge wiki.\n"))
+        self.assertEqual(3, len(calls))
+        self.assertTrue(calls[0].startswith("work in the answer in Work.\n"))
+        self.assertIn("`questions/q1.md` in the Meetings wiki", calls[0])
+        self.assertTrue(calls[1].startswith("work in the answer in the Knowledge wiki.\n"))
+        self.assertIn("`questions/q1.md` in the Knowledge wiki", calls[1])
+        self.assertIn("`questions/q2.md` in the Knowledge wiki", calls[2])
         self.assertNotIn("Knowledge", calls[0])
-        self.assertNotIn("Work only", calls[1])
         self.assertNotIn("meetings skill", calls[1])
         self.assertEqual({}, self.held())
 
     def test_a_call_stopped_at_its_limit_fails_the_step_and_the_place_is_still_left(self):
         """#566: exit 124 for the nightly summary, and the other places are still tried."""
-        code, calls = self.run_main(TWO_PLACES, [(agent.EXIT_TIMEOUT, "", None), (0, DONE, "Wikis/Knowledge/wiki/b.md")])
+        code, calls = self.run_main(TWO_PLACES, [(agent.EXIT_TIMEOUT, "", None), (0, DONE, "Wikis/Knowledge/wiki/b.md"),
+                                                 (0, DONE, "Wikis/Knowledge/wiki/c.md")])
         self.assertEqual(agent.EXIT_TIMEOUT, code)
-        self.assertEqual(2, len(calls))
+        self.assertEqual(3, len(calls))
         self.assertEqual({"Zones/Work": {"why": "assistant", "day": "2026-11-13"}}, self.held())
 
     def test_a_run_with_no_stopped_call_still_exits_0_after_one(self):
@@ -143,11 +153,118 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         def fake(tier, prompt, allow=(), cwd=None, **kw):
             seen.update(allow=list(allow), cwd=cwd, kw=kw, prompt=prompt)
             return 0, DONE
-        with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES[:1]), mock.patch.object(agent, "run", fake):
+        with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES[:1])), mock.patch.object(agent, "run", fake):
             work_in.main(["--workspace", str(self.ws)])
         self.assertEqual({}, seen["kw"])                                                # no budget, job name or cap of its own: agent.run's defaults hold
         self.assertIn("Never commit", seen["prompt"])
         self.assertTrue(all(not a.startswith("Bash(git") for a in seen["allow"]))
+
+
+class TestOneCallForEachAnswer(Case):
+    """#629: each answer is its own call and its own commit, so a call stopped at the limit loses only its own question."""
+
+    FOUR = [("Zones/Work", "Work", 4)]
+
+    def wiki(self, name):
+        return self.ws / "Wikis" / "Meetings" / "wiki" / name
+
+    def timed(self, spend, runs, places=FOUR, limit="480"):
+        """main() with a clock the calls move on: `spend` seconds for each call. Returns (exit code, prompts, the lines printed)."""
+        import contextlib
+        import io
+        calls, now = [], [1000.0]
+
+        def fake(tier, prompt, allow=(), cwd=None, **kw):
+            calls.append(prompt)
+            code, text, wrote = runs[len(calls) - 1]
+            now[0] += spend[len(calls) - 1]
+            if wrote:
+                write(self.ws / wrote, "# Answered %d\n" % len(calls))
+            return code, text
+        out = io.StringIO()
+        with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake), \
+                mock.patch.object(work_in.time, "time", lambda: now[0]), contextlib.redirect_stdout(out):
+            code = work_in.main(["--workspace", str(self.ws), "--limit", limit, "--today", DAY.isoformat()])
+        return code, calls, out.getvalue()
+
+    def log(self):
+        return git(self.ws / "Wikis", "log", "--format=%s", "-n", "10").strip().splitlines()
+
+    def test_four_answers_where_the_third_call_is_stopped_commit_two_put_back_one_and_leave_one(self):
+        runs = [(0, DONE, "Wikis/Meetings/wiki/a1.md"), (0, DONE, "Wikis/Meetings/wiki/a2.md"),
+                (agent.EXIT_TIMEOUT, "", "Wikis/Meetings/wiki/a3.md"), (0, DONE, "Wikis/Meetings/wiki/a4.md")]
+        code, calls, said = self.timed([100, 100, 280, 10], runs)
+        self.assertEqual(agent.EXIT_TIMEOUT, code)                       # a call stopped while it ran
+        self.assertEqual(3, len(calls))                                  # the fourth was not started: no time was left
+        self.assertTrue(self.wiki("a1.md").exists() and self.wiki("a2.md").exists())
+        self.assertFalse(self.wiki("a3.md").exists())                    # the stopped call's own question is put back
+        self.assertFalse(self.wiki("a4.md").exists())
+        self.assertEqual(["Answers worked in for Work: 1 question"] * 2 + ["start"], self.log())
+        self.assertEqual("", git(self.ws / "Wikis", "status", "--porcelain").strip())
+        self.assertEqual({"Zones/Work": {"why": "assistant", "day": "2026-11-13"}}, self.held())
+        self.assertIn("Work: 2 worked in, 2 left", said)
+
+    def test_the_limit_reached_between_two_answers_reports_what_was_worked_in_and_what_is_left_and_exits_0(self):
+        runs = [(0, DONE, "Wikis/Meetings/wiki/a1.md"), (0, DONE, "Wikis/Meetings/wiki/a2.md"), (0, DONE, "Wikis/Meetings/wiki/a3.md")]
+        code, calls, said = self.timed([230, 230, 10], runs)
+        self.assertEqual(0, code)                                        # not exit 124: no call was stopped
+        self.assertEqual(2, len(calls))
+        self.assertIn("work_in: Work: 2 worked in, 2 left (cap)", said)
+        self.assertNotIn("124", said)
+        self.assertEqual({"Zones/Work": {"why": "cap", "day": "2026-11-13"}}, self.held())
+
+    def test_the_next_night_works_in_the_rest_and_no_answer_is_redone(self):
+        runs = [(0, DONE, "Wikis/Meetings/wiki/a%d.md" % i) for i in (1, 2)]
+        self.timed([230, 230], runs)                                     # the first night: two of four
+        code, calls, said = self.timed([100, 100], [(0, DONE, "Wikis/Meetings/wiki/a3.md"), (0, DONE, "Wikis/Meetings/wiki/a4.md")],
+                                       places=[("Zones/Work", "Work", 2)])
+        self.assertEqual(0, code)
+        self.assertIn("Work: 2 worked in, 0 left", said)
+        self.assertEqual({}, self.held())
+        self.assertEqual(4, len([l for l in self.log() if l.startswith("Answers worked in")]))
+
+    def test_each_commit_goes_through_the_repositorys_hook_and_never_around_it(self):
+        hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
+        ran = self.ws / "hook-ran"
+        write(hook, "#!/bin/sh\necho x >> '%s'\nexit 0\n" % ran)
+        hook.chmod(0o755)
+        self.timed([10, 10], [(0, DONE, "Wikis/Meetings/wiki/a1.md"), (0, DONE, "Wikis/Meetings/wiki/a2.md")], places=[("Zones/Work", "Work", 2)])
+        self.assertEqual(2, len(ran.read_text().split()))                # once for each answer
+        self.assertNotIn("no-verify", (JOBS / "work_in.py").read_text())
+
+    def test_a_refusing_hook_puts_back_only_the_answer_it_refused(self):
+        hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
+        write(hook, "#!/bin/sh\ngit diff --cached --name-only | grep -q a2.md && exit 1\nexit 0\n")
+        hook.chmod(0o755)
+        self.timed([10, 10], [(0, DONE, "Wikis/Meetings/wiki/a1.md"), (0, DONE, "Wikis/Meetings/wiki/a2.md")], places=[("Zones/Work", "Work", 2)])
+        self.assertTrue(self.wiki("a1.md").exists())
+        self.assertFalse(self.wiki("a2.md").exists())
+        self.assertEqual("commit", self.held()["Zones/Work"]["why"])
+
+    def test_each_count_is_of_one_place_and_no_line_adds_two_places(self):
+        places = [("Zones/Work", "Work", 2), ("Zones/Personal", "Personal", 1)]
+        runs = [(0, DONE, "Wikis/Meetings/wiki/a%d.md" % i) for i in (1, 2, 3)]
+        code, calls, said = self.timed([10, 10, 10], runs, places=places)
+        self.assertEqual(3, len(calls))
+        lines = [l for l in said.splitlines() if l.startswith("work_in:")]
+        self.assertEqual(["work_in: Work: 2 worked in, 0 left", "work_in: Personal: 1 worked in, 0 left"], lines)
+        for call in calls:
+            self.assertEqual(1, call.count("work in the answer in "))     # a call names one place
+        self.assertNotIn("3 worked in", said)
+
+    def test_the_answers_come_oldest_first_in_each_place_zones_by_name_then_the_knowledge_wiki(self):
+        class Panel:
+            @staticmethod
+            def build(ws, C, today, link, collect=None):
+                collect += [("Personal", "Meetings", "questions/p1.md", "2026-11-02"), ("Knowledge", "Knowledge", "questions/k1.md", "2026-10-01"),
+                            ("Work", "Meetings", "questions/w2.md", "2026-11-05"), ("Work", "Meetings", "questions/w1.md", "2026-11-01"),
+                            ("Work", "Meetings", "questions/w1.md", "2026-11-01")]
+                return {"buckets": {}}
+        with mock.patch.object(work_in, "panel", return_value=Panel):
+            got = work_in.answers(self.ws, DAY)
+        self.assertEqual([("Zones/Personal", "Personal", "Meetings", "questions/p1.md"), ("Zones/Work", "Work", "Meetings", "questions/w1.md"),
+                          ("Zones/Work", "Work", "Meetings", "questions/w2.md"),
+                          ("Wikis/Knowledge", "the Knowledge wiki", "Knowledge", "questions/k1.md")], got)
 
 
 class TestAFailedCallLeavesNothingBehind(Case):
@@ -166,7 +283,7 @@ class TestAFailedCallLeavesNothingBehind(Case):
             index.write_text("# Index\nrefused text\n")
             write(self.ws / "Wikis" / "Meetings" / "wiki" / "new.md", "# New\n")
             return 0, DONE
-        with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES[:1]), mock.patch.object(agent, "run", fake):
+        with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES[:1])), mock.patch.object(agent, "run", fake):
             work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
         self.assertEqual("# Index\n", index.read_text())
         self.assertFalse((self.ws / "Wikis" / "Meetings" / "wiki" / "new.md").exists())
@@ -183,10 +300,24 @@ class TestAFailedCallLeavesNothingBehind(Case):
             def fake(tier, prompt, allow=(), cwd=None, **kw):
                 index.write_text("# Index\nhalf written\n")
                 return code, text
-            with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES[:1]), mock.patch.object(agent, "run", fake):
+            with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES[:1])), mock.patch.object(agent, "run", fake):
                 work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
             self.assertEqual("# Index\n", index.read_text(), why)
             self.assertEqual(why, self.held()["Zones/Work"]["why"])
+
+    def test_a_call_that_worked_nothing_in_and_held_nothing_is_incomplete(self):
+        index = self.ws / "Wikis" / "Meetings" / "wiki" / "index.md"
+
+        def fake(tier, prompt, allow=(), cwd=None, **kw):
+            index.write_text("# Index\nhalf written\n")
+            return 0, "WORKED 0 HELD 0\n" + work_in.SENTINEL
+        before = git(self.ws / "Wikis", "rev-parse", "HEAD").strip()
+        with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES[:1])), mock.patch.object(agent, "run", fake):
+            work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
+        self.assertEqual("# Index\n", index.read_text())
+        self.assertEqual(before, git(self.ws / "Wikis", "rev-parse", "HEAD").strip())
+        self.assertNotIn("0 questions", git(self.ws / "Wikis", "log", "--format=%s"))
+        self.assertEqual({"Zones/Work": {"why": "incomplete", "day": "2026-11-13"}}, self.held())
 
     def test_with_a_short_deadline_the_second_place_is_not_started_and_is_held(self):
         calls, now = [], [1000.0]
@@ -195,7 +326,7 @@ class TestAFailedCallLeavesNothingBehind(Case):
             calls.append(kw)
             now[0] += 90                                  # the first call uses most of the 100 seconds
             return 0, DONE
-        with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES), mock.patch.object(agent, "run", fake), \
+        with mock.patch.object(work_in, "answers", return_value=expand(TWO_PLACES)), mock.patch.object(agent, "run", fake), \
                 mock.patch.object(work_in.time, "time", lambda: now[0]):
             work_in.main(["--workspace", str(self.ws), "--limit", "100", "--today", DAY.isoformat()])
         self.assertEqual(1, len(calls))

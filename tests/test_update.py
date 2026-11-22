@@ -103,7 +103,7 @@ class Case(unittest.TestCase):
 class TestWhatGarrickShips(Case):
     def test_shipped_is_exactly_what_the_installer_wrote(self):
         files = self.stamp()["files"]
-        new = update.shipped(update.zones_of(self.root, self.stamp()), simple=False)
+        new = update.shipped(update.zones_of(self.root, self.stamp()))
         new.update(update.extras_shipped(["status"]))       # and the status page (#208)
         self.assertEqual(sorted(files), sorted(new))
         for path, (data, _) in new.items():
@@ -1722,7 +1722,7 @@ class ExtrasCase(Case):
 
 class TestExtras(ExtrasCase):
     def test_a_new_workspace_has_the_status_page_installed(self):
-        """#208: the installer puts it in place for the simple home, so an update
+        """#208: the installer puts it in place, so an update
         treats it as one copied in by hand, with nothing to do."""
         p = self.plan()
         self.assertEqual(["status"], p["extras"])
@@ -1730,7 +1730,7 @@ class TestExtras(ExtrasCase):
         self.assertIn("System/status/status.py", p["current"])
 
     def test_a_workspace_without_extras_has_none_to_update(self):
-        shutil.rmtree(self.root / "System" / "status")      # installed without the simple home, or taken out
+        shutil.rmtree(self.root / "System" / "status")      # installed without it, or taken out
         self.commit(self.root, "no status page")
         p = self.plan()
         self.assertEqual([], p["extras"])
@@ -1973,7 +1973,7 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertTrue((folder / "notes.md").is_file() and (folder / "main.js").is_file())
 
     def test_the_home_setting_goes_and_the_update_says_so_in_one_line(self):
-        """#503: the simple home is gone. The update takes "home" out of the settings file, keeps every other key, and names
+        """#503: the Garrick App has one home. The update takes "home" out of the settings file, keeps every other key, and names
         the projects whose Files/ folder it leaves where it is."""
         settings = self.root / "System" / "garrick-settings.json"
         settings.write_text(json.dumps({"home": "simple", "launchers": {"note": True}}))

@@ -8,6 +8,43 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **A render helper for look checks** (#622). `tools/render.py` takes screenshots of an HTML page at several widths and in both themes, with one headless-shell process for the whole list and a throwaway profile. It never starts the Chrome app, so no icon bounces in the Dock and no crash dump lands in the user's Chrome folder. With no headless shell installed, it exits with an install hint. The repo's `AGENTS.md` sends look checks through it. It is a development tool and is not shipped to workspaces.
 
+## [0.74.0] - 2026-11-22
+
+Two features 0.73.0 shipped, the machine's role and the read guard, can now be set from Settings, and each has a docs page written for the person who uses it. The Threads card and the card that opens on a row are easier to read. The Garrick App has one home.
+
+**Upgrading.**
+- The Garrick App opens on the full page only. A question that blocks a thread now shows as a row of *Waiting on you now* on the Overview, with a button for each answer.
+- The Threads card and the card that opens on a project or thread row are redesigned.
+- The machine's role and the read guard are set from Settings, and each setting has its own "?" that explains it in plain words. Both features have a new docs page with diagrams. Nothing turns the read guard on by itself: it stays *Off* until you choose *Watch only* or *On*.
+
+### Added
+
+- **This machine, in Settings** (#621). The section says whether this computer is *One computer*, a *Home server* or a *Laptop copy*. *Change…* sets it after a yes, with no terminal. A laptop copy needs the home server's name. In a browser the section shows the role and says it is changed in Garrick.app.
+- **The read guard, in Settings** (#621). A block under Walls sets it to *Off*, *Watch only* or *On*. It also chooses *Refuse* or *Ask me* across a wall, and lists the mail and calendar tools it checks and the tools it leaves alone. Moving from *Off* registers the hook for you, and moving back removes it. Under *Watch only*, the row says how many reads the guard would have stopped in the last 7 days, one line for each zone, with *Show* for the list. With Codex, the two tool lists give way to one line, because Codex cannot have those results checked.
+- **A "?" on every setting** (#621). Each setting row has its own short explanation, in plain words, naming no file, key or command.
+- **Docs for two computers and for the read guard** (#621). *One workspace on more than one machine* is rewritten for the user, and *The read guard* is a new page. Together they hold four diagrams: two computers and one workspace, a tick on the laptop, one read, and a mail search.
+- If the role change or the hook registration fails, the page says what failed in one sentence, with one next step, and the tool's own text under *Details* (#511, for these two actions).
+
+### Changed
+
+- **The Threads card** (#619). Zone names are plain text at body size, with the zone colour on the icon only. A rule separates the zones, and projects and threads step in by level. The zone and project arrows share one size and one column, the thread count has its own column, and the live dot is smaller, with no ring when the session is idle. The hint line says what the bar, the number and the dot mean.
+- **The row card** (#620). The card on a project or thread row, a search result and the graph is one menu. It shows the name and its state, then the apps to open it in, with the default marked by a dot, then the actions as plain rows. Delete comes last, in red, below a line.
+- Buttons that only the app may press now work only when Garrick.app itself sends them. A command line that says it is the page is treated as an assistant session, and so are the Ask box and the outbox when they come from a command line.
+- A held Todo request now shows on the laptop copy too, and *Drop it* works there.
+- Section help texts no longer name files.
+- The nightly answers step works through one answer at a time and saves each one when its call ends (#629). A night that runs out of time keeps what it finished and says how many answers are left in each place.
+
+### Fixed
+
+- When Garrick cannot read your list of parties, the mail and calendar check now removes every result while the read guard is *On*, and adds the wall sentence once. It no longer passes them through. Under *Watch only* it removes nothing and logs that it could not decide.
+- The Context tab no longer offers *Shorten it* or *Leave it as it is* as a background edit for a page outside a zone or a wiki, where the answer would be refused (#623). *Shorten it* opens your assistant for such a page.
+- *Move older entries to history* works again on history files that the first version of the history mover wrote, and brings their parent link up to date (#627).
+- The background assistant is found when Garrick.app starts with a short `PATH` (#628). When it cannot start, you get a plain sentence and a visible session, not an exit code.
+
+### Removed
+
+- What was left of the simple home (#503): its setting, the folder scan only it sent, and its mentions in the docs. A `home` setting left in `System/garrick-settings.json` opens the full page, and the check warns about it once.
+
 ## [0.73.0] - 2026-11-21
 
 Garrick can now check what an assistant session reads against the walls, the way it already checks what gets written. It starts by watching, not stopping. Check findings on the Context tab are plain questions you answer with a button. And one workspace can now live on a home server and travel on a laptop.

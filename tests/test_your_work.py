@@ -187,7 +187,7 @@ class Case(unittest.TestCase):
             return []
 
     def scan(self):
-        out = self.act(verb="discover", folder=str(self.drive))
+        out = pa.tool_json(self.root, "discover.py", "scan", str(self.drive))     # the page has no verb for it (#503)
         entry = Y.discovery(self.root)["folders"][os.path.realpath(str(self.drive))]
         return out, {p["name"]: p for p in entry["top"] + entry["more"]}
 
@@ -205,8 +205,7 @@ class Case(unittest.TestCase):
 class TestAddYourOwnWork(Case):
     def test_a_folder_is_looked_through_and_its_work_proposed(self):
         out, props = self.scan()
-        self.assertEqual(Y.view_id(os.path.realpath(str(self.drive))), out["view"])
-        self.assertIn("Nothing in it was changed", out["say"])
+        self.assertEqual(os.path.realpath(str(self.drive)), os.path.realpath(out["folder"]))
         self.assertEqual({"Catalogue 2027", "Lounge seating launch", "Website refresh"}, set(props))
         self.assertTrue((self.root / "System" / "generated" / "discovery.json").is_file())
 
@@ -215,12 +214,11 @@ class TestAddYourOwnWork(Case):
         home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(home)}):
             with self.assertRaisesRegex(pa.Refused, "Pick the folder your work is in"):
-                self.act(verb="discover", folder=str(home))
+                pa.tool_json(self.root, "discover.py", "scan", str(home))
         for folder in ("/",):
             with self.assertRaisesRegex(pa.Refused, "Pick the folder your work is in"):
-                self.act(verb="discover", folder=folder)
-        with self.assertRaisesRegex(pa.Refused, "not a folder Garrick can read"):
-            self.act(verb="discover", folder="relative/path")
+                pa.tool_json(self.root, "discover.py", "scan", folder)
+        self.assertNotIn("discover", pa.VERBS)       # no verb reaches the scan from the page (#503)
 
     def test_a_yes_makes_a_project_with_one_thread_committed_by_name(self):
         draft = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -522,7 +520,7 @@ class TestAFirstWorkspace(unittest.TestCase):
         return subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True, text=True).stdout
 
     def props(self):
-        pa.act(self.root, {"verb": "discover", "folder": str(self.drive)})
+        pa.tool_json(self.root, "discover.py", "scan", str(self.drive))
         entry = Y.discovery(self.root)["folders"][os.path.realpath(str(self.drive))]
         return {p["name"]: p for p in entry["top"] + entry["more"]}
 

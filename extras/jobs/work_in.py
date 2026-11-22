@@ -5,10 +5,11 @@
 
 A question the user answered on the Context card waits as `status: answered` until the `meetings` or `knowledge` skill
 works it into the pages it changes. Closing the queue asks for that at once; this step is what is left, so a user who
-never presses anything still has them worked in. For each zone, and for the Knowledge wiki, that holds an answer, it
-makes one assistant call that names only that place ("work in the answers in Work"), so no call ever holds two zones'
-answers, and the skills themselves leave out every page that is not in the question's own zone. A place with no answer
-waiting costs no call.
+never presses anything still has them worked in. It makes one assistant call for each answer, the oldest first, that
+names that one question and its place only ("work in the answer in Work"), so no call ever holds two zones' answers, and
+the skills themselves leave out every page that is not in the question's own zone. Each answer is committed when its own
+call ends, so a call stopped at the step's limit loses only its own question's changes and every answer worked in before
+it stays; what is left waits for the next night, in the same order (#629). A place with no answer waiting costs no call.
 
 The call is made through agent.py, so the scheduled jobs' own caps and deny profile hold it: nothing is added. The call
 writes pages and commits nothing. This script commits what changed in that wiki's repository, by name, through the
@@ -18,8 +19,10 @@ What it could not work in is kept for the Context card, which asks about it: `Sy
 for each place, the day and a reason from a short fixed list (never a path, a title or an answer), and nothing else.
 A place that works in cleanly is taken out of the file.
 
-Exit codes: 0 (a place left unworked is no fault of the night: the card asks about it); 124 when an assistant call was
-stopped at its time limit, so that the nightly summary says `answers exit 124` and the step is not read as ok (#566); the
+Exit codes: 0 (an answer left unworked is no fault of the night: the card asks about it, and the last line says
+"<place>: N worked in, M left" for each place, and each count is of that one place, also when the step's limit was reached
+between two answers); 124 when an assistant call
+was stopped while it ran, so that the nightly summary says `answers exit 124` and the step is not read as ok (#566); the
 assistant's own for a hard failure to start (2 usage, 127 missing); 64 for a workspace without the status page's panel.
 """
 
@@ -28,6 +31,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -74,32 +78,39 @@ def panel():
     return module
 
 
-def waiting(ws: Path, today: datetime.date) -> Optional[List[Tuple[str, str, int]]]:
-    """(scope, how the request names the place, how many answers) for each place that holds an answer, zones by name and
-    then the Knowledge wiki. None when the panel cannot read the workspace. The panel places each answer by the walls'
-    own view, so a zone's count holds that zone's answers and no other's."""
+def answers(ws: Path, today: datetime.date) -> Optional[List[Tuple[str, str, str, str]]]:
+    """(scope, how the request names the place, the wiki, the question's file) for each answer waiting, zones by name and
+    then the Knowledge wiki, the oldest question first within a place. None when the panel cannot read the workspace. The
+    panel places each answer by the walls' own view, so a zone's answers are that zone's and no other's."""
     mod = panel()
     if mod is None:
         return None
+    found: list = []
     try:
-        data = mod.build(ws, {"findings": [], "at": time.time()}, today, lambda p: "")
+        data = mod.build(ws, {"findings": [], "at": time.time()}, today, lambda p: "", found)
     except Exception:
         return None
     if not data:
         return None
-    out = [("Zones/" + zone, zone, int(b.get("answered") or 0)) for zone, b in sorted((data.get("buckets") or {}).items())]
-    out.append((KNOWLEDGE, "the Knowledge wiki", int(data.get("knowledge_answered") or 0)))
-    return [x for x in out if x[2] > 0]
+    seen, out = set(), []
+    for key, wiki, rel, asked in sorted(found, key=lambda x: (x[0] == "Knowledge", x[0], str(x[3] or ""), x[2])):
+        if (key, wiki, rel) in seen:
+            continue
+        seen.add((key, wiki, rel))
+        out.append((KNOWLEDGE, "the Knowledge wiki", wiki, rel) if key == "Knowledge" else ("Zones/" + key, key, wiki, rel))
+    return out
 
 
-def prompt_for(scope: str, place: str) -> str:
-    """The request, naming its own place only: the meetings skill's step for a zone, the knowledge skill's for the Knowledge wiki."""
+def prompt_for(scope: str, place: str, wiki: str = "", rel: str = "") -> str:
+    """The request, naming one question and its own place only: the meetings skill's step for a zone, the knowledge skill's
+    for the Knowledge wiki."""
     skill = "knowledge" if scope == KNOWLEDGE else "meetings"
-    return ("work in the answers in %s.\n"
-            "Follow the %s skill's \"Answers, and working them in\" for the questions of %s only. Change only the pages "
-            "`question-work` lists, cite the raw answer, and mark each question done. Never commit, never send, and never ask a "
-            "question: where an answer is unclear, or `question-work` refuses, leave that question as it is and count it as held.\n"
-            "Then write one line exactly: WORKED <n> HELD <n>, and after it one line that says exactly %s" % (place, skill, place, SENTINEL))
+    return ("work in the answer in %s.\n"
+            "The question is `%s` in the %s wiki. Follow the %s skill's \"Answers, and working them in\" for that one question "
+            "only. Change only the pages `question-work` lists, cite the raw answer, and mark the question done. Never commit, "
+            "never send, and never ask a question: where the answer is unclear, or `question-work` refuses, leave the question as "
+            "it is and count it as held.\n"
+            "Then write one line exactly: WORKED <n> HELD <n>, and after it one line that says exactly %s" % (place, rel, wiki, skill, SENTINEL))
 
 
 def counts(text: str) -> Optional[Tuple[int, int]]:
@@ -192,63 +203,77 @@ def write_held(ws: Path, held: Dict[str, dict]) -> None:
     os.replace(tmp, str(path))
 
 
-def work_place(ws: Path, scope: str, place: str, n: int, tier: str, deadline: Optional[float] = None) -> Optional[str]:
-    """Work in one place's answers. None when they were worked in, else the reason code."""
-    repo, rel = wiki_repo(ws, scope)
+def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str, deadline: Optional[float] = None) -> Tuple[Optional[str], int]:
+    """Work in one answer. (None, the number worked in) when it was worked in, else (the reason code, 0). The call's changes
+    are committed, or put back, before the next answer starts: only this call's own."""
+    repo, folder = wiki_repo(ws, scope)
     if repo is None:
-        return "assistant"
-    before = changes(repo, rel)
+        return "assistant", 0
+    before = changes(repo, folder)
     extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
-    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW, **extra)
+    code, text = agent.run(tier, prompt_for(scope, place, wiki, rel), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_TIMEOUT:
         STOPPED.append(place)
     if code == agent.EXIT_CAP:
-        restore(repo, before, rel)
-        return "cap"
+        restore(repo, before, folder)
+        return "cap", 0
     found = counts(text) if code == 0 else None
     if found is None:
-        restore(repo, before, rel)
-        return "assistant" if code else "incomplete"
+        restore(repo, before, folder)
+        return ("assistant" if code else "incomplete"), 0
     worked, held = found
-    why = commit(repo, before, rel, place, worked)
+    if worked + held == 0:
+        restore(repo, before, folder)                 # a call that worked nothing in and held nothing back did not finish (#629)
+        return "incomplete", 0
+    why = commit(repo, before, folder, place, worked)
     if why:
-        return why
-    return "held" if held else None
+        return why, 0
+    return ("held" if held else None), worked
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Work in the answers still waiting, one place at a time.")
+    ap = argparse.ArgumentParser(description="Work in the answers still waiting, one answer at a time.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
-    ap.add_argument("--limit", type=float, help="seconds the whole step may take; no place is started near the end of it")
+    ap.add_argument("--limit", type=float, help="seconds the whole step may take; no answer is started near the end of it")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
     today = datetime.date.fromisoformat(args.today) if args.today else datetime.date.today()
-    places = waiting(ws, today)
-    if places is None:
+    items = answers(ws, today)
+    if items is None:
         print("work_in: no System/status/questions_panel.py, or it cannot read this workspace", file=sys.stderr)
         return EXIT_NO_PANEL
     held = read_held(ws)
-    for scope in [s for s in held if s not in {p[0] for p in places}]:
+    for scope in [s for s in held if s not in {i[0] for i in items}]:
         del held[scope]                               # nothing waits there any more
     total = 0
     del STOPPED[:]
     deadline = time.time() + args.limit if args.limit else None
-    for scope, place, n in places:
-        if deadline is not None and deadline - time.time() < MIN_LEFT:
-            why = "cap"
-        else:
-            why = work_place(ws, scope, place, n, args.tier, deadline)
-        print("work_in: %s: %s%s" % (place, "worked in" if why is None else "left (%s)" % why,
-                                     ", the call was stopped at its time limit" if place in STOPPED else ""))
-        if why is None:
+    for scope, group in itertools.groupby(items, key=lambda i: i[0]):
+        group = list(group)
+        place = group[0][1]
+        worked_in, reason, cut = 0, None, False
+        for _, _, wiki, rel in group:
+            if cut or (deadline is not None and deadline - time.time() < MIN_LEFT):
+                cut = True                            # the limit is reached between answers: what is left waits for the night after
+                why, worked = "cap", 0
+            else:
+                why, worked = work_place(ws, scope, place, wiki, rel, args.tier, deadline)
+            total += worked
+            if why is None:
+                worked_in += 1
+            else:
+                reason = reason or why
+        n_left = len(group) - worked_in
+        print("work_in: %s: %d worked in, %d left%s%s" % (place, worked_in, n_left, " (%s)" % reason if reason else "",
+                                                        ", a call was stopped at its time limit" if place in STOPPED else ""))
+        if reason is None:
             held.pop(scope, None)
-            total += n
         else:
-            held[scope] = {"why": why, "day": today.isoformat()}
+            held[scope] = {"why": reason, "day": today.isoformat()}
         write_held(ws, held)
-    if not places:
+    if not items:
         print("work_in: no answer is waiting")
         if ws.joinpath(*HELD_FILE).exists():
             write_held(ws, held)

@@ -1101,7 +1101,7 @@ class HubBesideThreads(unittest.TestCase):
         self.root = Path(self._tmp.name).resolve() / "Workspace"
         build_workspace(self.root)
         write(self.root / "System" / "rules.md", "# Rules\n")
-        for tool in ("next_up.py", "garrick_lib.py", "briefing.py"):
+        for tool in ("next_up.py", "garrick_lib.py", "briefing.py", "work.py"):
             write(self.root / "System" / "tools" / tool, (TOOLS / tool).read_text(encoding="utf-8"))
         self.work = self.root / "Zones" / "Work"
         self.hub = self.work / "Acme Review" / "Acme Review.md"

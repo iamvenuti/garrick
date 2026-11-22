@@ -56,7 +56,6 @@ import garrick_lib as gl  # noqa: E402
 SOURCES = ("back", "due", "chase", "inbox", "parked", "wrap")
 # The rules as they are fixed. The output still carries them under "settings", as it did, so a reader of it sees no change.
 FIXED = {"on": True, "threshold": 45, "same-zone": False, "sources": list(SOURCES), "parked-days": 30, "wrap-days": 14}
-SKIP = {"archive", "Inbox", "Sources", "Deliverables"}
 PARKED, DONE = "parked", "done"
 
 # A line that asks for a reply or a chase is a few minutes' work; one that
@@ -136,25 +135,16 @@ def threads(root: Path) -> List[dict]:
     thread, and a hub that still holds a `### Resume here` block is one row
     beside its threads' (`### Outcome` in its place ends it)."""
     out = []
-    for zone in visible(root / "Zones"):
-        for project in visible(zone):
-            if project.name in SKIP:
-                continue
-            hub = project / (project.name + ".md")
-            pfm = gl.parse_frontmatter(hub) if hub.is_file() else {}
-            hub_state = str(pfm.get("status") or "").strip().lower()
-            found = [(t.name, t / (t.name + ".md")) for t in visible(project / "Threads")]
-            found = [(name, note) for name, note in found if note.is_file()]
-            if hub.is_file() and hub_state == PARKED:
-                out.append(row(root, zone, project, None, hub, pfm, PARKED, whole=True))
-                continue
-            heading = str(pfm.get("layout") or "").strip().lower() == "thread-first"     # no piece of work of its own
-            if hub.is_file() and ((not found and not heading) or (found and hub_state not in (PARKED, DONE) and gl.hub_keeps_resume(
-                    hub.read_text(encoding="utf-8", errors="replace"), pfm))):
-                out.append(row(root, zone, project, None, hub, pfm, hub_state))     # the hub's own resume point
-            for name, note in found:
-                fm = gl.parse_frontmatter(note)
-                out.append(row(root, zone, project, name, note, fm, str(fm.get("status") or "").strip().lower()))
+    for (zone, project), found in gl.work.by_project(gl.work.pieces(root)).items():
+        hub, hub_state = found[0].hub, found[0].hub_status
+        folder = root / "Zones" / zone / project
+        if hub is not None and hub_state == PARKED:
+            out.append(row(root, folder.parent, folder, None, hub, gl.parse_frontmatter(hub), PARKED, whole=True))
+            continue
+        for r in found:
+            if r.kind == "heading" or (r.beside and hub_state in (PARKED, DONE)):
+                continue            # a heading has no piece of work of its own; a parked or done hub keeps none beside its threads
+            out.append(row(root, folder.parent, folder, r.thread, r.note, gl.parse_frontmatter(r.note), r.status))
     return out
 
 

@@ -801,6 +801,7 @@ class TestNoWaitSettings(ActionCase):
 
     def test_a_pick_ticks_through_todo_done(self):
         shutil.copy2(REPO / "template" / "System" / "tools" / "next_up.py", self.root / "System" / "tools" / "next_up.py")
+        shutil.copy2(REPO / "template" / "System" / "tools" / "work.py", self.root / "System" / "tools" / "work.py")
         (self.root / "System" / "skills" / "todo").mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", self.root / "System" / "skills" / "todo" / "todo.py")
         spec = importlib.util.spec_from_file_location("garrick_next_up_pa", str(self.root / "System" / "tools" / "next_up.py"))

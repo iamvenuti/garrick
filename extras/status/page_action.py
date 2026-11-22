@@ -6446,7 +6446,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
                 raise Refused(PAGE_REFUSED)
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
-                    run, joined = start_record(ops, req, via)
+                    run, joined = start_record(ops, req, via, ws)
                 except ops.BadOp as e:
                     raise Refused(str(e))
                 except Exception:           # the record is best effort, as the audit log is
@@ -6513,14 +6513,16 @@ def outbox_gate(ws: Path, req, via: str):
     return box.gate(ws, req, via)
 
 
-def start_record(ops, req: dict, via: str):
+def start_record(ops, req: dict, via: str, ws=None):
     """operations.start(), naming the caller where this operations.py takes
-    one; an older copy is called as it always was."""
+    one, and the workspace root where it takes that (#641); an older copy is
+    called as it always was."""
     try:
-        takes = "via" in inspect.signature(ops.start).parameters
+        params = inspect.signature(ops.start).parameters
     except (TypeError, ValueError):
-        takes = False
-    return ops.start(jobs_dir(), req, via=via) if takes else ops.start(jobs_dir(), req)
+        params = {}
+    more = {"workspace": str(ws)} if ws is not None and "workspace" in params else {}
+    return ops.start(jobs_dir(), req, via=via, **more) if "via" in params else ops.start(jobs_dir(), req, **more)
 
 
 # The command-line form for a session (#344): a verb and the fields it takes as

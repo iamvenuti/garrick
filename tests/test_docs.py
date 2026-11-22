@@ -451,6 +451,28 @@ class RetiredWallModelsTest(unittest.TestCase):
                     found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
         self.assertEqual([], found)
 
+    def test_no_shipped_page_names_a_walls_table_or_asks_for_a_wall_between_parties(self):
+        """#643: walls are a flag on each zone since 0.63.0. No table of walls is in `System/context.md`, and no shipped page
+        under docs/ or template/ lists one, or asks for the pairs of parties that are to stay apart."""
+        found = []
+        pages = sorted((REPO / "docs").rglob("*.md")) + sorted((REPO / "template").rglob("*.md"))
+        for f in pages:
+            flat = " ".join(f.read_text(encoding="utf-8").split())
+            for phrase in ("Walls table", "Parties, Walls", "pair whose information must stay apart"):
+                if phrase in flat:
+                    found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
+        self.assertEqual([], found)
+
+    def test_the_read_guard_page_names_the_entry_points_that_call_decide_and_those_that_call_may_flow(self):
+        text = " ".join((REPO / "docs" / "enforced.md").read_text(encoding="utf-8").split())
+        self.assertNotIn("the same `decide()` as every other enforcement point", text)
+        self.assertIn("The commit hook (`check.py`), Recall and Nurture call `may_flow()` directly", text)
+        # and the code says the same: check.py, recall.py and nurture.py call may_flow(); the read guard and the todo skill call decide()
+        for rel, call in (("template/System/tools/check.py", "may_flow("), ("template/System/tools/recall.py", "may_flow("),
+                          ("template/System/tools/nurture.py", "may_flow("), ("extras/hooks/read_guard.py", "lib.decide("),
+                          ("template/System/skills/todo/todo.py", "lib.decide(")):
+            self.assertIn(call, (REPO / rel).read_text(encoding="utf-8"), rel)
+
     def test_the_readme_puts_separate_work_in_separate_walled_zones(self):
         text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
         self.assertIn("put each in its own walled zone", text)

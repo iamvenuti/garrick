@@ -533,6 +533,72 @@ class TestOnlyTheListedPathsAreCommitted(TestOneCallForEachAnswer):
         self.assertIsNone(REAL_LISTED(self.ws, "Meetings", "questions/missing.md", self.ws / "Wikis"))      # unreadable: no list
 
 
+class TestOnlyTheListedPathsAreCommittedOrPutBack(TestOneCallForEachAnswer):
+    """#640: the put-back and the commit both work from the paths `question-work` listed, never from what changed during the call."""
+
+    LISTED = {"Meetings/wiki/a1.md"}
+
+    def run_listed(self, listed, runs):
+        with mock.patch.object(work_in, "listed_paths", return_value=listed):
+            return self.timed([10], runs, places=[("Zones/Work", "Work", 1)])
+
+    def other_writer(self, name="other.md", tracked=False):
+        path = self.ws / "Wikis" / "Meetings" / "wiki" / name
+        if tracked:
+            write(path, "# Theirs, before\n")
+            git(self.ws / "Wikis", "add", "-A")
+            git(self.ws / "Wikis", "commit", "-q", "-m", "their page")
+        return path
+
+    def test_a_stopped_answer_puts_back_its_listed_page_and_not_a_page_another_writer_edited_meanwhile(self):
+        path = self.other_writer("theirs.md", tracked=True)
+        before = path.read_text()
+        runs = [(agent.EXIT_TIMEOUT, "", ["Wikis/Meetings/wiki/a1.md", "Wikis/Meetings/wiki/theirs.md", "Wikis/Meetings/wiki/new.md"])]
+        self.run_listed(self.LISTED, runs)
+        self.assertFalse(self.wiki("a1.md").exists())                              # its own page: put back
+        self.assertEqual("# Answered 1\n", path.read_text())                       # the other writer's edit: neither put back nor committed
+        self.assertNotEqual(before, path.read_text())
+        self.assertTrue(self.wiki("new.md").exists())
+        status = git(self.ws / "Wikis", "status", "--porcelain").split("\n")
+        self.assertIn(" M Meetings/wiki/theirs.md", [l for l in status])
+        self.assertEqual([], [l for l in self.log() if l.startswith("Answers worked in")])
+        kept = list((self.ws / "Wikis" / ".git" / "garrick-put-back").glob("*/Meetings/wiki/a1.md"))
+        self.assertEqual(1, len(kept))                                             # the existing put-back copy is made first
+        self.assertEqual([], list((self.ws / "Wikis" / ".git" / "garrick-put-back").glob("*/Meetings/wiki/theirs.md")))
+
+    def test_a_refused_commit_puts_back_only_the_listed_page(self):
+        hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
+        write(hook, "#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        self.run_listed(self.LISTED, [(0, DONE, ["Wikis/Meetings/wiki/a1.md", "Wikis/Meetings/wiki/other.md"])])
+        self.assertFalse(self.wiki("a1.md").exists())
+        self.assertTrue(self.wiki("other.md").exists())
+        self.assertEqual({"Zones/Work": {"why": "commit", "day": "2026-11-13"}}, self.held())
+
+    def test_a_listed_page_that_was_dirty_before_and_changed_by_the_call_is_committed(self):
+        write(self.wiki("a1.md"), "# Mine, before\n")
+        code, calls, said = self.run_listed(self.LISTED, [(0, DONE, "Wikis/Meetings/wiki/a1.md")])
+        self.assertEqual(["Meetings/wiki/a1.md"], git(self.ws / "Wikis", "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("# Answered 1\n", self.wiki("a1.md").read_text())
+        self.assertEqual("", git(self.ws / "Wikis", "status", "--porcelain").strip())
+
+    def test_a_listed_page_that_was_dirty_before_and_not_changed_is_left_alone_and_named(self):
+        write(self.wiki("a1.md"), "# Mine, before\n")
+        code, calls, said = self.run_listed(self.LISTED, [(0, DONE, [])])
+        self.assertEqual([], [l for l in self.log() if l.startswith("Answers worked in")])
+        self.assertEqual("# Mine, before\n", self.wiki("a1.md").read_text())
+        self.assertIn("1 listed page already changed before the call left as it is", said)
+
+    def test_a_stopped_answer_leaves_a_listed_page_that_was_dirty_before_as_it_was(self):
+        write(self.wiki("a1.md"), "# Mine, before\n")
+        self.run_listed(self.LISTED, [(agent.EXIT_TIMEOUT, "", "Wikis/Meetings/wiki/a1.md")])
+        self.assertEqual("# Answered 1\n", self.wiki("a1.md").read_text())          # not put back to the last commit: the earlier edit is not lost with it
+
+    def test_with_no_list_what_changed_during_the_call_is_still_put_back_after_its_copy(self):
+        self.run_listed(None, [(0, DONE, "Wikis/Meetings/wiki/a1.md")])
+        self.assertFalse(self.wiki("a1.md").exists())
+
+
 class TestTheRealList(PanelCase):
     """W6: the list the step holds a commit to, from the page's own reading of the question."""
 

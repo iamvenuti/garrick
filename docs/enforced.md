@@ -61,7 +61,7 @@ Everything else in `System/rules.md`, and in your `System/rules.local.md`, is as
 
 ## The read guard
 
-The optional read guard is one hook, `extras/hooks/read_guard.py`, that asks the same `decide()` as every other enforcement point. [The read guard](read-guard.md) says how to turn it on from Settings and how to use the first week; this section is the technical detail. It covers three things.
+The optional read guard is one hook, `extras/hooks/read_guard.py`, that asks `garrick_lib.decide()` of the workspace it runs in. The other enforcement points ask the wall's rule in one of two ways. The todo skill's reading of a page calls `decide()` too. The commit hook (`check.py`), Recall and Nurture call `may_flow()` directly, the rule `decide()` itself is built on, with no read, hold or confirm step of their own: each asks only whether material from one zone may go to another. [The read guard](read-guard.md) says how to turn it on from Settings and how to use the first week; this section is the technical detail. It covers three things.
 
 **The session's scope.** A session-start hook records the zone and project of the folder the session was opened in, in a folder outside every workspace, keyed by the session id and never committed. A call from a session with no record is judged by its working folder. A session at the workspace root or in `System/` keeps full read. A session opened in a wiki reads that wiki and what no zone owns.
 

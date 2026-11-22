@@ -1195,6 +1195,74 @@ class TestASendIsHeld(EngineCase):
         self.assertEqual(["mcp__mail__forward"], run.seen[1]["cmd"][run.seen[1]["cmd"].index("--allowedTools") + 1:])
         self.assertEqual([], self.hold.listing())
 
+    def full_runner(self, then):
+        """The request's own turn, then `then` for the one allowed tool the held action runs through."""
+        first = self.runner("Forwarded.", act=self.asking)
+        calls = []
+
+        def run(cmd, tier, cwd, env):
+            calls.append(cmd)
+            if len(calls) == 1:
+                return first(cmd, tier, cwd, env)
+            return then(cmd)
+        run.seen, run.calls = first.seen, calls
+        return run
+
+    def test_full_reports_a_send_that_went(self):
+        self.settings(ask={"autonomy": "full"})
+        run = self.full_runner(lambda cmd: (0, {"text": "Done."}))
+        got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
+        self.assertTrue(got["ok"])
+        self.assertIn("Forward the price sheet: Sent.", got["say"])
+        self.assertEqual([], got["held"])
+
+    def test_full_reports_a_send_that_failed_in_plain_words(self):
+        self.settings(ask={"autonomy": "full"})
+        run = self.full_runner(lambda cmd: (3, {"text": ""}))
+        got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
+        self.assertIn("Forward the price sheet: Not sent: ", got["say"])
+        self.assertNotIn("exit", got["say"])
+        self.assertNotIn(": Sent.", got["say"])
+        self.assertEqual("failed", self.hold.load()["held"][0]["state"])
+
+    def test_full_reports_a_result_it_cannot_read_as_not_known(self):
+        self.settings(ask={"autonomy": "full"})
+        run = self.full_runner(lambda cmd: (0, {"text": "Done."}))
+        with mock.patch.object(self.engine.hold, "outcome", lambda hid: ("", "")):
+            got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
+        self.assertIn("Forward the price sheet: Not known: ", got["say"])
+        self.assertNotIn(": Sent.", got["say"])
+
+    def test_hold_reads_the_outcome_back(self):
+        e = self.hold.add("ask", "Work", "e1", "Forward it", "dana@example.com", {"tool": "mcp__mail__forward", "args": {}})
+        self.assertEqual("", self.hold.outcome(e["id"])[0])          # still waiting: nothing to read
+        self.hold.run(e["id"], self.root, lambda w, r: (False, "no connection"))
+        self.assertEqual(("not sent", "no connection"), self.hold.outcome(e["id"]))
+        self.assertEqual("", self.hold.outcome("0000dead")[0])
+
+    def test_a_failed_turn_at_full_sends_nothing_and_keeps_the_send_held(self):
+        self.settings(ask={"autonomy": "full"})
+        first = self.runner("x", act=self.asking)
+        calls = []
+
+        def run(cmd, tier, cwd, env):
+            calls.append(cmd)
+            code, got = first(cmd, tier, cwd, env)
+            return 1, got
+        got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual(1, len(calls))                              # no second call: nothing was sent
+        [held] = got["held"]
+        self.assertEqual("held", self.hold.get(held["id"])["state"])
+        self.assertEqual([held["id"]], [r["id"] for r in self.hold.pending()])
+
+    def test_settings_and_the_docs_say_full_sends_without_asking_you_first(self):
+        sh = load("settings_help")
+        [row] = [r for r in sh.ROWS if r[1] == "ch-ask-autonomy"]
+        self.assertIn("Full sends without asking you first.", row[3])
+        docs = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
+        self.assertIn("Full sends without asking you first", docs)
+
     def test_telegram_never_runs_at_full_even_if_it_is_asked_to(self):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"channels": {"telegram": {"autonomy": "full"}}}))
         run = self.runner("x", act=self.asking)

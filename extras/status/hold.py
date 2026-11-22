@@ -288,6 +288,20 @@ def run(hid: str, ws: Path, runner: Callable[[Path, dict], Tuple[bool, str]], no
     return said if ok else "Not done. " + said
 
 
+def outcome(hid: str) -> Tuple[str, str]:
+    """What became of a held action that was run, read back from the queue: ("sent", the result), ("not sent", the
+    reason), or ("", "") when the entry is gone, or is in any other state: the caller says it is not known."""
+    e = get(hid)
+    if e is None:
+        return "", ""
+    state = e.get("state")
+    if state == "done":
+        return "sent", str(e.get("result") or "")
+    if state == "failed":
+        return "not sent", str(e.get("result") or "")
+    return "", ""
+
+
 def write_shared(ws: Path, e: dict) -> Tuple[bool, str]:
     """Code's own run of a held write under a synced shared folder: only a file that is not there yet, inside a
     `.shared/` link of the entry's zone, written whole."""

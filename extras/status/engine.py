@@ -227,15 +227,38 @@ def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] =
                 "tier": planned["tier"], "autonomy": level}
     ok = code == 0
     say = (got.get("text") or "").strip() if ok else "That did not work (exit %s). Nothing more was done." % code
-    if level == "full" and held:
-        # Full: the sends run without asking. Only Ask offers it, and only an owner who set it.
+    if level == "full" and held and ok:
+        # Full: the sends run without asking. Only Ask offers it, and only an owner who set it. A failed turn sends
+        # nothing: its actions stay held, as at Act. The reply says what became of each send (#642).
+        lines = []
         for e in list(held):
             hold.run(e["id"], ws, lambda w, rec: execute_held(w, rec, runner))
+            lines.append(send_line(e))
+        say = (say + "\n" if say else "") + "\n".join(lines)
         held = []
     return {"ok": ok, "say": say, "held": held, "session": got.get("session_id") or exchange.get("session"),
             "tier": planned["tier"], "effort": planned["effort"], "autonomy": level, "set": now["set"],
             "limited": now["limited"], "why": now["why"], "deep": planned["deep"], "usage": got.get("usage") or {},
             "cost": got.get("cost_usd")}
+
+
+def plain_reason(reason: str) -> str:
+    """A held action's failure in plain words: no exit code, error class or path."""
+    text = re.sub(r"\s*\((?:[^()]*exit \d+[^()]*|[A-Za-z]*(?:Error|Exception)|exit \d+)\)", "", str(reason or ""))
+    text = re.sub(r"^It did not run: [A-Za-z]*(?:Error|Exception)\.?$", "it did not run", text.strip())
+    text = " ".join(re.sub(r"(?:/[\w.\- ]+){2,}", "", text).split()).rstrip(".")
+    return (text[:200] or "it did not work")
+
+
+def send_line(e: dict) -> str:
+    """One line of the reply for a held action Full ran: its plain label, then Sent, Not sent or Not known."""
+    label = " ".join(str(e.get("what") or "The action").split()).rstrip("?.!")
+    state, result = hold.outcome(e["id"])
+    if state == "sent":
+        return "%s: Sent." % label
+    if state == "not sent":
+        return "%s: Not sent: %s." % (label, plain_reason(result))
+    return "%s: Not known: the result could not be read, so check before you send it again." % label
 
 
 def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[bool, str]:

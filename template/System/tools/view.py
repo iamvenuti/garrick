@@ -446,7 +446,7 @@ def _zone_work(root: Path, zone: Path) -> dict:
         projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
                                   "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
                                   "hub": _rel(hub, root), "party": tags(pfm.get("party"))}
-        if hub_path.is_file():           # what the project card's dialogs say: its files, and the layout change it offers
+        if hub is not None:              # what the project card's dialogs say: its files, and the layout change it offers
             projects[project.name].update({"files": files_in(project), "layout": layout_offers(project, heading, True)})
         for name, note in notes:
             fm = pfm if note == hub_path else (lib.parse_frontmatter(note) or {})
@@ -458,12 +458,12 @@ def _zone_work(root: Path, zone: Path) -> dict:
             held = hub_parked and note != hub_path          # parked with its project, whatever its own status
             state = "parked" if state in PARKED or held else state
             piece = _piece(root, judge, links, zone, project, name, note, hub_path, pfm, fm, state,
-                           "parked" if state == "parked" else "row", held, hub_path if hub_path.is_file() else None, True)
+                           "parked" if state == "parked" else "row", held, hub, True)
             (parked if state == "parked" else rows).append(piece)
         # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
         if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
             hubs.append(_piece(root, judge, links, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state, "hub", False,
-                               hub_path if hub_path.is_file() else None, True))
+                               hub, True))
     # By name, as you would look for one; the freshness bar carries the age.
     by_name = lambda p: (p["thread"].casefold(), p["project"].casefold())  # noqa: E731
     rows.sort(key=by_name)

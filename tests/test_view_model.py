@@ -10,6 +10,8 @@ v0.76.0 had them, and the view model are compared field by field. Every differen
     A zone folder that is a link: the old inbox read counted a link is no zone (work.py). The old read gave one zone's
     the files of the folder it points at, under the link's    files under a second name: a wall defect. The view model
     name.                                                      lists the link with no work and no inbox.
+    A hub note that is a link to a file outside its zone: the  A file of another zone is no part of this project. The view
+    old read took it for the project's hub and read it.        model has no hub for it, and reads nothing through it.
     An `Inbox` that is a link to a folder outside its zone:    The count must be of one zone. The view model leaves an
     the old read counted that folder's files.                  Inbox out whose real path is outside the zone it sits in.
 
@@ -95,6 +97,9 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     (garden / "Inbox").symlink_to(home / "Inbox", target_is_directory=True)
     (garden / "Plot" / "Threads").mkdir(parents=True)
     (garden / "Plot" / "Threads" / "Leak").symlink_to(home / "Cedar" / "Threads" / "Fence", target_is_directory=True)
+    (garden / "Borrowed").symlink_to(home / "Cedar", target_is_directory=True)      # a whole project of another zone, by a link
+    write(garden / "Twin" / "Threads" / "Copy" / "Copy.md", "---\ntitle: Copy\nstatus: active\n---\n\n# Copy\n")
+    (garden / "Twin" / "Twin.md").symlink_to(home / "Maple" / "Maple.md")           # a hub note that is another zone's file
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
     return root
 
@@ -107,6 +112,28 @@ def bare(threads: dict) -> dict:
         data["projects"] = {n: {k: v for k, v in p.items() if k not in ("files", "layout")} for n, p in data["projects"].items()}
         for key in ("rows", "parked", "finished", "hubs"):
             data[key] = [{k: v for k, v in r.items() if k not in ("files", "open")} for r in data[key]]
+        out[name] = data
+    return out
+
+
+def outside(path) -> bool:
+    """A note that is a link leading out of its zone: the old read took it for the project's hub."""
+    if path is None or not path.is_symlink():
+        return False
+    zone = next(p for p in path.parents if p.parent.name == "Zones")
+    real = path.resolve()
+    return not (real == zone.resolve() or zone.resolve() in real.parents)
+
+
+def walled(threads: dict) -> dict:
+    """The old read's threads with a hub that leads out of its zone taken for none, as the view model does (the second
+    named difference in the docstring)."""
+    out = {}
+    for name, data in threads.items():
+        data = dict(data)
+        for key in ("rows", "parked", "finished", "hubs"):
+            data[key] = [dict(r, hub=None) if outside(r.get("hub")) else r for r in data[key]]
+        data["projects"] = {n: dict(p, hub=None) if outside(p.get("hub")) else p for n, p in data["projects"].items()}
         out[name] = data
     return out
 
@@ -151,7 +178,7 @@ class TestShadowThreads(Case):
         self.assertEqual(list(old), [z["name"] for z in self.model["zones"]])
 
     def test_pieces_match_the_old_rows_exactly(self):
-        old = self.old["threads"](self.root)
+        old = walled(self.old["threads"](self.root))
         for name, data in old.items():
             z = self.zone(name)
             for shown, key in (("row", "rows"), ("parked", "parked"), ("done", "finished"), ("hub", "hubs")):
@@ -210,7 +237,7 @@ class TestPageThreads(Case):
     the old read gave, row for row."""
 
     def test_the_page_reads_the_same_threads_as_the_old_read(self):
-        self.assertEqual(self.old["threads"](self.root), bare(status.threads(self.root)))
+        self.assertEqual(walled(self.old["threads"](self.root)), bare(status.threads(self.root)))
 
     def test_the_page_reads_the_notes_through_the_view_alone(self):
         calls = []
@@ -448,7 +475,16 @@ class TestWalls(Case):
     def test_a_thread_folder_linked_into_another_zone_is_left_out(self):
         garden = self.zone("Garden")
         self.assertEqual([], [p for p in garden["work"] if p["thread"] == "Leak"])
-        self.assertEqual("Plot", garden["work"][0]["project"])
+        self.assertEqual({"Plot", "Twin"}, {p["project"] for p in garden["work"]})
+
+    def test_a_project_or_a_hub_note_that_is_a_link_into_another_zone_shows_none_of_it(self):
+        garden = self.zone("Garden")
+        self.assertEqual(["Plot", "Twin"], sorted({p["project"] for p in garden["work"]}))
+        text = json.dumps(garden)
+        for other in ("Fence", "Latch", "Gate", "Cedar", "Bark", "Maple"):
+            self.assertFalse(other in text, other)
+        self.assertIsNone(garden["projects"]["Twin"]["hub"])
+        self.assertNotIn("files", garden["projects"]["Twin"])
 
     def test_a_scope_holds_its_zones_alone(self):
         scoped = view.build(self.root, scope=["Garden"])

@@ -164,7 +164,7 @@ class TheAlwaysLoadedFiles(unittest.TestCase):
         return (REPO / "template" / rel).read_text(encoding="utf-8")
 
     def test_rules_and_context_name_names_md(self):
-        self.assertIn("`System/names.md`", self.read("System/rules.md"))
+        self.assertIn("`names.md`", self.read("System/rules.md"))
         context = self.read("System/context.md")
         self.assertIn("System/names.md", context)
         self.assertIn("Read it before acting on a name you cannot place", context)
@@ -174,8 +174,16 @@ class TheAlwaysLoadedFiles(unittest.TestCase):
         for skill in ("threads", "intake", "meetings", "nurture", "interview"):
             text = self.read("System/skills/%s/SKILL.md" % skill)
             self.assertRegex(text, r"People, Aliases\s*\| `System/names.md`|People and Aliases\)? in `System/names.md`|`System/names.md`", skill)
-        self.assertIn("Look it up in Aliases** (`System/names.md`)", self.read("System/skills/threads/SKILL.md"))
+        self.assertIn("Look it up in Aliases** (`System/names.md`, or `System/context.md` until the update has moved them)", self.read("System/skills/threads/SKILL.md"))
         self.assertIn("People and Aliases of `System/names.md`", self.read("System/skills/intake/SKILL.md"))
+
+    def test_a_workspace_not_yet_moved_is_told_both_places(self):
+        """C2: after an update and before the yes, People and Aliases are still in context.md."""
+        self.assertIn("`names.md`, else `context.md` until moved", self.read("System/rules.md"))
+        for skill in ("threads", "intake", "meetings", "nurture", "interview"):
+            self.assertIn("System/context.md", self.read("System/skills/%s/SKILL.md" % skill))
+            self.assertRegex(" ".join(self.read("System/skills/%s/SKILL.md" % skill).split()),
+                             r"`System/names\.md`[^`]{0,20}`System/context\.md`[^`]{0,4}until", skill)
 
     def test_no_skill_still_sends_a_person_or_an_alias_to_context_md(self):
         for path in sorted((REPO / "template" / "System" / "skills").rglob("*.md")):

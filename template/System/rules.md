@@ -51,11 +51,11 @@ Sorting: `intake` skill.
 
 Spoken commands: the `threads` and `nurture` skills.
 
-Tab commands, where the cmux extra is installed: the `desk` skill.
+Tab commands, with the cmux extra: the `desk` skill.
 
 - **Say the shortest unique name.** A project alone, for one piece of work; a thread alone, if only one has it; otherwise project and thread ("Acme, pricing"). The zone only if two projects share a name.
 - **When a name matches more than one thing**, or a heard name is close to two entries, ask in one line, naming the candidates. Never guess.
-- **Names arrive mangled.** Match each name against Parties (`System/context.md`), People and Aliases (`System/names.md`) before acting. Ignore noise; never correct the user's spelling.
+- **Names arrive mangled.** Match each name against Parties (`System/context.md`), People and Aliases (`names.md`, else `context.md` until moved) before acting. Ignore noise; never correct the user's spelling.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
 - **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy and on one yes fixes them all. Live files keep only the new value. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
 - **Answer for the ear when the user is listening**: when they say so, or the request came in by voice. The answer comes first, in three sentences at most. No tables, code, file paths or links read out; round the numbers. Offer the detail instead of giving it, and put anything long in a file and say where.
@@ -79,7 +79,7 @@ Tab commands, where the cmux extra is installed: the `desk` skill.
 
 ## Talking to me
 
-How the assistant talks. Change or add one under this heading in `System/rules.local.md`.
+How the assistant talks. Change or add one under this heading in `rules.local.md`.
 
 - No summary at the end of what is already on screen. Do report what the user could not see: files changed, commands run, what failed.
 - When the answer is one lookup away, look it up instead of hedging.

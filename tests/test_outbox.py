@@ -622,6 +622,55 @@ class RunningElsewhere(OutboxCase):
         self.assertEqual(row, json.loads(first))                                 # its row was never rewritten
 
 
+class NeverTwice(OutboxCase):
+    """#641 review (S6): a replay never applies a request twice, whatever state the journal is in."""
+
+    queue = Replay.queue
+
+    def test_an_unusable_journal_applies_nothing_keeps_the_envelope_and_says_so(self):
+        envelope = self.queue()
+        shutil.rmtree(self.jobs, ignore_errors=True)
+        self.jobs.write_text("a file where the jobs folder should be")          # the journal cannot be made or written
+        done = outbox.replay(self.root)
+        self.assertEqual(1, done.get("journal"))
+        self.assertEqual(0, done["applied"])
+        self.assertTrue(envelope.exists())
+        self.assertEqual(1, self.commits(self.work))
+        self.assertIn(LINE_A, self.todo())                                       # still open: nothing was applied
+
+    def test_a_reply_with_no_state_from_a_journalled_verb_is_applied_once_and_never_again(self):
+        envelope = self.queue()
+        calls = []
+
+        def inline(ws, req, ops, via):
+            calls.append(req["verb"])
+            return {"ok": True, "say": "Done."}, None, ""                        # the journal failed mid-way: the action ran inline
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root, perform=inline))
+        self.assertFalse(envelope.exists())
+        self.assertIn(envelope.stem, outbox.applied_ids())
+        self.assertEqual(["todo-done"], calls)
+
+    def test_an_envelope_whose_operation_record_is_gone_is_removed_and_named_not_applied_again(self):
+        envelope = self.queue()
+        outbox._write_json(envelope, dict(json.loads(envelope.read_text()), op="a19f3c80"))      # compaction took its record away
+        done = outbox.replay(self.root)
+        self.assertEqual([envelope.stem], done.get("gone"))
+        self.assertFalse(envelope.exists())
+        self.assertEqual(1, self.commits(self.work))
+        self.assertIn(LINE_A, self.todo())
+        self.assertEqual(0, outbox.replay(self.root)["applied"])
+
+    def test_an_operation_of_another_workspace_named_in_an_envelope_is_not_believed(self):
+        envelope = self.queue()
+        req = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key(LINE_A)}
+        run, _ = self.ops.start(self.jobs, dict(req, op="a19f3c80"), workspace="/somewhere/else")
+        run.finish("saved", req, said="Ticked")
+        run.close(req)
+        outbox._write_json(envelope, dict(json.loads(envelope.read_text()), op="a19f3c80"))
+        self.assertEqual(1, outbox.replay(self.root)["applied"])                 # applied here: that record is not this workspace's
+        self.assertIn("- [x] [[Pricing]]: Send the revised terms", self.todo())
+
+
 class Page(OutboxCase):
     def build(self):
         link = status.Links(self.root)

@@ -383,17 +383,20 @@ def joined_op(env: Optional[dict]) -> str:
 
 def ended_for_good(ops, req: dict, out: dict) -> bool:
     """Whether the reply to a replayed request says the work is over and saved. A journalled verb says so with a
-    completed state; a verb the journal does not hold (a reworded line) answers once, inline, with no state. Anything
-    else, a joined request that is still running above all, is not over, and the request stays in the outbox."""
+    completed state. A reply with no state came from an action done inline (a reworded line, which the journal does not
+    hold, or a journal that failed mid-way): it is done, and is remembered so that it is never applied twice. A joined
+    request that is still running is not over, and the request stays in the outbox."""
     state = out.get("state")
     if state is not None:
         return state == "completed"
-    return req.get("verb") not in getattr(ops, "OPS", {})
+    return True         # no state: the action ran inline, with no record to wait on (a verb the journal does not hold, or a journal that failed mid-way)
 
 
-def how_it_ended(pa, ops, op: str) -> str:
-    """`saved`, `running` or `ended` (it failed, or the record of it is gone) for an operation the journal holds. A
-    record that cannot be read at all counts as running: the envelope is kept."""
+def how_it_ended(pa, ops, op: str, ws: Optional[Path] = None) -> str:
+    """`saved`, `running`, `failed` or `gone` for an operation the journal holds. `gone`: no record of it is there (the
+    journal was compacted), so whether it saved cannot be told, and it is never applied again. A record of another
+    workspace is not believed: it counts as `failed`, and the request goes through the usual check. A record that cannot
+    be read at all counts as running: the envelope is kept."""
     try:
         journal = ops.Journal(pa.jobs_dir())
         with journal.lock():
@@ -402,10 +405,12 @@ def how_it_ended(pa, ops, op: str) -> str:
     except Exception:
         return "running"
     if rec is None:
-        return "ended"
+        return "gone"
+    if ws is not None and rec.get("workspace") != ops.workspace_id(ws):
+        return "failed"
     if rec.get("state") not in ("completed", "failed"):
         return "running"
-    return "saved" if rec.get("outcome") == "saved" else "ended"
+    return "saved" if rec.get("outcome") == "saved" else "failed"
 
 
 def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[str, int]:
@@ -416,6 +421,12 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
     perform = perform or pa.perform
     ops = pa.ops_lib(ws)
     count = {"applied": 0, "held": 0, "skipped": 0}
+    journal = getattr(ops, "Journal", None)
+    if journal is not None and not journal(pa.jobs_dir()).usable():
+        # Nothing records an action here, so an envelope could be applied again and again: every envelope stays, and
+        # nothing is applied until the journal can be written.
+        count["journal"] = 1
+        return count
     for zone in zones(ws):
         for path, env, held in list(_envelopes(zone)):
             if held:
@@ -433,7 +444,7 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
                 continue
             waited = joined_op(env)
             if waited:
-                ended = how_it_ended(pa, ops, waited)       # an operation this envelope joined on an earlier run
+                ended = how_it_ended(pa, ops, waited, ws)   # an operation this envelope joined on an earlier run
                 if ended == "running":
                     count["waiting"] = count.get("waiting", 0) + 1
                     continue
@@ -441,6 +452,11 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
                     remember(rid, now)
                     path.unlink(missing_ok=True)
                     count["applied"] += 1
+                    continue
+                if ended == "gone":                       # its record was compacted away: it may have saved, so it is not applied again
+                    remember(rid, now)
+                    path.unlink(missing_ok=True)
+                    count.setdefault("gone", []).append(rid)
                     continue
                 env = {k: v for k, v in env.items() if k != "op"}      # it ended without saving: this replay does it again
                 _write_json(path, env)

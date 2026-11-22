@@ -896,6 +896,21 @@ class TestTwoWorkspaces(JournalCase):
         self.assertEqual(old, next(r for r in self.j.records() if r["op"] == "d49f3c80"))
 
 
+class TestTheReaderIsOneWorkspaces(JournalCase):
+    """#641 review (W2): the page's list of open operations is the workspace's own."""
+
+    def test_one_workspace_never_lists_anothers_operations(self):
+        for workspace, op in (("/ws/one", "a19f3c80"), ("/ws/two", "b29f3c80")):
+            run, _ = ops.start(self.folder, dict(REQUESTS["todo-add"], op=op), workspace=workspace)
+            self.runs.append(run)
+        old = {"op": "c39f3c80", "key": "k", "verb": "park", "zone": "Work", "state": "running", "phase": "", "at": time.time(),
+               "done": None, "outcome": None, "say": None, "label": "x", "request": {}}
+        self.j.append(old)                                                      # written before the workspace was kept
+        self.assertEqual(["a19f3c80"], [r["op"] for r in self.j.open_set(workspace="/ws/one")])
+        self.assertEqual(["b29f3c80"], [r["op"] for r in ops.read(self.folder, workspace="/ws/two")["ops"]])
+        self.assertEqual([], [r["op"] for r in ops.read(self.folder, workspace="/ws/three")["ops"]])     # the old row shows nowhere
+
+
 class TestRepeatedLater(JournalCase):
     """#137: past the double click's window, a request the record holds is not
     run again unasked. It is told what was done and when, and asked."""
@@ -1059,7 +1074,7 @@ class TestReader(JournalCase):
 
     def test_a_record_with_no_worker_reads_back_unknown_and_stays_that_way(self):
         self.j.folder.mkdir(parents=True)
-        queued = {"op": "a19f3c80", "key": "k", "verb": "park", "zone": "Work", "state": "running", "phase": "checking", "at": time.time(),
+        queued = {"op": "a19f3c80", "key": "k", "workspace": "", "verb": "park", "zone": "Work", "state": "running", "phase": "checking", "at": time.time(),
                   "done": None, "outcome": None, "say": None, "label": "Parking Pricing…",
                   "request": {"zone": "Work", "project": "Acme Review", "thread": "Pricing"}}
         self.j.append(queued)                                                  # and no .run file: the worker is gone

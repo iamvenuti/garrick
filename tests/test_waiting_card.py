@@ -68,7 +68,7 @@ class TestTheLeadCountsOneZone(unittest.TestCase):
         rows = re.findall(r'<div class="wrow wneed"([^>]*)>', html)
         self.assertEqual(["", "", 'data-nz="Personal" hidden', 'data-nz="Personal" hidden', 'data-nz="Personal" hidden', ""],
                          [r.strip() for r in rows])                                  # the rows in view are built as they always were
-        self.assertIn('data-zone="Work"', html)
+        self.assertIn('data-view="Work"', html)
         self.assertIn('data-zones="[&quot;Work&quot;, &quot;Personal&quot;]"', html)
         self.assertIn('data-n="3"', html)
 

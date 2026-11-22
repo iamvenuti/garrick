@@ -8310,7 +8310,7 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
                                               % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
-    zone_attrs = (' data-zone="%s" data-zones="%s"' % (E(view), E(json.dumps(list(zones), ensure_ascii=False)))) if view is not None else ""
+    zone_attrs = (' data-view="%s" data-zones="%s"' % (E(view), E(json.dumps(list(zones), ensure_ascii=False)))) if view is not None else ""
     html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"%s' % ("" if total else " calm", len(seen), zone_attrs), 1)
     return html
 
@@ -8360,7 +8360,7 @@ setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=s
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
 /* the zone in view (W7): the rows of the other zones wait, hidden, until that zone is picked; the sentence counts what shows */
 function zoneView(z){var c=document.getElementById('waiting-now'),zs=[];if(!c||!c.dataset.zones)return;try{zs=JSON.parse(c.dataset.zones)}catch(e){}
-if(zs.indexOf(z)<0)return;c.dataset.zone=z;
+if(zs.indexOf(z)<0)return;c.dataset.view=z;
 [].forEach.call(c.querySelectorAll('.wneed'),function(r){var a=r.querySelector('[data-tz-go]'),w=r.dataset.nz||(a&&a.dataset.tzGo)||'';r.hidden=!!w&&zs.indexOf(w)>=0&&w!==z});
 [].forEach.call(c.querySelectorAll('.wgroup'),function(g){var n=g.querySelectorAll('.wneed:not([hidden])').length,e=g.querySelector('.wgn');if(e)e.textContent=n;g.hidden=!n});
 lead(box.children.length)}

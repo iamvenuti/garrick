@@ -1564,7 +1564,7 @@ class TestTheThreadsList(StatusCase):
         row, graph = panel(True, ("head", card, 1), ("head", card))
         self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the row above the project
         self.assertNotIn('<div class="muted">', row)
-        self.assertIn('<div class="pl pl1"><span class="chip">acme</span></div>', row)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><button class="ctl pflip"', row)
         self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
         self.assertIn("tc.innerHTML=Panel.card(o,1);", status.JS)
 

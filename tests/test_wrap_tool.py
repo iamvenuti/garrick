@@ -675,6 +675,30 @@ class PageRoute(Base):
         self.assertIn("file", reply["say"])
         self.assertEqual(1, self.count())
 
+    def test_two_wraps_of_one_thread_in_a_row_each_write_their_own_words(self):
+        import operations
+        first = self.pa.perform(self.root, self.request(entry="First words of the wrap."), operations, via="session")[0]
+        second = self.pa.perform(self.root, self.request(entry="Second words of the wrap."), operations, via="session")[0]
+        self.assertTrue(first["ok"] and second["ok"], (first, second))
+        text = self.thread.read_text(encoding="utf-8")
+        self.assertIn("First words of the wrap.", text)
+        self.assertIn("Second words of the wrap.", text)
+        self.assertEqual(3, self.count())                                    # a commit for each
+
+    def test_the_journal_holds_no_wrap_and_none_of_its_words(self):
+        import operations
+        self.pa.perform(self.root, self.request(entry="A private sentence for the journal test."), operations, via="session")
+        journal = self.base / "jobs" / operations.FILE
+        text = journal.read_text(encoding="utf-8") if journal.is_file() else ""
+        for word in ("wrap", "private sentence", "tier-two volume", "volumes are with the buyer"):
+            self.assertNotIn(word, text)
+
+    def request(self, **words):
+        data = dict(payload())
+        data = {k: data[k] for k in ("resume", "entry", "message")}
+        data.update(words)
+        return {"verb": "wrap", "zone": "Work", "project": "Northwind", "thread": "Pricing", "input": data}
+
     def test_the_words_may_not_name_another_thread_than_the_request(self):
         reply = self.send(words={"thread": "Other"})
         self.assertFalse(reply["ok"])

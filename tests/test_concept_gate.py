@@ -307,6 +307,16 @@ class TheNotesStayHere(unittest.TestCase):
         self.assertEqual([], [n for n in shipped if n.startswith("decisions/")])
 
 
+    def test_the_guide_does_not_take_a_decision_note_for_a_page(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_guide_t", str(REPO / "extras" / "status" / "guide.py"))
+        guide = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guide)
+        pages = guide.doc_pages(REPO / "docs")
+        self.assertIn("concepts.md", pages)
+        self.assertEqual([], [p for p in pages if p.startswith("decisions/")])
+
+
 class TheWorkflow(unittest.TestCase):
     def test_ci_runs_the_check_on_every_pull_request_and_waits_for_it(self):
         text = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")

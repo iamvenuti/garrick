@@ -255,6 +255,23 @@ class TestLayout(LayoutFiles):
         names = [n for n in self.git("show", "--name-only", "--format=", "HEAD").stdout.split("\n") if n]
         self.assertTrue(names and all(n.startswith("Acme/") for n in names), names)           # the commit stays inside the project
 
+    def test_a_working_file_a_split_gave_a_thread_stays_there_after_a_join_and_the_docs_say_so(self):
+        a = self.work / "Acme"
+        (a / "Notes").mkdir()
+        (a / "Notes" / "x.md").write_text("working note")
+        pricing = a / "Threads" / "Pricing" / "Pricing.md"
+        pricing.write_text(pricing.read_text() + "\nSee Notes/x.md for the working.\n")
+        self.commit("a working note, named by Pricing")
+        r = self.layout("--split")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((a / "Threads" / "Pricing" / "Notes" / "x.md").is_file())
+        r = self.layout("--join")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((a / "Threads" / "Pricing" / "Notes" / "x.md").is_file())       # Join moves papers only
+        self.assertFalse((a / "Notes" / "x.md").exists())
+        docs = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
+        self.assertIn("A Join moves papers only", docs)
+
     def test_the_ledger_row_follows_its_file_and_its_destination_stays(self):
         self.layout("--split")
         a = self.work / "Acme"

@@ -167,6 +167,11 @@ class NoWayRound(Case):
         self.assertFalse(self.run_check(BASE + "\nCedar\n-----" + self.NEW, "")[0])
         self.assertFalse(self.run_check(BASE + "\nMaple\n=====" + self.NEW, "")[0])
 
+    def test_an_html_heading_that_spans_lines_is_not_hidden(self):
+        self.assertFalse(self.run_check(BASE + "\n<h2>\nCedar\n</h2>" + self.NEW, "")[0])
+        self.assertFalse(self.run_check(BASE + "\n<h3 id=a\n>Cedar</h3>" + self.NEW, "")[0])
+        self.assertTrue(self.run_check(BASE + "\n```\n<h2>\nCedar\n</h2>\n```\n", "")[0])
+
     def test_an_html_heading_is_not_hidden(self):
         self.assertFalse(self.run_check(BASE + "\n<h3>Cedar</h3>" + self.NEW, "")[0])
 
@@ -213,6 +218,21 @@ class NoWayRound(Case):
     def test_a_decision_path_that_climbs_out_is_no_note(self):
         ok, _ = self.run_check(BASE + "\n### Cedar" + self.NEW, "- Cedar: docs/decisions/../concepts.md")
         self.assertFalse(ok)
+
+
+class AgainstTheMergeBase(Case):
+    def test_a_change_made_on_the_base_since_the_branch_is_not_the_pull_requests(self):
+        self.git("checkout", "-q", "-b", "pr")
+        self.write("docs/concepts.md", BASE + "\nAn aside.\n")
+        head = self.commit("pr work")
+        self.git("checkout", "-q", "-")
+        self.write("docs/concepts.md", BASE.replace("A zone is one side of your life or work.", "A zone is a wall."))
+        tip = self.commit("main moves on")
+        event = self.dir.parent / (self.dir.name + "-mb.json")
+        self.addCleanup(lambda: event.exists() and event.unlink())
+        event.write_text(json.dumps({"pull_request": {"body": "", "base": {"sha": tip}, "head": {"sha": head}}}))
+        ok, msg = gate.check("pull_request", str(event), self.dir)
+        self.assertTrue(ok, msg)
 
 
 class FailsClosed(Case):

@@ -1210,7 +1210,7 @@ class TestASendIsHeld(EngineCase):
 
     def test_full_reports_a_send_that_went(self):
         self.settings(ask={"autonomy": "full"})
-        run = self.full_runner(lambda cmd: (0, {"text": "Done."}))
+        run = self.full_runner(self.result((self.TOOL, False)))
         got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
         self.assertTrue(got["ok"])
         self.assertIn("Forward the price sheet: Sent.", got["say"])
@@ -1232,6 +1232,47 @@ class TestASendIsHeld(EngineCase):
             got = self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)
         self.assertIn("Forward the price sheet: Not known: ", got["say"])
         self.assertNotIn(": Sent.", got["say"])
+
+    TOOL = "mcp__mail__forward"
+
+    def result(self, *seen):
+        """What a stream-json run gives of the tool's own result: (name, is_error) for each tool_result."""
+        return lambda cmd: (0, {"text": "I did what you asked.", "tool_results": [{"name": n, "is_error": e} for n, e in seen]})
+
+    def at_full(self, then):
+        self.settings(ask={"autonomy": "full"})
+        run = self.full_runner(then)
+        return self.engine.run(self.root, "ask", "forward the price sheet", "Work", {"id": "e1"}, run, self.cap_ok)["say"], run
+
+    def test_a_send_is_sent_only_when_the_tools_own_result_was_read_and_is_not_an_error(self):
+        say, run = self.at_full(self.result((self.TOOL, False)))
+        self.assertIn("Forward the price sheet: Sent.", say)
+        cmd = run.calls[1]
+        self.assertEqual("stream-json", cmd[cmd.index("--output-format") + 1])       # the run gives the tool's result
+
+    def test_a_tool_error_with_a_clean_exit_is_not_sent(self):
+        say, _ = self.at_full(self.result((self.TOOL, True)))
+        self.assertIn("Forward the price sheet: Not sent: ", say)
+        self.assertNotIn(": Sent.", say)
+
+    def test_no_tool_result_means_not_known_with_the_assistants_own_sentence(self):
+        for given in (self.result(), self.result(("mcp__other__thing", False)), lambda cmd: (0, {"text": "I could not send it."})):
+            say, _ = self.at_full(given)
+            self.assertNotIn(": Sent.", say)
+            self.assertIn("Forward the price sheet: Not known: ", say)
+        say, _ = self.at_full(lambda cmd: (0, {"text": "I could not send it."}))
+        self.assertIn("I could not send it", say)
+
+    def test_the_stream_gives_each_tool_result_with_the_tools_name(self):
+        agent = self.engine.agent_lib()
+        out = "\n".join(json.dumps(m) for m in (
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": self.TOOL, "input": {}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "denied"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "zz", "content": "ok"}]}},
+            {"type": "result", "result": "done", "is_error": False}))
+        self.assertEqual([{"name": self.TOOL, "is_error": True}, {"name": "", "is_error": False}], agent.tool_results(out))
+        self.assertEqual([], agent.tool_results('{"type":"result","result":"x"}'))
+        self.assertEqual([], agent.tool_results("not json"))
 
     def test_hold_reads_the_outcome_back(self):
         e = self.hold.add("ask", "Work", "e1", "Forward it", "dana@example.com", {"tool": "mcp__mail__forward", "args": {}})

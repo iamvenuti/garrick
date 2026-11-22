@@ -550,6 +550,27 @@ def parse_claude_output(stdout: str) -> dict:
             "model": None, "is_error": False, "parsed": False}
 
 
+def tool_results(stdout: str) -> List[dict]:
+    """Each tool result of a `claude -p --output-format stream-json` run, as {"name": the tool's name ('' when the
+    result names no tool the run called), "is_error": whether the tool said it failed}, in order. Empty for output that
+    is not that stream: a caller that needs the result then has not got one."""
+    names, out = {}, []
+    for line in (stdout or "").splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        content = (msg.get("message") or {}).get("content") if isinstance(msg, dict) and isinstance(msg.get("message"), dict) else None
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+                names[block["id"]] = str(block.get("name") or "")
+            elif block.get("type") == "tool_result":
+                out.append({"name": names.get(block.get("tool_use_id"), ""), "is_error": bool(block.get("is_error"))})
+    return out
+
+
 def profile_problem(path: Path) -> Optional[str]:
     """Why the deny profile cannot be used, or None. Given a settings file that
     is not there, Claude carries on without its deny list, and given one that
@@ -1006,14 +1027,14 @@ def run_prepared(cmd: List[str], tier: str, cwd: Optional[Path] = None, job: str
         # Stopped before the final result, so the call never said what it spent: an estimate, marked, never null.
         outcome["cost_usd"] = estimate(tier, time.time() - start, _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD))
         outcome["estimated"] = True
-    extra = {"session_id": None, "usage": {}}
+    extra = {"session_id": None, "usage": {}, "tool_results": tool_results(out)}
     for line in reversed((out or "").strip().splitlines()):
         try:
             data = json.loads(line)
         except ValueError:
             continue
         if isinstance(data, dict) and ("result" in data or data.get("type") == "result"):
-            extra = {"session_id": data.get("session_id"), "usage": data.get("usage") if isinstance(data.get("usage"), dict) else {}}
+            extra = dict(extra, session_id=data.get("session_id"), usage=data.get("usage") if isinstance(data.get("usage"), dict) else {})
             break
     append_ledger(ledger, ledger_entry(start, job, tier, outcome, time.time() - start, code))
     return code, dict(outcome, **extra)

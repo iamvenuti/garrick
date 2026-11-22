@@ -332,7 +332,7 @@ The check reports and changes nothing, so its warnings pile up until nobody read
 
 | Kind | Examples | What happens |
 |---|---|---|
-| Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note in its zone, and not into another walled zone, made a wikilink; a note inside `Threads/<Thread>/` with no `parent:`, given `parent: "[[<Thread>]]"`; a history file's older `parent:` link, written in the current form | Listed, then applied on one yes, one commit per repository |
+| Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note in its zone, and not into another walled zone, made a wikilink; a note inside `Threads/<Thread>/` with no `parent:`, given `parent: "[[<Thread>]]"`; a history file's older `parent:` link, written in the current form; the papers a thread of a one-job project keeps of its own, moved into the project's (the Join, one commit with Undo; a name the project has already is left for you to place) | Listed, then applied on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome | One line each: a proposed answer and a question. Never a guess across a wall |
 | Correction | a value written down wrong, which you correct as you go: "that's wrong, it's acmecorp.example" | Every live copy listed as one finding, then corrected on one yes, one commit per repository |
 | Wall | a file that links to, embeds or names the path of a file of another walled zone | The file and the wall, never the material; taken out only on your yes |
@@ -340,7 +340,7 @@ The check reports and changes nothing, so its warnings pile up until nobody read
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one | Listed last, as low urgency; nothing to fix, and never in the morning digest |
 | Fading | wiki pages old enough to leave working memory, or a faded page linked again | How many, per wiki, and what to say; see [Fading](#fading). Nothing moves without a written proposal and your yes |
 
-A note over its cap is a mechanical finding, listed with words before and after, which the nightly run may apply. A Resume block over its limit is judgment.
+A note over its cap is a mechanical finding, listed with words before and after, which the nightly run may apply. The Join of a mixed project's papers is applied only on your yes, never at night. A Resume block over its limit is judgment.
 
 Behind it is one tool, which adds no checks of its own: it runs `check.py --json`, `wiki_lint.py` for both wikis and `drift.py`, and sorts what they find.
 

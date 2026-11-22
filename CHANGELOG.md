@@ -4,6 +4,42 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-11-22
+
+In this release each change of state has one owner, and that owner tells you what happened. The wrap is a single command, and every part of Garrick finds your pieces of work the same way. Ask, the outbox and the nightly jobs now report the result they saw, and say so when they could not see one.
+
+**Upgrading.**
+- The wrap is now one command that does the steps, and your assistant writes only what needs judgment: the Resume here block, the dated entry, the Todo lines. The steps are the same as before. What changed is who carries them out. The command answers with *saved*, *refused* (with the check's own sentence), *conflict* or *failed*, and on anything but *saved* it puts back every file it wrote. An update keeps the old threads skill until the command is in your workspace.
+- Every part of Garrick now reads a workspace's pieces of work the same way: the page, the briefing, *What's next*, the nightly sweep, intake and the Ask box.
+- Ask at Full now says what happened to each send. It reads *Sent* only when the tool's own result came back, *Not sent* with the reason, or *Not known*. After a failed turn it sends nothing, and the actions stay held with *Run it* and *Cancel*. Settings now says, beside Full: "Full sends without asking you first."
+- On a laptop copy, a queued tick is kept until the request is really saved. It is never applied twice, and never applied in another workspace on the same account.
+- The nightly jobs commit and put back only the files they worked on. A page you edit while they run is left alone.
+
+### Added
+
+- **The wrap as one command** (#645). `System/tools/wrap.py` takes your assistant's words as one input and does the rest in order. It takes the lock, writes the Resume here block and the dated entry, ticks and adds the Todo lines, and moves old entries to the history file. Then it archives what is done, stages each file by its literal path, makes one commit through the zone's own checks, writes the finish record and releases the lock. It writes only the thread or hub note, its zone's `Todo.md` and archive, the history file, its own records, and a pointer in your assistant's memory folder. It refuses a `Todo.md`, archive or history folder that leads into another zone. It works the same from Claude Code and Codex. The page's executor has a `wrap` verb that runs the same command. A wrap that stops half way still recovers through the lock, as before.
+- **One reader of the piece of work** (#644). `System/tools/work.py` lists a workspace's pieces of work and headings, with their zone, project, thread, kind, status, resume note and papers. It reads one zone at a time and never follows a link out of a zone. Before any caller moved to it, a test checked it against every old reader.
+
+### Changed
+
+- The threads skill keeps the judgment and makes one call. When the command reports *failed*, the assistant stops and says what failed; it does not do the steps by hand. A project in `System/` is not wrapped by the command: move it into a zone first.
+- The band leaves the wrap lock to the command.
+- The wrap's memory pointer is written by the command itself. It names the thread note and nothing else, and it goes only into your assistant's own memory folder.
+- The page lists only the open operations of its own workspace.
+- The reading sweep commits only the pages its run reports as written. A run that reports none commits nothing, and the summary names what changed.
+- A project, thread or hub folder that is a link out of its zone is no longer listed, and a zone folder that is a link is no zone.
+- If an update has not yet brought `work.py`, the page still builds and says that Garrick needs updating. An update holds back the page and the nightly sweep until the reader is in place.
+
+### Fixed
+
+- Ask at Full no longer reports the assistant's turn as the result of a send (#642).
+- On a laptop copy, a request that joined one still running is no longer dropped (#641). Two workspaces on one account no longer share an operation. A record written before 0.76.0 matches nothing.
+- The nightly answers step and the reading sweep no longer commit or put back a page someone else edited during the run (#640). A listed page that was already changed before the run is committed only if the run changed it too.
+- The guided session, the threads and nurture skills and the enforcement page no longer describe walls between parties or a Walls table. The enforcement page names which parts ask `decide()` and which ask `may_flow()` (#643).
+- The nightly sweep no longer quotes Next actions from a heading, from the Inbox folder, or from the threads of a parked project.
+- The Threads card no longer lists a thread folder that has no note.
+- The Ask box no longer reads a Resume here heading with extra spaces as a resume point.
+
 ## [0.75.0] - 2026-11-22
 
 This release cuts the number of sessions you have to approve, and the card on a project now says what the project is. A project is one job or separate jobs, and you switch it from its card in either direction. *Process the Inbox* and most Context answers do their work in the background. They come back with a result, and with a question only when they need one.

@@ -156,6 +156,13 @@ class ParseTest(unittest.TestCase):
             for text in ("secret-file.txt", "abc123", "wiki", "my folder", "notes"):
                 self.assertNotIn(text, json.dumps(line))                   # no argument reaches the ledger
 
+    def test_env_options_and_a_word_that_is_not_a_known_program_never_reach_the_ledger_s6(self):
+        self.assertEqual(["Bash", "Bash(curl)"], self.refused("env -u SECRETVAR curl http://x.example"))
+        self.assertEqual(["Bash", "Bash(curl)"], self.refused("env -C /x/secret curl http://x.example"))
+        self.assertEqual(["Bash", "Bash(curl)"], self.refused("env --unset=SECRETVAR -i curl x"))
+        self.assertEqual(["Bash"], self.refused("sk-live-123 --x"))
+        self.assertEqual(["Bash"], self.refused("./Zones/Work/Acme/acme-renewal.sh"))
+
     def test_a_command_that_cannot_be_read_is_recorded_as_bash_alone(self):
         for command in ("grep 'unclosed", "$(cat secret-file.txt)", "cd secret-folder", "&& ls", "", None, 5, "x" * 30000):
             self.assertEqual(["Bash"], self.refused(command), repr(command)[:40])

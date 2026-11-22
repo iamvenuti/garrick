@@ -451,6 +451,12 @@ def estimated_cost(tier: str, seconds: float, budget: float = DEFAULT_MAX_CALL_U
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _PROGRAM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,39}")
 _DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
+_KNOWN_PROGRAMS = frozenset((
+    "python", "python3", "pip", "pip3", "git", "gh", "cat", "ls", "grep", "rg", "find", "head", "tail", "sed", "awk", "sort", "wc",
+    "echo", "printf", "mkdir", "touch", "cp", "mv", "rm", "rmdir", "ln", "chmod", "chown", "open", "curl", "wget", "ssh", "scp",
+    "rsync", "nc", "osascript", "claude", "codex", "node", "npm", "npx", "ruby", "perl", "bash", "sh", "zsh", "sudo", "make",
+    "swift", "swiftc", "xcodebuild", "brew", "jq", "sqlite3", "tar", "zip", "unzip", "diff", "stat", "file", "xargs", "tee",
+    "defaults", "launchctl", "security", "kill", "ps", "which", "say", "pbcopy", "pbpaste", "mail", "sendmail", "dd", "env"))
 _STOPS = {"&&", "||", ";", "|", "&", "(", ")", ";;", "|&", "<", ">", ">>", "<<"}
 
 
@@ -487,7 +493,9 @@ def refused_program(command) -> Optional[str]:
         elif head == "env":
             words = words[1:]
             while words and (words[0].startswith("-") or _ASSIGN.match(words[0])):
-                words.pop(0)
+                arg = words.pop(0)
+                if arg in ("-C", "-u", "-S", "-P", "--chdir", "--unset", "--split-string", "--argv0", "-a") and words:
+                    words.pop(0)            # the option's own argument is a folder, a variable name or a string, never the program (S6)
         elif _ASSIGN.match(head):
             words = words[1:]
         else:
@@ -495,7 +503,9 @@ def refused_program(command) -> Optional[str]:
     if not words or words[0] in _STOPS:
         return None
     name = os.path.basename(words[0])
-    return name if _PROGRAM.fullmatch(name) else None
+    # A name is kept only when it is a program the ledger can say aloud, so a secret typed as a command, or a script's own
+    # file name, is never recorded (S6): any other word leaves the tool's name alone.
+    return name if _PROGRAM.fullmatch(name) and name in _KNOWN_PROGRAMS else None
 
 
 def denied_names(denials) -> List[str]:

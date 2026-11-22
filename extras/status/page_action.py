@@ -86,7 +86,6 @@ zone's repository, as the skills would:
                 "quiet": {...}}}, which notices this Mac shows, checked and
                 kept by System/tools/notifications.py.
                 Settings › Home:
-                {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
                 System/tools/fade.py keeps; saving moves no page.
@@ -375,8 +374,6 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 GRAPH_OFF = ("Red", "Crimson", "Amber")
 GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity", "decision")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
-# Settings › Home: which the page opens on. Its words are status.py's HOMES too.
-HOMES = ("simple", "full")
 # Settings › About Garrick: how often, in days, the check for a newer Garrick runs (garrick_lib's RELEASE_CADENCES).
 RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
@@ -1766,7 +1763,6 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
-    {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
     {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
     {"channels": {"telegram": {"autonomy": "act"}}}, Settings › Channels (#571): tier, effort and autonomy of Ask and
@@ -1774,7 +1770,9 @@ def save_settings(ws: Path, req: dict) -> str:
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
+    if "home" in req:                   # Settings has no Home choice any more (#503): the app opens on the full page, and a stored value is ignored
+        raise Refused("there is no home to choose: Garrick opens on the full page")
+    if not {"launchers", "zones", "graph", "notifications", "memory", "desk-agent",
             "release-notice", "release-notice-every", "ask", "channels"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
@@ -1801,10 +1799,6 @@ def save_settings(ws: Path, req: dict) -> str:
         if not (isinstance(days, int) and not isinstance(days, bool) and days in RELEASE_CADENCES):
             raise Refused("the check for a newer Garrick runs every %s days" % " or ".join(str(d) for d in RELEASE_CADENCES))
         new["release-notice-every"] = days
-    if "home" in req:
-        if req["home"] not in HOMES:
-            raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
-        new["home"] = req["home"]
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1846,8 +1840,6 @@ def save_settings(ws: Path, req: dict) -> str:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
-        return "Garrick opens on the full page"
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))

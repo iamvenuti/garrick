@@ -227,7 +227,7 @@ DECLARED: Dict[str, Op] = {
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
-    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "home", "memory",
+    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "memory",
                      "desk-agent", "release-notice", "release-notice-every", "ask", "channels"), (), "workspace"),
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.

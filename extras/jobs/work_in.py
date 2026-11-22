@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import itertools
 import json
@@ -55,9 +56,11 @@ SENTINEL = "END OF WORK-IN"
 COUNTS = re.compile(r"^WORKED (\d+) HELD (\d+)\s*$", re.M)
 EXIT_NO_PANEL = 64
 STOPPED: List[str] = []      # the places whose call was stopped at its time limit, in this run
+LEFT_ALONE: Dict[str, int] = {}      # how many other changed paths in the wiki the commits left as they were, by place (W6)
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
-REASONS = ("cap", "assistant", "incomplete", "held", "commit")
+REASONS = ("cap", "assistant", "incomplete", "held", "commit", "long")
+STOP_LIMIT = 2       # a question whose call was stopped at the limit on this many runs is held as too long, and the night skips it (#629)
 # What the call may run. page_action.py only by the two CLI verbs it needs: a CLI verb runs as `via: session`, which refuses
 # the page-only verbs, while JSON on stdin would run as `via: page`.
 ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
@@ -65,6 +68,43 @@ ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
          "Bash(python3 System/status/page_action.py question-done:*)"]
 MIN_LEFT = 60        # seconds: start no place with less than this left of the step's limit
 MARGIN = 20          # seconds kept back from the limit for the commit and the restore
+
+
+_PA = None
+
+
+def page_action():
+    """page_action.py of the status page extra, or None where there is none: it knows which pages a question may change."""
+    global _PA
+    if _PA is None:
+        path = STATUS / "page_action.py"
+        if not path.is_file():
+            return None
+        sys.path.insert(0, str(STATUS))
+        spec = importlib.util.spec_from_file_location("garrick_work_in_page_action", str(path))
+        _PA = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PA)
+    return _PA
+
+
+def listed_paths(ws: Path, wiki: str, rel: str, top: Path) -> Optional[Set[str]]:
+    """The paths this one answer may change, from the repository's top: the pages `question-work` lists for it, the question's own
+    file (which `question-done` marks) and the raw answer it cites. None when they cannot be listed: then nothing is kept (W6)."""
+    pa = page_action()
+    if pa is None:
+        return None
+    try:
+        q = pa.WikiQuestion(ws, {"wiki": wiki, "file": rel})
+        wall = pa.wall_sentence(ws)
+        record = pa.own_record(q, wall)
+        pages, _, _ = pa.question_pages(q, wall)
+        files = list(pages) + [q.path]
+        for name in (record, record + ".md"):
+            if (q.dir / name).is_file():
+                files.append((q.dir / name).resolve())
+        return {os.path.relpath(str(f), str(top.resolve())).replace(os.sep, "/") for f in files}
+    except Exception:
+        return None
 
 
 def panel():
@@ -110,6 +150,9 @@ def prompt_for(scope: str, place: str, wiki: str = "", rel: str = "") -> str:
             "only. Change only the pages `question-work` lists, cite the raw answer, and mark the question done. Never commit, "
             "never send, and never ask a question: where the answer is unclear, or `question-work` refuses, leave the question as "
             "it is and count it as held.\n"
+            "Look with Read, Grep and Glob. The shell runs only `python3 System/status/page_action.py question-work` and "
+            "`python3 System/status/page_action.py question-done`: no other shell command, never wait for a file to change, and "
+            "never run the lint, since the nightly run's own steps do that.\n"
             "Then write one line exactly: WORKED <n> HELD <n>, and after it one line that says exactly %s" % (place, rel, wiki, skill, SENTINEL))
 
 
@@ -171,9 +214,16 @@ def restore(repo: Path, before: Set[str], rel: str) -> None:
                 pass
 
 
-def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> Optional[str]:
-    """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why."""
+def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int, listed=None) -> Optional[str]:
+    """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why. With
+    `listed` (the paths `question-work` named for this answer), only those are committed; any other path the wiki holds changed
+    is left exactly as it is, and counted for the step's summary line (W6)."""
     paths = sorted(changes(repo, rel) - before)
+    if listed is not None:
+        others = [p for p in paths if p not in listed]
+        paths = [p for p in paths if p in listed]
+        if others:
+            LEFT_ALONE[place] = LEFT_ALONE.get(place, 0) + len(others)
     if not paths:
         return None
     git(repo, "add", "-A", "--", *paths)
@@ -193,12 +243,32 @@ def read_held(ws: Path) -> Dict[str, dict]:
     return {k: v for k, v in (held or {}).items() if isinstance(v, dict) and v.get("why") in REASONS} if isinstance(held, dict) else {}
 
 
-def write_held(ws: Path, held: Dict[str, dict]) -> None:
+def question_key(scope: str, wiki: str, rel: str) -> str:
+    """Twelve hex digits that name one question in the file below: never its path, its title or its answer."""
+    return hashlib.sha1(("%s\0%s\0%s" % (scope, wiki, rel)).encode("utf-8", "surrogatepass")).hexdigest()[:12]
+
+
+def read_stopped(ws: Path) -> Dict[str, dict]:
+    """For each question whose call was stopped at the step's limit, how many runs stopped it and the day of the last (#629)."""
+    try:
+        data = json.loads(ws.joinpath(*HELD_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    found = data.get("stopped") if isinstance(data, dict) else None
+    return {k: {"n": int(v["n"]), "day": str(v.get("day") or "")} for k, v in (found or {}).items()
+            if isinstance(v, dict) and re.fullmatch(r"[0-9a-f]{12}", str(k)) and isinstance(v.get("n"), int) and v["n"] > 0} \
+        if isinstance(found, dict) else {}
+
+
+def write_held(ws: Path, held: Dict[str, dict], stopped: Optional[Dict[str, dict]] = None) -> None:
     path = ws.joinpath(*HELD_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".status-answers-")
+    body = {"held": held}
+    if stopped:
+        body["stopped"] = stopped
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"held": held}, f, indent=1, sort_keys=True)
+        json.dump(body, f, indent=1, sort_keys=True)
         f.write("\n")
     os.replace(tmp, str(path))
 
@@ -210,10 +280,14 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
     if repo is None:
         return "assistant", 0
     before = changes(repo, folder)
+    listed = listed_paths(ws, wiki, rel, repo)
     extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
     code, text = agent.run(tier, prompt_for(scope, place, wiki, rel), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_TIMEOUT:
         STOPPED.append(place)
+    if listed is None:
+        restore(repo, before, folder)                 # which pages this answer may change cannot be told: nothing is kept (W6)
+        return "incomplete", 0
     if code == agent.EXIT_CAP:
         restore(repo, before, folder)
         return "cap", 0
@@ -225,7 +299,7 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
     if worked + held == 0:
         restore(repo, before, folder)                 # a call that worked nothing in and held nothing back did not finish (#629)
         return "incomplete", 0
-    why = commit(repo, before, folder, place, worked)
+    why = commit(repo, before, folder, place, worked, listed)
     if why:
         return why, 0
     return ("held" if held else None), worked
@@ -247,36 +321,52 @@ def main(argv: Optional[List[str]] = None) -> int:
     held = read_held(ws)
     for scope in [s for s in held if s not in {i[0] for i in items}]:
         del held[scope]                               # nothing waits there any more
+    stops = read_stopped(ws)
+    for key in [k for k in stops if k not in {question_key(i[0], i[2], i[3]) for i in items}]:
+        del stops[key]                                # answered or gone: no longer counted
     total = 0
     del STOPPED[:]
+    LEFT_ALONE.clear()
     deadline = time.time() + args.limit if args.limit else None
     for scope, group in itertools.groupby(items, key=lambda i: i[0]):
         group = list(group)
         place = group[0][1]
         worked_in, reason, cut = 0, None, False
         for _, _, wiki, rel in group:
-            if cut or (deadline is not None and deadline - time.time() < MIN_LEFT):
+            key = question_key(scope, wiki, rel)
+            if stops.get(key, {}).get("n", 0) >= STOP_LIMIT:
+                why, worked = "long", 0                # stopped at the limit on two runs: held for the card, the others go on (#629)
+            elif cut or (deadline is not None and deadline - time.time() < MIN_LEFT):
                 cut = True                            # the limit is reached between answers: what is left waits for the night after
                 why, worked = "cap", 0
             else:
+                stopped_before = len(STOPPED)
                 why, worked = work_place(ws, scope, place, wiki, rel, args.tier, deadline)
+                if len(STOPPED) > stopped_before:     # this question's call was stopped while it ran
+                    stops[key] = {"n": stops.get(key, {}).get("n", 0) + 1, "day": today.isoformat()}
+                    if stops[key]["n"] >= STOP_LIMIT:
+                        why = "long"
+                elif why in (None, "held"):
+                    stops.pop(key, None)              # it ran to its end: the count starts again
             total += worked
             if why is None:
                 worked_in += 1
             else:
                 reason = reason or why
         n_left = len(group) - worked_in
-        print("work_in: %s: %d worked in, %d left%s%s" % (place, worked_in, n_left, " (%s)" % reason if reason else "",
-                                                        ", a call was stopped at its time limit" if place in STOPPED else ""))
+        print("work_in: %s: %d worked in, %d left%s%s%s" % (
+            place, worked_in, n_left, " (%s)" % reason if reason else "", ", a call was stopped at its time limit" if place in STOPPED else "",
+            ", %d other changed path%s in the wiki left as %s" % (LEFT_ALONE[place], "" if LEFT_ALONE[place] == 1 else "s",
+                                                              "it is" if LEFT_ALONE[place] == 1 else "they are") if LEFT_ALONE.get(place) else ""))
         if reason is None:
             held.pop(scope, None)
         else:
             held[scope] = {"why": reason, "day": today.isoformat()}
-        write_held(ws, held)
+        write_held(ws, held, stops)
     if not items:
         print("work_in: no answer is waiting")
         if ws.joinpath(*HELD_FILE).exists():
-            write_held(ws, held)
+            write_held(ws, held, stops)
     agent.report_items(total)
     return agent.EXIT_TIMEOUT if STOPPED else 0
 

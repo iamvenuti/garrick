@@ -21,6 +21,8 @@ wall is the zone's.
     python3 intake.py process-notes [--tier sonnet] [--dry-run]     file the notes waiting, and update a thread when one warrants it (#572)
     python3 intake.py notes --project PATH [--thread NAME]  the notes since the thread's last wrap, and those awaiting review
     python3 intake.py learn --domain DOMAIN --party TAG     mail from DOMAIN suggests TAG from now on
+    python3 intake.py ask --file FILE --question "Work, from Acme?" --option "Work=File it in Work" ...
+                                                      an unattended run's question about one item in a zone's Inbox (#634)
 
 Every command takes `--root PATH` (default: the workspace this script sits in)
 and `--today YYYY-MM-DD`. Standard library only, Python 3.9 or later. On
@@ -1490,6 +1492,78 @@ def _tags(value: str) -> List[str]:
     return [t for t in (value or "").split(",") if t.strip()]
 
 
+# --------------------------------------------------------------------------- a question, for an unattended run (#634)
+
+QUESTION_BOX = "Needs you"
+MOST_OPTIONS = 6
+MOST_ASK = 200
+MOST_LABEL = 40
+
+
+def _foreign_names(ctx: dict, zone: str) -> List[str]:
+    """Every name the Parties and People tables give to a walled zone other than `zone`: its parties, their tags and
+    domains, and the people of those parties. A question may name none of them."""
+    tags = {t for t in ctx["parties"] if _walled_zone(ctx, t) not in ("", zone)}
+    names = set()
+    for t in tags:
+        names |= {t, _name(ctx, t)} | set(ctx["parties"][t].get("domains") or [])
+    names |= {p.get("name") or "" for p in ctx["people"] if strip_tag(p.get("party") or "") in tags}
+    return sorted(n for n in names if len(n.strip()) > 1)
+
+
+def ask_question(root: Path, item: Path, question: str, options: List[Tuple[str, str]], today: Optional[str] = None) -> Tuple[Path, bool]:
+    """One question about an item that waits in a zone's Inbox, as a file in that zone's `Needs you` folder, in the form the
+    status page lists: a bold line to ask, a button for each option, and the item's name. (the question's file, whether it
+    was written now). The item stays where it is. An item in the Meetings inbox or the workspace's own Inbox gets none: no
+    zone holds a question about it, so it is left for a visible session. The words name nothing of a walled zone but the
+    item's own; a question already open for the item is not asked twice."""
+    item = Path(item)
+    item = item if item.is_absolute() else root / item
+    where, zone = place_of(root, item)
+    if where != "zone":
+        raise Refusal("%s is not in a zone's inbox, so no question is written about it. Leave it where it is." % item.name)
+    if item.is_symlink() or not item.is_file():
+        raise Refusal("%s is not a file waiting in the %s inbox." % (item.name, zone))
+    question = " ".join(str(question or "").split())
+    if not question or len(question) > MOST_ASK or "**" in question:
+        raise Refusal("Ask in one short line, with no bold marks.")
+    if not 1 <= len(options) <= MOST_OPTIONS:
+        raise Refusal("Give from one to %d answers." % MOST_OPTIONS)
+    clean = []
+    for label, does in options:
+        label, does = " ".join(str(label).split()), " ".join(str(does).split())
+        if not label or len(label) > MOST_LABEL or re.search(r"[\[\]]", label) or label.casefold() in ("x", "not now") or not does:
+            raise Refusal("Each answer needs a short label, with no brackets and not `Not now`, and what it does.")
+        clean.append((label, does))
+    if len({l.casefold() for l, _ in clean}) != len(clean):
+        raise Refusal("Two answers carry the same label.")
+    ctx = load_context(root)
+    text = " ".join([question] + [l + " " + d for l, d in clean]).casefold()
+    for name in _foreign_names(ctx, zone):
+        if re.search(r"(?<![\w])%s(?![\w])" % re.escape(name.casefold()), text):
+            raise Refusal("The question names something of a walled zone other than %s. Ask only which zone files it." % zone)
+    box = root / "Zones" / zone / QUESTION_BOX
+    if box.is_symlink():
+        raise Refusal("%s is a link." % box.name)
+    stamp = (today or datetime.date.today().isoformat())
+    for f in sorted(box.glob("*.md")) if box.is_dir() else []:
+        fm = parse_frontmatter(f)
+        if str(fm.get("intake") or "") == item.name and str(fm.get("status") or "open").lower() in ("open", "later", "answered"):
+            return f, False
+    slug = re.sub(r"[^a-z0-9]+", "-", item.stem.casefold()).strip("-")[:40] or "item"
+    name = "%s - ask %s.md" % (stamp.replace("-", "")[2:], slug)
+    body = ["---", "type: question", "status: open", "asked: %s" % stamp, "intake: %s" % _yaml(item.name), "---", "", "**%s**" % question, ""]
+    body += ["- [%s] %s" % (l, d) for l, d in clean]
+    box.mkdir(exist_ok=True)
+    out = box / name
+    n = 2
+    while out.exists():
+        out = box / ("%s %d.md" % (name[:-3], n))
+        n += 1
+    write_new(root, root / "Zones" / zone, out, ("\n".join(body) + "\n").encode("utf-8"))
+    return out, True
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="List, read and file what is waiting in the inboxes. "
                                              "Every filing command takes its destination explicitly.")
@@ -1545,6 +1619,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     w = sub.add_parser("notes", help="the notes since a thread's last wrap, and those waiting for review")
     w.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
     w.add_argument("--thread", default="", help="a thread of it; leave out for a one-thread project")
+    a = sub.add_parser("ask", help="an unattended run's question about one item in a zone's Inbox, as a Needs you file")
+    a.add_argument("--file", required=True, help="the item, in Zones/<Zone>/Inbox/")
+    a.add_argument("--question", required=True, help="one short line, such as: Acme Review or Acme Renewal?")
+    a.add_argument("--option", action="append", default=[], metavar="LABEL=WHAT_IT_DOES", help="one answer; repeat for each")
     l = sub.add_parser("learn", help="record that mail from a domain belongs to a party")
     l.add_argument("--domain", required=True)
     l.add_argument("--party", required=True)
@@ -1597,6 +1675,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1 if res["failed"] else 0
         elif args.command == "notes":
             print(json.dumps(notes_since(root, args.project, args.thread or None), indent=2))
+        elif args.command == "ask":
+            pairs = [tuple(o.split("=", 1)) for o in args.option if "=" in o]
+            if len(pairs) != len(args.option):
+                raise Refusal("Write each answer as LABEL=WHAT_IT_DOES.")
+            made, fresh = ask_question(root, Path(args.file), args.question, pairs, args.today)
+            print("%s\t%s" % ("asked" if fresh else "already asked", rel(made)))
         elif args.command == "learn":
             print("%s\t%s\t%s" % (learn(root, args.domain, args.party), args.domain.strip().lower(), strip_tag(args.party)))
     except Refusal as exc:

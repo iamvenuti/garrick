@@ -2948,6 +2948,53 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
     return out
 
 
+INBOX_STATE = ("System", "generated", "status-inbox.json")
+
+
+def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Optional[dict]:
+    """What the last background run of Process the Inbox left for the page (#634): `running`, `done` or `failed`, with its one
+    sentence and its figures for each place, never over two. None for none, for one over a day old, and for a `running` that no
+    process holds the run's lock for any more (a run that died)."""
+    try:
+        data = json.loads(ws.joinpath(*INBOX_STATE).read_text(encoding="utf-8"))
+        at = dt.datetime.fromisoformat(str(data.get("at")))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
+        return None
+    if data["state"] == "running":
+        try:
+            import fcntl
+            fd = os.open(str((folder or jobs_dir(None)) / "inbox-run.lock"), os.O_RDWR)
+        except (OSError, ImportError):
+            return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return None                 # nobody holds it: the run is not going
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return data
+
+
+def inbox_act(state: Optional[dict], ws: Path) -> Tuple[str, str]:
+    """(the row's button, its result sentence) for Process the Inbox (#634). The main button starts the background run in the
+    Mac app (`inbox-run`); a browser, and the app when no background assistant is there, get the visible request. While a run
+    goes the button waits; a run that failed, or an item that no zone may hold a question about, offers the visible session."""
+    visible = request_button("Process it with my assistant", "process the inbox", ws)
+    if state and state["state"] == "running":
+        return '<button class="act" type="button" disabled>Processing\u2026</button>', "Processing the inbox\u2026"
+    start = act_button(json.dumps({"verb": "inbox-run"}), "Process the Inbox", "Processing the inbox\u2026", "act apponly") + \
+        request_button("Process the Inbox", "process the inbox", ws, cls="act webonly")
+    if state is None:
+        return start, ""
+    if state["state"] == "failed":
+        return visible, str(state.get("say") or "")
+    needs = sum(int(v.get("needs") or 0) for v in (state.get("places") or {}).values() if isinstance(v, dict))
+    return (visible if needs else start), str(state.get("say") or "")       # the sentence already says "1 item needs you", place by place
+
+
 def check_file(out: Path) -> Path:
     """Where the check's last result for the page at `out` is kept: beside it, never committed."""
     return out.with_name(out.stem + ".check.json")
@@ -7799,6 +7846,21 @@ def late_need(z: dict, today: dt.date, actions: bool = False) -> dict:
             "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
 
 
+# ---- Process the Inbox in the background (#634): the fallback ------------------------------
+# The button sends `inbox-run`, and an answer to a question it asked sends `intake-answer`; with no background assistant
+# the reply says `unavailable`, and the page opens the visible session as the button did before: the request button the row
+# keeps for a browser holds the folder and the phrase.
+INBOX_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&(q.verb==='inbox-run'||q.verb==='intake-answer')&&out&&out.unavailable){var a=window.GarrickAssistant&&GarrickAssistant(),
+b=document.querySelector('button[data-request="process the inbox"]');
+if(a&&b){host.postMessage({launch:a,folder:b.dataset.folder,phrase:b.dataset.request});if(window.GarrickSay)GarrickSay('Opening your assistant on \u201cprocess the inbox\u201d\u2026')}
+else if(window.GarrickSay)GarrickSay('Switch on an assistant in Settings to process the inbox from here.');return}
+return prev?prev(q,out):undefined};})();
+"""
+
+
 # ---- Waiting on you now > Follow-ups (#603) ---------------------------------------------
 # One row for each zone that has a Waiting on line whose chase day has come. What the follow-up found is read from the
 # zone's own .todo-followups.json, written by the todo skill's script; this file only reads it. A line nobody has looked at
@@ -8049,6 +8111,8 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
         if f.name.startswith((".", "_")):
             continue
         fm = frontmatter(f)
+        if folder == zone and not as_text(fm.get("intake")).strip():
+            continue                    # the zone's own box holds only what an inbox run asked (#634)
         state = as_text(fm.get("status")).strip().lower() or "open"
         later = as_date(fm.get("later"))
         if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
@@ -8066,7 +8130,8 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
                 ask = line.strip().strip("*").strip()
         if ask:
             out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
-                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name})
+                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name,
+                        "intake": bool(as_text(fm.get("intake")).strip()) and folder == zone})
     return out
 
 
@@ -8075,13 +8140,21 @@ def question_need(q: dict, today: dt.date) -> dict:
     the threads. An answer in the user's own words is the assistant's: the row offers the listed answers only."""
     own = q["own"].casefold()
     ask = q["ask"] if len(q["ask"]) <= QUESTION_ASK else q["ask"][:QUESTION_ASK - 1].rstrip() + "\u2026"
-    buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
-                                 label, "Noting: %s\u2026" % label, "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
-                      for label in q["options"] if label.casefold() != own)
-    buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
-                          "Putting it off until tomorrow\u2026", "act apponly", ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"])))
+    attrs = ' data-q="%s" data-qz="%s"' % (E(q["file"]), E(q["zone"]))
+    if q.get("intake"):                     # a question an unattended inbox run asked, in the zone's own Needs you folder (#634)
+        buttons = "".join(act_button(json.dumps({"verb": "intake-answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                     label, "Filing it\u2026", "act apponly", attrs)
+                          for label in q["options"] if label.casefold() != own)
+        buttons += act_button(json.dumps({"verb": "intake-answer", "zone": q["zone"], "file": q["file"], "label": "Not now"}), "Not now",
+                              "Putting it off until tomorrow\u2026", "act apponly", attrs)
+    else:
+        buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                     label, "Noting: %s\u2026" % label, "act apponly", attrs)
+                          for label in q["options"] if label.casefold() != own)
+        buttons += act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                              "Putting it off until tomorrow\u2026", "act apponly", attrs)
     return {"kind": "question", "group": "todo", "level": "warning", "zone": q["zone"], "count": 1,
-            "text": "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
+            "text": ask if q.get("intake") else "%s: %s" % (q["work"], ask), "late": "asked %s" % day_said(q["asked"], today) if q["asked"] else "",
             "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
 
 
@@ -8089,7 +8162,7 @@ def question_needs(ws: Path, today: dt.date) -> List[dict]:
     """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
     out: List[dict] = []
     for zone in visible_dirs(ws / "Zones"):
-        found: List[dict] = []
+        found: List[dict] = questions_in(zone, zone, today)      # the zone's own: what an inbox run asked (#634)
         for project in visible_dirs(zone):
             hub = project / (project.name + ".md")
             if hub.is_file():
@@ -8409,7 +8482,7 @@ if(prev)return prev(q,out)};
 # and the card's sentence follow it; a refusal leaves the row, and the page says why in its own line.
 QUESTION_JS = r"""
 (function(){var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&(q.verb==='answer'||q.verb==='later')&&out&&out.ok){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file&&x.dataset.qz===q.zone})[0],
+if(q&&(q.verb==='answer'||q.verb==='later'||q.verb==='intake-answer')&&out&&out.ok&&!out.unavailable){var b=[].filter.call(document.querySelectorAll('#wneeds [data-q]'),function(x){return x.dataset.q===q.file&&x.dataset.qz===q.zone})[0],
 row=b&&b.closest('.wneed');if(row){var g=row.closest('.wgroup'),c=document.getElementById('waiting-now');row.remove();
 if(g){var n=g.querySelector('.wgn'),left=g.querySelectorAll('.wneed').length;if(left)n.textContent=left;else g.remove()}
 if(c){c.dataset.n=Math.max(0,(+c.dataset.n||0)-1);if(window.GarrickNeedsLead)window.GarrickNeedsLead()}}}
@@ -8610,8 +8683,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         # zone the row does not name (W4). With one zone the link is that inbox, as it was; with several, the attention list's own
         # link is the card, since no single inbox is the row.
         attn.append(("warning", said_inbox, link(full[0][1]) if len(full) == 1 else "#waiting-now"))
+        inbox_button, inbox_said = inbox_act(inbox_state(ws, now), ws)
         detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
-                              "act": request_button("Process the Inbox", "process the inbox", ws),
+                              "act": inbox_button, "late": inbox_said,
                               "links": [(name, link(f)) for name, f in full] if len(full) > 1 else []}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
@@ -9126,7 +9200,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

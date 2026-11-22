@@ -181,13 +181,17 @@ VERB_ANSWERS = {kind: ids + ((UNKEEP,) if KEEP in ids else ()) for kind, ids in 
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
 # The handoff answers that are one bounded edit of the finding's own file (#592): the engine runs them in the background, in the
-# file's zone or wiki, and commits through the wall check; a visible assistant opens only when it is not available. A to-do line moves
-# what came of it into the thread's notes, a second file, so it stays a handoff. *Undo* is the one more answer the verb takes.
-BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": ("shorten",), "fix-failed": ("fix-now",)}
+# file's zone or wiki, and commits through the wall check; a visible assistant opens only when it is not available. A split creates
+# new notes, only in the finding's own folder (#626). A to-do line's engine run may also change the thread notes the long lines
+# name, and a correction's the files correct.py lists for it, in the finding's own zone: the verb works both lists out and checks
+# them before the run (page_action.py). *Undo* is the one more answer the verb takes. Left as visible handoffs on purpose: a wrong
+# attribution and a hook of the user's own (judgment).
+BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": ("shorten",), "fix-failed": ("fix-now",),
+           "note-long": ("split",), "other": ("fix-now",), "todo-long": ("shorten",), "correction": ("finish",)}
 UNDO = "undo-bounded"
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later", HOLDS), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
 for _kind, _ids in BOUNDED.items():
     VERB_ANSWERS[_kind] = VERB_ANSWERS[_kind] + _ids + (UNDO,)
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later", HOLDS), "answers-held": ("later",), OTHER: ("later", KEEP, UNKEEP)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -697,7 +701,49 @@ def bounded_request(kind: str, answer: str, rel: str) -> str:
         return ("Shorten the meeting page %s to who was there, the key points and the actions. Leave the transcript as it is." % rel)
     if (kind, answer) == ("fix-failed", "fix-now"):
         return "Make the small fix that Nurture holds back for %s." % rel
+    if (kind, answer) == ("note-long", "split"):
+        return ("Split the long sections of %s into their own notes in the %s's folder, link them from it, and keep the rest of the "
+                "page as it is." % (rel, "thread" if "/Threads/" in rel else "project"))
+    if (kind, answer) == (OTHER, "fix-now"):
+        return ("Run the quick check on %s, and fix what it reports for that page. Change nothing else on it." % rel)
     raise KeyError((kind, answer))
+
+
+def bounded_todo_request(rel: str, threads) -> str:
+    """The engine's request for a to-do list's long lines (#626): `threads` are the thread notes the long lines' own links name,
+    worked out and checked before the run. With none, the lines are shortened and nothing moves to a note."""
+    if threads:
+        return ("Shorten the long lines of %s to one action each, and keep their dates and tags. Move what came of each line into "
+                "the dated entry of the thread note it names, which is one of the other files given. Change no other line." % rel)
+    return "Shorten the long lines of %s to one action each, and keep their dates and tags. Change no other line." % rel
+
+
+def bounded_correction_request(old: str, new: str) -> str:
+    """The engine's request to finish a correction (#626): the value, and the files it is given, nothing more."""
+    return ('Change "%s" to "%s" in every file you are given, wherever it stands as that value and never inside a longer word. '
+            'Do not write that the value was ever different. Change nothing else.' % (old, new))
+
+
+CORRECT_LINE = re.compile(r'^Correct "([^"\n]{1,200})" to "([^"\n]{1,200})": ')
+
+
+def correction_values(item: dict):
+    """(old, new) a standing correction finding holds in its line (Nurture's `say_correction`), or None for one that holds
+    no values, such as a held file or a refused commit: those stay with a visible assistant."""
+    m = CORRECT_LINE.match(str(item.get("line") or ""))
+    return (m.group(1), m.group(2)) if m and m.group(1) != m.group(2) else None
+
+
+# The first line of the commit a bounded edit makes, by kind and answer: one fixed sentence, never a path or a page's name.
+BOUNDED_MESSAGE = {("note-long", "split"): "Split a long note into its own notes", (OTHER, "fix-now"): "Fix a page",
+                   ("todo-long", "shorten"): "Shorten the long lines of a to-do list", ("correction", "finish"): "Finish a correction"}
+
+
+def bounded_new_in(kind: str, answer: str, rel: str) -> str:
+    """The one folder a bounded edit may create new notes in, from the workspace: a split's is the folder of the note it splits."""
+    if (kind, answer) == ("note-long", "split"):
+        return rel.rsplit("/", 1)[0]
+    return ""
 
 
 def bounded_said(kind: str, ws, rel: str) -> str:
@@ -714,6 +760,14 @@ def bounded_said(kind: str, ws, rel: str) -> str:
         return "Shortened the resume point of %s." % note_name(rel)[0]
     if kind == "wall":
         return "Took the private material out of “%s”." % stem(rel)
+    if kind == "note-long":
+        return "Split the long sections of “%s” into their own notes." % note_name(rel)[0]
+    if kind == "todo-long":
+        return "Shortened the long lines of the %s to-do list." % place(rel)
+    if kind == "correction":
+        return "Finished the correction in %s." % place(rel)
+    if kind == OTHER:
+        return "Made the change to “%s”." % stem(rel)
     return "Made the small fix to “%s”." % stem(rel)
 
 
@@ -765,6 +819,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
                 continue            # the verb would refuse it: only a page of a zone or a wiki can be left as it is
             if a["action"] == "handoff":
                 a["phrase"] = other_phrase(item)
+                if a["id"] in BOUNDED[OTHER] and keepable_path(path) and path.endswith(".md"):      # one page of a zone or a wiki (#626)
+                    a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": a["id"]}
             else:
                 # the executor's request has three fields and no more: the finding's own mark rides in the answer, `later-<which>`
                 # or `keep-<which>`
@@ -799,6 +855,12 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
             # (a project kept under System/) is in no repository the engine commits in: a visible handoff with its phrase (#623)
             if a["id"] in BOUNDED.get(plain, ()) and keepable_path(path):
                 a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
+                if plain == "correction":       # the values ride with the request, checked against the record when it runs
+                    vals = correction_values(item)
+                    if vals:
+                        a["req"].update(old=vals[0], new=vals[1])
+                    else:
+                        del a["req"]            # a held or refused correction holds no values: a visible assistant
         elif a["action"] == "open":
             a["reqs"] = [{"verb": "note-open", "path": path}]
         elif a["action"] in ("look", "allow"):
@@ -811,6 +873,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
         if fb:
             f = dict(next(x for x in ANSWERS_NO_MOVE[plain] if x["id"] == fb))
             f["phrase"] = handoff_phrase(plain, fb, item)
+            if fb in BOUNDED.get(plain, ()) and keepable_path(path):
+                f["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": fb}
             a["fallback"] = f
     q.update(tag=TAGS[plain], sentence=sentence, why=why, answers=answers, free=free_prefix(plain, item), recommended="" if plain == "wall" else answers[0]["id"])
     if plain == "wall":
@@ -1019,7 +1083,8 @@ HELD_FILE = ("System", "generated", "status-answers.json")
 # Why a place's answers were left, by the code work_in.py keeps: the plain words. The file holds a code and a day, never a path or a title.
 ANSWERS_HELD = {"cap": "The assistant's limit for scheduled calls was reached.", "assistant": "The assistant could not be reached tonight.",
                 "incomplete": "The assistant did not finish.", "held": "Some of the answers were unclear, so the assistant left them.",
-                "commit": "The wall check refused the change, so nothing was kept."}
+                "commit": "The wall check refused the change, so nothing was kept.",
+                "long": "One answer took longer than a night's run allows, so the night leaves it and works in the others."}
 
 
 def held_answers(ws, places: Dict[str, str], waiting: Dict[str, int], hidden: set) -> Dict[str, List[dict]]:
@@ -1096,7 +1161,9 @@ def question_html(q: dict) -> str:
         if fb:        # shown in its place when this answer is refused for "nothing can move" (#540); a handoff, so it needs no host
             opts += ('<button class="opt" type="button" data-id="%s" data-for="%s" data-fa="%s" hidden><span class="n">%d</span><span>%s'
                      '<small><b class="recd">Recommended.</b> %s</small></span></button>'
-                     % (E(fb["id"]), E(a["id"]), E(json.dumps({"a": "handoff", "id": fb["id"], "phrase": fb["phrase"]}, sort_keys=True)), n, E(fb["label"]), E(fb["does"])))
+                     % (E(fb["id"]), E(a["id"]), E(json.dumps(dict({"a": "handoff", "id": fb["id"], "phrase": fb["phrase"]},
+                                                                    **({"req": fb["req"]} if fb.get("req") else {})), sort_keys=True)),
+                        n, E(fb["label"]), E(fb["does"])))
     if field and not field["first"]:
         opts += field_row()
     typed = bool(q.get("free") or field)
@@ -1181,9 +1248,15 @@ if(!dlg)return;
 var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['kept','left as it is'],['skipped','skipped']],UNSAVED=['skipped'];
 function fresh(){var t={};LINES.forEach(function(l){t[l[0]]=0});return t}
 var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null,taken={};
+/* Bounded edits run in the background (#626): the question leaves the queue at once (busy), its request waits its turn, one at a
+   time for each zone or wiki, and the result comes back to its row when the engine is done. A reload drops the waiting ones: their
+   findings are asked again. */
+var busy={},chain={};
+function pump(sc){var c=chain[sc];if(!c||c.on||!c.list.length||!host)return;c.on=c.list.shift();host.postMessage({act:c.on.req})}
+function running(){return Object.keys(busy).length}
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
 function qs(s){return[].slice.call(s.querySelectorAll('[data-q]'))}
-function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!isHanded(q)})}
+function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!busy[q.dataset.gk]&&!isHanded(q)})}
 /* What was handed to the assistant, and the line that says so (#592). Kept in the session, apart from KEY, which a close clears: a
    question handed over is not asked again until its file changes (the page's own hash of it) or a day passes, and the line stays
    until the next answer, across a close and a reload. A bounded edit's result and its Undo are kept the same way. */
@@ -1208,7 +1281,7 @@ function boundedOK(){var a=window.GarrickApp||{};return!!host&&a.ask!==false}
 /* what a reload keeps: the answers given, never a refusal, a disabled answer or a skip (Skip for now is the dialog's, not the disk's) */
 function kept(){var t={},n={};for(var k in tally)if(UNSAVED.indexOf(k)<0)t[k]=tally[k];for(var g in notes)if(!notes[g].bad)n[g]=notes[g];return{tally:t,notes:n}}
 function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,taken:taken,t:Date.now()}))}}
-function sum(){var p=[];LINES.forEach(function(l){if(tally[l[0]])p.push(tally[l[0]]+' '+l[1])});return p.join(', ')||'Nothing answered.'}
+function sum(){var p=[];LINES.forEach(function(l){if(tally[l[0]])p.push(tally[l[0]]+' '+l[1])});if(running())p.push(running()+' working in the background');return p.join(', ')||'Nothing answered.'}
 function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length});return o[0]||null}
 function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
 var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}else p.hidden=true}
@@ -1260,6 +1333,8 @@ var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detai
 function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]')||q.querySelector('.opt[data-id="'+f.id+'"] button[data-fa]');if(b){b.disabled=true;b.classList.remove('rec')}
 if(f.cant){var fb=q.querySelector('button.opt[data-for]');if(fb){var r=q.querySelector('button.opt[data-id="'+fb.dataset.for+'"]');
 if(r){r.hidden=true;r.classList.remove('rec')}fb.hidden=false;fb.classList.add('rec')}}
+if(f.phrase&&!q.querySelector('[data-qtry]')){var t=document.createElement('button');t.type='button';t.className='act';t.setAttribute('data-qtry','1');
+t.dataset.phrase=f.phrase;t.textContent='Try with my assistant';var sy=q.querySelector('.qsay');sy.parentNode.insertBefore(t,sy.nextSibling)}
 q.querySelector('[data-qskip]').hidden=false}
 function open(scope){var s=all().filter(function(x){return x.dataset.scope===scope})[0];if(!s)return;all().forEach(function(x){x.hidden=true});
 cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)dlg.showModal();show()}
@@ -1283,11 +1358,13 @@ if(t.closest('[data-qclose]')){st.del(KEY);if(dlg.open)dlg.close();return}
 var nx=t.closest('[data-qnext]');if(nx&&nx.dataset.qnext){tally=fresh();cur=all().filter(function(x){return x.dataset.scope===nx.dataset.qnext})[0];gone={};notes={};skip={};refused={};pend=null;show();return}
 var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');skip[sq.dataset.gk]=1;tally.skipped++;pend=null;clearLast();show();return}
 var un=t.closest('#queue [data-qundo]');if(un){var lu=hand().last;if(!lu||!lu.undo||!host)return;un.disabled=true;host.postMessage({act:lu.undo});return}
+var ty=t.closest('#queue [data-qtry]');if(ty){var tq=ty.closest('[data-q]');handoff(ty.dataset.phrase);ty.remove();finish(tq,'handed');return}
 var sh=t.closest('#queue [data-qshow]');if(sh){var ls=hand().last;if(ls&&ls.show&&host)host.postMessage({act:{verb:'note-open',path:ls.show}});return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
 /* a second press while the first answer is still out sends nothing: one answer, one request (#535) */
 if(pend&&pend.key===q.dataset.gk&&d.a!=='reveal'&&!(d.a==='handoff'&&!(d.req&&boundedOK())))return;
-if(d.a==='handoff'){if(d.req&&boundedOK()){out(q,'Working on it\u2026');pend={key:q.dataset.gk,id:d.id,phrase:d.phrase,bounded:1};save();host.postMessage({act:d.req});return}
+if(d.a==='handoff'){if(d.req&&boundedOK()){var sc=cur.dataset.scope;delete refused[q.dataset.gk];busy[q.dataset.gk]=1;
+(chain[sc]=chain[sc]||{on:null,list:[]}).list.push({req:d.req,key:q.dataset.gk,id:d.id,phrase:d.phrase,scope:sc});pump(sc);pend=null;clearLast();show();return}
 handoff(d.phrase);finish(q,'handed');return}
 if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}
 if(!host)return;
@@ -1347,6 +1424,13 @@ var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
 if(q&&q.verb==='finding'&&(q.answer==='undo-bounded'||/^unkeep/.test(q.answer||''))){var o=hand();if(o.last){o.last.text=(res&&res.say)||(res&&res.ok?'Undone.':'That did not work.');o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
+var job=null,jsc=null;if(q&&q.verb==='finding')Object.keys(chain).forEach(function(k){var c=chain[k];if(!job&&c.on&&c.on.req.kind===q.kind&&c.on.req.path===q.path&&c.on.req.answer===q.answer){job=c.on;jsc=k}});
+if(job){chain[jsc].on=null;delete busy[job.key];var same=cur&&cur.dataset.scope===jsc,jel=all().filter(function(x){return x.dataset.scope===jsc})[0],
+je=jel&&qs(jel).filter(function(x){return x.dataset.gk===job.key})[0];
+if(same&&je){if(res&&res.ok){gone[job.key]=1;tally.done++;setLast(res.say,{undo:res.undo||null,show:q.path})}
+else if(res&&res.unavailable){handoff(job.phrase);finish(je,'handed')}
+else refused[job.key]={say:(res&&res.say)||'That did not work.',id:job.id,phrase:job.phrase}}
+pump(jsc);if(same)show();if(prev)return prev(q,res);return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}

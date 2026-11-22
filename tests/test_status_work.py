@@ -668,6 +668,9 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"chase"}
         # *Drop it* on a held outbox request (#612) removes the held file from the zone's Inbox/.outbox/: no commit, no lock.
         unzoned |= {"outbox-drop"}
+        # Process the Inbox in the background (#634) takes the jobs folder's inbox-run lock and spans every zone; an answer to a
+        # question it asked starts the same run, and only its Not now takes one zone's lock, for a single file.
+        unzoned |= {"inbox-run", "intake-answer"}
         # Settings' role (#621) is written outside the workspace, and the read guard registers a hook there and saves the
         # workspace's settings file: neither commits in a zone or takes its lock.
         unzoned |= {"machine-role", "read-guard"}

@@ -357,6 +357,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "todo-retire",
          "chase",
          "outbox-drop",
+         "inbox-run", "intake-answer",
          "machine-role", "read-guard")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -3128,6 +3129,62 @@ def answer_question(ws: Path, req: dict, today: dt.date) -> str:
     return "Noted: %s. Next for %s: %s" % (chosen[0], name, said_text(chosen[1]))
 
 
+_INBOX = None
+
+
+def inbox_module():
+    """inbox_run.py, beside this file: Process the Inbox in the background (#634)."""
+    global _INBOX
+    if _INBOX is None:
+        sys.path.insert(0, str(HERE))
+        spec = importlib.util.spec_from_file_location("garrick_inbox_run", str(HERE / "inbox_run.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _INBOX = mod
+    return _INBOX
+
+
+def inbox_run_start(ws: Path) -> object:
+    """*Process the Inbox* (#634): one background run at the workspace root, started and not waited for. Page only. With the
+    background assistant unavailable the reply says so (`unavailable`) and the app opens a visible session as before; a run
+    already going says so and starts nothing."""
+    got = inbox_module().start(ws)
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
+
+
+def intake_answer(ws: Path, req: dict, today: dt.date) -> object:
+    """The answer to a question an unattended `intake` run asked (#634): a file in `Zones/<Zone>/Needs you/` that names the item
+    waiting in that zone's Inbox. An option files that one item in the background, with the same limits as the run itself;
+    *Not now* puts the question off to tomorrow. Page only. The question is read from its file, never from the request."""
+    zone = zone_dir(ws, req.get("zone"))
+    name = req.get("file")
+    if not isinstance(name, str) or not re.fullmatch(r"%s/[^/\\\0]+\.md" % re.escape(NEEDS), name) or name.split("/")[1].startswith((".", "_")):
+        raise Refused("that is not a question Garrick asked")
+    q = zone / NEEDS / name.split("/", 1)[1]
+    if q.is_symlink() or not q.is_file() or (zone / NEEDS).is_symlink():
+        raise Refused("that question is not there any more; the page rebuilds now")
+    label = answer(req, "label", most=LABEL_MAX)
+    text = open_question(q)
+    if not inbox_module().item_of(text):
+        raise Refused("that question is not one an inbox run asked")
+    if label.casefold() == "not now":
+        day = today + dt.timedelta(days=1)
+        with zone_lock(zone):
+            before = q.read_bytes()
+            q.write_text(set_front(open_question(q), {"status": "later", "later": day.isoformat()}), encoding="utf-8")
+            commit(zone, q, before, "Inbox question put off to %s" % day.isoformat(), wall=wall_refusal(ws))
+        return "Put off until tomorrow. It will be back then"
+    chosen = next((l for l, _ in options(text) if l.casefold() == label.casefold()), None)
+    if chosen is None:
+        raise Refused("that question has no answer called %r" % label)
+    got = inbox_module().start(ws, {"zone": zone.name, "file": name.split("/", 1)[1], "label": chosen})
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
+
+
 def answered_note(text: str, step: str, label: str, today: dt.date, name: str) -> str:
     """The work's note with its Next action set to `step`, `updated:` moved
     and a dated entry, newest first, as a wrap writes one."""
@@ -5610,16 +5667,121 @@ BOUNDED_COMMIT = {("wall", "take-out"): "Take private material out of a page", (
                   ("meeting-long", "shorten"): "Shorten a meeting page", ("fix-failed", "fix-now"): "Make a small fix to a page"}
 
 
+TODO_LONG_RAW = 200                 # check.py's TODO_LONG: a line whose text reaches this is a candidate; its own links are read, never its words
+MOST_THREAD_NOTES = 7               # the thread notes one to-do engine run may also change (the engine takes eight files in all)
+
+
+def todo_thread_notes(ws: Path, rel: str) -> list:
+    """The thread notes of a zone that the long lines of its Todo.md name by link (`[[Thread]]`), as paths from the workspace,
+    worked out before the engine runs so that it can be held to them (#626). A link that reaches no note or more than one, a
+    link that is a symlink, and a count over MOST_THREAD_NOTES give none at all: then the run may change Todo.md only."""
+    parts = rel.split("/")
+    zone = zone_dir(ws, parts[1])
+    try:
+        text = (ws / rel).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return []
+    names = []
+    for line in text.splitlines():
+        if re.match(r"^- \[[ xX]\] ", line) and len(line) > TODO_LONG_RAW:
+            for m in re.finditer(r"\[\[([^\]|#]+)", line):
+                name = m.group(1).strip()
+                if name and name not in names:
+                    names.append(name)
+    found = []
+    for name in names:
+        if "/" in name or "\\" in name or name.startswith(".") or "\0" in name:
+            return []
+        hits = [c for c in list(zone.glob("*/Threads/%s/%s.md" % (name, name))) + [zone / name / ("%s.md" % name)] if c.is_file()]
+        if len(hits) != 1 or hits[0].is_symlink() or zone.resolve() not in hits[0].resolve().parents:
+            return []
+        found.append(str(hits[0].resolve().relative_to(ws.resolve())))
+    return found if len(found) <= MOST_THREAD_NOTES else []
+
+
+def correction_on_record(ws: Path, rel: str, old: str, new: str) -> bool:
+    """Whether the Nurture record still holds the correction the request names, for that file (#626): the values ride with the
+    request, but only a pair the last runs recorded is ever acted on."""
+    mine = 'Correct "%s" to "%s": ' % (old, new)
+    folder = ws / "System" / "generated" / "nurture"
+    try:
+        days = sorted(f for f in folder.glob("*.json") if f.is_file() and not f.is_symlink())[-3:]
+    except OSError:
+        return False
+    for f in days:
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        left = rec.get("left") if isinstance(rec, dict) else None
+        for items in (left.values() if isinstance(left, dict) else []):
+            for i in items if isinstance(items, list) else []:
+                if isinstance(i, dict) and i.get("kind") == "correction" and i.get("path") == rel and str(i.get("line") or "").startswith(mine):
+                    return True
+    return False
+
+
+def correction_files(ws: Path, rel: str, old: str, new: str):
+    """The files `correct.py` lists for a correction, when the engine can finish all of them: every copy a live `.md` page of the
+    finding's own zone, no other repository, no raw record, no memory entry, no page outside the zone, and the finding's own
+    file among them. None otherwise, and the correction stays with a visible assistant: nothing crosses a zone (#626)."""
+    for v in (old, new):
+        if not isinstance(v, str) or not v or len(v) > 200 or any(c in v for c in "\n\r\0\""):
+            raise Refused("that correction is not on the record any more; the page rebuilds now")
+    if old == new or not correction_on_record(ws, rel, old, new):
+        raise Refused("that correction is not on the record any more; the page rebuilds now")
+    r = finding_run(ws, [finding_tool(ws, "correct.py"), "--root", ws, "--old=%s" % old, "--new=%s" % new, "--json"])
+    try:
+        hits = json.loads(r.stdout).get("hits")
+    except (ValueError, TypeError, AttributeError):
+        raise Refused("correct.py did not answer")
+    if not isinstance(hits, list) or not hits:
+        raise Refused("nothing holds the old value any more, so there is nothing to finish; the page rebuilds now")
+    zone = "/".join(rel.split("/")[:2]) + "/"
+    files = []
+    for h in hits:
+        path = h.get("path") if isinstance(h, dict) else None
+        if not (isinstance(path, str) and h.get("kind") not in ("raw", "memory", "context") and h.get("edited") and path.endswith(".md")
+                and path.startswith(zone) and ".." not in path.split("/") and not (ws / path).is_symlink()):
+            return None
+        files.append(path)
+    return files if rel in files and len(files) <= engine_module().MOST_FILES else None
+
+
 def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> object:
     """A handoff answer that is one bounded edit of the finding's own file (finding_queue.BOUNDED), run by the engine in the
     background, in that file's zone or wiki, committed through its wall check. With the engine unavailable the reply says so
-    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence."""
+    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence. A split
+    may also create new notes in its own folder, and nowhere else (#626). A to-do list's run may also change the thread notes its
+    long lines name, and a correction's the files correct.py lists for it, in the finding's own zone (#626): both lists are
+    worked out here and the engine holds the run to them."""
     fq = finding_queue()
     parts = rel.split("/")
     if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or not rel.endswith(".md"):
         raise Refused("only a page of a zone or a wiki can be changed here")
-    said = BOUNDED_COMMIT.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
-    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said)
+    if kind == "note-long":
+        finding_note(ws, rel)                 # a hub or a thread note of a zone, the only notes a split is about
+    files, request, new_in = [rel], None, ""
+    if kind == "todo-long":
+        if parts[0] != "Zones" or len(parts) != 3 or parts[2] != "Todo.md":
+            raise Refused("that is not a zone's to-do list")
+        threads = todo_thread_notes(ws, rel)
+        files, request = [rel] + threads, fq.bounded_todo_request(rel, threads)
+    elif kind == "correction":
+        if parts[0] != "Zones":
+            raise Refused("only a page of a zone can be corrected here")
+        old, new = req.get("old"), req.get("new")
+        files = correction_files(ws, rel, old, new)
+        if files is None:
+            return {"say": "This correction reaches more than the engine may change, so it goes to a visible assistant.", "unavailable": True}
+        request = fq.bounded_correction_request(old, new)
+    else:
+        new_in = fq.bounded_new_in(kind, answer, rel)
+    if request is None:
+        request = fq.bounded_request(kind, answer, rel)
+    said = BOUNDED_COMMIT.get((kind, answer)) or fq.BOUNDED_MESSAGE.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
+    run = engine_module().run_bounded
+    got = run(ws, parts[1], files, request, said, new_in=new_in) if new_in else run(ws, parts[1], files, request, said)
     if got.get("unavailable"):
         return {"say": got["say"], "unavailable": True}
     if not got.get("ok"):
@@ -5992,6 +6154,10 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "inbox-run":
+        return inbox_run_start(ws)
+    if req["verb"] == "intake-answer":
+        return intake_answer(ws, req, today or dt.date.today())
     if req["verb"] == "finding":
         return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "commit-files":
@@ -6042,6 +6208,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "chase",
              "layout",
              "outbox-drop",
+             "inbox-run", "intake-answer",
              "machine-role", "read-guard")
 
 

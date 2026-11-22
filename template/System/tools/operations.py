@@ -274,7 +274,13 @@ DECLARED: Dict[str, Op] = {
     # `commit` and `repo` ride only with Undo, which reverts the one commit a bounded edit made (#592).
     "finding": _op(("kind", "path", "answer",
                     "commit",
-                    "repo"), ("kind", "path", "answer"), "workspace", True),
+                    "repo",
+                    "old",
+                    "new"), ("kind", "path", "answer"), "workspace", True),
+    # Process the Inbox in the background (#634): one run at the workspace root, started and not waited for, and the answer to a
+    # question it asked, which files that one item. Both only from the app's bridge (page_action.py's PAGE_ONLY).
+    "inbox-run": _op((), (), "none"),
+    "intake-answer": _op(("zone", "file", "label"), ("zone", "file", "label"), "zone", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

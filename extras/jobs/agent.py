@@ -91,6 +91,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -447,6 +448,71 @@ def estimated_cost(tier: str, seconds: float, budget: float = DEFAULT_MAX_CALL_U
 # --------------------------------------------------------------------------- one call
 
 
+_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_PROGRAM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,39}")
+_DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
+_STOPS = {"&&", "||", ";", "|", "&", "(", ")", ";;", "|&", "<", ">", ">>", "<<"}
+
+
+def refused_program(command) -> Optional[str]:
+    """The first program of a refused shell command, and nothing else of it (#635): after any leading `cd <folder> &&`,
+    `timeout <seconds>` and `env` (with `VAR=value` assignments) are left out. Never an argument, never a path, never a value:
+    a command that cannot be read that way, or whose first word is not a plain program name, gives None, and the ledger keeps
+    only the tool's name, as before."""
+    if not isinstance(command, str) or not command.strip() or len(command) > 20000:
+        return None
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        words = list(lex)
+    except ValueError:
+        return None
+    guard = 0
+    while words and guard < 20:
+        guard += 1
+        head = words[0]
+        if head == "cd":
+            stop = next((i for i, w in enumerate(words) if w in ("&&", ";")), None)
+            if stop is None:
+                return None
+            words = words[stop + 1:]
+        elif head == "timeout":
+            words = words[1:]
+            while words and (words[0].startswith("-") or _DURATION.fullmatch(words[0])):
+                arg = words.pop(0)
+                if arg in ("-s", "-k", "--signal", "--kill-after") and words:
+                    words.pop(0)
+                elif _DURATION.fullmatch(arg):
+                    break
+        elif head == "env":
+            words = words[1:]
+            while words and (words[0].startswith("-") or _ASSIGN.match(words[0])):
+                words.pop(0)
+        elif _ASSIGN.match(head):
+            words = words[1:]
+        else:
+            break
+    if not words or words[0] in _STOPS:
+        return None
+    name = os.path.basename(words[0])
+    return name if _PROGRAM.fullmatch(name) else None
+
+
+def denied_names(denials) -> List[str]:
+    """The ledger's `denied` for a call: each refused tool by name and, for a refused shell command, its first program as
+    `Bash(<program>)`, so the Assistant calls panel can say which command a night kept trying (#635). No argument."""
+    names = set()
+    for d in denials or []:
+        if not isinstance(d, dict) or not d.get("tool_name"):
+            continue
+        names.add(d["tool_name"])
+        if d["tool_name"] == "Bash" and isinstance(d.get("tool_input"), dict):
+            program = refused_program(d["tool_input"].get("command"))
+            if program:
+                names.add("Bash(%s)" % program)
+    return sorted(n for n in names if isinstance(n, str) and n)
+
+
 def parse_claude_output(stdout: str) -> dict:
     """The answer and the numbers from `claude -p --output-format json`. When the
     output is not that JSON (an error printed before any turn ran), the raw text
@@ -457,13 +523,13 @@ def parse_claude_output(stdout: str) -> dict:
         except ValueError:
             continue
         if isinstance(data, dict) and ("result" in data or data.get("type") == "result"):
-            denied = {d.get("tool_name") for d in data.get("permission_denials") or [] if isinstance(d, dict)}
+            denied = denied_names(data.get("permission_denials"))
             usage = data.get("modelUsage")
             return {
                 "text": data.get("result") or "",
                 "turns": data.get("num_turns"),
                 "cost_usd": data.get("total_cost_usd"),
-                "denied": sorted(d for d in denied if d),
+                "denied": denied,
                 "subtype": data.get("subtype"),
                 # The models the call used, which the tier alone does not say.
                 "model": ("+".join(sorted(usage)) or None) if isinstance(usage, dict) else None,

@@ -2039,15 +2039,20 @@ function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;host.postM
 /* the card's own buttons: Rename and Delete on a thread or a project, New thread here on a project */
 var MI={plus:'<path d="M8 3v10M3 8h10"/>',pen:'<path d="M3 13l1-3 7-7 2 2-7 7z"/>',move:'<path d="M3 8h9M9 5l3 3-3 3"/>',list:'<path d="M3 4h10M3 8h7M3 12h7"/>',trash:'<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/>'};
 function mi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+MI[d]+'</svg>'}
-/* the card's menu (#620): New thread here, Rename, Move, a change of layout, then what the card passes in (Close session, Park or Wake), then
-   a separator and Delete last, in the critical colour. Every row is the button it was, with the same data-manage and data-mg. */
+/* the card's menu (#620, #633): the one-off actions only, New thread here, Rename, Move, then what the card passes in (Close session), then
+   a separator and Delete last, in the critical colour. What a project is, one job or separate jobs, is a chip on line 1 (GarrickLayoutChip). Every row is the button it was, with the same data-manage and data-mg. */
 window.GarrickManage=function(o,mid){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
 function row(what,label,icon,more){return'<button class="pmi" type="button" data-manage="'+what+'" data-mg="'+m+'"'+(more||'')+'>'+mi(icon)+esc(label)+'</button>'}
 return'<div class="pmenu" role="group">'+(k==='project'?row('new-thread','New thread here','plus'):'')+row('rename','Rename…','pen')+(k==='thread'?row('move','Move…','move'):'')
-+LAYOUTS.filter(function(l){return(o.mg[6]||[]).indexOf(l[0])>=0}).map(function(l){return row('layout-'+l[0],l[1],'list',' title="'+esc(l[2])+'"')}).join('')
 +(mid||'')+'<div class="psep" role="separator"></div><button class="pmi del" type="button" data-manage="delete" data-mg="'+m+'">'+mi('trash')+'Delete…</button></div>'};
-/* the project's switch (#604, #632), offered by the build only where it applies: code, button, what it is */
-var LAYOUTS=[['split','Split into separate jobs…','Each file goes to the one thread that names it'],['join','Join into one job…','Each thread’s papers move up into the project’s']];
+/* the project's switch (#604, #632), offered by the build only where it applies, as the layout chip on a project's card (#633): what the
+   project is now, and the plan it opens. Never a thread's: the project decides for every thread. */
+var LAYOUTS=[['split','One job','Split ',' into separate jobs…','<rect x="3" y="3" width="10" height="10" rx="2"/>'],
+['join','Separate jobs','Join ',' into one job…','<rect x="2.5" y="2.5" width="4.5" height="11" rx="1.5"/><rect x="9" y="2.5" width="4.5" height="11" rx="1.5"/>']];
+window.GarrickLayoutChip=function(o){if(!o||!o.mg||o.mg[2]||o.held)return'';var off=o.mg[6]||[],l=LAYOUTS.filter(function(x){return off.indexOf(x[0])>=0})[0];if(!l)return'';
+var label=l[2]+o.mg[1]+l[3];
+return'<button class="ctl" type="button" data-manage="layout-'+l[0]+'" data-mg="'+esc(JSON.stringify(o.mg))+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'
++'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4">'+l[4]+'</svg>'+l[1]+'</button>'};
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
 d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
 document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
@@ -6518,7 +6523,7 @@ function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';re
    the party as a chip, then the state, Active or Parked, as a button; line 2: when it was touched, a thread's resume point and an open session),
    where to open it (acts), what is done once (menu), and last, set apart, what removes it. The party's chip is the only bordered label. */
 function head(o,row){var chips=o.t&&o.t.length?o.t.map(function(t){return'<span class="chip">'+esc(t)+'</span>'}).join(''):'',
-ctls=stchip(o),st=[state(o),resume(o)].filter(Boolean).join(' · ');
+ctls=stchip(o)+(window.GarrickLayoutChip?window.GarrickLayoutChip(o):''),st=[state(o),resume(o)].filter(Boolean).join(' · ');
 return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4></div>'+(row?'':'<div class="pl pkind">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
 +(chips||ctls?'<div class="pl pl1">'+chips+ctls+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
 +(o.live?'<div class="pl pl2 psess"><span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live)+'</div>':'')}

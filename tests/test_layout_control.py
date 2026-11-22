@@ -255,7 +255,8 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
                             "--out", str(out), "--no-cmux"], capture_output=True, text=True, env=self.env)
         self.assertEqual(0, r.returncode, r.stderr[-1500:])
         html = out.read_text(encoding="utf-8")
-        for word in ("layout-split", "layout-join", "Split into separate jobs…", "Join into one job…", "window.GarrickLayout"):
+        for word in ("layout-'+l[0]", "' into separate jobs…'", "' into one job…'", "'One job'", "'Separate jobs'", "window.GarrickLayout",
+                     "window.GarrickLayoutChip"):
             self.assertIn(word, html)
         for gone in ("layout-own", "layout-project", "layout-heading", "Own papers…", "Project’s papers…", "Make a heading…"):
             self.assertNotIn(gone, html)

@@ -31,10 +31,12 @@ fails the wrap with nothing written.
               a line to tick must be the only open line that says it
     checkpoint  "folded", once the note's `### Checkpoint` block has been read and folded into
               the words above; a note that holds one and a wrap that does not say so fail
-    memory    {"path": "<a file in the assistant's memory folder>", "text": "<where the resume point is>"}
-              the text names the note and holds no status; the path must be a .md file
-              under the home folder, in a folder called `memory` or `memories`,
-              and never MEMORY.md
+    memory    {"path": "<an entry file of the assistant's memory folder>"}
+              the tool writes the pointer's words itself, from the zone, project, thread
+              and the note's path, with no status. The path, once resolved, must be a
+              .md file directly in `~/.claude/projects/<folder>/memory/`, never
+              MEMORY.md and never a link; a file already there that is not this
+              tool's pointer for this note is never rewritten (the wrap fails)
     lock      "take" (the default), or "held" when the band or the request has taken the lock
 
 What it writes, and nothing else: the thread note (or the hub, for a project
@@ -83,6 +85,7 @@ if str(HERE) not in sys.path:
 import garrick_lib as gl  # noqa: E402
 import history as hist  # noqa: E402
 import wrap_lock as wl  # noqa: E402
+import work  # noqa: E402
 
 OUTCOMES = ("saved", "refused", "conflict", "failed")
 ROWS = ("Live artifact", "Rebuild with", "Next action", "Keep in mind", "Waiting on", "Deadline")
@@ -188,9 +191,9 @@ def check_input(data) -> dict:
     out["lock"] = data.get("lock", "take")
     memory = data.get("memory")
     if memory is not None:
-        if not isinstance(memory, dict) or set(memory) != {"path", "text"}:
-            raise failed("memory takes a path and a text, and nothing else")
-        out["memory"] = (one_line(memory["path"], "the memory path", 1000), prose(memory["text"], "the memory text", 1200))
+        if not isinstance(memory, dict) or set(memory) != {"path"}:
+            raise failed("memory takes a path, and nothing else: the tool writes the pointer's words itself")
+        out["memory"] = one_line(memory["path"], "the memory path", 1000)
     return out
 
 
@@ -204,18 +207,16 @@ def has_resume(text: str) -> bool:
 
 def resume_note(root: Path, zone: str, project: str, thread: Optional[str]) -> Optional[Path]:
     """The note that holds the Resume here block of what is being wrapped: the thread's own note, or the hub of
-    a project that keeps its resume point there. The one place this tool decides it, so that a change of rule is
-    a change of this function."""
-    base = root / "Zones" / zone / project
-    hub = base / (project + ".md")
+    a project that keeps its resume point there. The one place this tool decides it, and it asks the one reader of the
+    piece of work (`work.py`), so a change to the unit of work is made there."""
+    found = [w for w in work.pieces(root, zone=zone) if w.project == project and w.kind == "piece"]
     if thread:
-        note = base / "Threads" / thread / (thread + ".md")
-        if note.is_file() and has_resume(note.read_text(encoding="utf-8", errors="replace")):
-            return note
-    if hub.is_file():
-        text = hub.read_text(encoding="utf-8", errors="replace")
-        if gl.hub_keeps_resume(text, gl.parse_frontmatter_text(text)):
-            return hub
+        for w in found:
+            if w.thread == thread and has_resume(w.note.read_text(encoding="utf-8", errors="replace")):
+                return w.note
+    for w in found:
+        if w.thread is None and w.keeps_resume:
+            return w.note
     return None
 
 
@@ -338,40 +339,50 @@ def todo_module(root: Path):
 # The memory pointer
 
 
-def memory_target(root: Path, path: str, text: str, rel: str) -> Path:
-    """The memory file this wrap may write, or a failure. It must sit in a folder called memory or memories
-    under the home folder, outside the workspace, and name the note it points to."""
+def pointer_text(job: dict, rel: str) -> str:
+    """The words of the memory pointer: where the resume point is, and nothing else. Built here from the names and the
+    note's path, so no word of the assistant's reaches a folder every zone's sessions load."""
+    return "%s (%s zone). Resume from %s, the Resume here block. Read it before anything else in the thread." % (
+        name_of(job), job["zone"], rel)
+
+
+def pointer_file(text: str, rel: str, today: datetime.date) -> str:
+    return "---\nsource: file:%s\ncreated: %s\n---\n%s\n" % (rel, today.isoformat(), text)
+
+
+def memory_target(root: Path, path: str, job: dict, rel: str) -> Path:
+    """The memory file this wrap may write, or a failure. It is a file of the assistant's own memory folder,
+    `~/.claude/projects/<folder>/memory/<name>.md`, by its resolved path: the folder may be a link, the file may not.
+    Codex documents no memory folder here, so none is allowed. An existing file is accepted only if it is the pointer this
+    tool writes for this note; any other is never rewritten."""
     given = Path(path)
-    if not given.is_absolute() or given.suffix != ".md" or given.name.lower() == "memory.md":
+    if not given.is_absolute() or given.is_symlink():
         raise failed("the memory path is not an entry file of the assistant's memory folder")
     where = given.resolve()
-    home = Path.home().resolve()
-    if home not in where.parents or root in where.parents:
-        raise failed("the memory path is not in the assistant's memory folder")
-    if not any(part in ("memory", "memories") for part in where.parent.relative_to(home).parts):
-        raise failed("the memory path is not in a folder called memory")
-    if rel not in text:
-        raise failed("the memory text must name the note it points to, %s" % rel)
+    if where.suffix != ".md" or where.name.lower() == "memory.md":
+        raise failed("the memory path is not an entry file of the assistant's memory folder")
+    base = (Path.home() / ".claude" / "projects").resolve()
+    try:
+        parts = where.relative_to(base).parts
+    except ValueError:
+        parts = ()
+    if len(parts) != 3 or parts[1] != "memory" or root in where.parents:
+        raise failed("the memory path is not in the assistant's own memory folder")
     if not where.parent.is_dir():
         raise failed("the memory folder is not there")
+    if where.exists():
+        old = where.read_text(encoding="utf-8", errors="replace")
+        match = re.match(r"---\nsource: file:(.*)\ncreated: \d{4}-\d{2}-\d{2}\n---\n(.*)\n\Z", old, re.S)
+        if not (match and match.group(1) == rel and match.group(2) == pointer_text(job, rel)):
+            raise failed("a file is already there that is not this wrap's pointer, and it is never rewritten")
     return where
 
 
-def write_memory(where: Path, text: str, rel: str, today: datetime.date) -> str:
-    """Create the pointer, leave one that is there, add the two keys to one that has neither. A note for the reply."""
-    keys = "source: file:%s\ncreated: %s\n" % (rel, today.isoformat())
+def write_memory(where: Path, job: dict, rel: str, today: datetime.date) -> str:
+    """Create the pointer; leave the one that is there. A note for the reply."""
     if not where.exists():
-        where.write_text("---\n%s---\n%s\n" % (keys, text), encoding="utf-8")
-        return ""
-    old = where.read_text(encoding="utf-8", errors="replace")
-    front = gl.parse_frontmatter_text(old)
-    if front and ("source" in front and "created" in front or "metadata" in front):
-        return ""
-    if old.startswith("---\n"):
-        where.write_text("---\n" + keys + old[4:], encoding="utf-8")
-    else:
-        where.write_text("---\n%s---\n%s" % (keys, old), encoding="utf-8")
-    return "The memory entry was there; its source and created keys were added."
+        where.write_text(pointer_file(pointer_text(job, rel), rel, today), encoding="utf-8")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +445,17 @@ class Snapshot:
             for p in folder.rglob("*"):
                 if p.is_file():
                     self.take(p)
+
+    def changed(self) -> List[Path]:
+        """The files of the kept folders that this run made or changed, and no other: another session's file there is
+        none of them."""
+        out = []
+        for folder in self.folders:
+            if folder.is_dir():
+                for p in sorted(folder.rglob("*")):
+                    if p.is_file() and (p not in self.files or self.files[p] != p.read_bytes()):
+                        out.append(p)
+        return out
 
     def restore(self) -> None:
         for folder in self.folders:
@@ -499,16 +521,21 @@ def run(root, data, today: Optional[datetime.date] = None, before_commit: Option
         if problem:
             raise failed(problem)
         new_text = new_note_text(text, job, today)
-        memory = memory_target(root, *job["memory"], rel) if job.get("memory") else None
+        memory = memory_target(root, job["memory"], job, rel) if job.get("memory") else None
         todo_path = zone / "Todo.md"
+        for place in (todo_path, zone / "archive", note.parent / hist.FOLDER):     # a link that leaves the zone is never written through
+            if (place.exists() or place.is_symlink()) and zone.resolve() not in (place.resolve(), *place.resolve().parents):
+                raise failed("%s leads out of the %s zone, so nothing was written" % (place.name, job["zone"]))
         if (job["add"] or job["tick"]) and not todo_path.is_file():
             raise failed("the %s zone has no Todo.md" % job["zone"])
         todo = todo_module(root) if todo_path.is_file() else None
         if todo_path.is_file() and todo is None:
             raise failed("the todo skill is not here, so the list cannot be archived")
     except Stop as stop:
+        release_held(root, data)
         return receipt(stop.outcome, say_for(stop.outcome, stop.why, data))
     except (OSError, ValueError) as exc:
+        release_held(root, data)
         return receipt("failed", say_for("failed", "a file could not be read: %s" % exc, data))
 
     locked = False
@@ -538,6 +565,26 @@ def run(root, data, today: Optional[datetime.date] = None, before_commit: Option
             wl.end(root, rel)
         else:
             wl.end(root, rel, abandon=True)
+
+
+def release_held(root: Path, data) -> None:
+    """A lock the band took stays the wrap's to release even when the wrap fails before it starts. The input may be what
+    failed, so only a request that says `held` and names its folders plainly is read; the lock is the one of the thread's
+    note or of the hub, whichever the band took."""
+    if not isinstance(data, dict) or data.get("lock") != "held":
+        return
+    names = [data.get(k) for k in ("zone", "project")] + ([data["thread"]] if data.get("thread") else [])
+    if not all(isinstance(n, str) and n and "/" not in n and "\\" not in n and n not in (".", "..") for n in names):
+        return
+    zone, project = names[0], names[1]
+    notes = ["Zones/%s/%s/%s.md" % (zone, project, project)]
+    if len(names) == 3:
+        notes.insert(0, "Zones/%s/%s/Threads/%s/%s.md" % (zone, project, names[2], names[2]))
+    for rel in notes:
+        try:
+            wl.end(root, rel, abandon=True)
+        except (ValueError, OSError):
+            pass
 
 
 def say_for(outcome: str, why: str, job) -> str:
@@ -589,7 +636,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
     if words > cap:
         notes.append("The Resume block is %d words, over its %d. Want a shorter one?" % (words, cap))
     # 4. what changed, by name
-    places = [in_zone, "Todo.md", "archive", note.parent.relative_to(zone).as_posix() + "/" + hist.FOLDER]
+    places = [in_zone, "Todo.md"] + [p.relative_to(zone).as_posix() for p in snap.changed()]       # the files it wrote, by name
     files = changed_among(zone, places)
     if before_commit is not None:
         before_commit()
@@ -620,7 +667,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
         commit = git(zone, "rev-parse", "--short", "HEAD").stdout.strip()
     if memory is not None:
         try:
-            extra = write_memory(memory, job["memory"][1], rel, today)
+            extra = write_memory(memory, job, rel, today)
             notes.append(extra)
         except OSError as exc:
             notes.append("The memory pointer was not written: %s." % exc)

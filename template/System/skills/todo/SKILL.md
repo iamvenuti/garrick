@@ -281,7 +281,7 @@ questions, in this order.
    python3 System/skills/todo/todo.py distil --zone <Zone> --changes plan.json [--yes]
    ```
    It edits `Todo.md` and `archive/` and leaves the commit to the caller,
-   whose commit already names both (the wrap's step 12, the meetings skill's
+   whose commit already names both (the wrap's step 11, the meetings skill's
    step 9). It prints the spoken report and any line it could not place: a
    line that no open line of the thread says, or that two say, is skipped and
    named, never guessed. It reaches only the open lines of that thread, matched

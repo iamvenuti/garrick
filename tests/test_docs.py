@@ -523,3 +523,32 @@ class WrapAsACommandTest(unittest.TestCase):
         self.assertIn("The steps did not change; only who carries them out.", commands)
         for word in ("*saved*", "*refused*", "*conflict*", "*failed*"):
             self.assertIn(word, commands)
+
+
+class WrapWordsAfterReviewTest(unittest.TestCase):
+    """The wording the release review asked for (#645)."""
+
+    def test_the_todo_skill_names_the_wraps_commit_step_as_the_skill_numbers_it(self):
+        todo = (REPO / "template" / "System" / "skills" / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        wrap = (REPO / "template" / "System" / "skills" / "threads" / "reference" / "wrap.md").read_text(encoding="utf-8")
+        steps = re.findall(r"(?m)^(\d+)\. \*\*", wrap.split("**What you decide, in order.**", 1)[1].split("**The receipt**", 1)[0])
+        self.assertEqual(str(len(steps)), steps[-1])
+        self.assertIn("Make the one call**", wrap.split("%s. **" % steps[-1], 1)[1][:40])
+        self.assertNotIn("the wrap's step 12", " ".join(todo.split()))
+        self.assertIn("the wrap's step %s" % steps[-1], " ".join(todo.split()))
+
+    def test_resume_trim_auto_is_described_as_the_assistant_writing_the_shorter_block_before_the_call(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("With `auto` your assistant writes the shorter block, 75% of the limit (300 words at 400), before it makes the call", flat)
+        self.assertNotIn("with `auto` it trims the block", flat)
+        self.assertNotIn("in the commit message", flat.split("`resume-trim`", 1)[1][:700])
+
+    def test_the_band_readme_starts_every_sentence_with_a_capital(self):
+        text = (REPO / "extras" / "mods" / "README.md").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"counts as gone\. [a-z]")
+        self.assertNotRegex(text, r"(?<!e\.g)(?<!i\.e)\. [a-z][a-z]+ (wrap tool|\(`System)")
+
+    def test_a_project_in_system_is_said_not_to_be_wrapped_by_the_tool(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("A project that lives in `System/` is not wrapped by the command", flat)
+        self.assertIn("move it into a zone", flat)

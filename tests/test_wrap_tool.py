@@ -107,7 +107,7 @@ class Base(unittest.TestCase):
         build(self.root)
         tools = self.root / "System" / "tools"
         tools.mkdir(parents=True, exist_ok=True)
-        for name in ("check.py", "garrick_lib.py", "wrap.py", "wrap_lock.py", "history.py"):
+        for name in ("check.py", "garrick_lib.py", "wrap.py", "wrap_lock.py", "history.py", "work.py"):
             shutil.copy2(TOOLS / name, tools / name)
         shutil.copytree(str(REPO / "template" / "System" / "skills" / "todo"), str(self.root / "System" / "skills" / "todo"))
         for zone, (project, thread, party) in CASES.items():
@@ -222,6 +222,15 @@ class Saved(Base):
         self.assertEqual(self.thread, wrap.resume_note(self.root, "Work", "Northwind", "Pricing"))
         self.assertIsNone(wrap.resume_note(self.root, "Work", "Northwind", "Nothing"))
 
+    def test_a_heading_has_no_resume_point_and_is_not_wrapped(self):
+        hub = self.work / "Northwind" / "Northwind.md"
+        write(hub, hub.read_text(encoding="utf-8").replace("status: active", "status: active\nlayout: thread-first") + "\n## State of play\n\n### Resume here\n\nx\n")
+        shutil.rmtree(self.work / "Northwind" / "Threads")
+        commit_all(self.work, "a heading")
+        got = self.run_wrap({k: v for k, v in payload().items() if k != "thread"})
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertTrue(self.clean())
+
     def test_a_note_with_no_rule_gets_one(self):
         text = self.thread.read_text(encoding="utf-8").split("\n---\n\n**1 March")[0] + "\n"
         write(self.thread, text)
@@ -309,6 +318,25 @@ class Refusals(Base):
         self.assertFalse(wl.lock_path(self.root, rel).exists())
         self.assertIsNotNone(wl.finished(wl.done_path(self.root, rel)))
 
+    def test_a_held_lock_is_released_when_the_wrap_fails_before_it_starts(self):
+        rel = self.thread.relative_to(self.root).as_posix()
+        good = payload(lock="held")
+        cases = {
+            "a parked thread": (lambda: write(self.thread, note_text("Northwind", "Pricing", "acme", "parked")), good),
+            "a missing key": (lambda: None, {k: v for k, v in good.items() if k != "entry"}),
+            "an unknown key": (lambda: None, dict(good, extra=1)),
+            "an unfolded checkpoint": (lambda: write(self.thread, fixtures.checkpoint(note_text("Northwind", "Pricing", "acme"))), good),
+        }
+        for what, (setup, data) in cases.items():
+            write(self.thread, note_text("Northwind", "Pricing", "acme"))
+            setup()
+            commit_all(self.work, what)
+            self.assertTrue(wl.start(self.root, rel))
+            got = self.run_wrap(data)
+            self.assertEqual("failed", got["outcome"], (what, got))
+            self.assertFalse(wl.lock_path(self.root, rel).exists(), what)
+            self.assertEqual([], self.generated(".done"), what)
+
     def test_the_hook_refusal_is_the_receipt_and_the_wrap_is_put_back(self):
         before = self.thread.read_text(encoding="utf-8")
         wl.start(self.root, "Zones/Work/Northwind/Threads/Pricing/Pricing.md")
@@ -345,6 +373,22 @@ class Refusals(Base):
         self.assertEqual("conflict", got["outcome"], got)
         self.assertEqual([], self.generated(".done"))
 
+    def test_another_sessions_file_in_archive_or_history_stays_out_of_the_commit(self):
+        old = "".join("**%d March 2025.** An old entry %d.\n\n" % (d, d) for d in range(2, 9))
+        write(self.thread, self.thread.read_text(encoding="utf-8") + "\n" + old)
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [x] [[Pricing]]: old one ✅ 2026-11-01\n\n## Done\n")
+        commit_all(self.work, "old entries")
+        write(self.work / "archive" / "Theirs.md", "# somebody else's\n")
+        write(self.thread.parent / "history" / "Theirs.md", "# somebody else's\n")
+        got = self.run_wrap()
+        self.assertEqual("saved", got["outcome"], got)
+        self.assertTrue(any(f.startswith("archive/Todo-2026") for f in got["files"]), got["files"])
+        self.assertTrue(any("history/Pricing history" in f for f in got["files"]), got["files"])
+        self.assertFalse(any("Theirs" in f for f in got["files"]), got["files"])
+        left = git(self.work, "status", "--porcelain", "--untracked-files=all")
+        self.assertIn("archive/Theirs.md", left)
+        self.assertIn("history/Theirs.md", left)
+
     def test_other_staged_files_are_never_swept_into_the_commit(self):
         write(self.work / "Stray.md", "# stray\n")
         git(self.work, "add", "--", "Stray.md")
@@ -355,6 +399,47 @@ class Refusals(Base):
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
+class Links(Base):
+    """Todo.md, archive/ and history/ that lead out of the zone are refused before the first write."""
+
+    def other(self):
+        return self.root / "Zones" / "Home"
+
+    def check(self, link, target, **over):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            link.unlink() if link.is_file() or link.is_symlink() else shutil.rmtree(link)
+        link.symlink_to(target)
+        commit_all(self.work, "a link")
+        before = self.thread.read_text(encoding="utf-8")
+        other = tree(self.root / "Zones" / "Home")
+        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"]}, **over))
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertEqual(before, self.thread.read_text(encoding="utf-8"))
+        self.assertEqual(other, tree(self.root / "Zones" / "Home"))
+        self.assertTrue(self.clean("Home"))
+        self.assertEqual([], self.generated(".lock"))
+
+    def test_a_todo_that_is_a_link_into_another_zone(self):
+        self.check(self.work / "Todo.md", self.other() / "Todo.md")
+
+    def test_an_archive_folder_that_is_a_link_into_another_zone(self):
+        self.check(self.work / "archive", self.other())
+
+    def test_a_history_folder_that_is_a_link_into_another_zone(self):
+        old = "".join("**%d March 2025.** An old entry %d.\n\n" % (d, d) for d in range(2, 9))
+        write(self.thread, self.thread.read_text(encoding="utf-8") + "\n" + old)
+        self.check(self.thread.parent / "history", self.other())
+
+    def test_a_link_inside_the_zone_is_fine(self):
+        real = self.work / "Real"
+        real.mkdir()
+        (self.work / "archive").symlink_to(real)
+        commit_all(self.work, "a link inside")
+        self.assertEqual("saved", self.run_wrap()["outcome"])
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
 class Memory(Base):
     def entry(self, name="thread.md"):
         return self.home / ".claude" / "projects" / "ws" / "memory" / name
@@ -362,9 +447,9 @@ class Memory(Base):
     def text(self):
         return "Northwind, Pricing (Work zone). Resume from Zones/Work/Northwind/Threads/Pricing/Pricing.md, the Resume here block."
 
-    def test_the_pointer_is_written_with_its_origin_and_nothing_else_is(self):
+    def test_the_tool_builds_the_pointer_and_writes_it_with_its_origin(self):
         before = tree(self.base)
-        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
+        got = self.run_wrap(payload(memory={"path": str(self.entry())}))
         self.assertEqual("saved", got["outcome"], got)
         body = self.entry().read_text(encoding="utf-8")
         self.assertIn("source: file:Zones/Work/Northwind/Threads/Pricing/Pricing.md", body)
@@ -372,33 +457,59 @@ class Memory(Base):
         self.assertIn(self.text(), body)
         self.assertEqual(set(), outside_allowed(before, tree(self.base), self.root, self.entry()))
 
-    def test_a_pointer_that_is_there_is_left_as_it_is(self):
-        write(self.entry(), "---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n")
-        self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
-        self.assertEqual("---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n", self.entry().read_text(encoding="utf-8"))
+    def test_free_text_for_the_pointer_is_an_unknown_key(self):
+        before = tree(self.base)
+        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": "Acme wants 12% royalty. Zones/Work/Northwind/Threads/Pricing/Pricing.md"}))
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertEqual(before, tree(self.base))
+        self.assertFalse(self.entry().exists())
 
-    def test_a_pointer_that_has_no_origin_gets_the_two_keys(self):
-        write(self.entry(), "Old pointer without keys.\n")
-        self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
-        self.assertTrue(self.entry().read_text(encoding="utf-8").startswith("---\nsource: file:"))
+    def test_a_pointer_the_tool_wrote_is_left_as_it_is(self):
+        self.run_wrap(payload(memory={"path": str(self.entry())}))
+        first = self.entry().read_bytes()
+        self.assertEqual("saved", self.run_wrap(payload(memory={"path": str(self.entry())}))["outcome"])
+        self.assertEqual(first, self.entry().read_bytes())
 
-    def test_a_memory_path_outside_a_memory_folder_writes_nothing(self):
+    def test_a_file_that_is_not_a_pointer_the_tool_wrote_is_never_rewritten(self):
+        for old in ("---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n", "Old pointer without keys.\n"):
+            write(self.entry(), old)
+            before = tree(self.base)
+            got = self.run_wrap(payload(memory={"path": str(self.entry())}))
+            self.assertEqual("failed", got["outcome"], got)
+            self.assertEqual(old, self.entry().read_text(encoding="utf-8"))
+            self.assertEqual(before, tree(self.base))
+
+    def test_a_memory_path_outside_the_assistants_memory_roots_writes_nothing(self):
+        (self.home / "Documents" / "memory").mkdir(parents=True)
+        (self.home / ".ssh" / "memory").mkdir(parents=True)
+        (self.home / ".codex" / "memories").mkdir(parents=True)
+        (self.home / ".claude" / "projects" / "ws" / "notes").mkdir(parents=True)
+        real = self.base / "elsewhere"
+        real.mkdir()
+        write(real / "data.txt", "keep\n")
+        link = self.entry("link.md")
+        link.symlink_to(real / "data.txt")
         before = tree(self.base)
         elsewhere = {
             "the workspace": self.root / "Zones" / "Work" / "Northwind" / "memory" / "x.md",
             "a system file": self.root / "System" / "rules.md",
             "the home folder": self.home / "x.md",
             "another folder": self.base / "other" / "memory" / "x.md",
+            "a memory folder of any other program": self.home / "Documents" / "memory" / "x.md",
+            "a hidden one": self.home / ".ssh" / "memory" / "x.md",
+            "codex, which documents none": self.home / ".codex" / "memories" / "x.md",
+            "a claude project folder that is not memory": self.home / ".claude" / "projects" / "ws" / "notes" / "x.md",
+            "deeper than an entry": self.entry("sub") / "x.md",
             "the index": self.entry("MEMORY.md"),
             "not markdown": self.entry("x.txt"),
             "climbing out": Path(str(self.entry().parent) + "/../../x.md"),
             "relative": Path("memory/x.md"),
+            "a link to another file": link,
         }
         for what, path in elsewhere.items():
-            got = self.run_wrap(payload(memory={"path": str(path), "text": self.text()}))
+            got = self.run_wrap(payload(memory={"path": str(path)}))
             self.assertEqual("failed", got["outcome"], (what, got))
-        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": "Status: done, waiting on the buyer."}))
-        self.assertEqual("failed", got["outcome"])                               # the text must name the note
+        self.assertEqual("keep\n", (real / "data.txt").read_text())
         self.assertEqual(before, tree(self.base))
 
 
@@ -428,8 +539,7 @@ class Writes(Base):
         commit_all(self.work, "todo")
         before = tree(self.base)
         mem = self.home / ".claude" / "projects" / "ws" / "memory" / "pricing.md"
-        text = "Northwind, Pricing. Resume from Zones/Work/Northwind/Threads/Pricing/Pricing.md."
-        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"], "tick": ["send the sheet"]}, memory={"path": str(mem), "text": text}))
+        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"], "tick": ["send the sheet"]}, memory={"path": str(mem)}))
         self.assertEqual("saved", got["outcome"], got)
         self.assertEqual(set(), outside_allowed(before, tree(self.base), self.root, mem))
 
@@ -608,6 +718,30 @@ class PageRoute(Base):
         self.assertFalse(reply["ok"])
         self.assertIn("file", reply["say"])
         self.assertEqual(1, self.count())
+
+    def test_two_wraps_of_one_thread_in_a_row_each_write_their_own_words(self):
+        import operations
+        first = self.pa.perform(self.root, self.request(entry="First words of the wrap."), operations, via="session")[0]
+        second = self.pa.perform(self.root, self.request(entry="Second words of the wrap."), operations, via="session")[0]
+        self.assertTrue(first["ok"] and second["ok"], (first, second))
+        text = self.thread.read_text(encoding="utf-8")
+        self.assertIn("First words of the wrap.", text)
+        self.assertIn("Second words of the wrap.", text)
+        self.assertEqual(3, self.count())                                    # a commit for each
+
+    def test_the_journal_holds_no_wrap_and_none_of_its_words(self):
+        import operations
+        self.pa.perform(self.root, self.request(entry="A private sentence for the journal test."), operations, via="session")
+        journal = self.base / "jobs" / operations.FILE
+        text = journal.read_text(encoding="utf-8") if journal.is_file() else ""
+        for word in ("wrap", "private sentence", "tier-two volume", "volumes are with the buyer"):
+            self.assertNotIn(word, text)
+
+    def request(self, **words):
+        data = dict(payload())
+        data = {k: data[k] for k in ("resume", "entry", "message")}
+        data.update(words)
+        return {"verb": "wrap", "zone": "Work", "project": "Northwind", "thread": "Pricing", "input": data}
 
     def test_the_words_may_not_name_another_thread_than_the_request(self):
         reply = self.send(words={"thread": "Other"})

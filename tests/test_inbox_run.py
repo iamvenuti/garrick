@@ -64,7 +64,7 @@ class RunCase(unittest.TestCase):
         build_workspace(self.root)
         write(self.root / "System" / "context.md", CONTEXT)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for name in ("check.py", "garrick_lib.py"):
+        for name in ("check.py", "garrick_lib.py", "work.py"):
             shutil.copy2(TOOLS / name, self.root / "System" / "tools" / name)
         for skill in ("intake", "meetings"):          # the helper a question's words are read with, as an installed workspace has it
             shutil.copytree(str(REPO / "template" / "System" / "skills" / skill), str(self.root / "System" / "skills" / skill))

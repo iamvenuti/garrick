@@ -39,7 +39,7 @@ class ReadingCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve() / "Workspace"
         build_workspace(self.root)
-        for rel in ("skills/intake/intake.py", "skills/meetings/ingest.py", "tools/garrick_lib.py"):
+        for rel in ("skills/intake/intake.py", "skills/meetings/ingest.py", "tools/garrick_lib.py", "tools/work.py"):
             (self.root / "System" / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(TEMPLATE / rel, self.root / "System" / rel)
         self.inbox = self.root / "Zones" / "Work" / "Inbox"

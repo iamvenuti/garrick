@@ -1143,7 +1143,7 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         note = live_note(zone, req.get("file"))
         parts = note.relative_to(zone).parts
         is_thread = len(parts) == 4 and parts[1] == "Threads" and parts[2] + ".md" == parts[3]
-        is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not any((zone / parts[0] / "Threads").glob("*/*.md"))
+        is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not project_threads(zone, parts[0])
         if not (is_thread or is_hub):
             raise Refused("only a thread note, or a single-thread project's hub, can be parked by its path; "
                           "name the project to park all of it")
@@ -1206,7 +1206,7 @@ def resume_note(ws: Path, req: dict) -> tuple:
     is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1]
     if not (is_thread or is_hub):
         raise Refused("only a thread note, or a single-thread project's hub, holds a resume point")
-    if is_hub and any((zone / parts[0] / "Threads").glob("*/*.md")):
+    if is_hub and project_threads(zone, parts[0]):
         raise Refused("%s has threads; name the one" % parts[0])
     return zone, note, parts, ("%s, %s" % (parts[0], parts[2]) if is_thread else parts[0])
 
@@ -3009,35 +3009,28 @@ def question(ws: Path, req: dict) -> tuple:
     return zone, q, note, parts, work_name(zone, parts)
 
 
-def hub_keeps_resume(hub: Path) -> bool:
-    """Does the hub hold the project's own resume point beside its threads: a `### Resume here` block and no
-    `layout: thread-first`? An `### Outcome` in its place ends it (status.py and garrick_lib read it the same way)."""
-    try:
-        text = hub.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
-    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
-    src = hub.parent.parent.parent.parent / "System" / "tools" / "garrick_lib.py"
-    if src.is_file():
-        try:
-            spec = importlib.util.spec_from_file_location("garrick_page_lib", str(src))
-            lib = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(lib)
-            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
-        except Exception:
-            pass
-    lines = text.splitlines()
-    front = {}
-    if lines and lines[0].strip() == "---":
-        for l in lines[1:]:
-            if l.strip() == "---":
-                break
-            if l.lower().startswith("layout:"):
-                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
-    if str(front.get("layout") or "").strip().lower() == "thread-first":
-        return False
-    return any(l.strip().lower() == "### resume here" for l in lines)
+_WORK = {}
+
+
+def work_reader(zone: Path):
+    """work.py, the one reader of the piece of work: the workspace's own copy in System/tools, else the one beside
+    this extra (an installed System/status sits next to System/tools), else the clone's template."""
+    for tools in (zone.parent.parent / "System" / "tools", HERE.parent / "tools", HERE.parent.parent / "template" / "System" / "tools"):
+        src = tools / "work.py"
+        if src.is_file():
+            if src not in _WORK:
+                spec = importlib.util.spec_from_file_location("garrick_work_page", str(src))
+                _WORK[src] = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_WORK[src])
+            return _WORK[src]
+    raise Refused("System/tools/work.py is missing; update Garrick")
+
+
+def project_threads(zone: Path, project: str) -> list:
+    """The records of a project's threads, from the reader."""
+    reader = work_reader(zone)
+    folder = zone / project
+    return [r for r in reader.project_pieces(zone.parent.parent, zone, folder) if r.thread] if folder.is_dir() else []
 
 
 def work_name(zone: Path, parts: tuple) -> str:
@@ -3046,8 +3039,9 @@ def work_name(zone: Path, parts: tuple) -> str:
     the hub keeps its own resume point beside the thread."""
     if len(parts) == 2:
         return parts[0]
-    threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    if len(threads) <= 1 and not hub_keeps_resume(zone / parts[0] / (parts[0] + ".md")):
+    reader = work_reader(zone)
+    found = reader.project_pieces(zone.parent.parent, zone, zone / parts[0]) if (zone / parts[0]).is_dir() else []
+    if len([r for r in found if r.thread]) <= 1 and not any(r.beside for r in found):
         return parts[0]
     return "%s, %s" % (parts[0], parts[2])
 
@@ -3064,18 +3058,12 @@ def say_name(ws: Path, zone: Path, parts: tuple) -> str:
         return name
     thread, project = parts[2].casefold(), parts[0].casefold()
     seen = []
-    for z in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
-        if not z.is_dir() or z.name.startswith((".", "_")):
-            continue
-        for p in z.iterdir():
-            if not p.is_dir() or p.name.startswith((".", "_")) or p.name in SKIP or p.name == "Inbox":
-                continue
-            notes = [t / (t.name + ".md") for t in (p / "Threads").glob("*/")
-                     if not t.name.startswith((".", "_")) and t.name not in SKIP and (t / (t.name + ".md")).is_file()]
-            if not notes and (p / (p.name + ".md")).is_file():
-                notes = [p / (p.name + ".md")]          # a project that is its own thread, by its name
-            seen += [(z.name, p.name.casefold(), n.stem.casefold()) for n in notes
-                     if front(n).get("status") not in ("done", "closed", "archived", "complete", "completed")]
+    for project_records in work_reader(zone).by_project(work_reader(zone).pieces(ws)).values():
+        threads = [r for r in project_records if r.thread]
+        # A project with no thread notes is its own thread, by its name.
+        for r in threads or [r for r in project_records if r.own or r.kind == "heading"]:
+            if r.status not in ("done", "closed", "archived", "complete", "completed"):
+                seen.append((r.zone, r.project.casefold(), (r.thread or r.project).casefold()))
     same = [s for s in seen if s[2] == thread]
     if len(same) <= 1:
         return parts[2]

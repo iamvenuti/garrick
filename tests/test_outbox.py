@@ -65,7 +65,7 @@ class OutboxCase(unittest.TestCase):
         self.addCleanup(patch.stop)
         build_workspace(self.root)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "machine.py"):
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "machine.py", "work.py"):
             shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         self.personal = self.root / "Zones" / "Personal"

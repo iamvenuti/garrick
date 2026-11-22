@@ -90,7 +90,7 @@ A thread is asked nothing about its papers: the project decides. In one job the 
 
 ### Changing one job or separate jobs later
 
-`scaffold.py layout` switches a project that exists, both ways, and carries the files. `--split` makes it separate jobs; `--join` makes it one job. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and a commit that is refused leaves every file and row where it was.
+`scaffold.py layout` switches a project that exists from one to the other, and carries the files. `--split` makes it separate jobs; `--join` makes it one job. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and a commit that is refused leaves every file and row where it was.
 
 ```sh
 python3 System/tools/scaffold.py layout --zone Work --project "Acme" --split --check

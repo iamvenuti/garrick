@@ -20,7 +20,7 @@ A side of your life or work, such as Work or Personal, in `Zones/<Zone>/`. Each 
 
 ### Project
 
-One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. A project is one job or separate jobs. In one job, the hub keeps the resume point and every thread uses the project's papers. In separate jobs, the hub has no resume point and no papers of its own: each thread has its own resume point and papers. A project needs no thread to start with. `scaffold.py project` makes either kind, and `scaffold.py layout` switches it later, both ways: see [Your first project](commands.md#your-first-project).
+One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. A project is one job or separate jobs. In one job, the hub keeps the resume point and every thread uses the project's papers. In separate jobs, the hub has no resume point and no papers of its own: each thread has its own resume point and papers. A project needs no thread to start with. `scaffold.py project` makes either kind, and `scaffold.py layout` switches it later, either way: see [Your first project](commands.md#your-first-project).
 
 ### Thread
 

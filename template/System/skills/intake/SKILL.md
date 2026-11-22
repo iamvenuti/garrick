@@ -234,8 +234,11 @@ The status page's *Process the Inbox* button runs this skill in the background, 
 afterwards, and anything outside the paths below is put back.
 
 - **Write only where intake files things:** the inboxes, `Wikis/Meetings/`, `Wikis/Knowledge/`, a project's `Sources/`,
-  a zone's `Todo.md`, and the `Needs you` question files below. Run no command but `intake.py` and `ingest.py`. Send,
-  share and delete nothing, and never delete anything that is not an inbox item you have just filed.
+  a zone's `Todo.md`, and the `Needs you` question files below. Run no command but these: `intake.py` with `list`,
+  `parse`, `file-conversation`, `file-reading`, `file-to-project`, `extract-attachment`, `skip` or `ask`, and `ingest.py`
+  with `land`, `index`, `log` or `link`. Anything else is refused, `learn`, `person` and `move-to-zone` among it: what
+  decides a wall is the user's to write. Send, share and delete nothing, and never delete anything that is not an inbox
+  item you have just filed.
 - **File without asking** what the rules settle: a mail whose domain a party lists in its zone, a transcript that names
   its parties, something to read from a sender no party owns, a file for the one project of its zone.
 - **Never ask in the conversation.** An item you would ask about stays in its inbox, and you write the question as a file:

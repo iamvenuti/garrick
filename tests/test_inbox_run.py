@@ -284,11 +284,59 @@ class TestTheRun(RunCase):
         text = " ".join(cmd[cmd.index("--allowedTools"):])
         for word in ("send", "reply", "forward", "share", "trash", "mcp__", "WebFetch", "curl"):
             self.assertNotIn(word, text)
-        self.assertEqual(["Read", "Grep", "Glob", "Edit", "Write", "Bash(python3 System/skills/intake/intake.py:*)",
-                          "Bash(python3 System/skills/meetings/ingest.py:*)"], ir.ALLOW)
+        self.assertEqual(["Read", "Grep", "Glob", "Edit", "Write"] +
+                         ["Bash(python3 System/skills/intake/intake.py %s:*)" % s for s in
+                          ("list", "parse", "file-conversation", "file-reading", "file-to-project", "extract-attachment", "skip", "ask")] +
+                         ["Bash(python3 System/skills/meetings/ingest.py %s:*)" % s for s in ("land", "index", "log", "link")], ir.ALLOW)
         deny = json.loads(Path(cmd[cmd.index("--settings") + 1]).read_text())["permissions"]["deny"]
         self.assertIn("mcp__claude_ai_Gmail__send_message", deny)
         self.assertIn("mcp__claude_ai_Google_Drive__share_file", deny)
+
+    def test_no_rule_lets_the_call_run_a_subcommand_that_writes_the_rules_of_the_walls(self):
+        # S1: a bare script rule would let a mail make the call run `learn` or `person`; each rule names its subcommand
+        for rule in ir.ALLOW:
+            self.assertNotRegex(rule, r"(intake|ingest)\.py:\*", rule)
+        text = " ".join(ir.ALLOW)
+        for sub in ("learn", "person", "move-to-zone", "file-note", "process-notes", "split"):
+            self.assertNotIn(".py %s:" % sub, text)
+        # and the skill's unattended section lists exactly the subcommands the rules allow
+        skill = (REPO / "template" / "System" / "skills" / "intake" / "SKILL.md").read_text()
+        section = skill.split("## Running unattended")[1].split("## A note to yourself")[0]
+        for sub in ir.INTAKE_SUBS + ir.INGEST_SUBS:
+            self.assertIn("`%s`" % sub, section)
+        for sub in ("learn", "person", "move-to-zone"):
+            self.assertIn("`%s`" % sub, section)          # named as refused
+
+    def test_a_run_that_changes_the_context_file_or_the_rules_is_refused_and_says_so(self):
+        for name, text in (("context.md", None), ("rules.md", "# Rules\n"), ("rules.local.md", None)):
+            with self.subTest(name):
+                target = self.root / "System" / name
+                write(target, text or (CONTEXT if name == "context.md" else "# Mine\n"))
+                self.drop("Work", "a-%s.eml" % name)
+                was = target.read_text()
+                before = self.heads()
+
+                def act():
+                    (self.work / "Inbox" / ("a-%s.eml" % name)).unlink()
+                    write(self.acme / "Sources" / "kept.txt", "filed\n")
+                    target.write_text(was + "\n| Evil | x | Work | `evil` | yes | evil.example |\n")
+                out = self.run_with(act)
+                self.assertEqual("failed", out["state"])
+                self.assertEqual(ir.SAY_SYSTEM, out["say"])
+                self.assertTrue(out.get("system"))
+                self.assertEqual(before, self.heads())                       # nothing committed
+                self.assertFalse((self.acme / "Sources" / "kept.txt").exists())   # the run's own allowed change is put back
+                self.assertTrue((self.work / "Inbox" / ("a-%s.eml" % name)).exists())
+                self.assertNotEqual(was, target.read_text())                 # the file itself is left as it is, not guessed at
+                target.write_text(was)
+
+    def test_a_run_that_leaves_the_rules_and_tools_as_they_were_is_not_refused(self):
+        self.drop("Work", "a.eml")
+
+        def act():
+            (self.work / "Inbox" / "a.eml").unlink()
+        out = self.run_with(act)
+        self.assertEqual("done", out["state"], out)
 
     def test_the_call_goes_through_run_prepared_under_its_own_ledger_name(self):
         seen = {}

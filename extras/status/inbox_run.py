@@ -51,14 +51,22 @@ MOST_BACKUP_BYTES = 200 * 1024 * 1024       # more waiting than this is left to 
 MOST_BACKUP_FILES = 3000
 MOST_KEPT = 2 * 1024 * 1024         # a file already changed before the run is kept in memory to put back, up to this size
 NEEDS = "Needs you"
-# What the call may run: the two scripts the intake skill's steps use, and the file tools. Nothing else.
-ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
-         "Bash(python3 System/skills/intake/intake.py:*)",
-         "Bash(python3 System/skills/meetings/ingest.py:*)"]
+# What the call may run: the file tools, and one rule for each subcommand of the two scripts that the intake skill's
+# unattended section uses. A subcommand that writes `System/` (`learn`, `person`) or leaves the inbox's own rules
+# (`move-to-zone`, `file-note`, `process-notes`, `split`) is not here (S1). Nothing else.
+INTAKE_SUBS = ("list", "parse", "file-conversation", "file-reading", "file-to-project", "extract-attachment", "skip", "ask")
+INGEST_SUBS = ("land", "index", "log", "link")
+ALLOW = ["Read", "Grep", "Glob", "Edit", "Write"] \
+    + ["Bash(python3 System/skills/intake/intake.py %s:*)" % sub for sub in INTAKE_SUBS] \
+    + ["Bash(python3 System/skills/meetings/ingest.py %s:*)" % sub for sub in INGEST_SUBS]
+# What the run must leave as it found it: the files that decide a wall and the code a run could change under itself.
+WATCHED_FILES = ("context.md", "rules.md", "rules.local.md")           # in System/
+WATCHED_TREES = ("skills", "tools")                                     # under System/
 SAY_BUSY = "The inbox is being processed already. Nothing new was started."
 SAY_UNAVAILABLE = "The background assistant is not available, so this goes to a visible one."
 SAY_FAILED = "The inbox could not be processed in the background."
 SAY_REFUSED = "The assistant changed something it may not, so nothing was kept. The items are still in the inbox."
+SAY_SYSTEM = "The assistant changed a file of the workspace's rules or tools, so nothing was kept. That file was left as it is."
 MEETINGS_INBOX = ("Wikis", "Meetings", "raw", "inbox")
 
 
@@ -86,6 +94,25 @@ def allowed(rel: str) -> bool:
     if len(rest) >= 3 and rest[1] == "Sources":
         return True
     return len(rest) >= 5 and rest[1] == "Threads" and rest[3] == "Sources"
+
+
+def system_hash(ws: Path) -> str:
+    """One hash over the files that decide a wall and the code a run could change under itself: `System/context.md`, the rules
+    files, and every file under `System/skills` and `System/tools`. A run that leaves a different hash was not a run that only
+    files (S1)."""
+    h = hashlib.sha1()
+    files = [ws / "System" / f for f in WATCHED_FILES]
+    for tree in WATCHED_TREES:
+        base = ws / "System" / tree
+        if base.is_dir():
+            files += sorted(p for p in base.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
+    for f in files:
+        h.update(str(f.relative_to(ws)).encode("utf-8", "replace") + b"\0")
+        try:
+            h.update(signature(f).encode("ascii") + b"\0")
+        except OSError:
+            h.update(b"unreadable\0")
+    return h.hexdigest()
 
 
 def inboxes(ws: Path) -> Dict[str, Path]:
@@ -461,6 +488,7 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
         if not item or "/" in item or item not in before_items.get(zone, []):
             return finish(state="failed", say="The item that question was about is not in the inbox any more.")
     snap = Snapshot(ws)
+    system_before = system_hash(ws)
     backup = Backup(ws, folders, keep)
     if not snap.ok or not backup.ok:
         backup.drop()
@@ -480,6 +508,13 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
         if answer:
             set_question(ws, zone, answer["file"], reopen=True)
         return finish(state="failed", say=SAY_FAILED)
+    if system_hash(ws) != system_before:
+        backup.restore()
+        put_all(snap)
+        backup.drop()
+        if answer:
+            set_question(ws, zone, answer["file"], reopen=True)
+        return finish(state="failed", say=SAY_SYSTEM, refused=True, system=True)
     moved = snap.moved()
     outside = [(r, p) for r, ps in moved.items() for p in ps
                if not allowed(str((r / p).relative_to(ws)).replace(os.sep, "/")) or linked(ws, r, p)]

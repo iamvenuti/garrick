@@ -341,6 +341,9 @@ DECLARED: Dict[str, Op] = {
     # the assistants' own settings and whose four choices are kept in the workspace's settings file. Only the app's bridge.
     "machine-role": _op(("role", "name", "server"), (), "machine", retry="safe"),
     "read-guard": _op(("mode", "cross", "tools", "skip"), (), "workspace", retry="safe"),
+    # The wrap (#645): the assistant's words in `input`, one JSON object, handed to System/tools/wrap.py, which does the lock,
+    # the writes and the commit in the zone and answers with its receipt. A second run writes a second dated entry.
+    "wrap": _op(("zone", "project", "thread", "input"), ("project", "thread"), "zone", True),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since

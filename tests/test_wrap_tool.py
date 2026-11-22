@@ -440,6 +440,16 @@ class Writes(Base):
         self.assertEqual(before, tree(self.base))
 
 
+    def test_a_refused_wrap_takes_back_the_history_it_made(self):
+        old = "".join("**%d March 2025.** An old entry %d.\n\n" % (d, d) for d in range(2, 9))
+        write(self.thread, self.thread.read_text(encoding="utf-8") + "\n" + old)
+        commit_all(self.work, "old entries")
+        got = self.run_wrap(payload(entry="See [[260311-home-call]]."))
+        self.assertEqual("refused", got["outcome"])
+        self.assertFalse((self.thread.parent / "history").exists())
+        self.assertTrue(self.clean())
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class HalfWay(Base):
     def test_a_wrap_killed_between_its_writes_and_its_commit_leaves_the_lock_to_expire(self):
@@ -548,6 +558,65 @@ class SameVerdictsAsTheHandWrap(Base):
             else:
                 git(self.root / "Zones" / zone, "reset", "-q", "--hard", "HEAD~1")             # back to the start for the next case
         self.assertGreaterEqual(refused_seen, 4)
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class PageRoute(Base):
+    """The page_action.py executor routes the wrap verb to the same tool, with the words in `input`."""
+
+    def setUp(self):
+        super().setUp()
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_page_action_for_wrap", REPO / "extras" / "status" / "page_action.py")
+        self.pa = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.pa)
+        shutil.copy2(TOOLS / "operations.py", self.root / "System" / "tools" / "operations.py")
+        (self.root / "System" / "rules.md").write_text("# Rules\n", encoding="utf-8")
+        jobs = mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(self.base / "jobs")})
+        jobs.start()
+        self.addCleanup(jobs.stop)
+
+    def send(self, **req):
+        data = dict(payload())
+        words = {k: data[k] for k in ("resume", "entry", "message")}
+        words.update(req.pop("words", {}))
+        request = dict({"verb": "wrap", "zone": "Work", "project": "Northwind", "thread": "Pricing", "input": words}, **req)
+        return self.pa.perform(self.root, request, via="session")[0]
+
+    def test_the_verb_is_declared_and_routed(self):
+        import operations
+        self.assertIn("wrap", self.pa.VERBS)
+        self.assertIn("wrap", operations.DECLARED)
+        self.assertEqual(("zone", "project", "thread", "input"), operations.DECLARED["wrap"].fields)
+        self.assertNotIn("wrap", operations.RECORDED)
+
+    def test_a_saved_wrap_answers_with_the_receipt_sentence(self):
+        reply = self.send()
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual("Saved: Northwind, Pricing is wrapped.", reply["say"])
+        self.assertTrue(self.clean())
+        self.assertEqual(2, self.count())
+
+    def test_a_refused_wrap_shows_the_hooks_sentence(self):
+        reply = self.send(words={"entry": "See [[260311-home-call]]."})
+        self.assertFalse(reply["ok"])
+        self.assertTrue(reply["say"].startswith("Refused: "), reply)
+        self.assertEqual(1, self.count())
+
+    def test_a_field_the_verb_does_not_declare_is_refused_by_name(self):
+        reply = self.send(file="x.md")
+        self.assertFalse(reply["ok"])
+        self.assertIn("file", reply["say"])
+        self.assertEqual(1, self.count())
+
+    def test_the_words_may_not_name_another_thread_than_the_request(self):
+        reply = self.send(words={"thread": "Other"})
+        self.assertFalse(reply["ok"])
+        self.assertEqual(1, self.count())
+
+    def test_a_request_with_no_words_is_refused(self):
+        reply = self.pa.perform(self.root, {"verb": "wrap", "zone": "Work", "project": "Northwind", "thread": "Pricing"}, via="session")[0]
+        self.assertFalse(reply["ok"])
 
 
 if __name__ == "__main__":

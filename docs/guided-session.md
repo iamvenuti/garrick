@@ -13,7 +13,7 @@ Bring:
 - One project you want to pick up tomorrow, and the question you need answered.
 - One short email, transcript or typed call note you are allowed to use with your chosen assistant and account.
 - The names of the parties involved. A party can be a client, partner or confidential internal project.
-- Any pair whose information must stay apart. Start with the parties relevant to this project; you can add others later.
+- Which zone each party belongs to, and which of those zones hold material that must not mix with the others. A wall is a flag on a zone: it is walled or open. Start with the zones relevant to this project; you can add others later.
 
 The facilitator will help with unfamiliar terms. You do not need to prepare a complete map of your work, install Obsidian or cmux, or connect your mail account.
 

@@ -267,6 +267,14 @@ Optional tools the repository ships in `extras/` for a workspace to take on, suc
 
 The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as the state chip on a card that parks or wakes a thread, or the box that ticks a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
 
+### View model
+
+The one JSON document the core builds of your workspace, and the only thing the Garrick App draws from: your pieces of work with their state, what each may do, and the queues of files and questions that wait. It reads and never writes, it keeps each zone's records apart, and it lives in `System/tools/view.py`, so that what a card means can be tested without drawing a page. Decided in [#650](https://github.com/iamvenuti/garrick/issues/650). See [The view model](architecture.md#the-view-model).
+
+### Usage counts
+
+The Mac app's count of which cards you open: a card's name, a day and a number, on this Mac only, with no path, name, zone or text, and no copy anywhere else. A setting turns it off, and `System/tools/usage.py` prints it. Decided in [#651](https://github.com/iamvenuti/garrick/issues/651). See [Counting which cards you open](extras/status-page.md#counting-which-cards-you-open).
+
 ### The Mac app
 
 *Garrick.app*, which shows the Garrick App in a window of its own, in the Dock and the menu bar. It rebuilds the page when it is old, and its buttons act. `make-app.sh` builds it on your Mac, signed for that Mac only, and "Set up Garrick" offers to run it. See [A Mac app](extras/status-page.md#a-mac-app).

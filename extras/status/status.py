@@ -501,40 +501,14 @@ def as_date(value) -> Optional[dt.date]:
 
 DONE = {"done", "closed", "archived", "complete", "completed"}
 PARKED = {"parked", "dormant", "paused", "on-hold"}
-RESUME = re.compile(r"^#{1,6}\s+Resume here\b", re.I)
-MONTH = {m.lower(): i + 1 for i, m in enumerate(("January February March April May June July August September "
-                                                  "October November December").split())}
-SPOKEN_DATE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})\b")
-
-
-def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
-    """Whether a thread note has its `### Resume here` block, as the threads
-    skill writes it, and the date the block gives itself: the first date on
-    its "Where it stands" line, or anywhere in the block before its table.
-    The full page reads nothing else of the block, and nothing of it reaches
-    that page; Your work reads the rest through resume_read()."""
-    found = resume_read(note)
-    return found["block"], found["date"]
-
-
-RESUME_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$")
-ENTRY_LINE = re.compile(r"^\*\*(?:[A-Z][a-z]+ \d\d:\d\d, )?(\d{1,2} [A-Za-z]{3,9}\.? \d{4})\.\*\*\s*(.*\S)\s*$")
 PLACEHOLDER = re.compile(r"^<[^>]*>$")
 
 
-def said_date(text: str) -> Optional[dt.date]:
-    """The first date in `text`, ISO or spoken ("3 October 2026")."""
-    iso = re.search(r"\b(\d{4}-\d\d-\d\d)\b", text)
-    if iso and as_date(iso.group(1)):
-        return as_date(iso.group(1))
-    for day, month, year in SPOKEN_DATE.findall(text):
-        number = MONTH.get(month.lower()) or next((n for m, n in MONTH.items() if m[:3] == month.lower()[:3]), None)
-        try:
-            if number:
-                return dt.date(int(year), number, int(day))
-        except ValueError:
-            continue
-    return None
+def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
+    """Whether a thread note has its `### Resume here` block, as the threads skill writes it, and the date the block
+    gives itself. Read by the view model (view.resume_read); nothing of the block reaches the page from here."""
+    found = view_reader().resume_read(note)
+    return found["block"], found["date"]
 
 
 def filled(text: Optional[str]) -> str:
@@ -543,102 +517,10 @@ def filled(text: Optional[str]) -> str:
     return "" if not text or PLACEHOLDER.match(text) else text
 
 
-def resume_read(note: Path) -> dict:
-    """A thread note's resume point, read once: `block`, whether it has a
-    `### Resume here` block, and `date`, the date the block gives itself (see
-    resume_point()). Also `where`, its Where it stands
-    line; `rows`, its table by row name (Next action, Waiting on, …), each
-    as written and "" where it is still the template's placeholder; `entry`,
-    the newest dated entry below it, (its date, its words); and `about`, the
-    note's opening sentence under its title."""
-    out = {"block": False, "date": None, "where": "", "rows": {}, "entry": None, "about": ""}
-    try:
-        lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return out
-    title = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
-    if title is not None:
-        para = []
-        for l in lines[title + 1:]:
-            if l.startswith("#") or (para and not l.strip()):
-                break
-            if l.strip():
-                para.append(l.strip())
-        out["about"] = filled(" ".join(para))
-    for i, line in enumerate(lines):
-        if not RESUME.match(line):
-            continue
-        out["block"] = True
-        lead: List[str] = []
-        for text in lines[i + 1:i + 12]:
-            if text.startswith(("#", "|", "---")):
-                break
-            if text.strip():
-                lead.append(text.strip())
-            if out["date"] is None:
-                out["date"] = said_date(text)
-        out["where"] = filled(re.sub(r"^\*\*Where it stands,?[^*]*\*\*\s*", "", " ".join(lead)).replace("**", ""))
-        end = len(lines)
-        for j in range(i + 1, len(lines)):
-            if lines[j].startswith("#") or lines[j].strip() == "---":
-                end = j
-                break
-            m = RESUME_ROW.match(lines[j])
-            if m and m.group(1) and not set(m.group(1)) <= set("-: "):
-                out["rows"][m.group(1)] = filled(m.group(2).replace("\\|", "|"))
-        for l in lines[end:end + 40]:
-            m = ENTRY_LINE.match(l.strip())
-            if m:
-                out["entry"] = (said_date(m.group(1)), filled(m.group(2)))
-                break
-            if l.startswith("## "):
-                break
-        break
-    return out
-
-
-# The checkpoint beside a resume point: `### Checkpoint` under Resume here,
-# what a session recorded as the work happened and has not wrapped yet. Only
-# its comment line is read here, which carries when it was written and the
-# hash of the resume point it was written against; no content of the block
-# reaches the page, as resume_point() promises of the block above it. The page
-# gets no button either: confirming a checkpoint is a wrap, and a wrap needs an
-# assistant that knows the session.
-CHECKPOINT_MARK = re.compile(r"(?m)^<!--[ \t]*garrick-checkpoint[ \t]([^\n]*?)-->[ \t]*$")
-CHECKPOINT_FIELD = re.compile(r"(\w+)=(\S+)")
-MONTH_NAMES = tuple(m.capitalize() for m in sorted(MONTH, key=MONTH.get))
-
-
 def checkpoint_mark(note: Path, ws: Optional[Path]) -> Optional[dict]:
-    """The unwrapped checkpoint in a note, as its comment line carries it:
-    `at`, when it was written, `said` and `full`, that time short and long, and
-    `stale`, whether the resume point has moved since. None where the note has
-    no checkpoint. Stale needs the workspace's own `resume_hash`, so without
-    `garrick_lib.py` a block reads as current: the time it carries is true
-    either way, and only the second claim would be a guess."""
-    try:
-        body = note.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    m = CHECKPOINT_MARK.search(body)
-    if m is None:
-        return None
-    fields = dict(CHECKPOINT_FIELD.findall(m.group(1)))
-    try:
-        when = dt.datetime.fromisoformat(fields.get("at") or "")
-    except ValueError:
-        when = None
-    lib = workspace_lib(ws)
-    base = None
-    if lib is not None and callable(getattr(lib, "resume_hash", None)):
-        try:
-            base = lib.resume_hash(body)
-        except Exception:
-            base = None
-    said = "%02d:%02d" % (when.hour, when.minute) if when else "an unreadable time"
-    full = "%s on %d %s %d" % (said, when.day, MONTH_NAMES[when.month - 1], when.year) if when else said
-    return {"at": when, "said": said, "full": full,
-            "stale": bool(base and fields.get("base") and fields["base"] != base)}
+    """The unwrapped checkpoint in a note: the view model's reading of its comment line (view.checkpoint_mark)."""
+    mod = view_reader(ws)
+    return mod.checkpoint_mark(note, mod.can_judge(ws) if ws is not None else False)
 
 
 def checkpoint_chip(r: dict) -> str:
@@ -656,23 +538,6 @@ def checkpoint_chip(r: dict) -> str:
     return '<span class="chip" title="%s">unwrapped since %s</span>' % (
         E("Work recorded at %s that no wrap has folded in yet. Open the thread to read it: "
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
-
-
-def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: Path, pfm: dict, fm: dict, state: str) -> dict:
-    """One row of threads(): a thread note's, or a hub's own."""
-    read = resume_read(note)
-    has_block, resumed = read["block"], read["date"]
-    mark = checkpoint_mark(note, ws)
-    updated = as_date(fm.get("updated"))
-    when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
-    return {"zone": zone.name, "project": project.name, "thread": name, "note": note,
-            "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
-            "party": tags(fm.get("party") or pfm.get("party")),
-            "updated": updated, "status": state,
-            "resume": has_block, "resumed": resumed,
-            "checkpoint": mark, "touched": max(when) if when else None,
-            "spoken": as_text(fm.get("spoken")).strip(), "read": read,
-            "heading": as_text(pfm.get("layout")).strip().lower() == "thread-first"}
 
 
 def work_reader(ws: Path):
@@ -693,76 +558,88 @@ def work_reader(ws: Path):
 _WORKS: dict = {}
 
 
-def threads(ws: Path) -> Dict[str, dict]:
-    """Per zone: every live thread's project, name, party and the date its
-    note was last updated, read from frontmatter like "what's open"; and
-    whether the note has a Resume here block, with that block's own date
-    (resume_point), and its unwrapped checkpoint read from the comment line
-    alone (checkpoint_mark), with `touched`, the later of `updated:` and that
-    checkpoint's day: this afternoon's unwrapped work is newer than the last
-    wrap, and the views that order by what moved last say so. A project
-    with no thread note is its own single thread, read from its hub, as in a
-    workspace laid out before Garrick gave every project a Threads/ folder.
-    A project whose hub says parked holds every live thread in it parked
-    too, each marked `held`; `held` per zone names those projects.
+def view_reader(ws: Optional[Path] = None):
+    """view.py, the view model (#650): the workspace's own copy in System/tools, else the one beside this extra (an
+    installed System/status sits next to System/tools), else the clone's template."""
+    homes = ([ws / "System" / "tools"] if ws is not None else []) + [
+        Path(__file__).resolve().parent.parent / "tools", Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools"]
+    for tools in homes:
+        src = tools / "view.py"
+        if src.is_file():
+            if src not in _VIEWS:
+                spec = importlib.util.spec_from_file_location("garrick_view_status", str(src))
+                _VIEWS[src] = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_VIEWS[src])
+            return _VIEWS[src]
+    raise FileNotFoundError("System/tools/view.py")
 
-    For the Threads card's search (#140), names only: each row's `spoken:`
-    form, `finished` per zone, the threads `done` counts, with their
-    project, name and note, and `projects`, each project by name with its
-    hub's status (live, parked or done), its spoken form and whether it is
-    its own single thread (`own`). Nothing of a note's body is read here."""
-    out = {}
+
+_VIEWS: dict = {}
+
+
+def piece_day(text) -> Optional[dt.date]:
+    return dt.date.fromisoformat(text) if text else None
+
+
+def piece_row(ws: Path, p: dict) -> dict:
+    """One piece of the view model as the Threads card's row has it: paths and dates restored."""
+    note = ws / p["note"]
+    hub = ws / p["hub"] if p["hub"] else None
+    if p["shown"] == "done":
+        return {"zone": p["zone"], "project": p["project"], "thread": p["thread"], "note": note, "hub": hub, "status": "done",
+                "party": list(p["party"]), "updated": piece_day(p["updated"]), "spoken": p["spoken"]}
+    read, mark = p["read"], p["checkpoint"]
+    row = {"zone": p["zone"], "project": p["project"], "thread": p["thread"], "note": note, "rel": p["rel"], "hub": hub,
+           "party": list(p["party"]), "updated": piece_day(p["updated"]), "status": p["state"],
+           "resume": p["resume"], "resumed": piece_day(p["resumed"]),
+           "checkpoint": dict(mark, at=dt.datetime.fromisoformat(mark["at"]) if mark["at"] else None) if mark else None,
+           "touched": piece_day(p["touched"]), "spoken": p["spoken"],
+           "read": dict(read, date=piece_day(read["date"]), rows=dict(read["rows"]),
+                        entry=(piece_day(read["entry"][0]), read["entry"][1]) if read["entry"] else None),
+           "heading": p["heading"]}
+    if "files" in p:
+        row["files"], row["open"] = p["files"], p["open"]
+    if p["held"]:
+        row["held"] = True
+    return row
+
+
+def view_model(ws: Path) -> Optional[dict]:
+    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet."""
     try:
-        reader = work_reader(ws)
+        work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
+        return view_reader(ws).build(ws)
     except FileNotFoundError:
-        # A half-finished update: this page is new and System/tools has no work.py yet. The page builds and says so.
+        return None
+
+
+def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
+    """Per zone, what the Threads card and Your work draw: every live thread's project, name, party and the date its
+    note was last updated; whether the note has a Resume here block, with that block's own date, and its unwrapped
+    checkpoint, with `touched`, the later of `updated:` and that checkpoint's day (#650: all of it decided by the
+    view model, System/tools/view.py, which reads the notes; this page only draws it). A project with no thread note
+    is its own single thread, read from its hub. A project whose hub says parked holds every live thread in it
+    parked too, each marked `held`; `held` per zone names those projects.
+
+    For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
+    `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
+    its own single thread (`own`). Nothing of a note's body is read here."""
+    model = model or view_model(ws)
+    if model is None:
+        # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
                             "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
-    for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
-        for (_, name_), found in reader.by_project(reader.pieces(ws, zone=zone.name)).items():
-            project = zone / name_
-            hub = found[0].hub
-            hub_path = project / (project.name + ".md")
-            pfm = frontmatter(hub, ws) if hub else {}
-            hub_state = as_text(pfm.get("status")).strip().lower() if hub else ""
-            hub_parked = hub_state in PARKED
-            if hub_parked:
-                asleep.append(project.name)
-            heading = any(r.kind == "heading" for r in found)     # no piece of work of its own
-            # The page shows a hub as its project's single thread only when it says `type: project`.
-            shown = reader.own_needs_type(found)
-            own = any(r.own for r in shown)
-            notes = [(r.thread or project.name, r.note) for r in shown if r.thread or r.own]
-            projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                      "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
-                                      "hub": hub, "party": tags(pfm.get("party"))}
-            for name, note in notes:
-                fm = pfm if note == hub_path else frontmatter(note, ws)
-                state = as_text(fm.get("status")).strip().lower()
-                if state in DONE:
-                    done += 1
-                    finished.append({"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                                     "hub": hub, "status": "done",
-                                     "party": tags(fm.get("party") or pfm.get("party")),
-                                     "updated": as_date(fm.get("updated")), "spoken": as_text(fm.get("spoken")).strip()})
-                    continue
-                held = hub_parked and note != hub_path          # parked with its project, whatever its own status
-                state = "parked" if state in PARKED or held else state
-                row = thread_row(ws, zone, project, name, note, hub_path, pfm, fm, state)
-                if held:
-                    row["held"] = True
-                (parked if state == "parked" else rows).append(row)
-            # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
-            if any(r.beside for r in found) and not hub_parked and hub_state not in DONE:
-                hubs.append(thread_row(ws, zone, project, project.name, hub_path, hub_path, pfm, pfm, hub_state))
-        # By name, as you would look for one; the freshness bar carries the age.
-        by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
-        rows.sort(key=by_name)
-        parked.sort(key=by_name)
-        finished.sort(key=by_name)
-        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
-                          "finished": finished, "projects": projects, "hubs": hubs}
+    out = {}
+    for z in model["zones"]:
+        work = z["work"]
+        out[z["name"]] = {"rows": [piece_row(ws, p) for p in work if p["shown"] == "row"],
+                          "parked": [piece_row(ws, p) for p in work if p["shown"] == "parked"],
+                          "done": z["done"], "folder": ws / "Zones" / z["name"], "held": list(z["held"]),
+                          "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
+                          "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
+                                       for name, v in z["projects"].items()},
+                          "open_links": [list(x) for x in z["open_links"]],
+                          "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
     return out
 
 
@@ -2929,16 +2806,13 @@ var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function()
 """
 
 
-def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
-    """Files waiting to be filed: each zone's Inbox and the Meetings inbox."""
-    places = [(z.name, z / "Inbox") for z in visible_dirs(ws / "Zones")]
-    places.append(("Meetings", ws / "Wikis" / "Meetings" / "raw" / "inbox"))
-    out = []
-    for name, folder in places:
-        if folder.is_dir():
-            n = sum(1 for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
-            out.append((name, folder, n))
-    return out
+def inboxes(ws: Path, model: Optional[dict] = None) -> List[Tuple[str, Path, int]]:
+    """Files waiting to be filed: each zone's Inbox and the Meetings inbox, as the view model counts them (#650): one
+    zone or one wiki per row, and none for a zone that is a link or an Inbox that leads out of its zone."""
+    model = model or view_model(ws)
+    if model is None:
+        return []                 # a half-finished update: the Threads card says so
+    return [(q["place"], ws / q["folder"], q["count"]) for q in model["queues"]["inbox"]]
 
 
 INBOX_STATE = ("System", "generated", "status-inbox.json")
@@ -4515,9 +4389,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     if actions:
         card["oc"] = [r["zone"], r["rel"]]     # what Open in Claude continues (#180), parked or not
     if r["note"] != r["hub"]:
-        card["mg"] = [r["zone"], r["project"], r["thread"], files_in(r["note"].parent),
-                      open_naming(r["note"].parents[3], {r["thread"]}), [],
-                      layout_offers(r["note"].parent, bool(r.get("heading")), r["hub"] is not None)]
+        card["mg"] = [r["zone"], r["project"], r["thread"], r["files"], r["open"], [], []]      # a thread offers no layout change
     if drive:
         card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
     live = session_in(desk, r["note"].parent)
@@ -4527,85 +4399,14 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 
 def layout_offers(folder: Path, heading: bool, hub: bool) -> List[str]:
-    """The change of layout a card offers (#604, #632): the project's switch and nothing else, as `scaffold.py layout`
-    makes it. `split` for a project that is one job, `join` for one that is separate jobs, `mend` (a Join) for a one-job
-    project where a thread holds papers of its own; a thread offers none, since
-    the project's switch decides for every thread under it. A project with no hub offers none."""
-    if not hub or folder.parent.name == "Threads":
-        return []
-    if heading:
-        return ["join"]
-    return ["mend"] if mixed_papers(folder) else ["split"]
-
-
-def _keeps_papers(folder: Path) -> bool:
-    """The same test as check.py's `keeps_papers` (N1): a tracked file a Join would move, so not a `.gitkeep`, a
-    `.DS_Store` or a `published.md` ledger with no row."""
-    if not folder.is_dir():
-        return False
-    try:
-        listing = subprocess.run(["git", "ls-files", "-z", "--", "."], cwd=str(folder), capture_output=True,
-                                 text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    for name in (n for n in listing.split("\0") if n):
-        path = folder / name
-        if Path(name).name in (".gitkeep", ".DS_Store") or path.is_symlink() or not path.is_file():
-            continue
-        if name == "published.md" and folder.name == "Deliverables":
-            rows = 0
-            try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                lines = []
-            for l in lines:
-                if l.strip().startswith("|"):
-                    cells = [c.strip() for c in l.strip().strip("|").split("|")]
-                    if len(cells) > 1 and cells[1] and not set(cells[0]) <= set("-: ") and cells[0].lower() != "date":
-                        rows += 1
-            if not rows:
-                continue
-        return True
-    return False
+    """The change of layout a project's card offers (view.layout_offers): `split`, `join` or `mend`, or none."""
+    return view_reader().layout_offers(folder, heading, hub)
 
 
 def mixed_papers(project: Path) -> bool:
-    """Is this one-job project mixed: a thread holds papers of its own, and the threads do not look like separate
-    jobs (the hub keeps its resume point, and some thread keeps none)? The check names the same case, and the fix it
-    names is the Join, not the Split (#632)."""
-    threads = sorted(d for d in (project / "Threads").glob("*") if d.is_dir() and not d.name.startswith("."))
-    holding = [t for t in threads if any(_keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
-    if not holding or len(holding) == len(threads):
-        return False
-    try:
-        hub = (project / (project.name + ".md")).read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return any(l.strip().lower() in ("### resume here", "### outcome") for l in hub.splitlines())
-
-
-def files_in(folder: Path) -> int:
-    """How many files deleting a folder would take, for the warning."""
-    return sum(len([f for f in fs if not f.startswith(".")]) for d, _, fs in os.walk(folder) if ".git" not in Path(d).parts)
-
-
-_OPEN: Dict[Path, List[str]] = {}
-
-
-def open_naming(zone: Path, names: set) -> int:
-    """How many open lines of the zone's Todo.md link to one of `names`, as
-    scaffold.py's delete would remove them."""
-    if zone not in _OPEN:
-        try:
-            text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        _OPEN[zone] = [l for l in text.splitlines() if re.match(r"\s*- \[ \]", l)]
-    n = 0
-    for line in _OPEN[zone]:
-        targets = [t.split("|")[0].split("#")[0] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
-        n += any(t.rsplit("/", 1)[-1] in names for t in targets)
-    return n
+    """Is this one-job project mixed (view.mixed_papers): a thread holds papers of its own, and the threads do not look
+    like separate jobs."""
+    return view_reader().mixed_papers(project)
 
 
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
@@ -5076,6 +4877,30 @@ def release_controls(on: bool, every: int) -> str:
             % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
+def usage_on(ws: Optional[Path]) -> bool:
+    """Whether the App counts which cards are opened (#651): on unless the settings say false."""
+    try:
+        return prefs().read(ws).get("usage-counts") is not False if ws is not None else True
+    except Exception:
+        return True
+
+
+def usage_cards(ws: Optional[Path]) -> List[str]:
+    """The ids of the page's cards that may be counted (view.CARDS); none while the view model is not in place."""
+    try:
+        return list(view_reader(ws).CARDS)
+    except (FileNotFoundError, AttributeError):
+        return []
+
+
+def usage_control(on: bool) -> str:
+    """Settings › About Garrick's switch for counting which cards are opened (#651), in the app only: the setting is saved
+    when Settings closes, with the rest, as `usage-counts`. USAGE_JS reads the box, so a card opened after it is cleared is
+    not counted."""
+    return ('<div class="setrel apponly" id="usage-settings"><p class="setrelrow"><label><input type="checkbox" id="usage-on"%s> '
+            '<span>Count which cards I open</span></label></p></div>' % (" checked" if on else ""))
+
+
 def stale_band_lines(ws: Optional[Path]) -> str:
     """The band kept outside the workspace, when it is from another commit than
     the workspace runs: `check.py --version` says the same. Read through the
@@ -5109,7 +4934,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), stale_band_lines(ws), release_controls(*release_choice(ws)) if ws is not None else "", rows))
+               E(version), stale_band_lines(ws), (release_controls(*release_choice(ws)) + usage_control(usage_on(ws))) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -6001,8 +5826,8 @@ OWNER_HEAD = re.compile(r"^\s*(?P<who>(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z
 
 
 def known_owners(ctx: Optional[dict], me: str = "") -> set:
-    """The names a bare "Name:" head may be: the people and parties of System/context.md (full name and first
-    name), and the user's own name, lower case."""
+    """The names a bare "Name:" head may be: the people (System/names.md, or System/context.md until an update has moved them) and the parties of
+    System/context.md (full name and first name), and the user's own name, lower case."""
     names = set()
     for person in (ctx or {}).get("people") or []:
         full = str(person.get("name") or "").strip()
@@ -6749,12 +6574,13 @@ var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Not
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
 /* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications,
    Memory, each only when it changed. null when there is nothing. */
-function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed());
-if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl))return null;
+function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed()),U=window.GarrickUsage,uc=!!(U&&U.changed());
+if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl||uc))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(m){q.memory=M.request();M.saved()}
 if(rl){var rq=R.request();q['release-notice']=rq.on;q['release-notice-every']=rq.every;R.saved()}
+if(uc){q['usage-counts']=U.request();U.saved()}
 lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
@@ -6928,6 +6754,22 @@ window.GarrickRelease={update:function(){if(!busy)go()},changed:function(){retur
 })();
 """
 # ---- end of Settings › About Garrick: Check for updates ------------------------------
+
+
+# ---- Settings › About Garrick: counting which cards are opened (#651) -------------------
+# A click that opens a closed card sends its id, one of the page's own cards (view.CARDS), to the Mac app, which
+# adds one to that day's count (`count-card`). Nothing is sent where the page is not in the app, and nothing while the box in
+# Settings is clear. A card's id is all that is sent: a thread's row is no card and is never counted.
+USAGE_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,on=document.getElementById('usage-on'),
+IDS=%s,changed=false;
+document.addEventListener('click',function(e){if(!host||!on||!on.checked)return;var t=e.target;if(!t||!t.closest)return;
+var s=t.closest('details.card>summary');if(!s||t.closest('.tools'))return;var d=s.parentNode;
+if(d.open||IDS.indexOf(d.id)<0)return;host.postMessage({act:{verb:'count-card',card:d.id}})},true);
+if(on)on.addEventListener('change',function(){changed=true});
+window.GarrickUsage={changed:function(){return changed},request:function(){return!!(on&&on.checked)},saved:function(){changed=false}};
+})();
+"""
 
 
 # ---- Settings › Memory (#108) -----------------------------------------------------
@@ -8670,7 +8512,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws)
-    T, IB, C, R, W = (threads(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
+    model = view_model(ws)                                 # the one document of the workspace this page draws from (#650)
+    T, IB, C, R, W = (threads(ws, model), inboxes(ws, model), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
@@ -8883,8 +8726,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             c["pp"] = [zone, project]        # what Park and Wake act on: the hub, and with it every thread
         if hub:
             subs = sorted({r["thread"] for r in items if r["note"] != r["hub"]})
-            c["mg"] = [zone, project, "", files_in(hub.parent), open_naming(hub.parent.parent, set(subs) | {project}),
-                       subs, layout_offers(hub.parent, bool(T[zone].get("projects", {}).get(project, {}).get("heading")), True)]
+            kept = T[zone].get("projects", {}).get(project, {})
+            c["mg"] = [zone, project, "", kept["files"], view_reader(ws).open_naming(T[zone]["open_links"], set(subs) | {project}),
+                       subs, kept["layout"]]
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
         if DK:
@@ -9255,7 +9099,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

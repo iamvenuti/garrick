@@ -302,8 +302,10 @@ focus, as under *No name given*). Then:
      refuses.
    - **Rewording, merging or retiring** an open line is Distil's (the `todo`
      skill's *Distil*), run for this thread **before** the call: it edits
-     `Todo.md` and `archive/` and commits nothing, and the tool's commit takes
-     what it changed. Its four questions (what is done, what changed, what is
+     `Todo.md` and, for a retired line, a file in `archive/`, and commits
+     nothing. The tool's commit takes the `Todo.md` it changed and only the
+     `archive/` and `history/` files the wrap itself wrote, so commit Distil's
+     `archive/` file by name before the call. Its four questions (what is done, what changed, what is
      new, what no longer holds) decide the lines; say its counts in the reply
      ("Distilled Acme, pricing: one added, two merged, one retired."). A line
      the user moved to another section is changed only on their yes, shown as

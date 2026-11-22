@@ -447,6 +447,17 @@ class Snapshot:
                 if p.is_file():
                     self.take(p)
 
+    def changed(self) -> List[Path]:
+        """The files of the kept folders that this run made or changed, and no other: another session's file there is
+        none of them."""
+        out = []
+        for folder in self.folders:
+            if folder.is_dir():
+                for p in sorted(folder.rglob("*")):
+                    if p.is_file() and (p not in self.files or self.files[p] != p.read_bytes()):
+                        out.append(p)
+        return out
+
     def restore(self) -> None:
         for folder in self.folders:
             if folder.is_dir():
@@ -604,7 +615,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
     if words > cap:
         notes.append("The Resume block is %d words, over its %d. Want a shorter one?" % (words, cap))
     # 4. what changed, by name
-    places = [in_zone, "Todo.md", "archive", note.parent.relative_to(zone).as_posix() + "/" + hist.FOLDER]
+    places = [in_zone, "Todo.md"] + [p.relative_to(zone).as_posix() for p in snap.changed()]       # the files it wrote, by name
     files = changed_among(zone, places)
     if before_commit is not None:
         before_commit()

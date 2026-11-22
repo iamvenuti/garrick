@@ -345,6 +345,22 @@ class Refusals(Base):
         self.assertEqual("conflict", got["outcome"], got)
         self.assertEqual([], self.generated(".done"))
 
+    def test_another_sessions_file_in_archive_or_history_stays_out_of_the_commit(self):
+        old = "".join("**%d March 2025.** An old entry %d.\n\n" % (d, d) for d in range(2, 9))
+        write(self.thread, self.thread.read_text(encoding="utf-8") + "\n" + old)
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [x] [[Pricing]]: old one ✅ 2026-11-01\n\n## Done\n")
+        commit_all(self.work, "old entries")
+        write(self.work / "archive" / "Theirs.md", "# somebody else's\n")
+        write(self.thread.parent / "history" / "Theirs.md", "# somebody else's\n")
+        got = self.run_wrap()
+        self.assertEqual("saved", got["outcome"], got)
+        self.assertTrue(any(f.startswith("archive/Todo-2026") for f in got["files"]), got["files"])
+        self.assertTrue(any("history/Pricing history" in f for f in got["files"]), got["files"])
+        self.assertFalse(any("Theirs" in f for f in got["files"]), got["files"])
+        left = git(self.work, "status", "--porcelain", "--untracked-files=all")
+        self.assertIn("archive/Theirs.md", left)
+        self.assertIn("history/Theirs.md", left)
+
     def test_other_staged_files_are_never_swept_into_the_commit(self):
         write(self.work / "Stray.md", "# stray\n")
         git(self.work, "add", "--", "Stray.md")

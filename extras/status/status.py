@@ -4975,7 +4975,7 @@ def channels_settings(ws: Path) -> str:
     lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
     return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s</section>'
             % (set_head("Channels", "channels", lede),
-               help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+               help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking you first; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
                          "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
                          "walled zone sent to Telegram is held on Telegram&#39;s servers."),
                body, limit, held_list()))

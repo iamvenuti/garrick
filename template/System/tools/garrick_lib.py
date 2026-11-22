@@ -1296,9 +1296,9 @@ def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
 # ---------------------------------------------------------------------------
 #
 # The policy is the Walled column of the Zones table of System/context.md, `yes`
-# or `no`. Every point that enforces it (the pre-commit check, Ask, the status
-# page's actions, intake, Nurture, scaffold) asks decide() and holds no wall
-# test of its own; a file's zone is its path, or, in the Meetings wiki, its
+# or `no`. Ask, the status page's actions, intake and scaffold ask decide() and
+# hold no wall test of their own; the commit check, Recall and Nurture call
+# may_flow() directly. A file's zone is its path, or, in the Meetings wiki, its
 # `zone:` (zone_of). The rule itself is may_flow().
 
 KNOWLEDGE = "*knowledge"   # what a Knowledge page is labelled: read by every scope, takes only material with no zone

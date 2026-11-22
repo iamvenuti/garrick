@@ -250,6 +250,8 @@ zone's repository, as the skills would:
                 built here from the folder the workspace holds and "open
                 <name>", the name the threads skill says; nothing in the
                 request is ever part of it. It only reads
+                Only the app's bridge sends it (PAGE_ONLY): a session is refused,
+                so it cannot ask whether another zone's project exists
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -6330,7 +6332,8 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "outbox-drop",
              "inbox-run", "intake-answer",
              "machine-role", "read-guard",
-             "count-card")
+             "count-card",
+             "session-url")
 
 
 # ---- The page's own route (#618 leftover) -------------------------------------------------

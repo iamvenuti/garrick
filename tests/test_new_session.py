@@ -273,6 +273,19 @@ default: print("?")
         self.assertEqual("nil", self.run_h("link", "claude", ok))                        # not a key of this route
         self.assertEqual("codex://threads/new?path=%2FWs&prompt=x", self.run_h("link", "codex-new", "codex://threads/new?path=%2FWs&prompt=x"))
 
+    def test_a_link_must_have_its_keys_path_and_query_names_only(self):
+        for text in ("claude://code/other?folder=%2FWs&q=x",                  # another route
+                     "claude://code/new/more?folder=%2FWs&q=x",
+                     "claude://code/new?folder=%2FWs",                        # a name missing
+                     "claude://code/new?folder=%2FWs&q=x&extra=1",            # a name added
+                     "claude://code/new?folder=%2FWs&folder=%2FOther&q=x",    # a name twice
+                     "claude://code/new?folder=%2FWs&prompt=x",               # the other app's name
+                     "claude://code/new"):
+            self.assertEqual("nil", self.run_h("link", "claude-new", text), text)
+        for text in ("codex://threads/other?path=%2FWs&prompt=x", "codex://threads/new?path=%2FWs&q=x",
+                     "codex://threads/new?folder=%2FWs&prompt=x", "codex://threads/new?path=%2FWs&prompt=x&a=b"):
+            self.assertEqual("nil", self.run_h("link", "codex-new", text), text)
+
     def test_a_link_the_app_takes_is_opened_once_and_nothing_is_copied(self):
         self.assertEqual("true open claude://code/new?folder=%2FWs&q=open%20X",
                          self.run_h("open", "takes", "claude://code/new?folder=%2FWs&q=open%20X", "open X"))

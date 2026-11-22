@@ -10,7 +10,7 @@ Garrick keeps track of where each piece of your work stands. It reads what comes
 
 An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “open [thread]” when you return.
 
-The [Garrick app](docs/extras/status-page.md) opens on your work, most recent first, each piece with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
+The [Garrick app](docs/extras/status-page.md) opens on your work, most recent first, each piece with its next action. Resume opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
 
 Behind the home, Garrick holds three things in one place: what you're working on, in your files; what was said, in a record of your meetings; and what you read, in a library of what you've studied. It files what comes in, such as mail, transcripts and documents, into the right one, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
 
@@ -20,7 +20,7 @@ When some of your work comes from people whose confidences you hold, such as two
 
 > Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed.
 
-Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
+Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, where Resume opens it without Claude's answer waiting.
 
 https://github.com/user-attachments/assets/54996021-8e82-4c7e-b5be-fe9be6f3167e
 
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/54996021-8e82-4c7e-b5be-fe9be6f3167e
 
 ## Start small
 
-![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls around the zones you mark walled. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
+![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls around the zones you mark walled. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: the Garrick App to see it all, Obsidian to browse and cmux for parallel sessions, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).

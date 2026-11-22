@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Changed
 
 - The Garrick App page's pictures are new, taken on 0.76.0 and the demo workspace. The Overview with *Waiting on you now* and *Your work*, and the Threads card with a thread's card open, both as the Mac app draws them, and Explore's graph with a thread selected replace the 0.10.0 pictures, which showed the look before 0.67.0.
+- The deck's home slide shows the App as it is now: *Waiting on you now*, *Your work* with *Resume*, and *Ask*. The deck and the README say *Resume*, the button's name since 0.56.0, where they said *Continue*. Level 3 of the adoption ladder names the Garrick App instead of the status page.
 
 ## [0.76.0] - 2026-11-22
 

@@ -520,3 +520,13 @@ class WrapWordsAfterReviewTest(unittest.TestCase):
         self.assertIn("With `auto` your assistant writes the shorter block, 75% of the limit (300 words at 400), before it makes the call", flat)
         self.assertNotIn("with `auto` it trims the block", flat)
         self.assertNotIn("in the commit message", flat.split("`resume-trim`", 1)[1][:700])
+
+    def test_the_band_readme_starts_every_sentence_with_a_capital(self):
+        text = (REPO / "extras" / "mods" / "README.md").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"counts as gone\. [a-z]")
+        self.assertNotRegex(text, r"(?<!e\.g)(?<!i\.e)\. [a-z][a-z]+ (wrap tool|\(`System)")
+
+    def test_a_project_in_system_is_said_not_to_be_wrapped_by_the_tool(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("A project that lives in `System/` is not wrapped by the command", flat)
+        self.assertIn("move it into a zone", flat)

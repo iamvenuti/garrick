@@ -107,6 +107,17 @@ class TestThePageRoute(RouteCase):
         self.main({"verb": "todo-add", "zone": "Work", "text": "Book the room"})
         self.assertTrue(self.log()[-1].endswith("(page)"), self.log()[-1])
 
+    def test_session_url_is_the_bridges_alone(self):
+        # A session passing another zone's folder learns nothing from ok or refused (#652): the same words either way.
+        self.assertIn("session-url", pa.PAGE_ONLY)
+        folder = str(self.work / "Acme Review")
+        for req in ({"verb": "session-url", "key": "claude-new", "folder": folder},
+                    {"verb": "session-url", "key": "claude-new", "folder": "/nowhere/Cedar"}):
+            for via in ("session", "ask", "outbox"):
+                self.assertEqual(pa.PAGE_REFUSED, self.main(req, via=via)["say"], via)
+        reply = self.main({"verb": "session-url", "key": "claude-new", "folder": folder})     # the app's own bridge
+        self.assertTrue(reply["url"].startswith("claude://code/new?folder="), reply)
+
     def test_the_same_verb_through_a_session_is_still_refused(self):
         self.assertEqual(pa.PAGE_REFUSED, self.main({"verb": "walls-allow"}, via="session")["say"])
 

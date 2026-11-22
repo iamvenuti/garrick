@@ -2797,10 +2797,11 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     the move is kept for the effort history (effort.py's moved.json), so the
     page's Time and Cost follow the new name. One line, and the zone's commit for Undo."""
     old = thread or project
-    context = ws / "System" / "context.md"
     root_repo = (ws / ".git").exists()
-    held = root_repo and context.is_file() and uncommitted(ws, context)
-    before = context.read_bytes() if context.is_file() else None
+    # The heard name goes to System/names.md once the workspace has it, else to System/context.md (#653).
+    files = [ws / "System" / n for n in ("context.md", "names.md")]
+    held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
+    before = {f: f.read_bytes() if f.is_file() else None for f in files}
     said = scaffold(ws, "rename", *which, "--to", to)
     code, head = git(zone, "rev-parse", "--short", "HEAD")
     made = head.strip() if code == 0 else ""
@@ -2811,16 +2812,17 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
         keep_move(ws, rel_old, rel_new)
     except OSError:
         note += " The page's time and cost for it start afresh under the new name."
-    added = context.is_file() and context.read_bytes() != before
-    if added and root_repo and not held:
-        try:
-            commit(ws, context, before or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
-                   wall=wall_refusal(ws))
-        except Refused as e:
-            note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
-    elif added and held:
-        note += (" Its old name is added as a heard one in System/context.md, which had other changes not committed, "
-                 "so it is left for you to commit.")
+    for context in files:
+        added = context.is_file() and context.read_bytes() != before[context]
+        if added and root_repo and not held[context]:
+            try:
+                commit(ws, context, before[context] or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
+                       wall=wall_refusal(ws))
+            except Refused as e:
+                note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
+        elif added and held[context]:
+            note += (" Its old name is added as a heard one in System/%s, which had other changes not committed, "
+                     "so it is left for you to commit." % context.name)
     if "Links written [[" in said:
         note += " Links that name only %s were left alone: another note in %s has that name too." % (old, zone.name)
     return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}

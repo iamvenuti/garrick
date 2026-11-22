@@ -264,7 +264,7 @@ class StandaloneExampleTest(unittest.TestCase):
         ctx = load_context(self.root)
         self.assertIn("Example", ctx["zones"])
         self.assertEqual("Example", ctx["parties"]["quillfield"]["zone"])
-        people = (self.root / "System" / "context.md").read_text(encoding="utf-8").split("## People", 1)[1]
+        people = (self.root / "System" / "names.md").read_text(encoding="utf-8").split("## People", 1)[1]
         for name in ("Robin Hale", "Ines Calder", "Leo Brandt", "Nadia Fenn", "Tom Ashby", "Carla Mendes"):
             self.assertIn("| %s | `quillfield` |" % name, people)
 

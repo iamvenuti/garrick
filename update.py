@@ -5,6 +5,7 @@
     python3 install.py --update ~/Garrick --apply            do it
     python3 install.py --update ~/Garrick --apply --only System/tools/check.py,System/rules.md
     python3 install.py --update ~/Garrick --json             the same report, for a program
+    python3 install.py --update ~/Garrick --names            move People and Aliases to System/names.md, after your yes
     python3 install.py --update ~/Garrick --split            move your text out of Garrick's instruction files
 
 Run it from the newer Garrick: a fresh download, or a clone after `git pull`.
@@ -63,8 +64,9 @@ kept outside the workspace.
 Nothing is written without `--apply`, and nothing is ever deleted, but the Obsidian plugin folder just described. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
-`System/context.md` is never read or written, but for one step: when its
-Zones table has no Walled column, the update runs before it installs anything.
+`System/context.md` and `System/names.md` are never read or written, but for two
+steps: the move of People and Aliases to `names.md` (held for your yes; `--names`,
+see names_move.py), and, when the Zones table has no Walled column, the update runs before it installs anything.
 It prints the flag each zone would get, runs the workspace's own check (the
 rule in force) and this Garrick's (the zone rule) over the workspace, and prints
 every flow whose verdict changes, grouped by kind. It installs and writes only
@@ -360,8 +362,14 @@ def plan(root, zones=None):
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
             "recorded": recorded, "listed": listed, "extras": extras,
-            "allowlist": allowlist(root, zones),
+            "allowlist": allowlist(root, zones), "names": names_study(root),
             "renames": old_jobs(root) if "jobs" in extras and on_mac() else []}
+
+
+def names_study(root):
+    """The held step that moves People and Aliases to System/names.md (#653), read only: its state and a sentence."""
+    import names_move       # beside this file, from the same Garrick
+    return names_move.study(root)
 
 
 def ever_committed(root, path, history):
@@ -523,6 +531,10 @@ def report(p, applied=None):
         lines.append("Extras updated with the rest: %s." % "; ".join(
             "%s (%s)" % (names[n][0], ", ".join(dest for _, dest, _ in names[n][1])) for n in p["extras"]))
     lines += say_allowlist(p.get("allowlist"))
+    names = p.get("names") or {}
+    if names.get("said") and names.get("state") in ("waiting", "unreadable", "both"):
+        lines += ["", names["said"] + (" To move them, say yes, then run the update again with --names, and with --apply."
+                                       if names["state"] == "waiting" else "")]
     steps = p.get("then") or []
     if steps:
         lines += ["", "Then%s:" % (", with --apply" if applied is None else "")]
@@ -661,6 +673,10 @@ def install_missing_hooks(root):
 # until the tool is in place, so that an update that stops half way never leaves a page without its reader.
 WORK_TOOL = "System/tools/work.py"
 WORK_EXTRAS = ("System/status/", "System/jobs/todo_sweep.py")
+# The status page builds its cards through System/tools/view.py, the view model, in the same way. The extras that import it.
+VIEW_TOOL = "System/tools/view.py"
+VIEW_EXTRAS = ("System/status/",)
+VIEW_HELD = "its view model (%s) is not in this workspace yet, so it waits; update again once the tool is there" % VIEW_TOOL
 WORK_HELD = "its reader (%s) is not in this workspace yet, so it waits; update again once the tool is there" % WORK_TOOL
 
 
@@ -734,6 +750,10 @@ def apply(root, p, only=None, today=None):
     if not (root / WORK_TOOL).is_file() and WORK_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
         waits = [item for item in todo if item[0] != "merge" and item[1].startswith(WORK_EXTRAS)]
         skipped += [(item[1], WORK_HELD) for item in waits]
+        todo = [item for item in todo if item not in waits]
+    if not (root / VIEW_TOOL).is_file() and VIEW_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
+        waits = [item for item in todo if item[0] != "merge" and item[1].startswith(VIEW_EXTRAS)]
+        skipped += [(item[1], VIEW_HELD) for item in waits]
         todo = [item for item in todo if item not in waits]
 
     by_repo = {}
@@ -2810,16 +2830,23 @@ def cleanups(root, clean, tty, as_json=False):
     Returns (lines to print, data)."""
     lib = install.lib()
     out, data = [], {}
-    context = root / "System" / "context.md"
-    text = context.read_text(encoding="utf-8", errors="replace")
-    shown, gone = duplicate_people(text)
+    # The People table is in System/names.md once the workspace has moved it (#653), in context.md before; both are read.
+    found = {}
+    for name in ("context.md", "names.md"):
+        path = root / "System" / name
+        if path.is_file():
+            shown, gone = duplicate_people(path.read_text(encoding="utf-8", errors="replace"))
+            if gone:
+                found["System/" + name] = (path, shown, gone)
+    gone = [g for _, _, rows in found.values() for g in rows]
     data["people"] = len(gone)
     if gone:
         out += ["", "People rows that repeat a person under a second party (%d):" % len(gone)] + ["  " + g for g in gone]
         if ask("Take these rows out of the People table?", "people" in clean, tty and not as_json):
-            why = commit_files(root, {"System/context.md": (shown.encode("utf-8"), context.stat().st_mode & 0o777)},
+            why = commit_files(root, {rel: (shown.encode("utf-8"), path.stat().st_mode & 0o777)
+                                      for rel, (path, shown, _) in found.items()},
                                "Garrick: one People row for each person")
-            out.append("Took them out." if not why else "Nothing was written: System/context.md: %s." % why)
+            out.append("Took them out." if not why else "Nothing was written: %s: %s." % (", ".join(sorted(found)), why))
         else:
             out.append("Left as they are. To take them out: python3 System/tools/release.py update --apply --clean people")
     stale = stale_allowances(root)
@@ -2937,6 +2964,8 @@ def main(argv=None):
                          % ", ".join(CLEAN_KINDS))
     ap.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
+    ap.add_argument("--names", action="store_true",
+                    help="move People and Aliases out of System/context.md into System/names.md, once, after your yes")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     ap.add_argument("--release-hashes", action="store_true",
                     help="maintainers: rewrite release-hashes.json from this clone's tags")
@@ -2952,6 +2981,9 @@ def main(argv=None):
         root = find_workspace(args.workspace)
         p = plan(root)
         only = [x.strip() for x in args.only.split(",") if x.strip()] or None
+        if args.names:
+            import names_move       # beside this file, from the same Garrick
+            return names_move.main(root, args.apply, args.json)
         if args.split:
             import split        # beside this file, from the same Garrick
             return split.main(root, p, args.apply, only, args.json)

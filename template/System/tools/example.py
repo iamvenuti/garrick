@@ -39,9 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import ARCHIVE, EXAMPLE_MANIFEST, VERSION_STAMP, strip_tag  # noqa: E402
 
-CONTEXT = ("System", "context.md")
 ARCHIVED = "archived.json"
-# The tables of context.md whose rows leave with the example, in the order they are read.
+# The tables of context.md and names.md whose rows leave with the example, in the order they are read.
 TABLES = ("Zones", "Parties", "People", "Walls", "Aliases")
 
 
@@ -148,56 +147,73 @@ def cell(header: List[str], cells: List[str], *names: str) -> str:
     return ""
 
 
-def example_rows(lines: List[str], zone: str) -> List[int]:
-    """The lines of context.md that belong to the example: its zone's row, its
-    parties, their people and walls, and the aliases that mean any of them."""
-    picked: List[int] = []
+def example_rows(texts: Dict[str, List[str]], zone: str) -> List[Tuple[str, int]]:
+    """The lines, as (file, line number), that belong to the example: its zone's row, its parties, their people
+    and walls, and the aliases that mean any of them. Zones and Parties are in context.md; People and Aliases are
+    in names.md once the workspace has moved them (#653), or in context.md before."""
+    picked: List[Tuple[str, int]] = []
     tags, names = set(), set()
     for heading in TABLES:
-        bounds = section_bounds(lines, heading)
-        if bounds is None:
-            continue
-        header, rows = table_of(lines, *bounds)
-        for i in rows:
-            cells = split_row(lines[i])
-            if heading == "Zones":
-                hit = cell(header, cells, "zone") == zone
-            elif heading == "Parties":
-                hit = cell(header, cells, "zone") == zone
+        for file, lines in texts.items():
+            bounds = section_bounds(lines, heading)
+            if bounds is None:
+                continue
+            header, rows = table_of(lines, *bounds)
+            for i in rows:
+                cells = split_row(lines[i])
+                if heading == "Zones":
+                    hit = cell(header, cells, "zone") == zone
+                elif heading == "Parties":
+                    hit = cell(header, cells, "zone") == zone
+                    if hit:
+                        tags.add(strip_tag(cell(header, cells, "tag")))
+                        names.add(cell(header, cells, "party").strip("*").lower())
+                elif heading == "People":
+                    hit = strip_tag(cell(header, cells, "party")) in tags
+                    if hit:
+                        names.add(cell(header, cells, "name").lower())
+                elif heading == "Walls":
+                    hit = bool({strip_tag(cell(header, cells, "between")), strip_tag(cell(header, cells, "and"))} & tags)
+                else:
+                    hit = cell(header, cells, "means").lower() in names
                 if hit:
-                    tags.add(strip_tag(cell(header, cells, "tag")))
-                    names.add(cell(header, cells, "party").strip("*").lower())
-            elif heading == "People":
-                hit = strip_tag(cell(header, cells, "party")) in tags
-                if hit:
-                    names.add(cell(header, cells, "name").lower())
-            elif heading == "Walls":
-                hit = bool({strip_tag(cell(header, cells, "between")), strip_tag(cell(header, cells, "and"))} & tags)
-            else:
-                hit = cell(header, cells, "means").lower() in names
-            if hit:
-                picked.append(i)
+                    picked.append((file, i))
     return picked
 
 
-def take_rows(text: str, zone: str) -> Tuple[str, List[dict]]:
-    """context.md without the example's rows, and each row with what stood above it."""
-    lines = text.split("\n")
-    picked = example_rows(lines, zone)
+def take_rows(texts: Dict[str, str], zone: str) -> Tuple[Dict[str, str], List[dict]]:
+    """Each file of the context without the example's rows, and each row with what stood above it and its file."""
+    split = {file: text.split("\n") for file, text in texts.items()}
+    picked = example_rows(split, zone)
     taken = []
-    for i in picked:
+    for file, i in picked:
+        lines = split[file]
         heading = next(lines[j][3:].strip() for j in range(i, -1, -1) if lines[j].startswith("## "))
-        taken.append({"section": heading, "line": lines[i], "after": lines[i - 1]})
-    kept = [l for i, l in enumerate(lines) if i not in set(picked)]
-    return "\n".join(kept), taken
+        taken.append({"section": heading, "line": lines[i], "after": lines[i - 1], "file": file})
+    gone = {(file, i) for file, i in picked}
+    kept = {file: "\n".join(l for i, l in enumerate(lines) if (file, i) not in gone) for file, lines in split.items()}
+    return kept, taken
 
 
-def put_rows(text: str, rows: List[dict]) -> str:
-    """context.md with the rows back: each after the line that stood above it
+def row_file(row: dict, texts: Dict[str, str]) -> str:
+    """The file a row goes back into: the one it came out of, unless that file is not there (an archive made after the
+    move, restored into a workspace that has none) or the row is of a table the workspace keeps elsewhere now."""
+    file = row.get("file", "context.md")
+    moved = row["section"] in ("People", "Aliases")
+    if file == "names.md" and "names.md" not in texts:
+        return "context.md"
+    if moved and file == "context.md" and "names.md" in texts and not section_bounds(texts["context.md"].split("\n"), row["section"]):
+        return "names.md"
+    return file
+
+
+def put_rows(texts: Dict[str, str], rows: List[dict]) -> Dict[str, str]:
+    """The files of the context with the rows back: each after the line that stood above it
     when that line is still in its section, else at the end of the section's
     table. In the order they were taken, so a run of rows comes back as a run."""
-    lines = text.split("\n")
+    split = {file: text.split("\n") for file, text in texts.items()}
     for row in rows:
+        lines = split[row_file(row, texts)]
         bounds = section_bounds(lines, row["section"])
         if bounds is None:
             lines += ["", "## " + row["section"], "", row["line"]]
@@ -208,7 +224,17 @@ def put_rows(text: str, rows: List[dict]) -> str:
             table = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
             at = table[-1] + 1 if table else end
         lines.insert(at, row["line"])
-    return "\n".join(lines)
+    return {file: "\n".join(lines) for file, lines in split.items()}
+
+
+def read_context(root: Path) -> Dict[str, str]:
+    """The text of each file of the context that is there, by its name."""
+    out = {}
+    for name in ("context.md", "names.md"):
+        path = root / "System" / name
+        if path.is_file():
+            out[name] = path.read_text(encoding="utf-8")
+    return out
 
 
 # --------------------------------------------------------------------------- the version stamp
@@ -294,12 +320,11 @@ def archive(root: Path, today: str) -> dict:
     if folder.exists():
         raise Refusal("%s is already there, from an earlier archive. Move it aside first." % folder.relative_to(root))
 
-    context_path = root.joinpath(*CONTEXT)
-    context = context_path.read_text(encoding="utf-8") if context_path.is_file() else None
+    context = read_context(root)
     stamp_text, stamp_files = take_stamp(root, zone.name)
-    rels = ["/".join(CONTEXT), "/".join(VERSION_STAMP)]
+    rels = ["System/" + name for name in context] + ["/".join(VERSION_STAMP)]
     was_clean = clean(root, rels)
-    new_context, rows = take_rows(context, zone.name) if context is not None else (None, [])
+    new_context, rows = take_rows(context, zone.name) if "context.md" in context else ({}, [])
 
     record = {"name": manifest.get("name", ""), "zone": zone.name, "archived": today,
               "drive": drive.name if drive is not None and drive.is_dir() else "",
@@ -319,12 +344,12 @@ def archive(root: Path, today: str) -> dict:
             os.rename(str(dst), str(src))
         shutil.rmtree(str(folder), ignore_errors=True)  # only the folder made just above
         raise Refusal("The example could not be put away, so everything is where it was: %s" % exc) from None
-    if new_context is not None and rows:
-        context_path.write_text(new_context, encoding="utf-8")
+    for file in sorted({r["file"] for r in rows}):
+        root.joinpath("System", file).write_text(new_context[file], encoding="utf-8")
     if stamp_text is not None:
         root.joinpath(*VERSION_STAMP).write_text(stamp_text, encoding="utf-8")
     left = commit(root, rels, was_clean, "Example: %s put away" % (record["name"] or zone.name))
-    said = ["The example is put away: the %s zone%s and %d rows of System/context.md, in %s."
+    said = ["The example is put away: the %s zone%s and %d rows of System/context.md and names.md, in %s."
             % (zone.name, ", its drive %s" % record["drive"] if record["drive"] else "", len(rows),
                folder.relative_to(root).as_posix() + "/"),
             "Nothing else was touched. To bring it back: example.py restore."]
@@ -354,7 +379,7 @@ def restore(root: Path) -> dict:
         if not src.exists():
             raise Refusal("%s is missing from the archive, so nothing was brought back." % src.relative_to(root))
 
-    rels = ["/".join(CONTEXT), "/".join(VERSION_STAMP)]
+    rels = ["System/" + name for name in read_context(root)] + ["/".join(VERSION_STAMP)]
     was_clean = clean(root, rels)
     moved: List[Tuple[Path, Path]] = []
     try:
@@ -365,9 +390,11 @@ def restore(root: Path) -> dict:
         for src, dst in reversed(moved):
             os.rename(str(dst), str(src))
         raise Refusal("The example could not be brought back, so it is still put away: %s" % exc) from None
-    context_path = root.joinpath(*CONTEXT)
-    if record.get("rows") and context_path.is_file():
-        context_path.write_text(put_rows(context_path.read_text(encoding="utf-8"), record["rows"]), encoding="utf-8")
+    here = read_context(root)
+    if record.get("rows") and "context.md" in here:
+        back = put_rows(here, record["rows"])
+        for file in sorted({row_file(r, here) for r in record["rows"]}):
+            root.joinpath("System", file).write_text(back[file], encoding="utf-8")
     stamp_text = put_stamp(root, record.get("stamp") or {})
     if stamp_text is not None:
         root.joinpath(*VERSION_STAMP).write_text(stamp_text, encoding="utf-8")
@@ -378,7 +405,7 @@ def restore(root: Path) -> dict:
         except OSError:
             break
     left = commit(root, rels, was_clean, "Example: %s brought back" % (record.get("name") or zone.name))
-    said = ["The example is back: the %s zone%s and its rows of System/context.md, as they were."
+    said = ["The example is back: the %s zone%s and its rows of System/context.md and names.md, as they were."
             % (zone.name, ", its drive %s" % drive.name if drive is not None else "")]
     if left:
         said.append(left)

@@ -128,7 +128,7 @@ states: each request carries the live projects and threads of every zone,
 from their frontmatter, sent again only when it has changed, and `<names>`,
 each name the request holds as it was heard and what ask_scope.mentions()
 settled it to: a party, a person and their party, a project or a thread.
-The session loads no System/context.md, so an alias or a person reaches it
+The session loads no System/context.md or names.md, so an alias or a person reaches it
 that way, and only the ones the request names. It answers with JSON
 (ask-brief.md). Each action is checked against that list, then:
 

@@ -32,20 +32,6 @@ Domains are optional: the part after the @ in their mail addresses. Mail from a 
 | Acme Corp | Client. Supply-chain review | Work | `acme` | acmecorp.example |
 | Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example |
 
-## People
+## People and Aliases
 
-One row for each person, by name. The Party cell is context for whoever reads it, and may be empty.
-
-| Name | Party | Role |
-|---|---|---|
-| Dana Whitlock | `acme` | Head of procurement; sponsor of the review |
-| Theo Marsh | `birch` | Managing partner |
-
-## Aliases
-
-How names arrive by dictation, and what they mean. Add a row whenever the assistant had to ask.
-
-| Heard | Means |
-|---|---|
-| birch and co, birchen co | Birch & Co |
-| dana whitlaw | Dana Whitlock |
+The people you deal with, and the names that arrive mangled by dictation, are in `System/names.md`, so that this file stays short. Read it before acting on a name you cannot place, and match every proper noun against it and the Parties above.

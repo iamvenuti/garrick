@@ -310,14 +310,23 @@ class ProfileTest(unittest.TestCase):
                      "mcp__claude_ai_Gmail__forward", "mcp__claude_ai_Gmail__trash_thread",
                      "mcp__claude_ai_Google_Drive__share_file", "mcp__claude_ai_Google_Calendar__create_event",
                      "mcp__claude_ai_Notion__notion-create-comment", "Bash(git push:*)", "Bash(curl:*)",
-                     "Bash(rm:*)", "Edit(System/**)", "Write(**/.git/**)",
-                     "Edit(System/notes-ledger.json*)", "Write(System/notes-ledger.json*)",
+                     "Bash(rm:*)", "Edit(System/**)", "Edit(**/.git/**)",
+                     "Edit(System/notes-ledger.json*)",
                      # Publishing a document, starting another agent, and driving a browser or the screen.
                      "mcp__claude_ai_Claude_Docs__create", "mcp__claude_ai_Notion__notion-spawn-session",
                      "mcp__claude-in-chrome", "mcp__cmux-cua",
                      # A user-level allow would otherwise reach a job: the web is denied outright.
                      "WebFetch", "WebSearch"):
             self.assertIn(tool, deny, tool)
+
+    def test_profile_has_no_write_path_rule(self):
+        # #639: a `Write(<path>)` deny never matches; `Edit(<path>)` covers every tool that edits a file.
+        deny = json.loads((JOBS / "headless-settings.json").read_text())["permissions"]["deny"]
+        bad = [t for t in deny if t.startswith("Write(") and t != "Write()"]
+        self.assertEqual([], bad, "A Write(<path>) deny rule never matches; use Edit(...) instead.")
+        for path in ("System/**", "System/notes-ledger.json*", "**/.git/**", "~/.claude/**",
+                     "~/.codex/**", "~/Library/LaunchAgents/**"):
+            self.assertIn("Edit(%s)" % path, deny)
 
     def test_profile_keeps_the_core_set(self):
         # The entries agent.py refuses to run without: an edit that drops one stops every Claude job.

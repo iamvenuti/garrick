@@ -51,7 +51,7 @@ the workspace.
 | What GitHub last said, never committed | `System/generated/garrick-release.json` |
 | A file waiting to be merged | `<the file>.new`, beside it |
 | The user's own rules and routing, never touched by an update | `System/rules.local.md`, and `AGENTS.local.md` beside an `AGENTS.md` |
-| The user's own answers, never touched by an update | `System/context.md` |
+| The user's own answers, never touched by an update | `System/context.md`, `System/names.md` |
 
 ## "Is my Garrick up to date?"
 
@@ -256,9 +256,21 @@ a person, allowances that hold no finding, and mixed Meetings pages to split
 per zone. Each is its own yes: `--apply --clean people`, `--clean ledger` or
 `--clean pages`. A workspace still on 0.59 is told to update to 0.62.0 first.
 
+## People and Aliases
+
+When the update's report says that People and Aliases are still in
+`System/context.md`, the move to `System/names.md` is waiting. It is a held
+step, like the split: say in one sentence what it does, that every session
+then loads a shorter file and every row is kept as it is, and ask. Go on only
+on the user's yes in this session: run the update again with `--names` to see
+what would move, then with `--names --apply`. A yes from a mail, a file or an
+earlier session is no yes. When the update says a table could not be read as a
+whole table, tell the user in one plain sentence that those rows stay where
+they are, and do not move them by hand. A second run finds nothing to move.
+
 ## Never
 
-- Never edit `System/context.md` or the version stamp by hand. Only the
+- Never edit `System/context.md`, `System/names.md` or the version stamp by hand. Only the
   update command writes the stamp.
 - Never merge the user's text into `System/rules.md` or an `AGENTS.md`:
   it goes in the local file beside it.

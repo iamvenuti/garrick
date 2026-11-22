@@ -260,7 +260,7 @@ commit:
 python3 System/status/page_action.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
 ```
 
-It also commits the old name as a heard alias in `System/context.md`, and asks for the page to be rebuilt.
+It also commits the old name as a heard alias, in `System/names.md` (in `System/context.md` before the workspace has moved its tables), and asks for the page to be rebuilt.
 **Without the status page**, run the script itself, and do those by hand:
 
 ```sh
@@ -281,7 +281,7 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
    it in the zone (the hub's list, `Todo.md`, `project:` frontmatter, the
    notes between) and every link to a file inside its folder, and adds the
    dated entry "Renamed from <old>.", all in one commit in the zone. It adds
-   the old name as a heard alias in `System/context.md`: the executor commits
+   the old name as a heard alias in `System/names.md`: the executor commits
    that; run by hand, commit it in the workspace root's repository.
 4. **The memory pointer**, if you keep one: point it at the new note.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.

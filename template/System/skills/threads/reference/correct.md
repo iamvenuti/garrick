@@ -6,7 +6,7 @@ Read after `SKILL.md`: the dispatcher's *Resolving a name* and *Listening mode* 
 
 These are the rules in `System/rules.md` that this request carries out, word for word.
 
-- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
+- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md` and `System/names.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
 
 ## Correct: "that's wrong, it's Y"
 
@@ -26,7 +26,7 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
    python3 System/tools/correct.py --old "<X>" --new "<Y>"
    ```
    It searches the memory entries in the folders `memory` names in
-   `System/garrick-checks.json`, `System/context.md`, every hub and thread
+   `System/garrick-checks.json`, `System/context.md`, `System/names.md`, every hub and thread
    note, each zone's `Todo.md` and the pages of both wikis, and lists each
    file and line. A raw record that holds the old value is listed too, with
    the pages that rest on it.

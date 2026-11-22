@@ -1296,9 +1296,9 @@ def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
 # ---------------------------------------------------------------------------
 #
 # The policy is the Walled column of the Zones table of System/context.md, `yes`
-# or `no`. Every point that enforces it (the pre-commit check, Ask, the status
-# page's actions, intake, Nurture, scaffold) asks decide() and holds no wall
-# test of its own; a file's zone is its path, or, in the Meetings wiki, its
+# or `no`. Ask, the status page's actions, intake and scaffold ask decide() and
+# hold no wall test of their own; the commit check, Recall and Nurture call
+# may_flow() directly. A file's zone is its path, or, in the Meetings wiki, its
 # `zone:` (zone_of). The rule itself is may_flow().
 
 KNOWLEDGE = "*knowledge"   # what a Knowledge page is labelled: read by every scope, takes only material with no zone
@@ -2419,14 +2419,30 @@ def resume_lines(text: str) -> List[str]:
     return out
 
 
-def hub_keeps_resume(text: str, fm: Optional[dict] = None) -> bool:
-    """Does a project's hub hold a resume point of its own, the main line of a project that is one
-    piece of work? It does while it has a `### Resume here` block; an `### Outcome` in that place
-    ends it, and a heading (`layout: thread-first`) never has one. It stands beside the project's
-    threads, so every reader of resume points reads it whether the project has threads or not."""
-    if str((fm or {}).get("layout") or "").strip().lower() == "thread-first":
-        return False
-    return any(l.strip().lower() == RESUME_HEADING.lower() for l in text.splitlines())
+def _load_work():
+    """work.py, beside this file: the one reader of the piece of work. One module object for every caller."""
+    import importlib.util
+    mod = sys.modules.get("garrick_work")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("garrick_work", str(Path(__file__).with_name("work.py")))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["garrick_work"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("garrick_work", None)
+            raise
+    return mod
+
+
+def __getattr__(name):
+    """`garrick_lib.work` is work.py, the one reader of the piece of work. Loaded on first use, so a library that
+    sits beside no work.py still loads for everything else."""
+    if name == "work":
+        return _load_work()
+    if name == "hub_keeps_resume":
+        return _load_work().hub_keeps_resume          # defined in work.py, once
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
 def _short_hash(parts: Iterable[str]) -> str:

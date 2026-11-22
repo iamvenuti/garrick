@@ -65,7 +65,7 @@ class NoteCase(unittest.TestCase):
         shutil.copytree(REPO / "extras" / "jobs", self.root / "System" / "jobs", ignore=shutil.ignore_patterns("__pycache__"))
         (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for tool in ("scaffold.py", "garrick_lib.py", "operations.py"):
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "work.py"):
             shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         self.personal = self.root / "Zones" / "Personal"

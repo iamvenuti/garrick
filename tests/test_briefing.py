@@ -75,7 +75,7 @@ def workspace(root: Path) -> Path:
     (quiet), Rebate (parked, changed), Old Terms (done, quiet); Birch
     Entry with Launch (changed only on its Todo line). Personal, untouched."""
     write(root / "System" / "rules.md", "# Rules\n")
-    for tool in ("briefing.py", "next_up.py", "garrick_lib.py", "history.py"):
+    for tool in ("briefing.py", "next_up.py", "garrick_lib.py", "history.py", "work.py"):
         write(root / "System" / "tools" / tool, (REPO / "template" / "System" / "tools" / tool).read_text(encoding="utf-8"))
     write(root / "System" / "skills" / "todo" / "todo.py",
           (REPO / "template" / "System" / "skills" / "todo" / "todo.py").read_text(encoding="utf-8"))

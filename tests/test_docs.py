@@ -451,6 +451,28 @@ class RetiredWallModelsTest(unittest.TestCase):
                     found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
         self.assertEqual([], found)
 
+    def test_no_shipped_page_names_a_walls_table_or_asks_for_a_wall_between_parties(self):
+        """#643: walls are a flag on each zone since 0.63.0. No table of walls is in `System/context.md`, and no shipped page
+        under docs/ or template/ lists one, or asks for the pairs of parties that are to stay apart."""
+        found = []
+        pages = sorted((REPO / "docs").rglob("*.md")) + sorted((REPO / "template").rglob("*.md"))
+        for f in pages:
+            flat = " ".join(f.read_text(encoding="utf-8").split())
+            for phrase in ("Walls table", "Parties, Walls", "pair whose information must stay apart"):
+                if phrase in flat:
+                    found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
+        self.assertEqual([], found)
+
+    def test_the_read_guard_page_names_the_entry_points_that_call_decide_and_those_that_call_may_flow(self):
+        text = " ".join((REPO / "docs" / "enforced.md").read_text(encoding="utf-8").split())
+        self.assertNotIn("the same `decide()` as every other enforcement point", text)
+        self.assertIn("The commit hook (`check.py`), Recall and Nurture call `may_flow()` directly", text)
+        # and the code says the same: check.py, recall.py and nurture.py call may_flow(); the read guard and the todo skill call decide()
+        for rel, call in (("template/System/tools/check.py", "may_flow("), ("template/System/tools/recall.py", "may_flow("),
+                          ("template/System/tools/nurture.py", "may_flow("), ("extras/hooks/read_guard.py", "lib.decide("),
+                          ("template/System/skills/todo/todo.py", "lib.decide(")):
+            self.assertIn(call, (REPO / rel).read_text(encoding="utf-8"), rel)
+
     def test_the_readme_puts_separate_work_in_separate_walled_zones(self):
         text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
         self.assertIn("put each in its own walled zone", text)
@@ -466,3 +488,67 @@ class RetiredWallModelsTest(unittest.TestCase):
             self.assertIn('data-tab="%s">%s' % (data_tab, label), built, label)
         self.assertIn('data-tab="questions">Context', panel)
         self.assertIn('data-tab="todo">Todo', built)
+
+
+class WrapAsACommandTest(unittest.TestCase):
+    """The wrap is one command that does the steps (#645): no page under docs/ describes it as steps the assistant runs by
+    hand, and the pages that describe it say who carries the steps out."""
+
+    BY_HAND = (
+        re.compile(r"(?i)\bthe wrap runs `?python3 System/tools/history\.py"),
+        re.compile(r"(?i)before it commits it runs `?todo\.py archive"),
+        re.compile(r"(?i)\bwrap\b[^.]{0,80}\bruns? `?(python3 )?(System/tools/)?wrap_lock\.py"),
+        re.compile(r"(?i)\bwrap\b[^.]{0,80}\bstages? [^.]{0,40}by name only"),
+        re.compile(r"(?i)\bsteps? (1|one) to (12|13|twelve|thirteen)\b"),
+        re.compile(r"(?i)\bthe assistant (takes|releases) the (wrap )?lock\b"),
+    )
+
+    def test_no_page_under_docs_describes_the_wrap_as_steps_the_assistant_runs_by_hand(self):
+        found = []
+        for page, text in documents():
+            if not page.startswith("docs/"):
+                continue
+            flat = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+            for rule in self.BY_HAND:
+                hit = rule.search(flat)
+                if hit:
+                    found.append("%s: %s" % (page, hit.group(0)))
+        self.assertEqual([], found)
+
+    def test_the_commands_and_first_session_pages_and_concepts_say_one_command_carries_the_steps(self):
+        for page in ("docs/commands.md", "docs/first-session.md", "docs/concepts.md"):
+            flat = " ".join((REPO / page).read_text(encoding="utf-8").split())
+            self.assertIn("System/tools/wrap.py", flat, page)
+        commands = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("The steps did not change; only who carries them out.", commands)
+        for word in ("*saved*", "*refused*", "*conflict*", "*failed*"):
+            self.assertIn(word, commands)
+
+
+class WrapWordsAfterReviewTest(unittest.TestCase):
+    """The wording the release review asked for (#645)."""
+
+    def test_the_todo_skill_names_the_wraps_commit_step_as_the_skill_numbers_it(self):
+        todo = (REPO / "template" / "System" / "skills" / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        wrap = (REPO / "template" / "System" / "skills" / "threads" / "reference" / "wrap.md").read_text(encoding="utf-8")
+        steps = re.findall(r"(?m)^(\d+)\. \*\*", wrap.split("**What you decide, in order.**", 1)[1].split("**The receipt**", 1)[0])
+        self.assertEqual(str(len(steps)), steps[-1])
+        self.assertIn("Make the one call**", wrap.split("%s. **" % steps[-1], 1)[1][:40])
+        self.assertNotIn("the wrap's step 12", " ".join(todo.split()))
+        self.assertIn("the wrap's step %s" % steps[-1], " ".join(todo.split()))
+
+    def test_resume_trim_auto_is_described_as_the_assistant_writing_the_shorter_block_before_the_call(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("With `auto` your assistant writes the shorter block, 75% of the limit (300 words at 400), before it makes the call", flat)
+        self.assertNotIn("with `auto` it trims the block", flat)
+        self.assertNotIn("in the commit message", flat.split("`resume-trim`", 1)[1][:700])
+
+    def test_the_band_readme_starts_every_sentence_with_a_capital(self):
+        text = (REPO / "extras" / "mods" / "README.md").read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"counts as gone\. [a-z]")
+        self.assertNotRegex(text, r"(?<!e\.g)(?<!i\.e)\. [a-z][a-z]+ (wrap tool|\(`System)")
+
+    def test_a_project_in_system_is_said_not_to_be_wrapped_by_the_tool(self):
+        flat = " ".join((REPO / "docs" / "commands.md").read_text(encoding="utf-8").split())
+        self.assertIn("A project that lives in `System/` is not wrapped by the command", flat)
+        self.assertIn("move it into a zone", flat)

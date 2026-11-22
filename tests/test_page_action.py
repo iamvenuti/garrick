@@ -85,7 +85,7 @@ class ActionCase(unittest.TestCase):
         # for to know they are in one. Nothing here uses the thread template.
         (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for tool in ("scaffold.py", "garrick_lib.py", "operations.py"):
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "work.py"):
             shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook
@@ -801,6 +801,7 @@ class TestNoWaitSettings(ActionCase):
 
     def test_a_pick_ticks_through_todo_done(self):
         shutil.copy2(REPO / "template" / "System" / "tools" / "next_up.py", self.root / "System" / "tools" / "next_up.py")
+        shutil.copy2(REPO / "template" / "System" / "tools" / "work.py", self.root / "System" / "tools" / "work.py")
         (self.root / "System" / "skills" / "todo").mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", self.root / "System" / "skills" / "todo" / "todo.py")
         spec = importlib.util.spec_from_file_location("garrick_next_up_pa", str(self.root / "System" / "tools" / "next_up.py"))
@@ -1362,7 +1363,7 @@ class TestJournal(ActionCase):
         self.assertEqual(keys, records[0]["request"]["keys"])
         self.assertEqual("Ticking 2 lines…", records[0]["label"])
         import test_operations as t
-        listed = t.ops.read(self.jobs)["ops"]
+        listed = t.ops.read(self.jobs, workspace=self.root)["ops"]      # the page reads its own workspace's operations
         self.assertEqual([keys], [r["keys"] for r in listed])                           # what a reload is told is pending
         self.assertIn('keys=["%s", "%s"]' % tuple(keys), (self.jobs / "page-actions.log").read_text())
 
@@ -2554,5 +2555,7 @@ class VerbsTest(unittest.TestCase):
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
         self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
-        self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
+        # The wrap (#645) is a session's verb, documented in commands.md under Opening and wrapping, with its receipt.
+        self.assertIn("System/tools/wrap.py", (REPO / "docs" / "commands.md").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY and v != "wrap"), sorted(documented))
         self.assertIn("page's own wall buttons", section)

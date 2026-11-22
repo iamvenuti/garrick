@@ -516,7 +516,7 @@ class Skills(unittest.TestCase):
         self.assertIn("never run overnight", wrap)
         for value in ('`"ask"`', '`"auto"`', "75%", "`GARRICK_HEADLESS=1`", "word for word"):
             self.assertIn(value, wrap)
-        self.assertLess(wrap.index("history.py apply"), wrap.index("git -C \"Zones/<Zone>\" commit"))
+        self.assertIn("its `history/` folder beside the note goes in the wrap's own commit", " ".join(wrap.split()))    # #645: the tool stages and commits it
         self.assertIn("`history/` folder", wrap)
 
     def test_park_moves_them_first_and_leaves_the_resume_block_as_it_is(self):

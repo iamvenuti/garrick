@@ -654,6 +654,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # Taking an allowance away edits the workspace's own ledger under its own lock.
         unzoned |= {"walls-unallow"}
+        # The wrap (#645) is a session's verb: the page sends none, so it tracks none, and the tool takes the zone's lock itself.
+        unzoned |= {"wrap"}
         # *Commit them* (#595) commits through the engine's bounded run, which keeps its own hold on the repository.
         unzoned |= {"commit-files"}
         # The wall question's look reads, and its allowance writes the same ledger (#548, #550): neither acts on one zone.

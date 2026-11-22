@@ -16,7 +16,7 @@ They follow the *Autonomy* section of `System/rules.md`.
 
 - **Read.** It answers and proposes. Nothing is changed.
 - **Act.** It does what git can undo without asking: it edits notes, files the inbox, ticks and adds Todo lines, makes and moves threads, and commits. Before anything that leaves the machine or cannot be undone (sending, sharing, deleting, writing to a synced shared folder, rewriting history) it asks you first.
-- **Full.** Act, and it also sends without asking. Offered for Ask only. Telegram never offers Full: nobody is at the desk to stop a wrong send, and an unlocked phone should not be enough to send mail in your name. Settings refuses it for Telegram, and a file edited by hand to say so is read as Read.
+- **Full.** Act, and it also sends without asking you first. If the turn fails, nothing is sent and the actions stay held, with Run it and Cancel, as at Act. After a good turn the reply lists each send as sent, not sent with the reason, or not known. A send is sent only when the connector tool's own result was read and shows success. Offered for Ask only. Telegram never offers Full: nobody is at the desk to stop a wrong send, and an unlocked phone should not be enough to send mail in your name. Settings refuses it for Telegram, and a file edited by hand to say so is read as Read.
 
 An updated workspace gets the defaults: Ask at Act. Telegram stays off until you [set it up](telegram.md).
 

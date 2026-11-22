@@ -18,6 +18,7 @@ from fixtures import build_workspace, write  # noqa: E402
 from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402
+import garrick_lib as gl  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -1101,7 +1102,7 @@ class HubBesideThreads(unittest.TestCase):
         self.root = Path(self._tmp.name).resolve() / "Workspace"
         build_workspace(self.root)
         write(self.root / "System" / "rules.md", "# Rules\n")
-        for tool in ("next_up.py", "garrick_lib.py", "briefing.py"):
+        for tool in ("next_up.py", "garrick_lib.py", "briefing.py", "work.py"):
             write(self.root / "System" / "tools" / tool, (TOOLS / tool).read_text(encoding="utf-8"))
         self.work = self.root / "Zones" / "Work"
         self.hub = self.work / "Acme Review" / "Acme Review.md"
@@ -1111,6 +1112,11 @@ class HubBesideThreads(unittest.TestCase):
 
     def keep(self, block):
         self.hub.write_text(self.hub.read_text(encoding="utf-8") + block, encoding="utf-8")
+
+    def keeps(self):
+        """Does the one reader find a resume point of its own in the hub?"""
+        found = [r for r in gl.work.project_pieces(self.root, self.work, self.work / "Acme Review") if r.thread is None]
+        return bool(found) and found[0].keeps_resume
 
     def next_up_rows(self):
         return [(r["project"], r["thread"]) for r in nu.threads(self.root) if r["project"] == "Acme Review"]
@@ -1126,27 +1132,23 @@ class HubBesideThreads(unittest.TestCase):
             self.assertIn(("Acme Review", None), rows)
             self.assertTrue([r for r in rows if r[1]], "its threads are still there")
 
-    def test_two_hashes_is_no_resume_point_in_all_five_readings(self):
+    def test_two_hashes_is_no_resume_point_in_every_reading(self):
         self.keep(HUB_BLOCK.replace("### Resume here", "## Resume here"))
         self.assertNotIn(("Acme Review", None), self.next_up_rows())
         self.assertNotIn(("Acme Review", None), self.briefing_rows())
         T = status.threads(self.root)
         self.assertEqual([], [r for r in T["Work"]["hubs"] if r["project"] == "Acme Review"])
-        self.assertFalse(status.hub_keeps_resume(self.hub, None))
-        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        self.assertFalse(self.keeps())
         # and the same without the workspace's garrick_lib, which both fall back from
         (self.root / "System" / "tools" / "garrick_lib.py").unlink()
         status._LIBS.clear()
-        self.assertFalse(status.hub_keeps_resume(self.hub, None))
-        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        self.assertFalse(self.keeps())
         self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("## Resume here", "### Resume here"), encoding="utf-8")
-        self.assertTrue(status.hub_keeps_resume(self.hub, None))
-        self.assertTrue(pa.hub_keeps_resume(self.hub))
+        self.assertTrue(self.keeps())
 
     def test_layout_is_read_from_the_front_matter_only(self):
         self.keep(HUB_BLOCK + "\nlayout: thread-first\n")                      # a body line is not the layout
-        self.assertTrue(pa.hub_keeps_resume(self.hub))
-        self.assertTrue(status.hub_keeps_resume(self.hub, None))
+        self.assertTrue(self.keeps())
         self.assertIn(("Acme Review", None), self.next_up_rows())
 
     def test_an_outcome_in_its_place_ends_it(self):

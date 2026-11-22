@@ -41,15 +41,15 @@ edits: the thread note for park and wake, `Todo.md` for a Todo verb. An edit of
 your own still waiting in that file would be swept into its commit under the
 wrong message. Before the call, look: `git -C "Zones/<Zone>" status --porcelain
 -- <that file>`. If it lists the file, commit your edit first, staging by name;
-or, as Wrap step 8 does for ticks, make the executor call first and the hand
-edit after.
+or make the executor call first and the hand edit after. A wrap's own ticks
+never go through this executor: the wrap tool ticks them.
 
 **Check for it first**: `test -f System/status/page_action.py`. Where it is
 there, use it for these verbs and do not also run `scaffold.py` or commit by
 hand for them: it has done both. Where it is not there (no status page), each
 section's steps below are the way, exactly as before: the scaffolding script
-and a commit by hand. Everything else a wrap
-writes is by hand either way.
+and a commit by hand. A wrap is neither: the wrap tool
+writes and commits it, as *Wrap* says.
 
 ## Checkpoint: as the work happens
 
@@ -115,6 +115,30 @@ the one way to save a thread's place: "wrap it", the band's *Wrap*, and the
 spoken "I'm being interrupted", "hold this" and "hold X" all run it. One
 thread per wrap: the one named, and nothing else.
 
+**You write the judgment; one command does the rest.** `System/tools/wrap.py`
+takes your words as one JSON object and runs every step that needs none, in
+order: the lock, the Resume here block, the dated entry, `updated:`, the
+checkpoint's removal, the Todo ticks and new lines, the history mover, the
+archive of lines ticked on an earlier day, staging by name, one commit in the
+zone through its hooks, the finish record and the lock's end. It answers with
+a receipt. The steps did not change; only who carries them out. Never do them
+by hand, and never run `wrap_lock.py` yourself except as the request says.
+
+Two of those steps are other tools' commands, which the wrap tool runs for you
+and you never run for a wrap. The history mover keeps the note short; its
+`history/` folder beside the note goes in the wrap's own commit:
+
+```sh
+python3 System/tools/history.py apply "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+```
+
+The archive moves the lines ticked before today to the zone's `archive/`,
+before the commit is staged:
+
+```sh
+python3 System/skills/todo/todo.py archive --zone <Zone>
+```
+
 **How it runs.** Resolve X first ("hold this" or no name at all: the thread in
 focus, as under *No name given*). Then:
 
@@ -125,44 +149,35 @@ focus, as under *No name given*). Then:
    the day, or for the band's *Close*, which waits for the note before it ends
    the session, do not run in the background: the wrap runs in the foreground,
    each thread in turn.
-- **Take the lock**, unless the request says the band has taken it already,
-   so a second wrap of this thread cannot start while one is running, and so
-   the band can show it:
-   ```sh
-   python3 System/tools/wrap_lock.py start "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
-   ```
-   Name the note that holds the Resume here block: the thread note, or the
-   hub (`Zones/<Zone>/<Project>/<Project>.md`) for a project that keeps its
-   resume point there. The band reads the record of that note.
-   It prints `locked` and exits 0, or says that a wrap of this thread is
-   already running and exits 1: then say so and stop. The lock is a file in
-   `System/generated/`; a lock older than ten minutes counts as gone.
-- **Run the steps below**, 1 to 12. Where the assistant can start a
-   background subagent, start one for them and
-   return to the user at once: "Acme pricing is being wrapped. Say back when
-   you're done." Brief the subagent with everything the conversation holds that
-   the steps need, since it has not seen it: the thread note's path, what this
-   session did and decided, the files it touched, the actions to file and the
-   lines to tick, any deliverable that left the workspace and who edits it
-   next, and what the user said with the request, word for word. The brief carries the
-   walls too, since a cold run knows none: the project's zone and whether
-   it is walled (the Walled column of the Zones table in
-   `System/context.md`), and any material in this session that a wall held
-   back, named only as "held back" with no content, no party and no subject.
-   Tell it to do the wall check (*The wall check*, step 4 above) before it
-   writes anything, and to write nothing it cannot place. Tell it to follow the
-   steps to the letter, to touch nothing outside this thread, and to end with
-   step 13. The foreground run needs none of this: it has the session. Where the assistant has no background run, do the steps yourself,
-   in the foreground, as a wrap always was.
-- **The last act of the wrap, success or failure,** is step 13: release the
-   lock. A wrap that died leaves the lock behind, and it expires by itself.
-   Releasing the lock and recording that the wrap finished are two things:
-   the record is written only after step 12's commit has succeeded, or found nothing to commit.
+- **The lock is the tool's.** It takes the lock first, so a second wrap of
+   this thread cannot start while one is running and the band can show it, and
+   releases it last, whatever happened. Where the request says the band has
+   taken the lock already, or tells you to take it, send `"lock": "held"`:
+   the tool then does not start it, and still releases it. A lock older than
+   ten minutes counts as gone.
+- **If `System/tools/wrap.py` is not there**, say that the workspace needs an
+   update and stop. There is no wrap by hand.
+- **In the background**, where the assistant can start a background subagent,
+   start one for the work and return to the user at once: "Acme pricing is
+   being wrapped. Say back when you're done." Brief the subagent with
+   everything the conversation holds that the work needs, since it has not
+   seen it: the thread note's path, what this session did and decided, the
+   files it touched, the actions to file and the lines to tick, any
+   deliverable that left the workspace and who edits it next, and what the
+   user said with the request, word for word. The brief carries the walls too,
+   since a cold run knows none: the project's zone and whether it is walled
+   (the Walled column of the Zones table in `System/context.md`), and any
+   material in this session that a wall held back, named only as "held back"
+   with no content, no party and no subject. Tell it to do the wall check
+   (*The wall check*, below) before it writes anything, and to write nothing
+   it cannot place. Tell it to touch nothing outside this thread and to end
+   with the call to `wrap.py`. The foreground run needs none of this: it has
+   the session.
 
-**The steps:**
+**What you decide, in order.**
 
 1. **Resolve X** (done above) and stop if the thread is finished or parked:
-   say so and offer to open or wake it.
+   say so and offer to open or wake it. The tool refuses one too.
 2. **Re-read the thread note now.** Another session may have changed it since
    you last looked.
 3. **Gather what happened**, from this session's conversation and the thread's
@@ -173,11 +188,12 @@ focus, as under *No name given*). Then:
    ```
 4. **Run the wall check** (below) on anything from the Meetings wiki that the
    wrap would write into the note: quoted, paraphrased, summarised, or linked.
-   That includes meeting material read earlier in this session.
+   That includes meeting material read earlier in this session. The questions
+   are yours and come before the call; the commit runs the same hook as any
+   commit, so its verdict is the same.
 5. **Fold in the checkpoint**, if the note has one. Read it with
-   `{"verb": "checkpoint", "read": true, ...}`, then, in the one edit that
-   rewrites Resume here below, and in the same commit as the `Todo.md` lines
-   it files:
+   `{"verb": "checkpoint", "read": true, ...}`, then carry it into the words
+   below:
    - **Made** items go to the Live artifact row where they are the artifact,
      and into the dated entry either way;
    - **Decided** items go into the dated entry with their quotes, said to
@@ -192,11 +208,12 @@ focus, as under *No name given*). Then:
      compared with the list as that step compares any line; one nobody
      dated goes on the list with no 📅, because no date is not a date;
    - a **Deadline** goes to the Deadline row.
-   Then **remove the block**, heading and markers, in that same edit. A
-   checkpoint the reply calls stale or invalid is read and never resumed from:
-   show its items and ask in one line whether any still hold. Made and Decided
-   items carry their sources and fold without a question; a Next action that
-   differs from the confirmed one is asked about.
+   Then send `"checkpoint": "folded"`: the tool removes the block, heading and
+   markers, in the same edit and in the same commit as the `Todo.md` lines it files, and refuses a note that holds one when the word
+   is missing. A checkpoint the reply calls stale or invalid is read and never
+   resumed from: show its items and ask in one line whether any still hold.
+   Made and Decided items carry their sources and fold without a question; a
+   Next action that differs from the confirmed one is asked about.
    **Read the notes made since the last wrap**: `python3
    System/skills/intake/intake.py notes --project Zones/<Zone>/<Project>
    --thread <Thread>` lists them (a note to yourself, in the thread's
@@ -204,230 +221,203 @@ focus, as under *No name given*). Then:
    line each; a note stays as it is, and only the user's yes changes the
    Resume here block. When the user settles a note marked `review: pending`,
    delete that line from the note.
-6. **Rewrite the Resume here block** so it describes now. Replace it; do not
-   append to it.
-   ```markdown
-   ### Resume here
+6. **Write the Resume here block** so it describes now. It replaces the old
+   one; it is not appended to. The input's `resume` holds `stands`, two or
+   three sentences on what is done, what is not and whether it is blocked,
+   and one line for each of the six rows. The tool writes the heading, the
+   date and the table.
 
-   **Where it stands, 27 September 2026.** <What is done, what is not, whether
-   it is blocked. Two or three sentences.>
-
-   | | |
+   | Row | What it says |
    |---|---|
-   | Live artifact | <path, relative to the project, and what it is> |
-   | Rebuild with | <how to make it again, and from what> |
-   | Next action | <the single next thing, small enough to start in two minutes, and whose it is> |
-   | Keep in mind | <what is only in your head: a decision half made and why, a doubt; or nothing> |
-   | Waiting on | <who, or nobody> |
-   | Deadline | <date, and what breaks if it slips; none; or not given> |
-   ```
-   Keep all six rows; a row that does not apply says "none" or "nobody".
-   **Deadline has a third answer**: "not given", for a thread nobody has dated.
-   "None" claims there is no deadline, and nobody said that. The
-   next action is one action, small enough to start in two minutes: "draft
-   the pricing section" fails, "open the pricing sheet and fill in the
-   tier-two volume" passes. Anything more goes to `Todo.md` (step 8).
-   **Keep in mind** holds what no file can tell a cold resume: the decision
-   half made and which way you were leaning and why, a doubt about a figure,
-   a thing noticed and not yet acted on. Write it from what was said in this
-   session and from what the user said with the request, not from the files; `nothing`
-   is a valid answer, and the usual one for a thread that is simply waiting.
-   A block written before this row existed is still whole; the row is added at
-   its next wrap.
-   **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
-   end the moment it needs a change. Every path and link in the block must lead
-   to something that exists now; `check.py` warns about one that does not.
-7. **Add a dated entry** directly below the `---` rule, above the earlier
-   entries, so the newest is first:
-   ```markdown
-   **27 September 2026.** <One line on what the session did.> <What was decided
-   and by whom, quoting where the wording was the point. What you decided that
-   they did not, marked as yours. What was left out on purpose, and why.>
-   ```
-   Never edit or compress earlier entries. They are the record. A wrap never
-   moves one by hand: step 12 hands the old ones to `history.py`, which moves
-   them whole.
-8. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
-   before editing. **Run Distil** (the `todo` skill's *Distil*) for this thread
-   in place of appending: its four questions (what is done, what changed, what
-   is new, what no longer holds) change this thread's open lines, one line per
-   commitment, and a new one is written as
-   `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
-   header gives, the dates last. A line the user moved to another section is
-   changed only on their yes, shown as before and after; with nobody to ask it
-   is proposed and left as it is. Say its counts in the reply ("Distilled Acme,
-   pricing: one added, two merged, one retired."). Distil edits `Todo.md` and
-   `archive/` and leaves the commit to step 12, as the append did. Open the line with this thread's link, or
-   its path, `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`, when another
-   project has a thread of the same name: that is how a later wrap or finish
-   finds its lines. A project in `System/` has no list of its own: its
-   actions go in the `Todo.md` of the zone the user works from most, as the
-   `todo` skill says.
-   **The example line goes with the first real action.** A list nobody has
-   written to yet may hold one, in `<angle brackets>`, to show the shape; delete
-   it in the same edit that writes the first real line. It is a task like any
-   other, so anything that counts open actions counts it.
-   Tick the lines this session finished, whether they name this thread or
-   only a party or person. Touch no line that names another thread. When
-   the session names no thread plainly, Distil writes as the append did,
-   `<Party>: ` first, and changes no other line.
-   **Where `System/status/page_action.py` exists, tick through it, before
-   appending anything** (*Running an action*): `python3 System/status/page_action.py
-   todo-done --zone <Zone> --line "<the line's text, or enough of it to be the
-   only one>"`. It ticks the line as written, commits `Todo.md`, and asks for
-   the page to be rebuilt; it refuses a line that is not there or that two
-   lines say, and writes nothing. Without the status page, edit the line by
-   hand and let step 12 commit it.
-   **Tick a line as it was written; the outcome goes in the dated entry, not
-   on the line.** `[ ]` becomes `[x]` and `✅ <YYYY-MM-DD>`, today, goes last,
-   as Obsidian Tasks writes it, and nothing else on the line changes: "file
-   the drafts" stays "file the drafts", and the issue numbers they were filed
-   as go in step 7's entry. **Never add a line for work that is already
-   done.** `Todo.md` holds what is still to do; what this session did is the
-   dated entry's, where it already is. `check.py` warns about a ticked line
-   the zone's history never held open, and about a line longer than 200
-   characters.
-   **A deliverable that left the workspace** in this session, copied to a
-   shared folder: ask who edits it next. Colleagues who edit it: the shared
-   copy counts from now on (`share`); nobody, or colleagues who only read
-   it: the copy here does (`here`). Re-read `Deliverables/published.md`
-   (when there is none, copy `System/templates/published.md` to it unchanged,
-   and never write the explanation yourself: every project's ledger opens with
-   the same shipped words, so the wall check reads them as common wording
-   rather than one project quoting another) and append one row,
-   `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
-   the destination relative to the folder the hub names in `shared:`, or the
-   folder it went into (`Decks/`) when it kept its name. The file is a path
-   under `Deliverables/`, or from the project's folder when it lives
-   elsewhere. A clause may follow `share` or `here`, such as who edits it there. Say
-   so in the Live artifact row when the shared copy is the one that counts.
-   `python3 System/tools/drift.py` compares them from then on. In a
-   thread-first project the ledger is the thread's own,
-   `Threads/<Thread>/Deliverables/published.md`.
-   **When this machine cannot reach the share.** `python3
-   System/tools/machine.py` says the machine's role. When it says `server`
-   and the link the hub's `shared:` names, under `Zones/<Zone>/.shared/`,
-   does not lead anywhere here, the copy cannot be made from this machine,
-   and nothing here reads through the link. Record the `published.md` row
-   as above, then add one line to the zone's `Todo.md` for the machine that
-   does reach the share, usually the laptop: `[[<Thread>]]: copy `<file>` to
-   `<link>/<destination>`, from the machine that reaches the share 📅 <today>`.
-   A copy to a share is a send, so it asks first when it is made. Say in
-   the Live artifact row that the copy waits. `drift.py` reports the link as
-   not reachable here until the machine that does reach it has handed in its
-   result. On any other role this paragraph does not apply.
-   **A copy that stopped counting** in this session is never deleted from the
-   ledger: the row is the record of what left. Change its date cell to
-   `withdrawn YYYY-MM-DD` when the copy came off the share, or `replaced
-   YYYY-MM-DD` when a newer one took its place, the day it happened, and add
-   the newer one's row beside it. A file sent by mail rather than placed on
-   a share gets a row too, dated `sent YYYY-MM-DD`. drift.py reads such a
-   row and never compares it.
-9. **Set `updated:`** in the note's frontmatter to today.
-10. **Update the hub's `## Threads` line** only if the thread's purpose changed.
-    Re-read the hub first; change that one line.
-11. **Memory pointer.** If you, the assistant, keep a memory of your own, keep
-    one entry for this thread that says where its resume point is and nothing
-    else: no status, no summary. Its frontmatter says where it came from, as
-    every learned entry's does (*Autonomy* in `System/rules.md`): `source:`
-    is the note it points at, `created:` the day it was made. Both may sit
-    under `metadata:` instead, where an assistant keeps keys of its own.
+   | Live artifact | the path, relative to the project, and what it is |
+   | Rebuild with | how to make it again, and from what |
+   | Next action | the single next thing, small enough to start in two minutes, and whose it is |
+   | Keep in mind | what is only in your head: a decision half made and why, a doubt; or `nothing` |
+   | Waiting on | who, or `nobody` |
+   | Deadline | the date and what breaks if it slips; `none`; or `not given` |
+
+   All six rows, each one line; a row that does not apply says "none" or
+   "nobody". **Deadline has a third answer**: "not given", for a thread
+   nobody has dated. "None" claims there is no deadline, and nobody said
+   that. The next action is one action: "draft the pricing section" fails,
+   "open the pricing sheet and fill in the tier-two volume" passes. Anything
+   more goes to `Todo.md` (step 8). **Keep in mind** holds what no file can
+   tell a cold resume: the decision half made and which way you were leaning
+   and why, a doubt about a figure, a thing noticed and not yet acted on.
+   Write it from what was said in this session and from what the user said
+   with the request, not from the files; `nothing` is a valid answer, and the
+   usual one for a thread that is simply waiting. **Rebuild with** earns its
+   place: an artifact nobody can regenerate is a dead end the moment it needs
+   a change. Every path and link in the block must lead to something that
+   exists now; `check.py` warns about one that does not.
+   **Keep the block short.** `python3 System/tools/history.py resume "<note>"`
+   prints the limit (`resume-max-words`, 400), the `resume-trim` setting and
+   the target as JSON. If your block would be over the limit, what happens
+   depends on `"trim"`: with `"auto"`, write it at the target, 75% of the
+   limit, and say so in the reply; with `"ask"`, the default and what any other
+   value counts as, write the block you want and offer the shrink in one line
+   after the receipt: "The Resume block is 920 words, over its 400. Want a
+   shorter one?" On a yes, show the proposed block as a diff before writing
+   it, as a wrap of its own. The rules for a trim: *Where it stands* says now,
+   *Keep in mind* loses what is settled or has shipped, a durable fact moves
+   to a working note with a link left in its place, the one Next action stays
+   word for word, and every boundary, confidence, trap and do-not-rebuild
+   warning stays, shortened if it must be. Under `GARRICK_HEADLESS=1` it is
+   always `"ask"`, and a shrink is never run overnight.
+7. **Write the dated entry**, as `entry`, without its date: the tool puts
+   today's date in front and the entry directly below the `---` rule, above
+   the earlier entries, so the newest is first. One line on what the session
+   did. What was decided and by whom, quoting where the wording was the
+   point. What you decided that they did not, marked as yours. What was left
+   out on purpose, and why. Never edit or compress earlier entries: they are
+   the record. The history mover moves old ones whole.
+8. **Decide the actions.** They go to the zone's `Todo.md`, not the note, and
+   never an action for work that is already done: `Todo.md` holds what is
+   still to do, and what this session did is the dated entry's.
+   - **New lines** go in `todo.add`, each written as
+     `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
+     header gives, the dates last (the leading `- [ ] ` may be left out). Open
+     the line with this thread's link, or its path,
+     `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`, when another project
+     has a thread of the same name: that is how a later wrap or finish finds
+     its lines. A project in `System/` has no list of its own: it is not
+     wrapped by this tool yet, so say so and stop.
+     **The example line goes with the first real action.** A list nobody has
+     written to yet may hold one, in `<angle brackets>`, to show the shape;
+     whoever writes the first real action must delete it in the same edit
+     that writes the first real line, and the tool does. A line the list
+     already says is not added twice.
+   - **Ticks** go in `todo.tick`: the words of an open line, enough to be the
+     only one that says it. Tick the lines this session finished, whether
+     they name this thread or only a party or person. Touch no line that names
+     another thread. **Tick a line as it was written; the outcome goes in the
+     dated entry, not on the line.** `[ ]` becomes `[x]` and
+     `✅ <YYYY-MM-DD>`, today, goes last, as Obsidian Tasks writes it, and
+     nothing else on the line changes: "file the drafts" stays "file the
+     drafts", and the issue numbers they were filed as go in step 7's entry.
+     **Never add a line for work that is already done.** `Todo.md` holds what
+     is still to do; what this session did is the dated entry's, where it
+     already is. `check.py` warns about a ticked line the zone's history never
+     held open, and about a line longer than 200 characters, which the tool
+     refuses.
+   - **Rewording, merging or retiring** an open line is Distil's (the `todo`
+     skill's *Distil*), run for this thread **before** the call: it edits
+     `Todo.md` and, for a retired line, a file in `archive/`, and commits
+     nothing. The tool's commit takes the `Todo.md` it changed and only the
+     `archive/` and `history/` files the wrap itself wrote, so commit Distil's
+     `archive/` file by name before the call. Its four questions (what is done, what changed, what is
+     new, what no longer holds) decide the lines; say its counts in the reply
+     ("Distilled Acme, pricing: one added, two merged, one retired."). A line
+     the user moved to another section is changed only on their yes, shown as
+     before and after; with nobody to ask it is proposed and left as it is.
+     When the session names no thread plainly, Distil writes
+     `<Party>: ` first and changes no other line.
+   - **A deliverable that left the workspace** in this session, copied to a
+     shared folder: ask who edits it next. Colleagues who edit it: the shared
+     copy counts from now on (`share`); nobody, or colleagues who only read
+     it: the copy here does (`here`). The ledger is not the tool's to write:
+     re-read `Deliverables/published.md` (when there is none, copy
+     `System/templates/published.md` to it unchanged, and never write the
+     explanation yourself: every project's ledger opens with the same shipped
+     words, so the wall check reads them as common wording rather than one
+     project quoting another), append one row,
+     `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
+     the destination relative to the folder the hub names in `shared:`, or the
+     folder it went into (`Decks/`) when it kept its name, and commit that
+     file by name, `git -C "Zones/<Zone>" add -- <path>` and a plain
+     `git commit`, **before** the call. A clause may follow `share` or
+     `here`, such as who edits it there. Say so in the Live artifact row when
+     the shared copy is the one that counts. `python3 System/tools/drift.py`
+     compares them from then on. In a thread-first project the ledger is the
+     thread's own, `Threads/<Thread>/Deliverables/published.md`.
+     **When this machine cannot reach the share.** `python3
+     System/tools/machine.py` says the machine's role. When it says `server`
+     and the link the hub's `shared:` names, under `Zones/<Zone>/.shared/`,
+     does not lead anywhere here, the copy cannot be made from this machine,
+     and nothing here reads through the link. Record the `published.md` row
+     as above, then add one line to the zone's `Todo.md`, through `todo.add`, for the machine that does reach
+     the share, usually the laptop: `[[<Thread>]]: copy `<file>` to
+     `<link>/<destination>`, from the machine that reaches the share 📅 <today>`.
+     A copy to a share is a send, so it asks first when it is made. Say in
+     the Live artifact row that the copy waits. On any other role this
+     paragraph does not apply.
+     **A copy that stopped counting** in this session is never deleted from the
+     ledger: the row is the record of what left. Change its date cell to
+     `withdrawn YYYY-MM-DD` when the copy came off the share, or `replaced
+     YYYY-MM-DD` when a newer one took its place, the day it happened, and add
+     the newer one's row beside it. A file sent by mail rather than placed on
+     a share gets a row too, dated `sent YYYY-MM-DD`. drift.py reads such a
+     row and never compares it.
+9. **The hub's `## Threads` line** changes only if the thread's purpose
+   changed. Re-read the hub, change that one line, and commit that file by
+   name before the call, as the ledger is.
+10. **Memory pointer.** If you, the assistant, keep a memory of your own in a
+    folder the tool knows, send `memory`: the path of this thread's entry file,
+    and nothing else. The tool writes the pointer's words itself, from the
+    zone, project, thread and the note's path, so there is no text of yours in
+    it and no status:
     ```
-    ---
-    source: file:Zones/Work/Acme/Threads/Pricing/Pricing.md
-    created: 2026-09-27
-    ---
     Acme, Pricing (Work zone). Resume from
     Zones/Work/Acme/Threads/Pricing/Pricing.md, the Resume here block. Read it
     before anything else in the thread.
     ```
-    Create it if missing, leave it if present, and add the two keys to one
-    that has neither. No memory, no step.
-12. **Commit in the zone's repository.** First keep the note short. Run
-    the history mover on the note the wrap wrote, after the new dated entry
-    and `updated:` are in:
+    It writes `source:` (the note) and `created:` (today) in its frontmatter, as
+    every learned entry's has (*Autonomy* in `System/rules.md`). It creates the
+    entry if missing, leaves it if it is this pointer, and fails the wrap, with
+    nothing written, if another file is there: it never rewrites one. The path
+    must resolve to a `.md` file directly inside
+    `~/.claude/projects/<folder>/memory/`, never `MEMORY.md` and never a link;
+    no other folder is accepted, and an assistant whose memory is anywhere else
+    leaves `memory` out. The entry for a finished thread is deleted by Finish,
+    not by a wrap. No memory, no key.
+11. **Make the one call**, from the workspace root:
     ```sh
-    python3 System/tools/history.py apply "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+    python3 System/tools/wrap.py <<'EOF'
+    {"zone": "Work", "project": "Acme", "thread": "Pricing",
+     "resume": {"stands": "The second draft is out; Dana's volumes are the only gap.",
+                "rows": {"Live artifact": "`Deliverables/260927 - Price sheet.xlsx`, the price sheet",
+                         "Rebuild with": "the sizing memo for the numbers",
+                         "Next action": "open the price sheet and fill in the tier-two volume",
+                         "Keep in mind": "leaning towards the lower tier; not decided",
+                         "Waiting on": "Dana, for the volumes",
+                         "Deadline": "2026-10-09; the quote lapses"}},
+     "entry": "Sent the second draft to Dana. She owes the volumes; the tier-two rate stands as drafted.",
+     "todo": {"add": ["[[Pricing]]: fill in the tier-two volume 📅 2026-09-30"], "tick": ["send the second draft"]},
+     "checkpoint": "folded",
+     "memory": {"path": "<the entry file in your memory folder>"},
+     "message": "Acme, Pricing: second draft sent; waiting on Dana's volumes"}
+    EOF
     ```
-    It moves each dated entry older than `history-months` (6), and then the
-    oldest ones until the note is under `note-max-words` (4,000), to
-    `history/<Note> history <YYYY>-Q<n>.md` beside the note, unchanged, and
-    leaves one line under the last entry that links them. The newest five
-    entries always stay. It checks that every line it removed is in a history
-    file before it says it is done, and puts the note back if one is not. It
-    changes nothing for a note with nothing to move, and nothing for one it
-    cannot read for certain, which it reports in a line: say that line in the
-    reply and carry on. The files it wrote go in this wrap's commit below, with
-    the thread's own files: the `history/` folder beside the note. Then run
-    `python3 System/tools/history.py resume "<note>"`, which prints the
-    block's words, the limit, the `resume-trim` setting and the target as
-    JSON. If it says `"over": true` (the block is over `resume-max-words`,
-    400), what happens depends on `"trim"`:
+    `thread` is left out for a project that keeps its resume point in its hub;
+    `todo`, `checkpoint`, `memory` and `lock` are left out when there is
+    nothing to say. A key it does not know, or a row missing, fails the wrap
+    with nothing written. Add `--json` for the receipt as an object.
 
-    - `"ask"` (the default, and what any other value counts as): offer the
-      shrink in one line after the wrap: "The Resume block is 920 words, over
-      its 400. Want a shorter one?" On a yes, show the proposed block as a diff
-      before writing it. Nothing changes without the yes.
-    - `"auto"`: trim the block now, before this wrap's commit, so the trim is in
-      it, aiming at `"target"` words (75% of the limit, 300 at 400), without
-      asking. Skip it, and say it was held, when the note has another session's
-      uncommitted changes. Say in the reply, and in the commit message, the
-      note, the words before and after, and any working note the trim made.
-      The tool reads the setting and counts; it never trims. Under
-      `GARRICK_HEADLESS=1` it says `"ask"` whatever the file holds.
+**The receipt** is one of four. Say it in the reply, and do the thing it asks.
 
-    Either way the rules are the same: *Where it stands* says now, *Keep in
-    mind* loses what is settled or has shipped, a durable fact moves to a
-    working note with a link left in its place, a section that has grown into
-    working material moves to a working note with a link, the one Next action
-    stays word for word, and every boundary, confidence, trap and
-    do-not-rebuild warning stays, shortened if it must be. A shrink is
-    never run overnight. The dated entry for it says what moved where.
-    Then move the lines ticked before today out of the list:
-    ```sh
-    python3 System/skills/todo/todo.py archive --zone <Zone>
-    ```
-    It moves them, whichever thread they name, to `archive/Todo-<YYYY>.md`,
-    where they can be read and pasted back, and leaves the lines ticked today
-    for the status page's *Done today*. The nightly sweep does the same, so in
-    a zone it reaches this usually moves nothing; in one it does not reach, or
-    a workspace without the jobs extra, it is the only thing that does. A
-    project in `System/` archives the zone whose list step 8 wrote to, and
-    commits that list there; with no list touched, there is nothing to
-    archive.
-    Then stage by name only what this wrap touched and this thread's own
-    changed files: the thread folder, with its `history/` folder, the hub if
-    edited, `Todo.md` if edited or archived, `archive/` when the archive moved a line, and any
-    `Deliverables/` or `Sources/` file this session made for the thread.
-    Never `git add -A`.
-    ```sh
-    git -C "Zones/<Zone>" log -1 --format='%h %an %s'   # did someone commit meanwhile?
-    git -C "Zones/<Zone>" add -- "<path>" "<path>"
-    git -C "Zones/<Zone>" diff --cached --stat          # only what you meant
-    git -C "Zones/<Zone>" commit -m "Acme, Pricing: second draft sent; waiting on Dana's volumes"
-    ```
-    The message says what changed. One zone per commit. Never push: that leaves
-    the machine and needs the user's yes.
-13. **Release the lock**, whatever happened above. Which call it is depends
-    on how step 12 ended. The note is the same as the lock's in the first step,
-    hub included.
-    - **The commit succeeded, or there was nothing to commit because the note
-      was already current:** `end` removes the lock and writes the time the
-      wrap finished (`wrap-<note>.done`).
-      ```sh
-      python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
-      ```
-    - **Anything else:** the commit was refused or failed, the save failed, the wrap stopped
-      before it, or it was interrupted. `end --abandon` removes the lock and
-      writes no record, and leaves an earlier record as it was.
-      ```sh
-      python3 System/tools/wrap_lock.py end --abandon "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
-      ```
-    That record, not the note's last write and not the release of the lock, is
-    what says a wrap landed: the band and Close read it. A failed wrap leaves
-    no new record, so the band still offers Wrap. Never use `end` to clean up
-    after a failure, and never take the removal of the lock as proof that the
-    wrap succeeded.
+- **saved**: the commit was made, or there was nothing to commit because the
+  note was already current. The finish record is written, the lock is gone.
+  Say the next action.
+- **refused**, with the zone's hook sentence: the wall check stopped the
+  commit. The tool put every file back, so nothing is written. Tell the user a
+  wall held something back, as in the wall check's step 7, and nothing more.
+  Take the material out of your words and call again. Never commit with
+  `--no-verify` unless the user explicitly asks for it, in this request. If
+  the refusal looks wrong, tell the user which file and which wall, name
+  the command that lets that one refusal through once, and stop (*The wall
+  check*, below).
+- **conflict**: another session moved the zone's repository, or the note,
+  while the wrap ran. Nothing was committed and the files are back as they
+  were. Re-read the note, fold in what the other session did, and call again.
+- **failed**, with the reason in plain words: nothing was committed. Say what
+  failed, in the reply, and stop. Do not do the steps by hand. A wrap that
+  failed or was refused releases the lock and writes no finish record, so
+  the band still offers *Wrap*.
+
+A wrap killed between its writes and its commit leaves the lock, which
+expires after ten minutes, and the files it wrote, which `git status` shows;
+`python3 System/tools/wrap_lock.py end --abandon "<note>"` releases the lock
+at once.
 
 Spoken, when the wrap runs in the background: "Acme pricing is being wrapped.
 Say back when you're done." When it runs in the foreground, or when the
@@ -551,9 +541,9 @@ decides what is written into a project, never what the user may know.
 ## What a wrap does not do
 
 - **It never touches a thread it was not asked about.** A wrap reads and writes
-  one thread's note, one hub line, the `Todo.md` lines step 8 allows and that
+  one thread's note (or its hub), the `Todo.md` lines its input names and that
   thread's memory pointer. Other threads are not read, judged or refreshed,
-  even when something about them looks stale. The one exception is step 12's
+  even when something about them looks stale. The one exception is the tool's
   archive, which moves every line ticked before today, whichever thread it
   names: a done line is done, and it is kept in `archive/`.
 - **A wrap is not a sweep.** It does not expire, reorder or tidy `Todo.md`

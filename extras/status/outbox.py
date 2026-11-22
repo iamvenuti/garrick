@@ -37,6 +37,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -46,7 +47,7 @@ HERE = Path(__file__).resolve().parent
 FOLDER = (("Inbox", ".outbox"))
 DROP_VERB = "outbox-drop"          # the page's *Drop it*: allowed on every role, since it only removes a file from the drop folder
 VERBS = ("todo-done", "todo-undo", "todo-edit", "todo-add")       # operations.OUTBOX_VERBS, which page_action.py checks it against
-ENVELOPE = ("id", "made", "machine", "line", "request")
+ENVELOPE = ("id", "made", "machine", "line", "request", "op")   # `op`: the operation a replay joined, written by the server (#641)
 HELD_ENVELOPE = ENVELOPE + ("held", "held_at")
 ID_RE = re.compile(r"[0-9a-f]{8,32}")
 PENDING_FILE = re.compile(r"([0-9a-f]{8,32})\.json")
@@ -374,6 +375,44 @@ def hold(zone: Path, path: Path, env: Optional[dict], reason: str, now: dt.datet
     path.unlink()
 
 
+def joined_op(env: Optional[dict]) -> str:
+    """The operation an envelope joined on an earlier run, or ''."""
+    op = env.get("op") if isinstance(env, dict) else ""
+    return op if isinstance(op, str) else ""
+
+
+def ended_for_good(ops, req: dict, out: dict) -> bool:
+    """Whether the reply to a replayed request says the work is over and saved. A journalled verb says so with a
+    completed state. A reply with no state came from an action done inline (a reworded line, which the journal does not
+    hold, or a journal that failed mid-way): it is done, and is remembered so that it is never applied twice. A joined
+    request that is still running is not over, and the request stays in the outbox."""
+    state = out.get("state")
+    if state is not None:
+        return state == "completed"
+    return True         # no state: the action ran inline, with no record to wait on (a verb the journal does not hold, or a journal that failed mid-way)
+
+
+def how_it_ended(pa, ops, op: str, ws: Optional[Path] = None) -> str:
+    """`saved`, `running`, `failed` or `gone` for an operation the journal holds. `gone`: no record of it is there (the
+    journal was compacted), so whether it saved cannot be told, and it is never applied again. A record of another
+    workspace is not believed: it counts as `failed`, and the request goes through the usual check. A record that cannot
+    be read at all counts as running: the envelope is kept."""
+    try:
+        journal = ops.Journal(pa.jobs_dir())
+        with journal.lock():
+            journal.settle_dead(time.time())     # a worker that died is failed, not running for ever
+            rec = journal.latest().get(op)
+    except Exception:
+        return "running"
+    if rec is None:
+        return "gone"
+    if ws is not None and rec.get("workspace") != ops.workspace_id(ws):
+        return "failed"
+    if rec.get("state") not in ("completed", "failed"):
+        return "running"
+    return "saved" if rec.get("outcome") == "saved" else "failed"
+
+
 def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[str, int]:
     """Apply, in each zone, what its outbox holds: each request once, through page_action's perform with the lock,
     the commit and the record of a click here. Returns {applied, held, skipped}. Never raises for one request."""
@@ -382,6 +421,12 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
     perform = perform or pa.perform
     ops = pa.ops_lib(ws)
     count = {"applied": 0, "held": 0, "skipped": 0}
+    journal = getattr(ops, "Journal", None)
+    if journal is not None and not journal(pa.jobs_dir()).usable():
+        # Nothing records an action here, so an envelope could be applied again and again: every envelope stays, and
+        # nothing is applied until the journal can be written.
+        count["journal"] = 1
+        return count
     for zone in zones(ws):
         for path, env, held in list(_envelopes(zone)):
             if held:
@@ -397,12 +442,36 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
                 hold(zone, path, env, str(e), now)
                 count["held"] += 1
                 continue
+            waited = joined_op(env)
+            if waited:
+                ended = how_it_ended(pa, ops, waited, ws)   # an operation this envelope joined on an earlier run
+                if ended == "running":
+                    count["waiting"] = count.get("waiting", 0) + 1
+                    continue
+                if ended == "saved":
+                    remember(rid, now)
+                    path.unlink(missing_ok=True)
+                    count["applied"] += 1
+                    continue
+                if ended == "gone":                       # its record was compacted away: it may have saved, so it is not applied again
+                    remember(rid, now)
+                    path.unlink(missing_ok=True)
+                    count.setdefault("gone", []).append(rid)
+                    continue
+                env = {k: v for k, v in env.items() if k != "op"}      # it ended without saving: this replay does it again
+                _write_json(path, env)
             out, logged, _ = perform(ws, dict(req), ops, "outbox")
             try:
                 pa.audit(req, bool(out.get("ok")), logged or out.get("say") or "", via="outbox")
             except Exception:
                 pass
-            if out.get("ok"):
+            if out.get("ok") and not ended_for_good(ops, req, out):
+                # The request joined one that is still running (or the record says nothing of how it ended): keep the
+                # envelope, with the operation's id, until that operation really ends (#641).
+                if isinstance(out.get("op"), str) and ops.valid_op(out.get("op")) and path.exists():
+                    _write_json(path, dict(env, op=out["op"]))
+                count["waiting"] = count.get("waiting", 0) + 1
+            elif out.get("ok"):
                 remember(rid, now)                    # first: a crash after the commit never applies it twice
                 path.unlink(missing_ok=True)
                 count["applied"] += 1
@@ -517,6 +586,18 @@ def hand_ticks(ws: Path, now: Optional[dt.datetime] = None) -> int:
 # --------------------------------------------------------------------------- command line
 
 
+def summary(done: dict) -> str:
+    """The one line `replay` prints: what it applied, and what it kept back and why."""
+    line = "Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done
+    if done.get("retry"):
+        line += " %d wait for the next run." % done["retry"]
+    if done.get("journal"):
+        line += " The journal could not be read, so nothing was applied; the queued requests are kept."
+    if done.get("gone"):
+        line += " %d not applied again, because their record is gone: %s." % (len(done["gone"]), ", ".join(done["gone"]))
+    return line
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="The outbox of a roaming machine's Todo actions.")
     ap.add_argument("command", choices=("replay", "list"))
@@ -534,8 +615,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("This machine only receives the workspace; the server applies the outbox.", file=sys.stderr)
         return 1
     done = replay(ws)
-    print("Applied %(applied)d, held %(held)d, skipped %(skipped)d." % done
-          + (" %d wait for the next run." % done["retry"] if done.get("retry") else ""))
+    print(summary(done))
     return 0
 
 

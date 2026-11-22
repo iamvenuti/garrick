@@ -43,7 +43,7 @@ All paths are relative to the workspace root.
 | Thread note | `Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md` |
 | Project hub | `Zones/<Zone>/<Project>/<Project>.md` |
 | Open actions | `Zones/<Zone>/Todo.md` |
-| Parties, Walls, People, Aliases | `System/context.md` |
+| Zones (the walled flag), Parties, People, Aliases | `System/context.md` |
 | Meeting pages | `Wikis/Meetings/wiki/sources/`, people in `wiki/people/` |
 
 A thread note is the `.md` file whose name matches its folder. Other files in the

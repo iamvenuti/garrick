@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import json
 import re
 import subprocess
@@ -134,29 +135,36 @@ def next_action(note: Path) -> str:
     return ""
 
 
-def hub_keeps_resume(hub: Path) -> bool:
-    """As `garrick_lib.hub_keeps_resume`: the hub holds a `### Resume here` block and is not a heading."""
-    try:
-        text = hub.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    head = text[3:].split("\n---", 1)[0] if text.startswith("---") else ""
-    if re.search(r"(?im)^layout:\s*[\"']?thread-first[\"']?\s*$", head):
-        return False
-    return any(l.strip().lower() == "### resume here" for l in text.splitlines())
+def work_reader(zone: Path):
+    """work.py, the one reader of the piece of work: the workspace's own copy in System/tools, else the one beside
+    these jobs (an installed System/jobs sits next to System/tools), else the clone's template."""
+    for tools in (zone.parent.parent / "System" / "tools", HERE.parent / "tools",
+                  HERE.parent.parent / "template" / "System" / "tools"):
+        src = tools / "work.py"
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("garrick_work_sweep", str(src))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    raise FileNotFoundError("System/tools/work.py")
 
 
 def thread_notes(zone: Path) -> List[Path]:
-    """The live thread notes of the zone, and the hubs of projects that have no threads or keep a resume point of their own beside
-    them (a `### Resume here` block, in a project that is not a heading): a note whose status is done or parked is left out."""
+    """The live pieces of work of the zone, as the one reader lists them: the hubs of projects that are one piece of
+    work or keep a resume point of their own beside their threads, and the thread notes. A note whose status is done
+    or parked is left out, and so is every thread of a parked project."""
     notes = []
-    for project in sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "archive"):
-        threads = project / "Threads"
-        hub = project / (project.name + ".md")
-        found = [t / (t.name + ".md") for t in sorted(threads.iterdir()) if t.is_dir()] if threads.is_dir() else [hub]
-        if threads.is_dir() and hub_keeps_resume(hub):
-            found.insert(0, hub)
-        notes += [n for n in found if n.is_file() and front(n).get("status", "active").lower() not in ("done", "parked")]
+    try:
+        reader = work_reader(zone)
+    except FileNotFoundError:
+        print("%s: System/tools/work.py is missing, so the Next action rows are not read; update Garrick." % zone.name,
+              file=sys.stderr)
+        return []
+    for r in reader.pieces(zone.parent.parent, zone=zone.name):
+        if r.kind != "piece" or (r.thread and r.hub_status == "parked"):
+            continue
+        if (r.status or "active") not in ("done", "parked"):
+            notes.append(r.note)
     return notes
 
 

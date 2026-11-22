@@ -125,7 +125,6 @@ JUDGMENT = {
         "Change anything: no tick, no wrap, no commit.",
     ],
 }
-SKIP = {"archive", "Inbox", "Sources", "Deliverables"}
 PARKED, DONE = "parked", "done"
 EXIT_USAGE = 2
 
@@ -405,26 +404,18 @@ def notes(zone: Path) -> List[dict]:
     note, whose hub is its thread, and a hub that keeps its own resume point
     beside its threads. A parked project parks its threads."""
     out = []
-    for project in visible(zone):
-        if project.name in SKIP:
+    for r in gl.work.pieces(zone.parent.parent, zone=zone.name):
+        if r.kind == "heading":
             continue
-        hub = project / (project.name + ".md")
-        hub_state = str(gl.parse_frontmatter(hub).get("status") or "").strip().lower() if hub.is_file() else ""
-        found = [(t.name, t / (t.name + ".md")) for t in visible(project / "Threads")]
-        found = [(name, note) for name, note in found if note.is_file()]
-        pfm = gl.parse_frontmatter(hub) if hub.is_file() else {}
-        if hub.is_file() and not found:
-            if str(pfm.get("layout") or "").strip().lower() == "thread-first":
-                continue                                       # a heading with no thread is no piece of work
-            out.append({"project": project.name, "thread": None, "note": hub, "folder": project, "status": hub_state})
-        elif hub.is_file() and hub_state not in (DONE,) and gl.hub_keeps_resume(hub.read_text(encoding="utf-8", errors="replace"), pfm):
-            # The hub's own resume point, beside the threads': its folder is the project's without them.
-            out.append({"project": project.name, "thread": None, "note": hub, "folder": project, "status": hub_state,
-                        "skip": "Threads"})
-        for name, note in found:
-            state = str(gl.parse_frontmatter(note).get("status") or "").strip().lower()
-            out.append({"project": project.name, "thread": name, "note": note, "folder": note.parent,
-                        "status": PARKED if hub_state == PARKED and state != DONE else state})
+        if r.thread is None:
+            if r.beside and r.hub_status == DONE:
+                continue
+            # The hub's own resume point: beside the threads', its folder is the project's without them.
+            out.append({"project": r.project, "thread": None, "note": r.note, "folder": r.folder, "status": r.hub_status,
+                        **({"skip": "Threads"} if r.beside else {})})
+        else:
+            out.append({"project": r.project, "thread": r.thread, "note": r.note, "folder": r.folder,
+                        "status": PARKED if r.hub_status == PARKED and r.status != DONE else r.status})
     return out
 
 

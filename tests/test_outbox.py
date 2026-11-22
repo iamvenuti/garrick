@@ -7,6 +7,7 @@ asked about when the line is not as it was. A fake HOME and a fake jobs folder; 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -63,7 +65,7 @@ class OutboxCase(unittest.TestCase):
         self.addCleanup(patch.stop)
         build_workspace(self.root)
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "machine.py"):
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py", "machine.py", "work.py"):
             shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         self.personal = self.root / "Zones" / "Personal"
@@ -539,6 +541,136 @@ class Replay(OutboxCase):
         self.assertEqual(1, self.commits(self.work))
 
 
+class RunningElsewhere(OutboxCase):
+    """#641: a replay that joins a running request keeps its envelope until that request really ends."""
+
+    queue = Replay.queue
+
+    def running(self, workspace=None):
+        """The same request, already running under another op: its worker is alive until `run` is closed."""
+        req = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key(LINE_A)}
+        run, reply = self.ops.start(self.jobs, dict(req, op="a19f3c80"), workspace=self.root if workspace is None else workspace)
+        self.assertIsNone(reply)
+        run.running()
+        self.addCleanup(run.close, req)
+        return run, req
+
+    def test_a_joined_running_request_keeps_the_envelope_with_its_operation(self):
+        envelope = self.queue()
+        run, req = self.running()
+        done = outbox.replay(self.root)
+        self.assertEqual({"applied": 0, "held": 0, "skipped": 0, "waiting": 1}, done)
+        self.assertTrue(envelope.exists())
+        self.assertEqual("a19f3c80", json.loads(envelope.read_text())["op"])      # the envelope id's operation is kept in the envelope
+        self.assertNotIn(envelope.stem, outbox.applied_ids())
+        self.assertEqual(1, self.commits(self.work))
+        self.assertEqual({"applied": 0, "held": 0, "skipped": 0, "waiting": 1}, outbox.replay(self.root))   # still running: still kept
+
+    def test_when_that_request_saves_the_envelope_goes_without_a_second_apply(self):
+        envelope = self.queue()
+        run, req = self.running()
+        outbox.replay(self.root)
+        run.finish("saved", req, said="Ticked")
+        run.close(req)
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertFalse(envelope.exists())
+        self.assertIn(envelope.stem, outbox.applied_ids())
+        self.assertEqual(1, self.commits(self.work))                             # the first run's save is the only one
+
+    def test_when_that_request_fails_the_envelope_is_replayed_later(self):
+        envelope = self.queue()
+        run, req = self.running()
+        outbox.replay(self.root)
+        run.finish("crashed", req, why="the action was stopped before it finished.")
+        run.close(req)
+        self.assertTrue(envelope.exists())                                       # nothing lost while it was waiting
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertFalse(envelope.exists())
+        self.assertIn("- [x] [[Pricing]]: Send the revised terms", self.todo())
+        self.assertEqual(2, self.commits(self.work))
+
+    def test_two_replays_at_once_never_lose_the_request(self):
+        envelope = self.queue()
+        run, req = self.running()
+        for _ in range(2):
+            outbox.replay(self.root)
+        self.assertTrue(envelope.exists())
+
+    def test_a_request_of_another_workspace_is_never_joined_by_a_replay(self):
+        envelope = self.queue()
+        self.running(workspace="/somewhere/else/Workspace")                      # same zone name, same Todo line
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertFalse(envelope.exists())
+        self.assertIn("- [x] [[Pricing]]: Send the revised terms", self.todo())
+
+    def test_a_row_without_a_workspace_matches_nothing_and_stays_as_it_was(self):
+        envelope = self.queue()
+        req = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key(LINE_A)}
+        fields = {k: self.ops._norm(k, req.get(k)) for k in sorted(self.ops.OPS["todo-done"].identity)}
+        if "keys" in fields:
+            del fields["keys"]
+            fields["key"] = self.key(LINE_A)
+        body = {"verb": "todo-done", "zone": "Work", "fields": fields}          # how 0.75.0 hashed it: no workspace
+        old_key = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        row = {"op": "d49f3c80", "key": old_key, "verb": "todo-done", "zone": "Work", "state": "running", "phase": "", "at": time.time(),
+               "request": {}, "done": None, "outcome": None, "say": None, "label": "x"}
+        self.jobs.mkdir(parents=True, exist_ok=True)
+        (self.jobs / "operations.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root))
+        self.assertFalse(envelope.exists())
+        first = (self.jobs / "operations.jsonl").read_text().splitlines()[0]
+        self.assertEqual(row, json.loads(first))                                 # its row was never rewritten
+
+
+class NeverTwice(OutboxCase):
+    """#641 review (S6): a replay never applies a request twice, whatever state the journal is in."""
+
+    queue = Replay.queue
+
+    def test_an_unusable_journal_applies_nothing_keeps_the_envelope_and_says_so(self):
+        envelope = self.queue()
+        shutil.rmtree(self.jobs, ignore_errors=True)
+        self.jobs.write_text("a file where the jobs folder should be")          # the journal cannot be made or written
+        done = outbox.replay(self.root)
+        self.assertEqual(1, done.get("journal"))
+        self.assertEqual(0, done["applied"])
+        self.assertTrue(envelope.exists())
+        self.assertEqual(1, self.commits(self.work))
+        self.assertIn(LINE_A, self.todo())                                       # still open: nothing was applied
+
+    def test_a_reply_with_no_state_from_a_journalled_verb_is_applied_once_and_never_again(self):
+        envelope = self.queue()
+        calls = []
+
+        def inline(ws, req, ops, via):
+            calls.append(req["verb"])
+            return {"ok": True, "say": "Done."}, None, ""                        # the journal failed mid-way: the action ran inline
+        self.assertEqual({"applied": 1, "held": 0, "skipped": 0}, outbox.replay(self.root, perform=inline))
+        self.assertFalse(envelope.exists())
+        self.assertIn(envelope.stem, outbox.applied_ids())
+        self.assertEqual(["todo-done"], calls)
+
+    def test_an_envelope_whose_operation_record_is_gone_is_removed_and_named_not_applied_again(self):
+        envelope = self.queue()
+        outbox._write_json(envelope, dict(json.loads(envelope.read_text()), op="a19f3c80"))      # compaction took its record away
+        done = outbox.replay(self.root)
+        self.assertEqual([envelope.stem], done.get("gone"))
+        self.assertFalse(envelope.exists())
+        self.assertEqual(1, self.commits(self.work))
+        self.assertIn(LINE_A, self.todo())
+        self.assertEqual(0, outbox.replay(self.root)["applied"])
+
+    def test_an_operation_of_another_workspace_named_in_an_envelope_is_not_believed(self):
+        envelope = self.queue()
+        req = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key(LINE_A)}
+        run, _ = self.ops.start(self.jobs, dict(req, op="a19f3c80"), workspace="/somewhere/else")
+        run.finish("saved", req, said="Ticked")
+        run.close(req)
+        outbox._write_json(envelope, dict(json.loads(envelope.read_text()), op="a19f3c80"))
+        self.assertEqual(1, outbox.replay(self.root)["applied"])                 # applied here: that record is not this workspace's
+        self.assertIn("- [x] [[Pricing]]: Send the revised terms", self.todo())
+
+
 class Page(OutboxCase):
     def build(self):
         link = status.Links(self.root)
@@ -623,3 +755,19 @@ class Page(OutboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplaySummary(unittest.TestCase):
+    """The printed line names an unusable journal and the requests not applied again (0.76.0 confirmation pass, N2)."""
+
+    def test_the_line_says_the_journal_could_not_be_read(self):
+        line = outbox.summary({"applied": 0, "held": 0, "skipped": 0, "journal": 1})
+        self.assertIn("nothing was applied", line)
+
+    def test_the_line_names_the_requests_whose_record_is_gone(self):
+        line = outbox.summary({"applied": 1, "held": 0, "skipped": 0, "gone": ["a1", "b2"]})
+        self.assertIn("2 not applied again", line)
+        self.assertIn("a1, b2", line)
+
+    def test_a_plain_run_reads_as_before(self):
+        self.assertEqual(outbox.summary({"applied": 2, "held": 1, "skipped": 0}), "Applied 2, held 1, skipped 0.")

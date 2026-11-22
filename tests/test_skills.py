@@ -408,13 +408,13 @@ class SkillsTest(unittest.TestCase):
 
     def test_a_wrap_archives_before_it_commits(self):
         """So a zone the nightly sweep never reaches still loses the lines ticked
-        on an earlier day, and the archive goes in the wrap's own commit."""
+        on an earlier day, and the archive goes in the wrap's own commit: the wrap
+        tool does both, in that order (#645)."""
         threads = threads_all()
-        step = section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"').split("\n12. ", 1)[1].split("\n13. ", 1)[0]
-        command = "python3 System/skills/todo/todo.py archive --zone <Zone>"
-        self.assertIn(command, step)
-        self.assertLess(step.index(command), step.index('git -C "Zones/<Zone>" add'))
-        self.assertIn("`archive/` when the archive moved a line", flat(step))
+        wrap = flat(section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"'))
+        self.assertIn("the archive of lines ticked on an earlier day, staging by name, one commit", wrap)
+        source = (REPO / "template" / "System" / "tools" / "wrap.py").read_text(encoding="utf-8")
+        self.assertLess(source.index("todo.archive(zone, today)"), source.index('git(zone, "add"'))
         self.assertIn("beyond that archive", flat(section(threads, "## What a wrap does not do")))
 
     def test_the_example_line_goes_with_the_first_real_action(self):
@@ -554,10 +554,10 @@ class ThreadsDispatcherTest(unittest.TestCase):
         self.assertEqual(1, len(re.findall(r"(?m)^description:", text)))      # one trigger list
 
     def test_a_wrap_reads_the_dispatcher_and_one_reference(self):
-        """The wrap carries what it runs on: the executor, the wall check, the lock and its last step."""
+        """The wrap carries what it runs on: the executor, the wall check and the call to the wrap tool."""
         wrap = flat((THREADS / "reference" / "wrap.md").read_text(encoding="utf-8"))
-        for needle in ("## Running an action", "## The wall check", "python3 System/tools/wrap_lock.py start",
-                       "python3 System/tools/wrap_lock.py end", "python3 System/tools/history.py apply"):
+        for needle in ("## Running an action", "## The wall check", "python3 System/tools/wrap.py <<'EOF'",
+                       "python3 System/tools/wrap_lock.py end --abandon", "python3 System/tools/history.py resume"):
             self.assertIn(needle, wrap, needle)
 
 

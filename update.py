@@ -598,6 +598,13 @@ RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "
     for name in ("open", "wrap", "lifecycle", "correct", "catch-up", "wall-check"))
 
 
+# The threads skill calls System/tools/wrap.py (#645): a workspace holds the skill back until the tool is in place, so that the
+# wrap is never described by words that call a command the workspace does not have.
+WRAP_TOOL = "System/tools/wrap.py"
+WRAP_SKILL = "System/skills/threads/"
+WRAP_HELD = "its tool (%s) is not in this workspace yet, so the skill that calls it waits; update again once the tool is there" % WRAP_TOOL
+
+
 def uncommitted_files(root, p):
     """The files `apply` would skip for changes not committed, as the dry run
     lists them: [{"path": from the top of the workspace, "repo": the repository
@@ -650,6 +657,13 @@ def install_missing_hooks(root):
     return out
 
 
+# The status page and the todo sweep read the pieces of work through System/tools/work.py (#644): a workspace holds them back
+# until the tool is in place, so that an update that stops half way never leaves a page without its reader.
+WORK_TOOL = "System/tools/work.py"
+WORK_EXTRAS = ("System/status/", "System/jobs/todo_sweep.py")
+WORK_HELD = "its reader (%s) is not in this workspace yet, so it waits; update again once the tool is there" % WORK_TOOL
+
+
 def apply(root, p, only=None, today=None):
     """Make the changes `p` lists: every replace, add and merge, or only the
     paths in `only`, which may also name a file to restore. Returns what was
@@ -700,6 +714,11 @@ def apply(root, p, only=None, today=None):
                 continue
             todo.append((kind, path, dest, data, mode))
 
+    if not (root / WRAP_TOOL).is_file() and WRAP_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
+        for kind, path, _, _, _ in [item for item in todo if item[1].startswith(WRAP_SKILL) and item[0] != "merge"]:
+            skipped.append((path, WRAP_HELD))
+        todo = [item for item in todo if item[0] == "merge" or not item[1].startswith(WRAP_SKILL)]
+
     if any(path == RULES and kind == "replace" for kind, path, _, _, _ in todo):
         written_now = {path for kind, path, _, _, _ in todo if kind != "merge"}
         behind = [path for path in RULE_SKILLS if path in p["files"] and path not in written_now
@@ -711,6 +730,11 @@ def apply(root, p, only=None, today=None):
             todo = [item for item in todo if item[1] != RULES]
             skipped.append((RULES, "the skills that carry the procedures it points to are not updated yet (%s); "
                                    "merge or commit them, then run again" % ", ".join(behind)))
+
+    if not (root / WORK_TOOL).is_file() and WORK_TOOL not in {path for kind, path, _, _, _ in todo if kind != "merge"}:
+        waits = [item for item in todo if item[0] != "merge" and item[1].startswith(WORK_EXTRAS)]
+        skipped += [(item[1], WORK_HELD) for item in waits]
+        todo = [item for item in todo if item not in waits]
 
     by_repo = {}
     for kind, path, dest, data, mode in todo:

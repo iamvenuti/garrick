@@ -358,7 +358,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "chase",
          "outbox-drop",
          "inbox-run", "intake-answer",
-         "machine-role", "read-guard")
+         "machine-role", "read-guard",
+         "wrap")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1143,7 +1144,7 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         note = live_note(zone, req.get("file"))
         parts = note.relative_to(zone).parts
         is_thread = len(parts) == 4 and parts[1] == "Threads" and parts[2] + ".md" == parts[3]
-        is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not any((zone / parts[0] / "Threads").glob("*/*.md"))
+        is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not project_threads(zone, parts[0])
         if not (is_thread or is_hub):
             raise Refused("only a thread note, or a single-thread project's hub, can be parked by its path; "
                           "name the project to park all of it")
@@ -1206,7 +1207,7 @@ def resume_note(ws: Path, req: dict) -> tuple:
     is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1]
     if not (is_thread or is_hub):
         raise Refused("only a thread note, or a single-thread project's hub, holds a resume point")
-    if is_hub and any((zone / parts[0] / "Threads").glob("*/*.md")):
+    if is_hub and project_threads(zone, parts[0]):
         raise Refused("%s has threads; name the one" % parts[0])
     return zone, note, parts, ("%s, %s" % (parts[0], parts[2]) if is_thread else parts[0])
 
@@ -3009,35 +3010,28 @@ def question(ws: Path, req: dict) -> tuple:
     return zone, q, note, parts, work_name(zone, parts)
 
 
-def hub_keeps_resume(hub: Path) -> bool:
-    """Does the hub hold the project's own resume point beside its threads: a `### Resume here` block and no
-    `layout: thread-first`? An `### Outcome` in its place ends it (status.py and garrick_lib read it the same way)."""
-    try:
-        text = hub.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
-    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
-    src = hub.parent.parent.parent.parent / "System" / "tools" / "garrick_lib.py"
-    if src.is_file():
-        try:
-            spec = importlib.util.spec_from_file_location("garrick_page_lib", str(src))
-            lib = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(lib)
-            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
-        except Exception:
-            pass
-    lines = text.splitlines()
-    front = {}
-    if lines and lines[0].strip() == "---":
-        for l in lines[1:]:
-            if l.strip() == "---":
-                break
-            if l.lower().startswith("layout:"):
-                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
-    if str(front.get("layout") or "").strip().lower() == "thread-first":
-        return False
-    return any(l.strip().lower() == "### resume here" for l in lines)
+_WORK = {}
+
+
+def work_reader(zone: Path):
+    """work.py, the one reader of the piece of work: the workspace's own copy in System/tools, else the one beside
+    this extra (an installed System/status sits next to System/tools), else the clone's template."""
+    for tools in (zone.parent.parent / "System" / "tools", HERE.parent / "tools", HERE.parent.parent / "template" / "System" / "tools"):
+        src = tools / "work.py"
+        if src.is_file():
+            if src not in _WORK:
+                spec = importlib.util.spec_from_file_location("garrick_work_page", str(src))
+                _WORK[src] = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_WORK[src])
+            return _WORK[src]
+    raise Refused("System/tools/work.py is missing; update Garrick")
+
+
+def project_threads(zone: Path, project: str) -> list:
+    """The records of a project's threads, from the reader."""
+    reader = work_reader(zone)
+    folder = zone / project
+    return [r for r in reader.project_pieces(zone.parent.parent, zone, folder) if r.thread] if folder.is_dir() else []
 
 
 def work_name(zone: Path, parts: tuple) -> str:
@@ -3046,8 +3040,9 @@ def work_name(zone: Path, parts: tuple) -> str:
     the hub keeps its own resume point beside the thread."""
     if len(parts) == 2:
         return parts[0]
-    threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    if len(threads) <= 1 and not hub_keeps_resume(zone / parts[0] / (parts[0] + ".md")):
+    reader = work_reader(zone)
+    found = reader.project_pieces(zone.parent.parent, zone, zone / parts[0]) if (zone / parts[0]).is_dir() else []
+    if len([r for r in found if r.thread]) <= 1 and not any(r.beside for r in found):
         return parts[0]
     return "%s, %s" % (parts[0], parts[2])
 
@@ -3064,18 +3059,12 @@ def say_name(ws: Path, zone: Path, parts: tuple) -> str:
         return name
     thread, project = parts[2].casefold(), parts[0].casefold()
     seen = []
-    for z in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
-        if not z.is_dir() or z.name.startswith((".", "_")):
-            continue
-        for p in z.iterdir():
-            if not p.is_dir() or p.name.startswith((".", "_")) or p.name in SKIP or p.name == "Inbox":
-                continue
-            notes = [t / (t.name + ".md") for t in (p / "Threads").glob("*/")
-                     if not t.name.startswith((".", "_")) and t.name not in SKIP and (t / (t.name + ".md")).is_file()]
-            if not notes and (p / (p.name + ".md")).is_file():
-                notes = [p / (p.name + ".md")]          # a project that is its own thread, by its name
-            seen += [(z.name, p.name.casefold(), n.stem.casefold()) for n in notes
-                     if front(n).get("status") not in ("done", "closed", "archived", "complete", "completed")]
+    for project_records in work_reader(zone).by_project(work_reader(zone).pieces(ws)).values():
+        threads = [r for r in project_records if r.thread]
+        # A project with no thread notes is its own thread, by its name.
+        for r in threads or [r for r in project_records if r.own or r.kind == "heading"]:
+            if r.status not in ("done", "closed", "archived", "complete", "completed"):
+                seen.append((r.zone, r.project.casefold(), (r.thread or r.project).casefold()))
     same = [s for s in seen if s[2] == thread]
     if len(same) <= 1:
         return parts[2]
@@ -6103,6 +6092,36 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     raise Refused("not an answer Garrick offers for this finding")
 
 
+def wrap_thread(ws: Path, req) -> dict:
+    """The wrap (#645): the words the assistant wrote, as one JSON object in `input`, handed to System/tools/wrap.py, which
+    does the lock, the writes, the commit through the zone's hooks and the finish record. The page never invents the words:
+    a session writes them. Its receipt is the reply: a saved wrap answers ok, and a wrap the hook refused, another session
+    moved under, or that failed answers with the tool's own sentence."""
+    tool = ws / "System" / "tools" / "wrap.py"
+    if not tool.is_file():
+        raise Refused("this workspace has no wrap tool yet; update Garrick first")
+    data = req.get("input")
+    if not isinstance(data, dict):
+        raise Refused("a wrap needs the words of the wrap, as an object, in input")
+    data = dict(data)
+    for key in ("zone", "project", "thread"):
+        if req.get(key) is not None:
+            if data.get(key) not in (None, req[key]):
+                raise Refused("the wrap's words name another %s than the request does" % key)
+            data[key] = req[key]
+    try:
+        done = subprocess.run([sys.executable, "-B", str(tool), "--root", str(ws), "--json"], input=json.dumps(data),
+                              capture_output=True, text=True, timeout=600)
+        got = json.loads(done.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        raise Refused("the wrap did not answer; look at git status in the zone before trying again")
+    if not isinstance(got, dict) or got.get("outcome") not in ("saved", "refused", "conflict", "failed") or not isinstance(got.get("say"), str):
+        raise Refused("the wrap did not answer in words this page reads")
+    if got["outcome"] != "saved":
+        raise Refused(got["say"])
+    return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or a reply whose
     "say" comes with what the caller reads back."""
@@ -6170,6 +6189,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_machine_role(ws, req)
     if req["verb"] == "read-guard":
         return set_read_guard(ws, req)
+    if req["verb"] == "wrap":
+        return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
         return answer_suggestion(ws, req)
     if req["verb"] == "start":
@@ -6199,7 +6220,8 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
-               "todo-retire")
+               "todo-retire",
+               "wrap")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session", "outbox")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
@@ -6446,7 +6468,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
                 raise Refused(PAGE_REFUSED)
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS and not only_looks(req):
                 try:
-                    run, joined = start_record(ops, req, via)
+                    run, joined = start_record(ops, req, via, ws)
                 except ops.BadOp as e:
                     raise Refused(str(e))
                 except Exception:           # the record is best effort, as the audit log is
@@ -6513,14 +6535,16 @@ def outbox_gate(ws: Path, req, via: str):
     return box.gate(ws, req, via)
 
 
-def start_record(ops, req: dict, via: str):
+def start_record(ops, req: dict, via: str, ws=None):
     """operations.start(), naming the caller where this operations.py takes
-    one; an older copy is called as it always was."""
+    one, and the workspace root where it takes that (#641); an older copy is
+    called as it always was."""
     try:
-        takes = "via" in inspect.signature(ops.start).parameters
+        params = inspect.signature(ops.start).parameters
     except (TypeError, ValueError):
-        takes = False
-    return ops.start(jobs_dir(), req, via=via) if takes else ops.start(jobs_dir(), req)
+        params = {}
+    more = {"workspace": str(ws)} if ws is not None and "workspace" in params else {}
+    return ops.start(jobs_dir(), req, via=via, **more) if "via" in params else ops.start(jobs_dir(), req, **more)
 
 
 # The command-line form for a session (#344): a verb and the fields it takes as
@@ -6629,7 +6653,11 @@ def main(argv=None) -> int:
                 raise Refused("not a request")
         ops = ops_lib(ws)
         if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
-            print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
+            try:
+                said = ops.read(jobs_dir(), workspace=str(ws))      # this workspace's own operations (#641)
+            except TypeError:                                       # an older operations.py reads them all, as it always did
+                said = ops.read(jobs_dir())
+            print(json.dumps(said, ensure_ascii=False))             # a read: nothing to log
             return 0
         out, logged, _ = perform(ws, req, ops, via)
     except Refused as e:

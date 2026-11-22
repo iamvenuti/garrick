@@ -66,7 +66,7 @@ def hub(status: str = "active") -> str:
 
 def workspace(root: Path) -> Path:
     write(root / "System" / "rules.md", "# Rules\n")
-    for tool in ("next_up.py", "garrick_lib.py"):
+    for tool in ("next_up.py", "garrick_lib.py", "work.py"):
         write(root / "System" / "tools" / tool, (REPO / "template" / "System" / "tools" / tool).read_text(encoding="utf-8"))
     write(root / "System" / "skills" / "todo" / "todo.py",
           (REPO / "template" / "System" / "skills" / "todo" / "todo.py").read_text(encoding="utf-8"))

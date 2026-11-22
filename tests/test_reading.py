@@ -39,7 +39,7 @@ class ReadingCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve() / "Workspace"
         build_workspace(self.root)
-        for rel in ("skills/intake/intake.py", "skills/meetings/ingest.py", "tools/garrick_lib.py"):
+        for rel in ("skills/intake/intake.py", "skills/meetings/ingest.py", "tools/garrick_lib.py", "tools/work.py"):
             (self.root / "System" / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(TEMPLATE / rel, self.root / "System" / rel)
         self.inbox = self.root / "Zones" / "Work" / "Inbox"
@@ -121,7 +121,8 @@ class TestReadingSweep(ReadingCase):
                     subprocess.run([sys.executable, str(self.root / "System" / "skills" / "intake" / "intake.py"),
                                     "--root", str(self.root), "file-reading", "--file", str(self.root / line[2:])],
                                    check=True, capture_output=True)
-            return 0, "Filed it.\nFILED 1 SKIPPED 0\n" + self.job.SENTINEL + "\n"
+            wrote = ["Wikis/Knowledge/raw/freight-ledger-weekly.eml"]
+            return 0, "Filed it.\n" + "".join("WROTE %s\n" % w for w in wrote) + "FILED 1 SKIPPED 0\n" + self.job.SENTINEL + "\n"
         out = []
         with mock.patch.object(self.job.agent, "run", side_effect=run), \
                 mock.patch("builtins.print", side_effect=lambda *a, **k: out.append(" ".join(map(str, a)))):
@@ -136,6 +137,74 @@ class TestReadingSweep(ReadingCase):
         self.assertTrue((self.inbox / "reading-260928-pallet-forecast-2.eml").exists())
         self.assertIn("Knowledge: reading swept; 1 filed, 0 skipped", git(self.wikis, "log", "-1", "--format=%s"))
         self.assertIn("Knowledge/raw/freight-ledger-weekly.eml", git(self.wikis, "show", "--stat", "--format=", "HEAD"))
+
+    def sweep(self, run):
+        self.drop("reading-260928-freight-ledger-weekly-1.eml", eml(**NEWSLETTER))
+        out = []
+        with mock.patch.object(self.job.agent, "run", side_effect=run), \
+                mock.patch("builtins.print", side_effect=lambda *a, **k: out.append(" ".join(map(str, a)))):
+            code = self.job.main(["--workspace", str(self.root), "--zone", "Work"])
+        return code, out
+
+    def filing(self, report=True, also=None):
+        """An assistant that files the item with the tool, then (as the knowledge skill says) writes a page, and reports
+        the paths it wrote; `also` runs as another writer's edit while the call is under way."""
+        def run(tier, prompt, allow=(), cwd=None, **kw):
+            for line in prompt.splitlines():
+                if line.startswith("- Zones/"):
+                    subprocess.run([sys.executable, str(self.root / "System" / "skills" / "intake" / "intake.py"),
+                                    "--root", str(self.root), "file-reading", "--file", str(self.root / line[2:])],
+                                   check=True, capture_output=True)
+            page = self.wikis / "Knowledge" / "wiki" / "sources" / "freight-ledger.md"
+            page.parent.mkdir(parents=True, exist_ok=True)
+            page.write_text("# Freight ledger\n", encoding="utf-8")
+            if also:
+                also()
+            wrote = ["Wikis/Knowledge/wiki/sources/freight-ledger.md", "Wikis/Knowledge/raw/freight-ledger-weekly.eml"] if report else []
+            return 0, "".join("WROTE %s\n" % w for w in wrote) + "FILED 1 SKIPPED 0\n" + self.job.SENTINEL + "\n"
+        return run
+
+    def test_only_the_paths_the_run_reports_are_committed(self):
+        theirs = self.wikis / "Knowledge" / "wiki" / "theirs.md"
+        git(self.wikis, "add", "-A")
+        (self.wikis / "Knowledge" / "wiki").mkdir(parents=True, exist_ok=True)
+        theirs.write_text("# Theirs\n", encoding="utf-8")
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "commit", "-q", "-m", "their page")
+        code, out = self.sweep(self.filing(also=lambda: theirs.write_text("# Theirs, edited meanwhile\n", encoding="utf-8")))
+        self.assertEqual(0, code, out)
+        shown = git(self.wikis, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertEqual(["Knowledge/raw/freight-ledger-weekly.eml", "Knowledge/wiki/sources/freight-ledger.md"], sorted(shown))
+        self.assertIn(" M Knowledge/wiki/theirs.md", git(self.wikis, "status", "--porcelain").split("\n"))    # the other writer's edit: left alone
+        self.assertEqual("# Theirs, edited meanwhile\n", theirs.read_text(encoding="utf-8"))
+        line = next(l for l in out if "1 filed, 0 skipped" in l)
+        self.assertIn("Knowledge/wiki/theirs.md", line)                                                      # named, not committed
+
+    def test_a_run_that_reports_none_commits_nothing_and_names_what_changed(self):
+        code, out = self.sweep(self.filing(report=False))
+        self.assertEqual(0, code, out)
+        self.assertEqual("start", git(self.wikis, "log", "-1", "--format=%s").strip())
+        line = next(l for l in out if "1 filed, 0 skipped" in l)
+        self.assertIn("nothing was reported as filed, so nothing was committed", line)
+        self.assertIn("Knowledge/wiki/sources/freight-ledger.md", line)
+
+    def test_a_reported_page_that_was_dirty_before_is_committed_only_if_the_call_changed_it(self):
+        page = self.wikis / "Knowledge" / "wiki" / "sources" / "freight-ledger.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("# Mine, before\n", encoding="utf-8")                # dirty before the call
+        code, out = self.sweep(self.filing())                                  # the call rewrites it and reports it
+        self.assertIn("Knowledge/wiki/sources/freight-ledger.md", git(self.wikis, "show", "--name-only", "--format=", "HEAD"))
+
+    def test_a_reported_page_that_was_dirty_before_and_not_changed_is_left_alone_and_named(self):
+        page = self.wikis / "Knowledge" / "wiki" / "sources" / "freight-ledger.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("# Freight ledger\n", encoding="utf-8")               # dirty before, and the call writes the same
+        code, out = self.sweep(self.filing())
+        shown = git(self.wikis, "show", "--name-only", "--format=", "HEAD").split()
+        self.assertNotIn("Knowledge/wiki/sources/freight-ledger.md", shown)
+        line = next(l for l in out if "1 filed, 0 skipped" in l)
+        self.assertIn("Knowledge/wiki/sources/freight-ledger.md", line)
+        self.assertIn("was already changed before the call", line)
 
     def test_an_incomplete_answer_commits_nothing(self):
         self.drop("reading-260928-freight-ledger-weekly-1.eml", eml(**NEWSLETTER))

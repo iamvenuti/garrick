@@ -4,10 +4,6 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
-### Added
-
-- **A render helper for look checks** (#622). `tools/render.py` takes screenshots of an HTML page at several widths and in both themes, with one headless-shell process for the whole list and a throwaway profile. It never starts the Chrome app, so no icon bounces in the Dock and no crash dump lands in the user's Chrome folder. With no headless shell installed, it exits with an install hint. The repo's `AGENTS.md` sends look checks through it. It is a development tool and is not shipped to workspaces.
-
 ## [0.74.0] - 2026-11-22
 
 Two features 0.73.0 shipped, the machine's role and the read guard, can now be set from Settings, and each has a docs page written for the person who uses it. The Threads card and the card that opens on a row are easier to read. The Garrick App has one home.

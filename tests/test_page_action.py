@@ -1363,7 +1363,7 @@ class TestJournal(ActionCase):
         self.assertEqual(keys, records[0]["request"]["keys"])
         self.assertEqual("Ticking 2 lines…", records[0]["label"])
         import test_operations as t
-        listed = t.ops.read(self.jobs)["ops"]
+        listed = t.ops.read(self.jobs, workspace=self.root)["ops"]      # the page reads its own workspace's operations
         self.assertEqual([keys], [r["keys"] for r in listed])                           # what a reload is told is pending
         self.assertIn('keys=["%s", "%s"]' % tuple(keys), (self.jobs / "page-actions.log").read_text())
 

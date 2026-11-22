@@ -232,7 +232,7 @@ def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] =
         # nothing: its actions stay held, as at Act. The reply says what became of each send (#642).
         lines = []
         for e in list(held):
-            hold.run(e["id"], ws, lambda w, rec: execute_held(w, rec, runner))
+            hold.run(e["id"], ws, lambda w, rec: execute_held_read(w, rec, runner))
             lines.append(send_line(e))
         say = (say + "\n" if say else "") + "\n".join(lines)
         held = []
@@ -258,10 +258,17 @@ def send_line(e: dict) -> str:
         return "%s: Sent." % label
     if state == "not sent":
         return "%s: Not sent: %s." % (label, plain_reason(result))
+    if state == "not known":
+        return "%s: Not known: the tool's own result was not read; the assistant said \"%s\"." % (label, plain_reason(result))
     return "%s: Not known: the result could not be read, so check before you send it again." % label
 
 
 def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[bool, str]:
+    """execute_held_read() without whether the tool's own result was read: what a yes (a dialog, a Telegram reply) shows."""
+    return execute_held_read(ws, e, runner)[:2]
+
+
+def execute_held_read(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[bool, str, bool]:
     """Do one held action, after the owner's yes. A write under a shared folder is code's; a connector tool runs
     through one assistant call that is allowed that tool and no other: the one name, checked again here against the
     shape of a connector tool and the kinds a hold may be.
@@ -270,17 +277,17 @@ def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[
     could name in `--strict-mcp-config` without guessing, so the call loads them as the owner's settings do, and
     `--allowedTools` is the one tool."""
     if "write" in (e.get("request") or {}):
-        return hold.write_shared(ws, e)
+        return hold.write_shared(ws, e) + (True,)
     tool = str((e.get("request") or {}).get("tool") or "")
     args = (e.get("request") or {}).get("args") or {}
     if not tool:
-        return False, "the action names no tool"
+        return False, "the action names no tool", True
     if not hold.TOOL_RE.match(tool) or hold.kind_of({"tool": tool}) not in hold.HELD_KINDS:
-        return False, "the action names a tool that is not a connector tool that sends, shares or deletes"
+        return False, "the action names a tool that is not a connector tool that sends, shares or deletes", True
     claude = channels.claude_path() or "claude"
     prompt = ("The owner has approved this one action. Do exactly it, with the tool %s and these arguments, and "
               "nothing else; then say in one sentence what happened.\n<arguments>\n%s\n</arguments>" % (tool, json.dumps(args)[:8000]))
-    cmd = [claude, "-p", prompt, "--model", "haiku", "--output-format", "json", "--permission-mode", "default",
+    cmd = [claude, "-p", prompt, "--model", "haiku", "--output-format", "stream-json", "--verbose", "--permission-mode", "default",
            "--setting-sources", "user", "--allowedTools", tool]
     workdir = Path(tempfile.mkdtemp(prefix="garrick-held-"))
     try:
@@ -288,8 +295,14 @@ def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[
     finally:
         shutil.rmtree(str(workdir), ignore_errors=True)
     if code != 0 or got.get("refused"):
-        return False, "the assistant could not do it (%s)" % (got.get("refused") or "exit %s" % code)
-    return True, (got.get("text") or "Done.").strip()[:300]
+        return False, "the assistant could not do it (%s)" % (got.get("refused") or "exit %s" % code), True
+    said = (got.get("text") or "Done.").strip()[:300]
+    # The exit code says the assistant finished, not that the tool did its work: the tool's own result decides. A run that
+    # gives no result for this tool (or none at all) is not known, and the assistant's own sentence is the reason.
+    mine = [r for r in (got.get("tool_results") or []) if isinstance(r, dict) and r.get("name") == tool]
+    if any(r.get("is_error") for r in mine):
+        return False, "the tool reported an error: %s" % said, True
+    return True, said, bool(mine)
 
 
 # ---- one bounded edit, or one commit, for the Context queue (#592) --------------------------------------------------

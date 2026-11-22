@@ -786,14 +786,16 @@ class Journal:
             except OSError:
                 pass
 
-    def open_set(self, now: Optional[float] = None) -> List[dict]:
+    def open_set(self, now: Optional[float] = None, workspace="") -> List[dict]:
         """What a page is shown: every record that is not terminal, and each
-        terminal one from the last RECENT seconds. A worker found dead is
-        settled first."""
+        terminal one from the last RECENT seconds, of this workspace's own: a
+        record with another workspace, or none (written before 0.76.0), is
+        never shown. A worker found dead is settled first."""
         now = time.time() if now is None else now
         with self.lock():
             self.settle_dead(now)
-            latest = list(self.latest().values())
+            where = workspace_id(workspace)
+            latest = [r for r in self.latest().values() if r.get("workspace") == where]
         out = []
         for rec in latest:
             if rec.get("state") not in ("completed", "failed") or now - (rec.get("done") or rec.get("at") or 0) <= RECENT:
@@ -974,7 +976,7 @@ def _release(journal: Journal, fd: int, op: str) -> None:
     return None
 
 
-def read(folder, now: Optional[float] = None) -> dict:
+def read(folder, now: Optional[float] = None, workspace="") -> dict:
     """The reply to the page's `operations` request: the open set, and what the
     page needs to render it. `durable` is false when nothing can be recorded
     in this folder, which is what the page tells the user once."""
@@ -982,4 +984,4 @@ def read(folder, now: Optional[float] = None) -> dict:
     if not journal.usable():
         return {"ok": True, "say": "Actions are not recoverable here.", "durable": False, "verbs": [], "ops": []}
     return {"ok": True, "say": "Checked what is running.", "durable": True, "verbs": sorted(OPS),
-            "ops": journal.open_set(now), "lost": lost_sentence()}
+            "ops": journal.open_set(now, workspace), "lost": lost_sentence()}

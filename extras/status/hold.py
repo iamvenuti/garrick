@@ -280,23 +280,27 @@ def run(hid: str, ws: Path, runner: Callable[[Path, dict], Tuple[bool, str]], no
             return "That action waited more than a day and was dropped. Nothing was done."
         e["state"] = "running"
         save(data)
+    read = True
     try:
-        ok, said = runner(Path(ws), e)
+        got = runner(Path(ws), e)
+        ok, said = got[0], got[1]
+        read = bool(got[2]) if len(got) > 2 else True       # a runner may say it never read the tool's own result
     except Exception as exc:
         ok, said = False, "It did not run: %s." % type(exc).__name__
-    _set(hid, state="done" if ok else "failed", result=" ".join(str(said).split())[:300], ran=now)
+    _set(hid, state="done" if ok else "failed", result=" ".join(str(said).split())[:300], ran=now, read=read)
     return said if ok else "Not done. " + said
 
 
 def outcome(hid: str) -> Tuple[str, str]:
     """What became of a held action that was run, read back from the queue: ("sent", the result), ("not sent", the
-    reason), or ("", "") when the entry is gone, or is in any other state: the caller says it is not known."""
+    reason), or ("not known", the assistant's sentence) when the call ended well but the tool's own result was never read, or
+    ("", "") when the entry is gone, or is in any other state: the caller says it is not known."""
     e = get(hid)
     if e is None:
         return "", ""
     state = e.get("state")
     if state == "done":
-        return "sent", str(e.get("result") or "")
+        return ("sent" if e.get("read", True) else "not known"), str(e.get("result") or "")
     if state == "failed":
         return "not sent", str(e.get("result") or "")
     return "", ""

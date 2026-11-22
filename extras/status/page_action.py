@@ -6653,7 +6653,11 @@ def main(argv=None) -> int:
                 raise Refused("not a request")
         ops = ops_lib(ws)
         if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
-            print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
+            try:
+                said = ops.read(jobs_dir(), workspace=str(ws))      # this workspace's own operations (#641)
+            except TypeError:                                       # an older operations.py reads them all, as it always did
+                said = ops.read(jobs_dir())
+            print(json.dumps(said, ensure_ascii=False))             # a read: nothing to log
             return 0
         out, logged, _ = perform(ws, req, ops, via)
     except Refused as e:

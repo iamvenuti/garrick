@@ -147,6 +147,10 @@ zone's repository, as the skills would:
                 `blob` is the file as that look read it: if the file has changed, nothing is
                 written. Only the app's bridge (`via: page`): the ask box and a session are
                 refused, and the command line has no verb for it
+    count-card  one card of the page opened (#651): {"card"}, an id from view.py's CARDS, added to today's count in
+                System/garrick-usage.json when the setting `usage-counts` is on. Nothing else is kept; any other value is
+                refused and nothing is written. Only the app's bridge (`via: page`). It commits nothing and keeps no
+                operations record
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -359,6 +363,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "outbox-drop",
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
+         "count-card",
          "wrap")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -1775,7 +1780,7 @@ def save_settings(ws: Path, req: dict) -> str:
     if "home" in req:                   # Settings has no Home choice any more (#503): the app opens on the full page, and a stored value is ignored
         raise Refused("there is no home to choose: Garrick opens on the full page")
     if not {"launchers", "zones", "graph", "notifications", "memory", "desk-agent",
-            "release-notice", "release-notice-every", "ask", "channels"} & set(req):
+            "release-notice", "release-notice-every", "ask", "channels", "usage-counts"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
@@ -1784,6 +1789,10 @@ def save_settings(ws: Path, req: dict) -> str:
         if not isinstance(req["ask"], bool):
             raise Refused("Ask is on or off")
         new["ask"] = req["ask"]
+    if "usage-counts" in req:           # Settings › About Garrick: whether the App counts which cards are opened (#651)
+        if not isinstance(req["usage-counts"], bool):
+            raise Refused("counting which cards are opened is on or off")
+        new["usage-counts"] = req["usage-counts"]
     if "channels" in req:               # Settings › Channels (#571): each channel's tier, effort and autonomy
         try:
             kept = prefs().read(ws).get("channels")
@@ -6124,6 +6133,39 @@ def wrap_thread(ws: Path, req) -> dict:
     return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
 
 
+_USAGE = None
+
+
+def usage_counts():
+    """usage_counts.py, beside this file: the App's count of which cards are opened (#651)."""
+    global _USAGE
+    if _USAGE is None:
+        spec = importlib.util.spec_from_file_location("garrick_usage_counts", str(HERE / "usage_counts.py"))
+        _USAGE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_USAGE)
+    return _USAGE
+
+
+def count_card(ws: Path, req) -> dict:
+    """`count-card` (#651): add one to a card's count for today, in System/garrick-usage.json. The card must be one of the
+    page's own, by id; anything else is refused and nothing is written. With the setting `usage-counts` off nothing is
+    written and the reply says so. It commits nothing and keeps no operations record, and the reply is only read: no toast,
+    no rebuild."""
+    mod = usage_counts()
+    try:
+        settings = prefs().read(ws)
+    except Exception:
+        settings = {}
+    try:
+        with held("usage-counts.lock", wait=5, strict=False):
+            did = mod.record(ws, req.get("card"), settings=settings)
+    except mod.Refused as e:
+        raise Refused(str(e))
+    except OSError:
+        raise Refused("the count could not be kept")
+    return {"say": "Counted." if did == "counted" else "Counting is off."}
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or a reply whose
     "say" comes with what the caller reads back."""
@@ -6175,6 +6217,8 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "count-card":
+        return count_card(ws, req)
     if req["verb"] == "inbox-run":
         return inbox_run_start(ws)
     if req["verb"] == "intake-answer":
@@ -6233,7 +6277,8 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "layout",
              "outbox-drop",
              "inbox-run", "intake-answer",
-             "machine-role", "read-guard")
+             "machine-role", "read-guard",
+             "count-card")
 
 
 # ---- The page's own route (#618 leftover) -------------------------------------------------

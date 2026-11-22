@@ -167,6 +167,9 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'id="rel-on"', "rel-on", "Check for a newer Garrick",
      "Looks once in a while at Garrick's public release page to see whether a newer version is out, and tells you. Nothing "
      "about your work is sent. Turn it on if you want to hear about updates."),
+    (r'id="usage-on"', "usage-on", "Count which cards I open",
+     "Keeps a count of which cards you open, and on which day, on this Mac only. Nothing else is kept: no name, no note, no "
+     "text, and nothing is sent anywhere. It helps decide which cards are worth their space. Turn it off and nothing is counted."),
 ]
 SLUG = re.compile(r"[^a-z0-9]+")
 

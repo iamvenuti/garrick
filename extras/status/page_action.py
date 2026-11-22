@@ -355,6 +355,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "todo-retire",
          "chase",
          "outbox-drop",
+         "inbox-run", "intake-answer",
          "machine-role", "read-guard")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -3113,6 +3114,62 @@ def answer_question(ws: Path, req: dict, today: dt.date) -> str:
             your_work().keep_first_look(ws, key, request="Help me with the next step on %s: %s" % (name, chosen[1]))
         return "Noted. Next for %s: %s. Continue in Claude starts on it" % (name, said_text(chosen[1]))
     return "Noted: %s. Next for %s: %s" % (chosen[0], name, said_text(chosen[1]))
+
+
+_INBOX = None
+
+
+def inbox_module():
+    """inbox_run.py, beside this file: Process the Inbox in the background (#634)."""
+    global _INBOX
+    if _INBOX is None:
+        sys.path.insert(0, str(HERE))
+        spec = importlib.util.spec_from_file_location("garrick_inbox_run", str(HERE / "inbox_run.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _INBOX = mod
+    return _INBOX
+
+
+def inbox_run_start(ws: Path) -> object:
+    """*Process the Inbox* (#634): one background run at the workspace root, started and not waited for. Page only. With the
+    background assistant unavailable the reply says so (`unavailable`) and the app opens a visible session as before; a run
+    already going says so and starts nothing."""
+    got = inbox_module().start(ws)
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
+
+
+def intake_answer(ws: Path, req: dict, today: dt.date) -> object:
+    """The answer to a question an unattended `intake` run asked (#634): a file in `Zones/<Zone>/Needs you/` that names the item
+    waiting in that zone's Inbox. An option files that one item in the background, with the same limits as the run itself;
+    *Not now* puts the question off to tomorrow. Page only. The question is read from its file, never from the request."""
+    zone = zone_dir(ws, req.get("zone"))
+    name = req.get("file")
+    if not isinstance(name, str) or not re.fullmatch(r"%s/[^/\\\0]+\.md" % re.escape(NEEDS), name) or name.split("/")[1].startswith((".", "_")):
+        raise Refused("that is not a question Garrick asked")
+    q = zone / NEEDS / name.split("/", 1)[1]
+    if q.is_symlink() or not q.is_file() or (zone / NEEDS).is_symlink():
+        raise Refused("that question is not there any more; the page rebuilds now")
+    label = answer(req, "label", most=LABEL_MAX)
+    text = open_question(q)
+    if not inbox_module().item_of(text):
+        raise Refused("that question is not one an inbox run asked")
+    if label.casefold() == "not now":
+        day = today + dt.timedelta(days=1)
+        with zone_lock(zone):
+            before = q.read_bytes()
+            q.write_text(set_front(open_question(q), {"status": "later", "later": day.isoformat()}), encoding="utf-8")
+            commit(zone, q, before, "Inbox question put off to %s" % day.isoformat(), wall=wall_refusal(ws))
+        return "Put off until tomorrow. It will be back then"
+    chosen = next((l for l, _ in options(text) if l.casefold() == label.casefold()), None)
+    if chosen is None:
+        raise Refused("that question has no answer called %r" % label)
+    got = inbox_module().start(ws, {"zone": zone.name, "file": name.split("/", 1)[1], "label": chosen})
+    if got.get("busy"):
+        raise Refused(got["say"])
+    return got
 
 
 def answered_note(text: str, step: str, label: str, today: dt.date, name: str) -> str:
@@ -6084,6 +6141,10 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "inbox-run":
+        return inbox_run_start(ws)
+    if req["verb"] == "intake-answer":
+        return intake_answer(ws, req, today or dt.date.today())
     if req["verb"] == "finding":
         return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "commit-files":
@@ -6134,6 +6195,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "chase",
              "layout",
              "outbox-drop",
+             "inbox-run", "intake-answer",
              "machine-role", "read-guard")
 
 

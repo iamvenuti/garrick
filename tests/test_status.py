@@ -3313,8 +3313,8 @@ class TestApp(unittest.TestCase):
         opened = swift[swift.index("	func openInbox(_ act: [String: String]) {"):]
         opened = opened[:opened.index("\n	}\n")]
         self.assertIn("toast(", opened)                                       # a click that cannot launch says so
-        self.assertIn("self.openInbox(act)", swift[swift.index("	func fillPanel("):])
-        self.assertIn("openInbox(act)", swift[swift.index("	@objc func processInbox(_ sender: NSMenuItem) {"):])
+        self.assertIn("self.runInbox(act)", swift[swift.index("	func fillPanel("):])            # the panel runs the inbox in the background first (#634); openInbox is its fallback
+        self.assertIn("runInbox(act)", swift[swift.index("	@objc func processInbox(_ sender: NSMenuItem) {"):])        # the menu row too (#634)
 
     def test_the_icon_menu_only_finds(self):
         """#310: the menu's field finds, takes the keys as the menu opens, and

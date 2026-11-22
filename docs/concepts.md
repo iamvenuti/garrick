@@ -179,7 +179,7 @@ Where everything lands first: a recording's transcript in `Wikis/Meetings/raw/in
 
 ### Intake
 
-The skill that empties the inboxes, started by "process the inbox". It files a conversation into Meetings, something to read into Knowledge and material for a project into that project's `Sources/`, and asks when the zone, a party or the project is unclear. See [The two memories](commands.md#the-two-memories).
+The skill that empties the inboxes, started by "process the inbox", or by the Garrick App's *Process the Inbox* button, which runs it in the background and turns each question into a row of *Waiting on you now*. It files a conversation into Meetings, something to read into Knowledge and material for a project into that project's `Sources/`, and asks when the zone, a party or the project is unclear. See [The two memories](commands.md#the-two-memories).
 
 ### Brief
 

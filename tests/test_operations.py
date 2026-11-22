@@ -346,7 +346,9 @@ PY_SHAPES = {'"run"': ("run",),
              # a `check` chip's Fix on the Threads card (#179)
              '"fix"': ("fix",),
              # Needs you on the Overview: a question's answers and Not now (#503)
-             '"answer"': ("answer",), '"later"': ("later",)}
+             '"answer"': ("answer",), '"later"': ("later",),
+             # Process the Inbox in the background, and the answer to a question it asked (#634)
+             '"inbox-run"': ("inbox-run",), '"intake-answer"': ("intake-answer",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'new-project-party'", "onclick: 'rename'", "onclick: 'move'",

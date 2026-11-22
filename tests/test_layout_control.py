@@ -228,6 +228,25 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
         self.assertEqual(["join"], self.offers("Cedar"))
 
+    def test_a_mixed_project_offers_the_join_and_threads_that_look_separate_offer_the_split(self):
+        # Acme is one job with two threads, Pricing and Freight; its hub keeps the Resume here block.
+        pricing = self.work / "Acme" / "Threads" / "Pricing"
+        (pricing / "Sources").mkdir(exist_ok=True)
+        (pricing / "Sources" / ".gitkeep").write_text("")
+        self.assertEqual(["split"], self.offers("Acme"))                      # an empty folder is no papers
+        (pricing / "Sources" / "brief.txt").write_text("brief")
+        self.assertEqual(["mend"], self.offers("Acme"))                       # one of two threads holds papers: mixed
+        freight = self.work / "Acme" / "Threads" / "Freight"
+        (freight / "Deliverables").mkdir(exist_ok=True)
+        (freight / "Deliverables" / "260101 - Rates.xlsx").write_bytes(b"x")
+        self.assertEqual(["split"], self.offers("Acme"))                      # every thread holds papers: they look like separate jobs
+
+    def test_the_mixed_chip_opens_the_join(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn("['mend','One job','Join ',' into one job…'", text)
+        self.assertIn("v==='layout-mend'", text)
+        self.assertIn("layout({zone:mg[0],project:mg[1],join:true})", text)
+
     def test_no_thread_offers_a_layout_whatever_its_papers_(self):
         self.assertEqual([], self.offers("Acme", "Pricing"))
         (self.work / "Acme" / "Threads" / "Pricing" / "Sources").mkdir()                  # a mixed project: still the project's switch

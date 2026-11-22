@@ -2429,6 +2429,30 @@ def hub_keeps_resume(text: str, fm: Optional[dict] = None) -> bool:
     return any(l.strip().lower() == RESUME_HEADING.lower() for l in text.splitlines())
 
 
+def _load_work():
+    """work.py, beside this file: the one reader of the piece of work. One module object for every caller."""
+    import importlib.util
+    mod = sys.modules.get("garrick_work")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("garrick_work", str(Path(__file__).with_name("work.py")))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["garrick_work"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("garrick_work", None)
+            raise
+    return mod
+
+
+def __getattr__(name):
+    """`garrick_lib.work` is work.py, the one reader of the piece of work. Loaded on first use, so a library that
+    sits beside no work.py still loads for everything else."""
+    if name == "work":
+        return _load_work()
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
+
+
 def _short_hash(parts: Iterable[str]) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
 

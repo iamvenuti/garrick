@@ -640,6 +640,19 @@ class TestTheMixedProjectFinding(LayoutFiles):
         self.assertNotIn("Wharf", found.message)
         self.assertNotIn("separate jobs", found.message)             # one thread of two: a mixed project, not separate jobs
 
+    def test_an_empty_papers_folder_is_not_reported_and_one_real_file_is(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar")
+        self.make("thread", "--zone", "Work", "--project", "Cedar", "--name", "Quay")
+        quay = self.work / "Cedar" / "Threads" / "Quay"
+        (quay / "Sources").mkdir(exist_ok=True)
+        (quay / "Sources" / ".gitkeep").write_text("")
+        (quay / "Deliverables").mkdir(exist_ok=True)
+        self.commit("empty folders")
+        self.assertEqual([], self.finding())
+        (quay / "Sources" / "brief.txt").write_text("brief")
+        self.commit("one real file")
+        self.assertEqual(1, len(self.finding()))
+
     def test_a_project_whose_threads_all_keep_papers_also_offers_to_split(self):
         self.mixed(threads=("Quay", "Wharf"), hold=("Quay", "Wharf"))
         (found,) = self.finding()

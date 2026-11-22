@@ -2016,6 +2016,14 @@ MIXED_PAPERS = "is one job, but the thread"
 MIXED_SPLIT = "; these threads look like separate jobs, so split the project into separate jobs instead"
 
 
+def keeps_papers(folder: Path) -> bool:
+    """Does the folder hold a file of its own, anything but a `.gitkeep`? An empty folder is no papers: Join has
+    nothing to move for it, so the check must not name it."""
+    if not folder.is_dir():
+        return False
+    return any(p.is_file() and p.name != ".gitkeep" for p in folder.rglob("*"))
+
+
 def check_mixed_papers(ws: Workspace) -> List[Finding]:
     """A project that is one job with a thread holding `Sources/` or `Deliverables/` of its own (#632). In one job every
     thread uses the project's papers, so the files belong in the project's: the fix moves them up, in one commit that
@@ -2026,7 +2034,7 @@ def check_mixed_papers(ws: Workspace) -> List[Finding]:
         if str(pfm.get("layout") or "").strip().lower() == "thread-first":
             continue
         threads = visible_dirs(project / "Threads")
-        holding = [t for t in threads if any((t / k).is_dir() for k in ("Sources", "Deliverables"))]
+        holding = [t for t in threads if any(keeps_papers(t / k) for k in ("Sources", "Deliverables"))]
         if not holding:
             continue
         hub = project / (project.name + ".md")

@@ -62,6 +62,10 @@ The shape, with one piece of work and one inbox:
 
 `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
 
+#### What the App counts
+
+The App counts which cards are opened, in `System/garrick-usage.json`: a card id, a day and a count, written by the status extra (`status.py` owns the file, through `page_action.py`'s `count-card`) and never committed. `System/tools/usage.py` reads it, with the operations journal and the App's action log, and prints the report. The setting `usage-counts` in `System/garrick-settings.json` turns it off. See [Counting which cards you open](extras/status-page.md#counting-which-cards-you-open).
+
 ## Where you work
 
 The work happens in your assistant's own app, on the same files whichever you choose:
@@ -132,6 +136,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `scaffold.py` makes zones, parties, projects and threads, and parks, wakes, renames and deletes them. It checks a name and a party before it writes anything. See [Your first project](commands.md#your-first-project).
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
 - `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes.
+- `usage.py` prints what the Garrick App is used for: card opens, wraps and Ask actions, from records that already exist. It reads and never writes.
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.

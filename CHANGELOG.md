@@ -4,6 +4,35 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-11-22
+
+In this release the App's data and its drawing come apart. The core builds one view of your workspace, and the App draws it. The App can also open a new session in the Claude or Codex desktop app, and every session loads a shorter `context.md`.
+
+**Upgrading.**
+- The App now draws from one view of the workspace that the core builds, and it looks the same as before. In this release the Threads card, *Your work* and the inbox rows come from that view. The other cards follow in later releases.
+- The App counts which cards you open, on this Mac only: the card, the day and a number, and nothing else. Settings › About Garrick turns it off, and `python3 System/tools/usage.py` prints what was counted.
+- The App can open a new session in the Claude or Codex desktop app, in the right folder, with the first prompt filled in. You press Enter. *New session in Claude* and *New session in Codex* sit beside the other ways to open a thread. If the app does not take the link, the App opens the app and copies the prompt for you.
+- People and Aliases move from `System/context.md` to `System/names.md` once you say yes, so every session loads less. Every row is kept as it was, and a table the update cannot read stays where it is. A new workspace starts this way.
+- A pull request that adds a concept to `docs/concepts.md` must link its decision note.
+- The headless profile no longer prints six "never matches" warnings in Claude Code.
+
+### Added
+
+- **The view model** (#650, in part). `System/tools/view.py` builds one JSON document of the workspace: your pieces of work with their state, the actions each one may take, and the queues of files that wait. It reads and never writes, and it keeps each zone's records apart. The Threads card, with its Rename, Move and Delete dialogs, *Your work* and the inbox rows are drawn from it. `docs/architecture.md` shows its shape with an example.
+- **Card counts** (#651). Opening a card adds one to its count for the day in `System/garrick-usage.json`. The file holds only a card's name from a fixed list, a day and a number, and Git leaves it out. The `usage-counts` setting is on by default. `System/tools/usage.py` reports card opens, and wraps and Ask actions by outcome for each zone. It says where each number comes from: wraps come from the App's action log, which every workspace on the Mac shares, so it counts only wraps started from the App, and a wrap that conflicted or failed shows as refused.
+- **New session in Claude and in Codex** (#652). Two new ways to open a piece of work, through each desktop app's own link, in the piece of work's folder, with "open" and the thread's short name as the first prompt. Neither link is documented by its vendor. They were tested on Claude 6.28899.6 and Codex 26.1117.41037, and each page build checks that the app still registers its link. A row is greyed out, with the reason, when it does not. Only the App can ask for the link, and the App opens it only when its scheme, host, path and query names are the app's own. The existing *Open in Claude* and *Open in Codex* rows are unchanged.
+- **`System/names.md`** (#653). It holds the People and Aliases tables. The rules, the skills and the tools read it beside `context.md`. The update moves the two tables there once, on your yes, and only when both are whole. `check.py` warns when `context.md` passes 8,000 characters and names the section that grew.
+- **The concept check** (#654). A CI check fails a pull request that adds a heading to `docs/concepts.md`, or changes the first sentence under one, unless its description links a decision note. `CONTRIBUTING.md` says what a decision note holds.
+
+### Changed
+
+- An update holds back the page until `view.py` is in place, as it does for `work.py`. Without it, the page still builds and says that Garrick needs updating.
+
+### Fixed
+
+- The headless profile's six `Write(...)` deny rules matched nothing and are gone; the `Edit(...)` rules already cover writes (#639).
+- A zone folder that is a link, an Inbox that leads out of its zone, or a hub note that links out of its zone no longer shows another zone's files or counts.
+
 ### Changed
 
 - The Garrick App page's pictures are new, taken on 0.76.0 and the demo workspace. The Overview with *Waiting on you now* and *Your work*, and the Threads card with a thread's card open, both as the Mac app draws them, and Explore's graph with a thread selected replace the 0.10.0 pictures, which showed the look before 0.67.0.

@@ -2796,15 +2796,13 @@ var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function()
 
 
 def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
-    """Files waiting to be filed: each zone's Inbox and the Meetings inbox."""
-    places = [(z.name, z / "Inbox") for z in visible_dirs(ws / "Zones")]
-    places.append(("Meetings", ws / "Wikis" / "Meetings" / "raw" / "inbox"))
-    out = []
-    for name, folder in places:
-        if folder.is_dir():
-            n = sum(1 for p in folder.iterdir() if p.is_file() and not p.name.startswith("."))
-            out.append((name, folder, n))
-    return out
+    """Files waiting to be filed: each zone's Inbox and the Meetings inbox, as the view model counts them (#650): one
+    zone or one wiki per row, and none for a zone that is a link or an Inbox that leads out of its zone."""
+    try:
+        queue = view_reader(ws).build(ws)["queues"]["inbox"]
+    except FileNotFoundError:
+        return []                 # a half-finished update: the Threads card says so
+    return [(q["place"], ws / q["folder"], q["count"]) for q in queue]
 
 
 INBOX_STATE = ("System", "generated", "status-inbox.json")

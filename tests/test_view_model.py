@@ -232,6 +232,20 @@ class TestShadowInbox(Case):
         for name in set(new):
             self.assertEqual(old[name], new[name], name)
 
+    def test_the_page_reads_the_inbox_through_the_view(self):
+        """Section 2, the inbox rows: the page's `inboxes()` is the view's queue, and differs from the old read only by
+        the two walls named above."""
+        page = {name: (folder, n) for name, folder, n in status.inboxes(self.root)}
+        old = {name: (folder, n) for name, folder, n in self.old["inboxes"](self.root)}
+        self.assertEqual({"Linked", "Garden"}, set(old) - set(page))
+        for name in page:
+            self.assertEqual(old[name], page[name], name)
+        self.assertEqual(["Home", "Personal", "Work", "Meetings"], [n for n, _, _ in status.inboxes(self.root)])
+
+    def test_a_half_finished_update_has_no_inbox_rows(self):
+        with mock.patch.object(status, "view_reader", mock.Mock(side_effect=FileNotFoundError("view.py"))):
+            self.assertEqual([], status.inboxes(self.root))
+
     def test_the_wiki_inbox_is_one_wiki_and_the_zones_are_one_zone_each(self):
         counts = {q["place"]: (q["kind"], q["count"]) for q in self.model["queues"]["inbox"]}
         self.assertEqual(("wiki", 1), counts["Meetings"])

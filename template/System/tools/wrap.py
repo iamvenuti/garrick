@@ -533,8 +533,10 @@ def run(root, data, today: Optional[datetime.date] = None, before_commit: Option
         if todo_path.is_file() and todo is None:
             raise failed("the todo skill is not here, so the list cannot be archived")
     except Stop as stop:
+        release_held(root, data)
         return receipt(stop.outcome, say_for(stop.outcome, stop.why, data))
     except (OSError, ValueError) as exc:
+        release_held(root, data)
         return receipt("failed", say_for("failed", "a file could not be read: %s" % exc, data))
 
     locked = False
@@ -564,6 +566,26 @@ def run(root, data, today: Optional[datetime.date] = None, before_commit: Option
             wl.end(root, rel)
         else:
             wl.end(root, rel, abandon=True)
+
+
+def release_held(root: Path, data) -> None:
+    """A lock the band took stays the wrap's to release even when the wrap fails before it starts. The input may be what
+    failed, so only a request that says `held` and names its folders plainly is read; the lock is the one of the thread's
+    note or of the hub, whichever the band took."""
+    if not isinstance(data, dict) or data.get("lock") != "held":
+        return
+    names = [data.get(k) for k in ("zone", "project")] + ([data["thread"]] if data.get("thread") else [])
+    if not all(isinstance(n, str) and n and "/" not in n and "\\" not in n and n not in (".", "..") for n in names):
+        return
+    zone, project = names[0], names[1]
+    notes = ["Zones/%s/%s/%s.md" % (zone, project, project)]
+    if len(names) == 3:
+        notes.insert(0, "Zones/%s/%s/Threads/%s/%s.md" % (zone, project, names[2], names[2]))
+    for rel in notes:
+        try:
+            wl.end(root, rel, abandon=True)
+        except (ValueError, OSError):
+            pass
 
 
 def say_for(outcome: str, why: str, job) -> str:

@@ -309,6 +309,25 @@ class Refusals(Base):
         self.assertFalse(wl.lock_path(self.root, rel).exists())
         self.assertIsNotNone(wl.finished(wl.done_path(self.root, rel)))
 
+    def test_a_held_lock_is_released_when_the_wrap_fails_before_it_starts(self):
+        rel = self.thread.relative_to(self.root).as_posix()
+        good = payload(lock="held")
+        cases = {
+            "a parked thread": (lambda: write(self.thread, note_text("Northwind", "Pricing", "acme", "parked")), good),
+            "a missing key": (lambda: None, {k: v for k, v in good.items() if k != "entry"}),
+            "an unknown key": (lambda: None, dict(good, extra=1)),
+            "an unfolded checkpoint": (lambda: write(self.thread, fixtures.checkpoint(note_text("Northwind", "Pricing", "acme"))), good),
+        }
+        for what, (setup, data) in cases.items():
+            write(self.thread, note_text("Northwind", "Pricing", "acme"))
+            setup()
+            commit_all(self.work, what)
+            self.assertTrue(wl.start(self.root, rel))
+            got = self.run_wrap(data)
+            self.assertEqual("failed", got["outcome"], (what, got))
+            self.assertFalse(wl.lock_path(self.root, rel).exists(), what)
+            self.assertEqual([], self.generated(".done"), what)
+
     def test_the_hook_refusal_is_the_receipt_and_the_wrap_is_put_back(self):
         before = self.thread.read_text(encoding="utf-8")
         wl.start(self.root, "Zones/Work/Northwind/Threads/Pricing/Pricing.md")

@@ -355,6 +355,47 @@ class Refusals(Base):
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
+class Links(Base):
+    """Todo.md, archive/ and history/ that lead out of the zone are refused before the first write."""
+
+    def other(self):
+        return self.root / "Zones" / "Home"
+
+    def check(self, link, target, **over):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            link.unlink() if link.is_file() or link.is_symlink() else shutil.rmtree(link)
+        link.symlink_to(target)
+        commit_all(self.work, "a link")
+        before = self.thread.read_text(encoding="utf-8")
+        other = tree(self.root / "Zones" / "Home")
+        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"]}, **over))
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertEqual(before, self.thread.read_text(encoding="utf-8"))
+        self.assertEqual(other, tree(self.root / "Zones" / "Home"))
+        self.assertTrue(self.clean("Home"))
+        self.assertEqual([], self.generated(".lock"))
+
+    def test_a_todo_that_is_a_link_into_another_zone(self):
+        self.check(self.work / "Todo.md", self.other() / "Todo.md")
+
+    def test_an_archive_folder_that_is_a_link_into_another_zone(self):
+        self.check(self.work / "archive", self.other())
+
+    def test_a_history_folder_that_is_a_link_into_another_zone(self):
+        old = "".join("**%d March 2025.** An old entry %d.\n\n" % (d, d) for d in range(2, 9))
+        write(self.thread, self.thread.read_text(encoding="utf-8") + "\n" + old)
+        self.check(self.thread.parent / "history", self.other())
+
+    def test_a_link_inside_the_zone_is_fine(self):
+        real = self.work / "Real"
+        real.mkdir()
+        (self.work / "archive").symlink_to(real)
+        commit_all(self.work, "a link inside")
+        self.assertEqual("saved", self.run_wrap()["outcome"])
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
 class Memory(Base):
     def entry(self, name="thread.md"):
         return self.home / ".claude" / "projects" / "ws" / "memory" / name

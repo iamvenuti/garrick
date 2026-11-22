@@ -513,6 +513,9 @@ def run(root, data, today: Optional[datetime.date] = None, before_commit: Option
         new_text = new_note_text(text, job, today)
         memory = memory_target(root, job["memory"], job, rel) if job.get("memory") else None
         todo_path = zone / "Todo.md"
+        for place in (todo_path, zone / "archive", note.parent / hist.FOLDER):     # a link that leaves the zone is never written through
+            if (place.exists() or place.is_symlink()) and zone.resolve() not in (place.resolve(), *place.resolve().parents):
+                raise failed("%s leads out of the %s zone, so nothing was written" % (place.name, job["zone"]))
         if (job["add"] or job["tick"]) and not todo_path.is_file():
             raise failed("the %s zone has no Todo.md" % job["zone"])
         todo = todo_module(root) if todo_path.is_file() else None

@@ -4,8 +4,8 @@ mail or calendar connector hands back to it (#613, #614).
 
 The zone guard stops writes outside the session's project. This one covers
 reads. It is a hook for Claude Code and Codex, reading the event on stdin, and
-it asks `garrick_lib.decide()` of the workspace it runs in, which is built on
-`may_flow()`, the rule the commit check, Recall and Nurture ask directly.
+it asks `garrick_lib.decide()` of the workspace it runs in, the same question
+every other enforcement point asks.
 
 - SessionStart records the session's scope: the zone, project and parties of
   the folder it was opened in. The record lives in the read guard's folder

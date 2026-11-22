@@ -243,6 +243,13 @@ zone's repository, as the skills would:
                 note that is not there. It only reads
     note-open   that note opened in the app the Mac uses for a .md file:
                 {"path"}; the same checks, and nothing written
+    session-url a new session in the Claude or Codex desktop app (#652):
+                {"key": "claude-new" or "codex-new", "folder"}. The folder only
+                names the project or thread, and is checked as an open by
+                folder is. The reply carries the link the app opens ("url"),
+                built here from the folder the workspace holds and "open
+                <name>", the name the threads skill says; nothing in the
+                request is ever part of it. It only reads
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -339,6 +346,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -364,11 +372,11 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
          "count-card",
-         "wrap")
+         "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
-LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")
+LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new")
 DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmuxlib's AGENTS
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
@@ -2141,6 +2149,48 @@ def cmux_folder(ws: Path, req: dict) -> tuple:
     if not (folder / (folder.name + ".md")).is_file():
         raise Refused("no %s called %s in %s" % ("project" if len(names) == 1 else "thread", names[-1], zone.name))
     return folder, ", ".join(names)
+
+
+# A new session in a desktop app (#652): the link each app takes. Neither route is documented by its vendor.
+# key: (scheme, the link's host and path, the query's name for the folder, for the prompt, the app as the page says it)
+NEW_SESSION = {"claude-new": ("claude", "code/new", "folder", "q", "Claude"),
+               "codex-new": ("codex", "threads/new", "path", "prompt", "Codex")}
+
+
+def spoken_name(ws: Path, req: dict, long: str) -> str:
+    """The name to say for the work the request names, as the threads skill says it: ask.py's spoken(), the
+    thread alone, else the project, else with the zone. `long` is cmux_folder's "project, thread", for a workspace
+    whose ask.py is not beside this file."""
+    path = HERE / "ask.py"
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_ask_names", str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        thread = req.get("thread") if req.get("thread") not in (None, "", "-") else None
+        return mod.spoken(mod.scan(ws), req["zone"], req["project"], thread)
+    except Exception:                       # no ask.py, or one that does not read: the long form is still unique
+        return long
+
+
+def session_url(ws: Path, req: dict) -> dict:
+    """The link that opens a new session in the Claude or Codex desktop app, in the work's folder, with "open
+    <name>" filled in and not sent. The page names a key and a folder and nothing else: a folder only finds the
+    project or thread, by_folder() refuses anything outside the workspace, a link out of it, or what is neither,
+    and the link is built here from the folder the workspace holds, the query encoded. Nothing is opened here."""
+    key = req.get("key")
+    if key not in NEW_SESSION:
+        raise Refused("not a way to open a new session")
+    scheme, route, folder_key, prompt_key, app = NEW_SESSION[key]
+    work = dict(folder=req.get("folder"))
+    if by_folder(ws, work) is not None:
+        raise Refused("a new session opens only in a project or thread")
+    folder, long = cmux_folder(ws, work)
+    prompt = "open " + spoken_name(ws, work, long)
+    url = "%s://%s?%s" % (scheme, route, urllib.parse.urlencode(
+        [(folder_key, str(folder)), (prompt_key, prompt)], quote_via=urllib.parse.quote))
+    return {"say": "Opening a new session in %s" % app, "url": url, "prompt": prompt, "app": app,
+            "fallback": "%s did not open a new session. Opened %s instead; the clipboard now holds “%s”. Paste it into a new session."
+                        % (app, app, prompt)}
 
 
 def by_folder(ws: Path, req: dict) -> Optional[str]:
@@ -6193,6 +6243,8 @@ def act(ws: Path, req, today=None, now=None):
         return release_update(ws, req.get("held"))
     if req["verb"] == "note-read":
         return note_read(ws, req)
+    if req["verb"] == "session-url":
+        return session_url(ws, req)
     if req["verb"] == "note-open":
         return note_open(ws, req)
     if req["verb"] in ("park", "wake"):

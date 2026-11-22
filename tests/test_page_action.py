@@ -750,7 +750,8 @@ class TestSettings(ActionCase):
 
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
-        self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True},
+        self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True,
+                                        "claude-new": False, "codex-new": False},
                           "default": "claude"}, json.loads(self.path().read_text()))
         self.act(verb="settings", launchers=[])
         self.assertEqual("note", json.loads(self.path().read_text())["default"])
@@ -776,7 +777,8 @@ class TestSettings(ActionCase):
         self.act(verb="settings", launchers=["note", "preview", "cmux"], default="cmux")
         self.assertTrue(json.loads(self.path().read_text())["launchers"]["preview"])
         self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
-        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": False},
+        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": False,
+                          "claude-new": False, "codex-new": False},
                          json.loads(self.path().read_text())["launchers"])
 
 

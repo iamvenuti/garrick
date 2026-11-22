@@ -1940,7 +1940,8 @@ class TestLaunchers(StatusCase):
         self.app(apps, "Codex", "com.openai.codex")                      # installed, no launcher in it
         self.assertEqual(("finder",), status.launchers_installed([apps]))
         self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_CODEX_CLI,
-                          "claude": status.NOT_INSTALLED}, status.launcher_state([apps]))
+                          "claude": status.NOT_INSTALLED, "claude-new": status.NOT_INSTALLED,
+                          "codex-new": status.NO_NEW_SESSION % "Codex"}, status.launcher_state([apps]))
         for rel in status.CODEX_CLI:                                     # any of the three it may carry will do
             shutil.rmtree(apps)
             self.app(apps, "Codex", "com.openai.codex", cli=rel)
@@ -1988,13 +1989,15 @@ class TestLaunchers(StatusCase):
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
         dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
-        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
+        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+                         re.findall(r'data-launcher="([a-z-]+)"', dialog))
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
-        self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+                         re.findall(r'name="garrick-default" value="([a-z-]+)"', dialog))
         self.assertIn('<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
                       '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
-        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
-        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
+        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new']", status.PANEL_JS)
+        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)

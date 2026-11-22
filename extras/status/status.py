@@ -4183,9 +4183,32 @@ def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
 LAUNCHERS = (("finder", "Finder", "com.apple.finder", ()),
              ("cmux", "cmux", "com.cmuxterm.app", ("cmux",)),
              ("codex", "Codex", "com.openai.codex", ("Codex", "ChatGPT")),
-             ("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)))
-VERB = {"finder": "Reveal in Finder", "cmux": "Open in cmux", "codex": "Open in Codex", "claude": "Open in Claude"}
+             ("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)),
+             # A new session in the app's own window, in the work's folder, with "open <name>" typed in and not
+             # sent (#652). It needs no command-line tool, only an app that takes its URL scheme.
+             ("claude-new", "New session in Claude", "com.anthropic.claudefordesktop", ("Claude",)),
+             ("codex-new", "New session in Codex", "com.openai.codex", ("Codex", "ChatGPT")))
+VERB = {"finder": "Reveal in Finder", "cmux": "Open in cmux", "codex": "Open in Codex", "claude": "Open in Claude",
+        "claude-new": "New session in Claude", "codex-new": "New session in Codex"}
 LABEL = {k: label for k, label, _, _ in LAUNCHERS}
+# The two that open a new session through the app's URL scheme (#652), and the scheme each app must register.
+NEW_SESSION = {"claude-new": ("claude", "Claude"), "codex-new": ("codex", "Codex")}
+
+
+def url_schemes(app: Path) -> Tuple[str, ...]:
+    """The URL schemes an app's Info.plist registers (CFBundleURLTypes), lower case; none when it does not read.
+    The build never opens the app to ask: a version that does not register the scheme cannot open a session."""
+    try:
+        with (app / "Contents" / "Info.plist").open("rb") as f:
+            types = plistlib.load(f).get("CFBundleURLTypes")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return ()
+    out: List[str] = []
+    for t in types if isinstance(types, list) else []:
+        for scheme in (t.get("CFBundleURLSchemes") if isinstance(t, dict) else None) or []:
+            if isinstance(scheme, str):
+                out.append(scheme.lower())
+    return tuple(out)
 
 
 def bundle_id(app: Path) -> Optional[str]:
@@ -4206,6 +4229,7 @@ CODEX_CLI = ("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
 NOT_ON_A_MAC = "Opening an app is a Mac's own; this page was built elsewhere"
 NOT_INSTALLED = "Not installed on this Mac"
 NO_CODEX_CLI = "Installed, but its own launcher is missing: reinstall the Codex app"
+NO_NEW_SESSION = "Installed, but this version cannot open a new session: update the %s app"
 # Installed and able to work, but this build was told to leave it out (--no-cmux).
 LEFT_OUT = "Left out when this page was built"
 
@@ -4229,6 +4253,8 @@ def launcher_state(apps: Optional[List[Path]] = None) -> Dict[str, Optional[str]
             state[key] = NOT_INSTALLED
         elif key == "codex" and not any(os.access(app / rel, os.X_OK) for rel in CODEX_CLI):
             state[key] = NO_CODEX_CLI
+        elif key in NEW_SESSION and NEW_SESSION[key][0] not in url_schemes(app):
+            state[key] = NO_NEW_SESSION % NEW_SESSION[key][1]
         else:
             state[key] = None
     return state
@@ -4982,7 +5008,7 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
     why = launcher_state() if why is None else why
     rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
     rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
-              LAUNCH_ICON % "var(--icon-%s)" % k)
+              LAUNCH_ICON % "var(--icon-%s)" % k.replace("-new", ""))
              for k, _, _, _ in LAUNCHERS]
     row = ('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> %s<span>%s%s</span></label>'
            '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>')
@@ -6168,7 +6194,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}
-.act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}
+.act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}.act[data-k=claude-new]{--ic:var(--icon-claude)}.act[data-k=codex-new]{--ic:var(--icon-codex)}
 .appicons .gacts{align-items:center}
 .appicons .act[data-k]{position:relative;width:30px;height:30px;padding:0;font-size:0;color:transparent;border:0;border-radius:7px;background:transparent var(--ic) center/22px no-repeat}
 /* the default app, the one a click on the name uses, is the one with a 4px accent dot under it */
@@ -6357,7 +6383,7 @@ PANEL_JS = r"""
    app, the settings saved for every viewer (#launch-settings, written by
    page_action.py from what Settings sends) come first; a browser keeps its own. */
 var GarrickPrefs=(function(){
-var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','preview','finder','cmux','codex','claude'];
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new'];
 var el=document.getElementById('launch-settings'),shared=null;if(host&&el){try{shared=JSON.parse(el.textContent)}catch(e){}}
 if(shared&&!Array.isArray(shared.launchers))shared=null;
 function local(k){try{return localStorage.getItem(k)}catch(e){return null}}
@@ -6373,6 +6399,8 @@ var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHand
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
 var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
+/* New session in Claude or Codex (#652): the app's own window, the work's folder, "open <name>" typed in and not sent */
+var NS={'claude-new':'Claude','codex-new':'Codex'};
 function prefs(){return GarrickPrefs.launchers()}
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
 function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
@@ -6384,7 +6412,9 @@ function going(o){return'Opening '+o.n+' in Claude…'}
    for, Codex and cmux say the clipboard now holds the phrase, Finder names the phrase it
    cannot take, and a failure says what is left to do. An app built before 0.28.0 says
    nothing back, and then this line is all there is. */
-function launch(k,o,pl){var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
+function launch(k,o,pl){if(NS[k]&&o.f){var nl='New session in '+NS[k],nt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):nl,nm=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),nq={verb:'session-url',key:k,folder:o.f};
+return'<button class="'+(pl?'act ymi':'act')+'" type="button"'+nm+' title="'+(pl?pl.l:nl)+'" aria-label="'+(pl?pl.l:nl)+'" data-act="'+esc(JSON.stringify(nq))+'" data-say="'+esc('Opening a new session in '+NS[k]+'…')+'">'+nt+'</button>'}
+var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
 var l=pl?pl.l:k==='finder'?'Reveal in Finder':'Open in '+LABEL[k],txt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):l,mk=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),cls=pl?'act ymi':'act';
 var q=k==='claude'&&cont(o);if(q)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+esc(JSON.stringify(q))+'" data-say="'+esc(going(o))+'">'+txt+'</button>';
 if(k==='cmux'&&o.dk)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
@@ -6404,17 +6434,17 @@ if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="ga
 /* One way to resume, for a row of Your work (#523, #559): a text button, Resume, which runs Settings' Default, and beside it a
    menu of labelled rows, each with a 16 px icon, the default ticked: the ways that are on and installed, then a divider and the
    folder and the note. One way on: Resume alone. The rows carry no data-k, so the app never draws them as its icons. */
-var IC={cmux:'<path d="M3 4.5l3.5 3.5L3 11.5M8.5 12h4.5"/>',claude:'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>',codex:'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',finder:'<path d="M2 4.5h4l1.2 1.5H14v6.5H2z"/>',note:'<path d="M4 2.5h5.5L12 5v8.5H4zM9.5 2.5V5H12"/>'};
+var IC={cmux:'<path d="M3 4.5l3.5 3.5L3 11.5M8.5 12h4.5"/>',claude:'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>','claude-new':'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>','codex-new':'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',codex:'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',finder:'<path d="M2 4.5h4l1.2 1.5H14v6.5H2z"/>',note:'<path d="M4 2.5h5.5L12 5v8.5H4zM9.5 2.5V5H12"/>'};
 function ico(k){return'<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+IC[k]+'</svg>'}
 var TICK='<svg class="ytick" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>';
-var RESUME={cmux:'Resume in cmux',claude:'Resume in Claude',codex:'Resume in Codex',finder:'Open folder',note:'Open the note'};
+var RESUME={cmux:'Resume in cmux',claude:'Resume in Claude',codex:'Resume in Codex','claude-new':'New session in Claude','codex-new':'New session in Codex',finder:'Open folder',note:'Open the note'};
 function opener(o){var ways=(prefs().note===false?[]:['note']).concat(o.f&&host?chosen():[]),d=GarrickPrefs.def();
 if(!ways.length)ways=['note'];if(ways.indexOf(d)<0)d=ways[0];
 function one(k,pl){return k==='note'?noteLink(o,pl):launch(k,o,pl)}
 var main=one(d,{l:'Resume'});
 if(ways.length<2)return'<span class="ysplit">'+main+'</span>';
 function row(k){return one(k,{l:RESUME[k],i:ico(k),t:k===d}).replace(/^<(button|a) /,'<$1 role="menuitem" ')}
-var apps=['cmux','claude','codex'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
+var apps=['cmux','claude','codex','claude-new','codex-new'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
 var items=apps.map(row).join('')+(apps.length&&rest.length?'<hr class="ydiv" role="separator">':'')+rest.map(row).join('');
 return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" title="Other ways to resume" aria-label="Other ways to resume" aria-haspopup="menu">▾</summary><div class="ymenu" role="menu">'+items+'</div></details></span>'}
 /* The state, a chip beside the party's on line 1 (#633): Active or Parked, and a button that does what the menu's Park and Wake did, by

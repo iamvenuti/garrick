@@ -172,22 +172,26 @@ class RowCard(unittest.TestCase):
     def test_a_project_reads_header_open_in_actions_then_delete(self):
         row, graph = self.run_card(PROJECT)
         self.order(row, 'class="phead"', 'class="pl pl1"', 'class="pl pl2"', 'class="gacts popen"', 'class="pmenu"', 'class="psep"', "Delete…")
-        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-split"', "Close session", "Park</button>", 'class="psep"', 'data-manage="delete"')
+        self.assertEqual(0, row[row.index('class="pmenu"'):].count('"verb":"park"'))               # no Park row in the menu (#633)
+        self.order(row, "Open in", 'data-manage="new-thread"', 'data-manage="rename"', 'data-manage="layout-split"', "Close session", 'class="psep"', 'data-manage="delete"')
         self.assertTrue(row.rstrip().endswith("Delete…</button></div>"))                      # Delete is the last row
         self.assertEqual(1, row.count('data-manage="delete"'))
         self.assertIn("project · Work", graph)                                               # the graph's panel keeps kind, zone and project
         self.assertNotIn("project · Work", row)
 
-    def test_line_one_is_the_chip_and_the_count_and_line_two_the_state(self):
+    def test_line_one_is_the_party_and_the_state_and_line_two_when_it_was_touched(self):
         row, _ = self.run_card(PROJECT)
-        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><span>3 threads</span></div>', row)
+        self.assertIn('<div class="pl pl1"><span class="chip">acme</span><button class="ctl pflip" type="button" data-act=', row)
+        self.assertIn('>Active</button></div>', row)
+        self.assertNotIn("3 threads", row)                                                    # the row has the count (#633)
         self.assertIn('<div class="pl pl2">Touched yesterday</div>', row)
         self.assertIn('<span class="live idle"></span>Session open in cmux, idle', row)
         thread, _ = self.run_card(THREAD)
         self.assertIn('<div class="pl pl2">Touched 3 days ago · Resume point dated 3 days ago</div>', thread)
         self.assertNotIn("threads", thread.split('class="gacts')[0].split('pl1')[1])         # a thread has no count
         parked, _ = self.run_card(dict(THREAD, s=1))
-        self.assertIn("Parked", parked)
+        self.assertIn('class="ctl parked pflip"', parked)
+        self.assertIn('>Parked</button>', parked)
 
     def test_no_action_has_a_border_and_the_chip_is_the_only_bordered_element(self):
         row, _ = self.run_card(PROJECT)

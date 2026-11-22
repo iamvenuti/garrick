@@ -1019,7 +1019,7 @@ class TestTheDocsSayOneJob(unittest.TestCase):
     """#632: the docs and the skills describe one job and separate jobs, Split and Join, and nothing older."""
 
     OLD = ("Make a heading", "Own papers…", "Project’s papers…", "Project's papers…", "--papers", "--heading", "heading over",
-           "a heading over", "separate pieces", "one piece of work, or a heading")
+           "a heading over", "separate pieces", "one piece of work, or a heading", "a row of the menu")
 
     def pages(self):
         for base in (REPO / "docs", REPO / "template" / "System" / "skills" / "threads"):

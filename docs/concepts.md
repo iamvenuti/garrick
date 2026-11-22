@@ -257,7 +257,7 @@ Optional tools the repository ships in `extras/` for a workspace to take on, suc
 
 ### The Garrick App
 
-The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
+The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as the state chip on a card that parks or wakes a thread, or the box that ticks a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
 
 ### The Mac app
 

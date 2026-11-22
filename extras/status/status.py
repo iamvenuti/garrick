@@ -6229,6 +6229,13 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .gpop h4,.tcard h4{margin:0;font-size:var(--fs-sub);font-weight:640;overflow-wrap:anywhere}
 .gpop .x{position:absolute;right:8px;top:6px;z-index:1;border:0;background:none;color:var(--muted);font-size:var(--fs-h3);line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
+.gacts.popen{gap:4px;margin:10px 0 8px}
+/* the card's controls (#633): the state is a chip you press, beside the party's label; a finished thread's is a label too */
+.ctl{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;background:var(--wash);border-radius:999px;padding:0 8px 0 7px;line-height:22px;font:inherit;font-size:var(--fs-meta);color:var(--ink);cursor:pointer}
+.ctl:hover{border-color:var(--line);background:var(--surface)}
+.ctl .dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--good)}.ctl.parked .dot{background:transparent;border:1.5px solid var(--muted)}
+.ctl.done{cursor:default;background:none;border-color:var(--line);color:var(--muted)}.ctl.done:hover{background:none;border-color:var(--line)}
+.ctl svg{width:13px;height:13px;flex:none;color:var(--muted)}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}
@@ -6238,6 +6245,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 /* the default app, the one a click on the name uses, is the one with a 4px accent dot under it */
 .appicons .act[data-k][data-d]::after{content:"";position:absolute;left:50%;bottom:-3px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--accent)}
 .appicons .act[data-k]:hover{background-color:var(--wash)}
+/* five apps fit the card's 264px on one row (#633): Open in, then 28px squares 4px apart; the default keeps its dot */
+.appicons .gacts.popen{flex-wrap:nowrap}.appicons .gacts.popen .plbl{flex:none;margin:0 4px}
+.appicons .gacts.popen .act[data-k]{flex:none;width:28px;height:28px;min-height:0;background-size:20px}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:var(--fs-meta);padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
@@ -6478,34 +6488,41 @@ function row(k){return one(k,{l:RESUME[k],i:ico(k),t:k===d}).replace(/^<(button|
 var apps=['cmux','claude','codex'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
 var items=apps.map(row).join('')+(apps.length&&rest.length?'<hr class="ydiv" role="separator">':'')+rest.map(row).join('');
 return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" title="Other ways to resume" aria-label="Other ways to resume" aria-haspopup="menu">▾</summary><div class="ymenu" role="menu">'+items+'</div></details></span>'}
-/* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
-function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
+/* The state, a chip beside the party's on line 1 (#633): Active or Parked, and a button that does what the menu's Park and Wake did, by
+   its note for a thread (pa) or by its name for a project (pp), its hub then holding every thread in it. A finished thread says Done
+   and a thread parked with its project says so, neither a button. In the app it parks or wakes; elsewhere it copies the phrase. */
+function stchip(o){if(o.fin)return'<span class="ctl done">Done</span>';
+if(o.held)return'<span class="ctl done" title="Parked with its project">Parked</span>';
+if(o.pend||(o.h&&o.hp==null))return'';
+var s=o.h?o.hp:o.s,who=o.N||o.n,label=s?'Wake '+who:'Park '+who+(o.h&&o.tn?' and its thread'+(o.tn===1?'':'s'):''),
+inner='<span class="dot"></span>'+(s?'Parked':'Active'),cls='ctl'+(s?' parked':'')+' pflip',
+tip=' title="'+esc(label)+'" aria-label="'+esc(label)+'"';
+if(host&&(o.h?o.pp:o.pa)){var v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
-return'<button class="pmi pflip" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
-+'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
+return'<button class="'+cls+'" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
++'" data-say="'+(s?'Waking ':'Parking ')+esc(who)+'…"'+tip+'>'+inner+'</button>'}
+if(!o.w)return'<span class="ctl done">'+(s?'Parked':'Active')+'</span>';
+var p=(s?'wake ':'park ')+o.w;
+return'<button class="'+cls+'" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="'+esc(label+'. Copies “'+p+'”')+'" aria-label="'+esc(label)+'">'+inner+'</button>'}
 function pi(d){return'<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+d+'</svg>'}
 function shut(o){return o.dk&&o.live&&host?'<button class="pmi pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
 +' data-say="Closing the session…">'+pi('<path d="M4 4l8 8M12 4l-8 8"/>')+'Close session</button>':''}
-/* a menu row: Close session, then Park or Wake, which acts in the app and copies the phrase anywhere else */
-function pflip(o){if(o.fin||o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
-var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
-return'<button class="pmi pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+pi(s?'<path d="M5 3.5l7 4.5-7 4.5z"/>':'<path d="M5.5 3.5v9M10.5 3.5v9"/>')+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 /* how long since the note moved, as a figure: age is not urgency, so nothing here reads as a fault */
-function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.d==null)return'';
 return'Touched '+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
 /* A row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project; the
-   graph's panel, which floats free of any list, keeps them. The card reads top to bottom (#620): what it is (line 1: the party as a chip, then
-   a project's thread count; line 2: its state, a thread's resume point and an open session), where to open it (acts), what to change
-   (menu), and last, set apart, what removes it. The chip is the only bordered element. */
+   graph's panel, which floats free of any list, keeps them. The card reads top to bottom (#620, #633): what it is and what can be changed (line 1:
+   the party as a chip, then the state, Active or Parked, as a button; line 2: when it was touched, a thread's resume point and an open session),
+   where to open it (acts), what is done once (menu), and last, set apart, what removes it. The party's chip is the only bordered label. */
 function head(o,row){var chips=o.t&&o.t.length?o.t.map(function(t){return'<span class="chip">'+esc(t)+'</span>'}).join(''):'',
-n=o.h&&o.tn?'<span>'+o.tn+' thread'+(o.tn===1?'':'s')+'</span>':'',st=[state(o),resume(o)].filter(Boolean).join(' · ');
+ctls=stchip(o),st=[state(o),resume(o)].filter(Boolean).join(' · ');
 return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4></div>'+(row?'':'<div class="pl pkind">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
-+(chips||n?'<div class="pl pl1">'+chips+n+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
++(chips||ctls?'<div class="pl pl1">'+chips+ctls+'</div>':'')+(st?'<div class="pl pl2">'+esc(st)+'</div>':'')
 +(o.live?'<div class="pl pl2 psess"><span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live)+'</div>':'')}
-function menu(o){var mid=shut(o)+pflip(o),m=window.GarrickManage?GarrickManage(o,mid):'';return m||(mid?'<div class="pmenu" role="group">'+mid+'</div>':'')}
+function menu(o){var mid=shut(o),m=window.GarrickManage?GarrickManage(o,mid):'';return m||(mid?'<div class="pmenu" role="group">'+mid+'</div>':'')}
 function card(o,row,pre){return head(o,row)+acts(o,pre)+menu(o)}
 /* what clicking a thread's name does, on its row or among what the search box found (.sres): its own link,
    unless Settings picked an app the Mac app can open it in */

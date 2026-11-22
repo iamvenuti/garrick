@@ -2128,9 +2128,9 @@ class TestPreviewFeatures(StatusCase):
             self.assertIn(verb, status.TODO_JS)
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
-        self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
-        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: Park and Wake sit in the card's menu (#620)
-        self.assertIn("function pflip(o)", status.PANEL_JS)
+        self.assertIn("if(host&&(o.h?o.pp:o.pa)){var v=s?'wake':'park'", status.PANEL_JS)          # only the app parks
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4></div>'", status.PANEL_JS)           # the name alone: the state is a chip on line 1 (#633)
+        self.assertIn("function stchip(o)", status.PANEL_JS)
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 

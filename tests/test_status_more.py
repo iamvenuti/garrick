@@ -1494,16 +1494,18 @@ class TestParkAProject(StatusCase):
         html = self.page()
         acme, birch = project_cards(html)["Acme Review"], project_cards(html)["Birch Entry"]
         pricing = cards(html)[("Acme Review", "Pricing")]
-        wake, park, held, held_card = panel(True, ("menu", acme), ("menu", birch), ("menu", pricing), ("head", pricing))
+        wake, park, held = panel(True, ("head", acme, 1), ("head", birch, 1), ("head", pricing, 1))
         self.assertIn('data-act="{"verb":"wake","zone":"Work","project":"Acme Review"}"', wake)
         self.assertIn('data-expect="active:Work/Acme Review/Acme Review.md"', wake)
-        self.assertIn('title="Wake the project and every thread in it">', wake)
-        self.assertTrue(wake.endswith("Wake</button></div>"))
+        self.assertIn('title="Wake Acme Review" aria-label="Wake Acme Review"', wake)
+        self.assertIn('class="ctl parked pflip"', wake)
+        self.assertIn('Parked</button>', wake)
         self.assertIn('data-act="{"verb":"park","zone":"Work","project":"Birch Entry"}"', park)
         self.assertIn('data-expect="parked:Work/Birch Entry/Birch Entry.md"', park)
-        self.assertNotIn("pflip", held)                                    # parked with its project: no button of its own
-        self.assertIn("Parked with its project", held_card)
-        browser = panel(False, ("menu", dict(birch, pp=None)))[0]
+        self.assertIn('aria-label="Park Birch Entry and its thread', park)
+        self.assertNotIn("<button", held)                                  # parked with its project: a label, no button of its own
+        self.assertIn("Parked with its project", held)
+        browser = panel(False, ("head", dict(birch, pp=None), 1))[0]
         self.assertIn('data-copy="park Birch Entry"', browser)               # elsewhere it copies the phrase
 
 

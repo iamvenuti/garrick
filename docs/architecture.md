@@ -138,7 +138,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `scaffold.py` makes zones, parties, projects and threads, and parks, wakes, renames and deletes them. It checks a name and a party before it writes anything. See [Your first project](commands.md#your-first-project).
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
 - `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes.
-- `usage.py` prints what the Garrick App is used for: card opens, wraps and Ask actions, from records that already exist. It reads and never writes.
+- `usage.py` prints what the Garrick App is used for: card opens, wraps started from the App and Ask actions, from records that already exist. It names each source and what it cannot see. It reads and never writes.
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.

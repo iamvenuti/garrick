@@ -36,6 +36,7 @@
   "test_layout": 40.0,
   "test_layout_control": 50.0,
   "test_lib": 0.3,
+  "test_names": 60.0,
   "test_machine": 0.3,
   "test_machine_checks": 10.0,
   "test_machine_docs": 0.1,

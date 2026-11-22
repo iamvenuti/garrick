@@ -188,7 +188,7 @@ class InstallTest(unittest.TestCase):
         # answers, their rules, the workspace's settings and the assistant's), the stamp
         # itself and System/generated/, where other tests here build pages.
         on_disk = {p for p in on_disk if not p.startswith("System/generated/")}
-        yours = {"System/context.md", "System/garrick-version.json", "System/rules.local.md",
+        yours = {"System/context.md", "System/names.md", "System/garrick-version.json", "System/rules.local.md",
                  "System/garrick-settings.json", ".claude/settings.json"}
         self.assertEqual(on_disk - yours, set(files))
         self.assertTrue(yours <= on_disk)

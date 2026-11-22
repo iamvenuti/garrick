@@ -37,7 +37,8 @@ own: a new kind of problem gets a check in `check.py` first.
 | What would fade, and why | `System/tools/fade.py`; its proposal in `System/generated/fade/<Wiki>.md` |
 | The judgment the numbers can't hold | `System/retention.md`, and `System/retention.local.md`, which wins |
 | How fast each kind fades | `"memory"` in `System/garrick-settings.json`: `python3 System/tools/fade.py settings` prints it |
-| Zones (the walled flag), Parties, People, Aliases | `System/context.md` |
+| Zones (the walled flag), Parties | `System/context.md` |
+| People, Aliases | `System/names.md` |
 
 ## The kinds
 

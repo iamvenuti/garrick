@@ -100,6 +100,8 @@ TOUCH_MAP = {
     "tests/walls/": ["test_walls_cases"],
     # The concept check (#654) and the pages it reads.
     "tests/concept_gate.py": ["test_concept_gate"],
+    "names_move.py": ["test_names"],
+    "tests/test_names.py": ["test_names"],
     "docs/concepts.md": ["test_concept_gate"],
     "docs/decisions/": ["test_concept_gate"],
     "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard", "test_settings_actions", "test_settings_ui"],

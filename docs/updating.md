@@ -77,7 +77,7 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 | Removed by you | A file Garrick still ships that you deleted | Nothing, unless you name it with `--only` |
 | Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone. The one exception is the old `System/status/fonts/` folder: the update removes it when it holds only the files Garrick shipped, by name and content, and leaves it, saying so, when it holds anything else |
 
-A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written but for the one step under [Zone flags](#zone-flags), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
+A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md` and `System/names.md`, your own answers, are never read or written but for the steps under [Zone flags](#zone-flags) and [People and Aliases](#people-and-aliases), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
 
 ### The wall check in your repositories
 
@@ -98,6 +98,19 @@ The step runs before the update installs anything, and shows you before it write
 `party:` on hubs, threads and Meetings pages is left as it is: it stays as an optional index.
 
 After the yes it proposes three clean-up lists, each on its own yes: People rows that repeat a person under a second party, allowances in the ledger whose finding no longer exists, and each mixed Meetings page, split per zone, page by page. At a terminal it asks about each. Without one, answer with `python3 System/tools/release.py update --apply --clean people`, `--clean ledger` or `--clean pages`. A page with a block that cites no source, or sources of two zones, is left for hand work. A second run of the update finds nothing to do.
+
+## People and Aliases
+
+[`System/context.md`](concepts.md#systemcontextmd) is loaded into every session, and in a workspace used for a few months most of it is the People and Aliases tables. A session needs only the rows for the names its prompt holds, so Garrick keeps those two tables in [`System/names.md`](concepts.md#systemnamesmd), with the same columns, and reads them from there. A new workspace starts that way.
+
+A workspace from before has them in `System/context.md`. It reads as it did, and the update's report says the move is waiting. The move happens once, only on your yes:
+
+```
+python3 install.py --update ~/Garrick --names            say what would move; changes nothing
+python3 install.py --update ~/Garrick --names --apply    do it
+```
+
+It moves each of the two sections as it stands, every row byte for byte, writes `System/names.md`, and leaves a pointer line in `System/context.md`, in one commit that `git revert` undoes. It moves them only when both are whole: each a section with one table in it, every row with as many cells as its header. Anything it cannot read stays in `System/context.md`, and the update says so in one sentence. When `System/names.md` already has a People or Aliases section, nothing moves and both files are read together. A second run finds nothing to move. `check.py` warns when `System/context.md` goes past 8,000 characters and names the section that grew.
 
 ## Your rules, and Garrick's
 

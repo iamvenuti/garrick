@@ -100,15 +100,19 @@ The table in `System/context.md` that lists every party: its name, what it is, i
 
 ### People
 
-The table in `System/context.md` of the people who come up, one row per person, by name. The Party cell is context and may be empty. It holds names for voice input; no check reads it as a wall.
+The table in `System/names.md` of the people who come up, one row per person, by name. The Party cell is context and may be empty. It holds names for voice input; no check reads it as a wall.
 
 ### Aliases
 
-The table in `System/context.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it. See [Voice](../template/System/rules.md#voice) in the rules.
+The table in `System/names.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it. See [Voice](../template/System/rules.md#voice) in the rules.
+
+### `System/names.md`
+
+The file that holds People and Aliases, so that [`System/context.md`](#systemcontextmd), which every session loads, stays short ([#653](https://github.com/iamvenuti/garrick/issues/653)). See [People and Aliases](updating.md#people-and-aliases).
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones and Parties. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 

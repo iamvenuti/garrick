@@ -70,7 +70,7 @@ project parks every thread in it, whatever each thread's note says.
 heading, and points every link to it in the zone at the new name: the hub's
 list, the Todo.md lines that open with it, `project:` frontmatter, the notes
 between. One commit in the zone, with a dated entry "Renamed from <old>."; the
-old name becomes a heard alias in context.md, left for you to commit. The
+old name becomes a heard alias in names.md (context.md before the move), left for you to commit. The
 Meetings wiki is listed, never edited. `move` takes a thread to another
 project of its zone, by the same machinery: the folder, every link to it and to
 the files inside it, its line in the hub (under the same heading), `project:`
@@ -157,6 +157,7 @@ from garrick_lib import (  # noqa: E402
     learned_cell,
     learned_row,
     load_context,
+    table_files,
     machine_made,
     parse_frontmatter,
     place_checkpoint,
@@ -1063,25 +1064,29 @@ def dated_entry(text, line, today, append=True):
 
 
 def add_alias(root, heard, means, today=None):
-    """The old name as a heard form of the new one, in context.md's Aliases
-    table, so "Pricing" still finds "Renewal" for a while. False when the
-    table is missing or already has it. With `today`, the row's Learned cell
-    says it came from the user, who asked for the rename."""
-    path = root / "System" / "context.md"
-    if not path.is_file() or heard.lower() in load_context(root).get("aliases", {}):
+    """The old name as a heard form of the new one, in the Aliases table, so
+    "Pricing" still finds "Renewal" for a while: in System/names.md, or in
+    context.md while the workspace has not moved its tables (#653). False when
+    there is no table or the table already has it, else the file it went into. With `today`, the row's
+    Learned cell says it came from the user, who asked for the rename."""
+    if heard.lower() in load_context(root).get("aliases", {}):
         return False
-    lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## aliases"), None)
-    if start is None:
-        return False
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-    if len(rows) < 2:
-        return False
-    cells = [heard.lower(), means]
-    lines.insert(rows[-1] + 1, learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return True
+    for path in table_files(root, "aliases"):
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## aliases"), None)
+        if start is None:
+            continue
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+        if len(rows) < 2:
+            continue
+        cells = [heard.lower(), means]
+        lines.insert(rows[-1] + 1, learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return "System/" + path.name
+    return False
 
 
 # --------------------------------------------------------------------------- park and wake
@@ -1269,8 +1274,9 @@ def cmd_rename(root, args, today):
     said += asked
     if others:
         said.append(f"Links written [[{old}]] were left alone: another note in {zone_dir.name} has that name too.")
-    if add_alias(root, old, new, today):
-        said.append(f'Added "{old}" as a heard name for {new} in System/context.md; commit it in the workspace root.')
+    alias_file = add_alias(root, old, new, today)
+    if alias_file:
+        said.append(f'Added "{old}" as a heard name for {new} in {alias_file}; commit it in the workspace root.')
     meetings = root / "Wikis" / "Meetings" / "wiki"
     mentions = sorted(p.relative_to(root).as_posix() for p in meetings.rglob("*.md")
                       if re.search(r"\[\[[^\]]*\b%s\b" % re.escape(old), p.read_text(encoding="utf-8", errors="replace"))) \

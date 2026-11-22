@@ -96,6 +96,10 @@ __all__ = [
     "phonetic_key",
     "edit_distance",
     "load_context",
+    "names_path",
+    "table_files",
+    "NAMES_FILE",
+    "TABLE_FILE",
     "ORIGIN_USER",
     "ORIGIN_PREFIXES",
     "LEARNED_COLUMN",
@@ -846,6 +850,27 @@ CONTEXT_TABLES = {
 }
 
 
+# Where each table of the context lives, from the top of the workspace. A table not named here is in
+# System/context.md. People and Aliases are in System/names.md once the workspace has moved them (#653): the
+# context file is loaded into every session, and a session needs only the rows for the names its prompt holds.
+CONTEXT_FILE = ("System", "context.md")
+NAMES_FILE = ("System", "names.md")
+TABLE_FILE = {"people": "names.md", "aliases": "names.md"}
+
+
+def names_path(root: PathLike) -> Path:
+    return Path(root).joinpath(*NAMES_FILE)
+
+
+def table_files(root: PathLike, table: str) -> List[Path]:
+    """The files that hold `table`'s rows now, in the order they are read: names.md first for People and Aliases,
+    then context.md, which holds the rest, and the rows of a workspace not yet moved."""
+    files = [Path(root).joinpath(*CONTEXT_FILE)]
+    if table in TABLE_FILE:
+        files.insert(0, names_path(root))
+    return files
+
+
 def plain_name(cell: str) -> str:
     """A name cell as plain text: Markdown emphasis (`**`, `*`, `_`) and surrounding backticks taken off."""
     return (cell or "").strip().strip("*_` \t").strip()
@@ -911,7 +936,8 @@ def load_context(root: PathLike) -> dict:
           "pending": bool,   # True while the Zones table has no Walled column: the flags above were derived (#485)
           "me":      [your own addresses, lower case],
           "owner":   {"name": "Jo Example", "first": "Jo"}, or None,   # the first sentence of ## Me
-          "learned": [{"table", "row", "cell"}, ...],
+          "learned": [{"table", "row", "cell", "file"}, ...],
+          "names_file": bool,   # System/names.md exists: People and Aliases are read from it too (#653)
         }
 
     `learned` holds each row's Learned cell, where its table has that column
@@ -929,25 +955,41 @@ def load_context(root: PathLike) -> dict:
     except OSError:
         return ctx
     sections = _sections(text)
+    # People and Aliases may be in names.md instead, or in both while a move is half done: every row of both is
+    # read, names.md's first, and none is dropped.
+    try:
+        named = _sections(names_path(root).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        named = None
+    ctx["names_file"] = named is not None
+    rows_of: Dict[str, List[Dict[str, str]]] = {}
     for name, (_, columns) in CONTEXT_TABLES.items():
-        lines = sections.get(name)
-        if lines is None:
+        found = [(sections.get(name), CONTEXT_FILE[-1])]
+        if name in TABLE_FILE and named is not None:
+            found.insert(0, (named.get(name), NAMES_FILE[-1]))
+        found = [(lines, file) for lines, file in found if lines is not None]
+        if not found:
             continue
-        rows = _table(lines)
-        header = _table_header(lines)
+        rows: List[Dict[str, str]] = []
+        headers = [(_table_header(lines), file, lines) for lines, file in found]
+        for lines, file in found:
+            part = _table(lines)
+            rows += part
+            header = _table_header(lines)
+            column = next((h for h in (header or []) if h.startswith(LEARNED_COLUMN.lower())), None)
+            for row in (part if column else []):
+                cell = (row.get(column) or "").strip()
+                if cell:
+                    first = next(iter(row.values()), "")
+                    ctx["learned"].append({"table": name, "row": first.strip(), "cell": cell, "file": file})
         ctx["tables"][name] = {
-            "table": header is not None,
-            "text": any(l.strip() for l in lines),
+            "table": any(h is not None for h, _, _ in headers),
+            "text": any(l.strip() for _, _, lines in headers for l in lines),
             "rows": len(rows),
-            "missing": [c for c in columns if header is not None and not any(h.startswith(c) for h in header)],
+            "missing": [c for c in columns if any(h is not None and not any(x.startswith(c) for x in h)
+                                                   for h, _, _ in headers)],
         }
-        column = next((h for h in (header or []) if h.startswith(LEARNED_COLUMN.lower())), None)
-        for row in (rows if column else []):
-            cell = (row.get(column) or "").strip()
-            if cell:
-                first = next(iter(row.values()), "")
-                ctx["learned"].append({"table": name, "row": first.strip(),
-                                       "cell": cell})
+        rows_of[name] = rows
 
     ctx["owner"] = _owner(sections.get("me", []))
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
@@ -969,14 +1011,14 @@ def load_context(root: PathLike) -> dict:
             "flag": _col(row, "walled").strip().strip("`*").strip().lower(),
         }
 
-    for row in _table(sections.get("people", [])):
+    for row in rows_of.get("people", []):
         name = plain_name(_col(row, "name"))
         if name:
             ctx["people"].append(
                 {"name": name, "party": strip_tag(_col(row, "party")), "role": _col(row, "role")}
             )
 
-    for row in _table(sections.get("aliases", [])):
+    for row in rows_of.get("aliases", []):
         heard, means = _col(row, "heard"), _col(row, "means")
         for form in heard.split(","):
             form = form.strip().lower()
@@ -3041,7 +3083,7 @@ ALLOWED_COMMANDS = "allowed-commands"
 # the stamp, never compared or written by an update. The two settings files are
 # here because each holds the user's own entries beside Garrick's; an update
 # replaces only the entries it wrote, and never the whole file.
-UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES,
+UNLISTED = ("System/context.md", "System/names.md", "/".join(VERSION_STAMP), LOCAL_RULES,
             "/".join(SETTINGS), "/".join(CLAUDE_SETTINGS))
 
 

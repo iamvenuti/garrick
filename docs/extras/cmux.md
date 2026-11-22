@@ -46,7 +46,7 @@ You need cmux and `python3`. desk lives in your workspace, like the Garrick App,
    |---|---|---|
    | `workspaces` | The cmux workspace each zone's tabs go to; `neutral` is for System and the wikis | each zone's own name, and *System* |
    | `skip` | Folder names desk passes over | `archive`, `Archive`, `Inbox` |
-   | `aliases` | Heard names, on top of the Aliases table in `System/context.md` | none |
+   | `aliases` | Heard names, on top of the Aliases table in `System/names.md` | none |
    | `agent` | The assistant a new tab starts: `claude` or `codex`. The Garrick App's Settings › *Opening a thread* sets it too, as *A cmux tab starts*, and so does `desk agent codex` | `claude` |
    | `socket_password_file` | Where the cmux socket password is kept (below) | `cmux-socket.password` in the jobs folder |
 

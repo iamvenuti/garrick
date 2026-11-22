@@ -89,6 +89,7 @@ TOUCH_MAP = {
                                 "test_status_more", "test_status_work", "test_waiting_card", "test_needs_you_rows", "test_threads_card", "test_todo_solo",
                                 "test_overview_work", "test_status_look", "test_settings_ui",
                                 "test_view_model", "test_usage_counts"],
+    "template/System/tools/usage.py": ["test_usage_report"],
     "extras/status/usage_counts.py": ["test_usage_counts"],
     "extras/status/settings_guard.py": ["test_settings_ui", "test_settings_actions"],
     "extras/status/settings_help.py": ["test_settings_ui"],

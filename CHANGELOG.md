@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The Garrick App page's pictures are new, taken on 0.76.0 and the demo workspace. The Overview with *Waiting on you now* and *Your work*, the Threads card with a thread's card open, and Explore's graph with a thread selected replace the 0.10.0 pictures, which showed the look before 0.67.0.
+
 ## [0.76.0] - 2026-11-22
 
 In this release each change of state has one owner, and that owner tells you what happened. The wrap is a single command, and every part of Garrick finds your pieces of work the same way. Ask, the outbox and the nightly jobs now report the result they saw, and say so when they could not see one.

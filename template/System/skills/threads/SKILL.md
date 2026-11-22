@@ -114,8 +114,8 @@ dictation, so resolve before acting, and never guess.
      say how it is said (`pricing` → Acme's Pricing thread; `fourth quarter
      planning` → Q4 Planning);
    - "project, thread" (`acme pricing`, `acme, pricing`);
-   - a project name: a piece of work (its hub keeps a `### Resume here`) is
-     its hub; else one live thread is that thread; several, or a heading
+   - a project name: one job (its hub keeps a `### Resume here`) is its hub;
+     else one live thread is that thread; several, or separate jobs
      (`layout: thread-first`), ask which, naming them;
    - a party or a person, through Parties and People: the projects whose hub
      `party` is that tag, then as for a project name (`dana whitlaw` → Dana
@@ -136,7 +136,7 @@ dictation, so resolve before acting, and never guess.
    separator and leave the rows typed by hand as they are. Re-read
    `System/context.md` right before editing it.
 
-The **short name** is the one to say back: the project alone for a piece of work;
+The **short name** is the one to say back: the project alone for one job;
 the thread name alone if no other thread has it; otherwise "project, thread"; the
 zone as well only when two projects share a name.
 

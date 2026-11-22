@@ -256,6 +256,24 @@ def would_have_stopped(lines: List[dict]) -> Dict[str, List[dict]]:
     return dict(sorted(out.items(), key=lambda kv: kv[0].casefold()))
 
 
+HARNESS_FOLDERS = {"Claude Code": ".claude", "Codex": ".codex"}
+
+
+def installed_harness(line: str, home: Path) -> bool:
+    """Whether a line of `check_lines()` is about an assistant that is installed here: its folder holds something. A folder
+    with nothing in it is no installation, so a Claude-only registration beside an empty Codex folder is a registration
+    (C6). Any other line, and an assistant whose folder holds anything yet no registration, counts: the guard is Off until
+    every assistant that is installed has it, so Settings never shows On for one that was not set up."""
+    name = line.split(":", 1)[0]
+    folder = HARNESS_FOLDERS.get(name)
+    if folder is None:
+        return True
+    try:
+        return any(True for _ in (Path(home) / folder).iterdir())
+    except OSError:
+        return True
+
+
 def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.datetime] = None) -> dict:
     """What Settings shows of the read guard: whether its hook is registered, its mode and cross-wall choice, both lists,
     whether the connector filter can run, and what the log holds. Reads only; never raises."""
@@ -271,7 +289,8 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     guard = guard_module()
     try:
         lines, _ = guard.check_lines(str(home)) if guard is not None else ([], False)
-        state["registered"] = bool(lines) and all("is registered" in l for l in lines)
+        used = [l for l in lines if installed_harness(l, home)]
+        state["registered"] = bool(used) and all("is registered" in l for l in used)
     except Exception:
         pass
     try:

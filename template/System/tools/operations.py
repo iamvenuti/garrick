@@ -220,12 +220,14 @@ DECLARED: Dict[str, Op] = {
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
     "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
-    # Where a thread keeps its papers, or a project made a heading (#604): `check` asks for the plan and writes nothing.
-    "layout": _op(("zone", "project", "thread", "papers", "heading", "check", "plan"), ("project", "thread", "papers", "heading"), "zone", True),
+    # A project split into separate jobs (`heading`) or joined into one job (`join`, #632): `check` asks for the plan and
+    # writes nothing. `thread` and `papers` stay declared so that a request that still names one is refused in words.
+    "layout": _op(("zone", "project", "thread", "papers", "heading", "join", "resume_from", "check", "plan"),
+                  ("project", "thread", "papers", "heading", "join", "resume_from"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
-    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "home", "memory",
+    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "memory",
                      "desk-agent", "release-notice", "release-notice-every", "ask", "channels"), (), "workspace"),
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.

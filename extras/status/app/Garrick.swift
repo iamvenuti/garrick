@@ -1025,7 +1025,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
 		if let u = body["open"] as? String, let url = URL(string: u) { return follow(url, place: body["place"] as? String) }
 		if let row = body["reveal"] as? [String: Any] { return revealBoth(row) }
-		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
 		if let id = body["waitingGo"] as? String { return goToWaiting(id) }
@@ -1043,33 +1042,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
 		if let request = body["act"] as? [String: Any] { act(request) }
-	}
-
-	// Add your own work (#182): macOS's own folder picker, which also grants
-	// this app access to the folder picked, as a sheet on the window. It opens
-	// on the cloud drives where there are any, since that is where work is
-	// usually kept. The folder goes to page_action.py's `discover`, which
-	// reads its names and dates and changes nothing in it; discover.py
-	// refuses the whole Mac, the home folder and Garrick's own folders. The
-	// page then opens on what it found.
-	func pickFolder() {
-		let panel = NSOpenPanel()
-		panel.canChooseDirectories = true
-		panel.canChooseFiles = false
-		panel.allowsMultipleSelection = false
-		panel.canCreateDirectories = false
-		panel.prompt = "Choose"
-		panel.message = "Choose the folder you work from. Garrick reads the names and dates in it, and never changes anything."
-		let cloud = URL(fileURLWithPath: NSHomeDirectory() + "/Library/CloudStorage", isDirectory: true)
-		var isDir: ObjCBool = false
-		panel.directoryURL = FileManager.default.fileExists(atPath: cloud.path, isDirectory: &isDir) && isDir.boolValue
-			? cloud : URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-		panel.beginSheetModal(for: window) { [weak self] response in
-			guard let self, response == .OK, let folder = panel.url else { return }
-			self.toast("Looking through \(folder.lastPathComponent): names and dates only, and nothing in it is changed.",
-			           alsoNotify: false)
-			self.act(["verb": "discover", "folder": folder.path])
-		}
 	}
 
 	// Save a copy, on an earlier version of a work's file (#189): macOS's own

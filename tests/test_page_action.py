@@ -732,6 +732,22 @@ class TestSettings(ActionCase):
     def path(self):
         return self.root / "System" / "garrick-settings.json"
 
+    def test_there_is_no_home_to_save_and_a_stored_one_is_left_alone(self):
+        write(self.path(), json.dumps({"home": "simple", "ask": True}))
+        for req in ({"home": "full"}, {"home": "simple", "ask": False}):
+            with self.assertRaises(pa.Refused) as why:
+                self.act(verb="settings", **req)
+            self.assertIn("no home field", str(why.exception))
+        self.assertEqual({"home": "simple", "ask": True}, json.loads(self.path().read_text()))     # refused: nothing written
+        self.act(verb="settings", ask=False)
+        self.assertEqual({"home": "simple", "ask": False}, json.loads(self.path().read_text()))    # a stored value is kept, never read
+
+    def test_the_app_no_longer_sends_the_removed_discover_verb(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertNotIn('"verb": "discover"', swift)
+        self.assertNotIn("pickFolder", swift)
+        self.assertNotIn("discover", pa.VERBS)
+
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
         self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True},

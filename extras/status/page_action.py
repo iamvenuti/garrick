@@ -46,13 +46,16 @@ zone's repository, as the skills would:
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
     new-project a project, as "new project" by voice: {"zone", "name", "party",
-                "thread", "heading"}; one piece of work unless "heading" says a
-                heading over separate pieces, and no thread unless one is
-                named; committed in the zone
-    new-thread  a thread in a project: {"zone", "project", "name", "papers"};
-                "papers" is "own" for a thread that keeps its own Sources and
-                Deliverables, and the project's otherwise (a heading's threads
-                always keep their own)
+                "thread", "heading"}; one job unless "heading" says separate
+                jobs, and no thread unless one is named; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name"}; the project
+                decides where its papers are (one job: the project's; separate
+                jobs: its own), so a request that names "papers" is refused
+    layout      the project's switch, one job or separate jobs: {"zone",
+                "project", "heading": true} splits it into separate jobs,
+                {"zone", "project", "join": true, "resume_from"?} joins it
+                into one job; "check" and "plan" say what would move and write
+                nothing; a thread or "papers" is refused
     check-name  whether a new name would do, making nothing, for the form as
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
@@ -83,7 +86,6 @@ zone's repository, as the skills would:
                 "quiet": {...}}}, which notices this Mac shows, checked and
                 kept by System/tools/notifications.py.
                 Settings › Home:
-                {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
                 System/tools/fade.py keeps; saving moves no page.
@@ -372,8 +374,6 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 GRAPH_OFF = ("Red", "Crimson", "Amber")
 GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity", "decision")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
-# Settings › Home: which the page opens on. Its words are status.py's HOMES too.
-HOMES = ("simple", "full")
 # Settings › About Garrick: how often, in days, the check for a newer Garrick runs (garrick_lib's RELEASE_CADENCES).
 RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
@@ -1763,7 +1763,6 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
-    {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
     {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
     {"channels": {"telegram": {"autonomy": "act"}}}, Settings › Channels (#571): tier, effort and autonomy of Ask and
@@ -1771,7 +1770,9 @@ def save_settings(ws: Path, req: dict) -> str:
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
+    if "home" in req:                   # Settings has no Home choice any more (#503): the app opens on the full page, and a stored value is ignored
+        raise Refused("there is no home to choose: Garrick opens on the full page")
+    if not {"launchers", "zones", "graph", "notifications", "memory", "desk-agent",
             "release-notice", "release-notice-every", "ask", "channels"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
@@ -1798,10 +1799,6 @@ def save_settings(ws: Path, req: dict) -> str:
         if not (isinstance(days, int) and not isinstance(days, bool) and days in RELEASE_CADENCES):
             raise Refused("the check for a newer Garrick runs every %s days" % " or ".join(str(d) for d in RELEASE_CADENCES))
         new["release-notice-every"] = days
-    if "home" in req:
-        if req["home"] not in HOMES:
-            raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
-        new["home"] = req["home"]
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1843,8 +1840,6 @@ def save_settings(ws: Path, req: dict) -> str:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
-        return "Garrick opens on the full page"
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
@@ -2285,14 +2280,26 @@ def wants_heading(req: dict) -> bool:
     raise Refused("not a heading choice: %r" % (value,))
 
 
-def papers_of(req: dict) -> Optional[str]:
-    """A new thread's papers, own or project; none when the request does not say."""
-    value = req.get("papers")
-    if value is None:
-        return None
-    if value in ("own", "project"):
-        return value
-    raise Refused("papers is own or project, not %r" % (value,))
+SWITCH_SAID = ("A thread has no papers choice of its own: a project is one job or separate jobs, and every thread "
+               "follows it. To change the project, Split it into separate jobs or Join it into one job.")
+
+
+def no_papers(req: dict) -> None:
+    """A thread's papers follow its project's switch (one job or separate jobs), never a choice of the thread: a
+    request that still names `papers`, or a thread for a layout, is refused with the sentence that names the switch."""
+    if req.get("papers") is not None:
+        raise Refused(SWITCH_SAID)
+
+
+def wants_join(req: dict) -> bool:
+    """Is the layout change a Join, one job from separate jobs? True, or yes or true from a command line; anything
+    else but nothing is refused. A Split is `heading`, the key the request has always had."""
+    value = req.get("join")
+    if value is None or value is False or (isinstance(value, str) and value.strip().lower() in ("no", "false")):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("yes", "true")):
+        return True
+    raise Refused("not a join choice: %r" % (value,))
 
 
 def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
@@ -2397,10 +2404,9 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
-        papers = papers_of(req)
+        no_papers(req)
         args = ["thread", "--zone", z, "--project", project, "--name", name,
-                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
-                *(["--papers", papers] if papers else [])]
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
         if not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
@@ -2425,11 +2431,18 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
     if verb == "layout":
-        # Where a thread keeps its papers, or a project made a heading (scaffold.py layout): the plan, with `check`,
-        # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
-        papers, heading = papers_of(req), wants_heading(req)
+        # A project split into separate jobs, or joined into one job (scaffold.py layout): the plan, with `check`,
+        # or the change, in one commit through the zone's wall check. A Split moves only what exactly one thread note
+        # names; a Join moves each thread's papers up, a name already taken in the project's moved nowhere.
+        no_papers(req)
+        if thread:
+            raise Refused(SWITCH_SAID)
+        heading, join = wants_heading(req), wants_join(req)
+        if heading == join:
+            raise Refused("say what changes: heading to split the project into separate jobs, or join to join it into one job")
+        resume = field(req, "resume_from", required=False) if join else None
         want_plan = check or req.get("check") is True
-        args = ["layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else [])]
+        args = ["layout", *which, *(["--split"] if heading else ["--join", *(["--resume-from", resume] if resume else [])])]
         if req.get("plan") is True:
             # The plan as data, for the page's dialog (#604): the same check, which writes nothing, and the same
             # words beside it. Only with `check`; a plan of a real run is no such thing.
@@ -6351,14 +6364,14 @@ def start_record(ops, req: dict, via: str):
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
     "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken",
-                    "heading",
+                    "heading", "separate",
                     ),
     "new-thread": ("zone", "project", "name", "spoken",
                    "papers",
                    ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
-    "layout": ("zone", "project", "thread", "papers", "heading"),
+    "layout": ("zone", "project", "thread", "papers", "heading", "join", "resume_from"),
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
@@ -6399,6 +6412,8 @@ def session_line(ws: Path, req: dict) -> dict:
 
 def session_request(ws: Path, args) -> dict:
     """The request a verb typed in a terminal means: only the options that verb
+    if "separate" in req:                     # the word a person says for it (#632); the request has always called it `heading`
+        req["heading"] = req.pop("separate")
     takes, each given or left out. A zone is always named; nothing is guessed."""
     given = {k: getattr(args, k.replace("-", "_")) for k in CLI_FIELDS[args.verb]}
     if args.verb.startswith("question-"):
@@ -6423,7 +6438,7 @@ def command_parser() -> argparse.ArgumentParser:
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
                  "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
-                 "heading",
+                 "heading", "separate", "join", "resume-from",
                  "papers"):
         ap.add_argument("--" + name)
     return ap

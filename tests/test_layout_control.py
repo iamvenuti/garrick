@@ -1,16 +1,18 @@
-"""#604, the rest: the layout control on the page and in the Ask box.
+"""#604, #632, the rest: the layout control on the page and in the Ask box.
 
-The page's cards offer each change of layout only where it applies. A dialog asks for the plan (nothing is written),
-and Move them makes the change, once, in one commit; a file no thread names is never placed by the control. The Ask
-box offers the same dialog and runs nothing.
+A project's card offers its one switch, Split into separate jobs or Join into one job, and no thread's card offers
+any. A dialog asks for the plan (nothing is written), and Move them makes the change, once, in one commit; a file
+no thread names is never placed by the control. The Ask box offers the same dialog and runs nothing.
 
     cd tests && python3 -m unittest test_layout_control
 """
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -73,7 +75,7 @@ class ControlCase(tl.LayoutCase):
         return self.git("status", "--porcelain").stdout == ""
 
     def request(self, **extra):
-        return dict({"verb": "layout", "zone": "Work", "project": "Acme", "thread": "Pricing", "papers": "own"}, **extra)
+        return dict({"verb": "layout", "zone": "Work", "project": "Acme", "heading": True}, **extra)
 
     def look(self, **extra):
         """The plan, as the dialog asks for it, through the executor the app's bridge uses."""
@@ -87,7 +89,8 @@ class TestTheControlShowsThePlan(ControlCase):
         out = self.look()
         self.assertTrue(out["ok"], out)
         plan = out["plan"]
-        self.assertEqual([[f"Deliverables/{self.DECK}", f"Threads/Pricing/Deliverables/{self.DECK}"]], plan["moves"])
+        self.assertEqual([[f"Deliverables/{self.DECK}", f"Threads/Pricing/Deliverables/{self.DECK}"],
+                          [f"Deliverables/{self.SHEET}", f"Threads/Freight/Deliverables/{self.SHEET}"]], sorted(plan["moves"]))
         self.assertEqual({self.MISC: "no thread names it", self.BRIEF: "more than one note names it"},
                          {n.split("/")[-1]: why for n, why in plan["left"]})
         self.assertEqual(["Freight", "Pricing"], sorted(plan["threads"]))
@@ -95,12 +98,24 @@ class TestTheControlShowsThePlan(ControlCase):
         self.assertEqual(before, self.snapshot())
         self.assertTrue(self.clean())
         self.assertEqual(count, self.commits())
+        self.assertTrue(plan["heading"])
+        self.assertFalse(plan["join"])
 
-    def test_a_heading_plan_and_a_plan_back_up(self):
-        out = self.look(thread=None, papers=None, heading=True)
+    def test_a_join_plan_offers_each_threads_next_action_and_writes_nothing(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
+        self.make("thread", "--zone", "Work", "--project", "Cedar", "--name", "Quay")
+        self.commit("Cedar")
+        before, count = self.snapshot(project="Cedar"), self.commits()
+        out, _, _ = pa.perform(self.root, {"verb": "layout", "zone": "Work", "project": "Cedar", "join": True, "check": True,
+                                           "plan": True}, pa.ops_lib(self.root), via="page")
         self.assertTrue(out["ok"], out)
-        self.assertEqual(self.DECK, out["plan"]["moves"][0][0].split("/")[-1])
-        self.assertTrue(out["plan"]["heading"])
+        plan = out["plan"]
+        self.assertTrue(plan["join"] and plan["opens_resume"])
+        self.assertEqual(["Harbour", "Quay"], sorted(n for n, _ in plan["next_actions"]))
+        self.assertIn(plan["resume_from"], ("Harbour", "Quay"))
+        self.assertEqual(before, self.snapshot(project="Cedar"))
+        self.assertEqual(count, self.commits())
+        self.assertTrue(self.clean())
 
     def test_a_plan_is_only_of_a_check(self):
         out, _, why = pa.perform(self.root, self.request(plan=True), pa.ops_lib(self.root), via="page")
@@ -128,6 +143,14 @@ class TestTheControlShowsThePlan(ControlCase):
         self.assertTrue(out["ok"], out)
         self.assertTrue((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables" / self.DECK).is_file())
 
+    def test_a_thread_or_a_papers_choice_is_refused_by_the_verb_with_the_sentence_that_names_the_switch(self):
+        for extra in ({"thread": "Pricing"}, {"papers": "own"}, {"thread": "Pricing", "papers": "project", "heading": None, "join": True}):
+            for look in (True, False):
+                out, _, _ = pa.perform(self.root, self.request(check=look, **extra), pa.ops_lib(self.root), via="page")
+                self.assertFalse(out["ok"], extra)
+                self.assertIn("one job or separate jobs", out["say"])
+        self.assertTrue(self.clean())
+
 
 class TestMoveThem(ControlCase):
     def test_it_moves_and_commits_once_and_places_nothing_listed(self):
@@ -139,6 +162,7 @@ class TestMoveThem(ControlCase):
         self.assertEqual(count + 1, self.commits())
         self.assertTrue(self.clean())
         self.assertTrue((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables" / self.DECK).is_file())
+        self.assertTrue((self.work / "Acme" / "Threads" / "Freight" / "Deliverables" / self.SHEET).is_file())
         self.assertEqual(listed[self.MISC], (self.work / "Acme" / "Deliverables" / self.MISC).read_bytes())
         self.assertEqual(listed[self.BRIEF], (self.work / "Acme" / "Sources" / self.BRIEF).read_bytes())
         self.assertFalse(any((self.work / "Acme" / "Threads" / t / k / self.MISC).exists() for t in ("Pricing", "Freight")
@@ -199,20 +223,31 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
         row = [r for r in T["rows"] if r["project"] == project and r["thread"] == thread][0]
         return status.layout_offers(row["note"].parent, bool(row.get("heading")), row["hub"] is not None)
 
-    def test_a_project_of_one_piece_of_work_offers_a_heading(self):
-        self.assertEqual(["heading"], self.offers("Acme"))
+    def test_a_project_that_is_one_job_offers_to_split_and_a_project_of_separate_jobs_offers_to_join(self):
+        self.assertEqual(["split"], self.offers("Acme"))
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
+        self.assertEqual(["join"], self.offers("Cedar"))
 
-    def test_a_thread_on_the_projects_papers_offers_its_own_and_one_with_its_own_offers_the_way_back(self):
-        self.assertEqual(["own"], self.offers("Acme", "Pricing"))
-        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Side Deal", "--papers", "own")
-        self.assertEqual(["project"], self.offers("Acme", "Side Deal"))
-        (self.work / "Acme" / "Threads" / "Pricing" / "Sources").mkdir()
-        self.assertEqual(["own", "project"], self.offers("Acme", "Pricing"))        # only half its papers
-
-    def test_a_heading_and_its_threads_offer_nothing(self):
-        self.make("project", "--zone", "Work", "--name", "Cedar", "--heading", "--thread", "Harbour")
-        self.assertEqual([], self.offers("Cedar"))
+    def test_no_thread_offers_a_layout_whatever_its_papers_(self):
+        self.assertEqual([], self.offers("Acme", "Pricing"))
+        (self.work / "Acme" / "Threads" / "Pricing" / "Sources").mkdir()                  # a mixed project: still the project's switch
+        self.assertEqual([], self.offers("Acme", "Pricing"))
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
         self.assertEqual([], self.offers("Cedar", "Harbour"))
+
+    def test_a_projects_card_offers_exactly_one_layout_action_and_a_threads_none(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
+        out = self.base / "status.html"
+        r = subprocess.run([sys.executable, str(REPO / "extras" / "status" / "status.py"), "--workspace", str(self.root),
+                            "--out", str(out), "--no-cmux"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        cards = [json.loads(html_lib.unescape(m)) for m in re.findall(r'data-card="(\{[^"]*)"', out.read_text(encoding="utf-8"))]
+        offers = {(c["kl"], c["n"]): c["mg"][6] for c in cards if c.get("mg")}
+        self.assertEqual(["split"], offers[("project", "Acme")])
+        self.assertEqual(["join"], offers[("project", "Cedar")])
+        for (kind, name), offered in offers.items():
+            if kind == "thread":
+                self.assertEqual([], offered, name)
 
     def test_the_cards_carry_it_and_the_page_builds_the_buttons(self):
         out = self.base / "status.html"
@@ -220,13 +255,18 @@ class TestTheControlIsOfferedWhereItApplies(ControlCase):
                             "--out", str(out), "--no-cmux"], capture_output=True, text=True, env=self.env)
         self.assertEqual(0, r.returncode, r.stderr[-1500:])
         html = out.read_text(encoding="utf-8")
-        self.assertIn('"Acme","",', html.replace("&quot;", '"').replace('\\"', '"'))
-        for word in ("layout-own", "layout-project", "layout-heading", "A thread to its own papers",
-                     "A thread back to the project’s papers", "A project to a heading", "window.GarrickLayout"):
+        for word in ("layout-'+l[0]", "' into separate jobs…'", "' into one job…'", "'One job'", "'Separate jobs'", "window.GarrickLayout",
+                     "window.GarrickLayoutChip"):
             self.assertIn(word, html)
-        data = html.replace("&quot;", '"')
-        self.assertIn('["heading"]', data)
-        self.assertIn('[],["own"]', data)
+        for gone in ("layout-own", "layout-project", "layout-heading", "Own papers…", "Project’s papers…", "Make a heading…"):
+            self.assertNotIn(gone, html)
+        self.assertIn('["split"]', html.replace("&quot;", '"'))
+
+    def test_the_join_dialog_lists_the_next_actions_and_preselects_the_last_touched(self):
+        for word in ("p.opens_resume", 'name="lay-from"', "(n[0]===p.resume_from?' checked'", "no Next action written",
+                     "var from=d.querySelector('#lay-resume input:checked')", "more.resume_from=from.value"):
+            self.assertIn(word, STATUS_SRC)
+        self.assertEqual(2, STATUS_SRC.count("host.postMessage({act:Object.assign({},base"))     # the look, and Move them only
 
     def test_the_dialog_checks_first_and_moves_only_on_the_owners_click(self):
         self.assertIn("check:true,plan:true", STATUS_SRC)
@@ -287,33 +327,31 @@ class TestTheAskBoxOffersItAndRunsNothing(ControlCase):
         self.assertEqual(count, self.commits())
         self.assertTrue(self.clean())
 
-    def test_a_heading_request_offers_the_dialog(self):
+    def test_a_split_request_offers_the_dialog(self):
         before, count = self.snapshot(), self.commits()
-        out = self.asker.ask("make Acme a heading")
+        out = self.asker.ask("split Acme into separate jobs")
         self.assertEqual([{"label": "Review the change", "layout": {"zone": "Work", "project": "Acme", "heading": True}}], out["choices"])
         self.assertEqual([], out["acted"])
         self.assertEqual([], out["launch"])
         self.assertIn("Nothing moves until you say so", out["say"])
         self.assert_nothing_ran(before, count)
 
-    def test_an_own_papers_request_offers_the_dialog(self):
+    def test_a_join_request_offers_the_dialog_only_where_it_applies(self):
         before, count = self.snapshot(), self.commits()
-        out = self.asker.ask("give Pricing its own papers")
-        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Work", "project": "Acme", "thread": "Pricing",
-                                                                      "papers": "own"}}], out["choices"])
-        self.assert_nothing_ran(before, count)
+        out = self.asker.ask("join Acme into one job")
+        self.assertEqual([], out["choices"])                       # one job already, and no thread keeps papers of its own
+        self.assertIn("one job already", out["say"])
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
+        self.commit("Cedar")
+        out = self.asker.ask("join Cedar into one job")
+        self.assertEqual([{"label": "Review the change", "layout": {"zone": "Work", "project": "Cedar", "join": True}}], out["choices"])
+        self.assert_nothing_ran(self.snapshot(), self.commits())
 
-    def test_a_request_to_go_back_offers_it_only_where_it_applies(self):
-        before, count = self.snapshot(), self.commits()
-        out = self.asker.ask("let Pricing use the project's papers")
-        self.assertEqual([], out["choices"])                      # it uses them already
-        self.assertIn("already", out["say"])
-        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Side Deal", "--papers", "own")
-        self.commit("Side Deal")
-        before, count = self.snapshot(), self.commits()
-        out = self.asker.ask("let Side Deal use the project's papers")
-        self.assertEqual("project", out["choices"][0]["layout"]["papers"])
-        self.assert_nothing_ran(before, count)
+    def test_a_request_about_one_threads_papers_offers_nothing_and_is_not_read_as_a_layout(self):
+        self.session.answers.append(json.dumps({"say": "Nothing like that here.", "do": []}))
+        out = self.asker.ask("give Pricing its own papers")
+        self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c])
+        self.assertNotIn("Review the change", json.dumps(out))
 
     def test_the_box_cannot_run_the_verb(self):
         out, _, _ = pa.perform(self.root, self.request(), pa.ops_lib(self.root), via="ask")
@@ -322,38 +360,38 @@ class TestTheAskBoxOffersItAndRunsNothing(ControlCase):
         out, _, _ = pa.perform(self.root, self.request(check=True, plan=True), pa.ops_lib(self.root), via="session")
         self.assertFalse(out["ok"])
 
-    def test_a_heading_is_offered_nothing(self):
-        self.make("project", "--zone", "Work", "--name", "Cedar", "--heading", "--thread", "Harbour")
+    def test_separate_jobs_are_not_split_again(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar", "--separate", "--thread", "Harbour")
         self.commit("Cedar")
-        out = self.asker.ask("make Cedar a heading")
+        out = self.asker.ask("split Cedar into separate jobs")
         self.assertEqual([], out["choices"])
-        self.assertIn("heading", out["say"])
+        self.assertIn("separate jobs already", out["say"])
 
     def personal_project(self):
         self.make("project", "--zone", "Personal", "--name", "Maple")
-        self.make("project", "--zone", "Personal", "--name", "Linden", "--heading", "--thread", "Harbour")
+        self.make("project", "--zone", "Personal", "--name", "Linden", "--separate", "--thread", "Harbour")
 
     def test_a_project_of_another_zone_is_neither_named_nor_offered_in_this_zones_window(self):
         self.personal_project()
-        for request in ("make Maple a heading", "make Linden a heading", "give Harbour its own papers"):
+        for request in ("split Maple into separate jobs", "join Linden into one job", "split Harbour into separate jobs"):
             self.session.answers.append(json.dumps({"say": "Nothing like that here.", "do": []}))
             out = self.asker.ask(request, zone="Work")
             self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c], request)
-            for word in ("Maple", "Linden", "Harbour", "heading over", "own papers already", "Review the change"):
+            for word in ("Maple", "Linden", "Harbour", "separate jobs already", "one job already", "Review the change"):
                 self.assertNotIn(word, json.dumps(out), request)
 
     def test_the_same_request_in_its_own_zones_window_offers_it(self):
         self.personal_project()
-        out = self.asker.ask("make Maple a heading", zone="Personal")
+        out = self.asker.ask("split Maple into separate jobs", zone="Personal")
         self.assertEqual([{"label": "Review the change", "layout": {"zone": "Personal", "project": "Maple", "heading": True}}],
                          out["choices"])
-        out = self.asker.ask("make Linden a heading", zone="Personal")
-        self.assertIn("heading over separate pieces of work already", out["say"])
+        out = self.asker.ask("split Linden into separate jobs", zone="Personal")
+        self.assertIn("separate jobs already", out["say"])
 
     def test_with_no_window_a_name_held_by_two_zones_offers_nothing(self):
         self.make("project", "--zone", "Personal", "--name", "Acme")
         self.session.answers.append(json.dumps({"say": "Which one?", "do": []}))
-        out = self.asker.ask("make Acme a heading")
+        out = self.asker.ask("split Acme into separate jobs")
         self.assertEqual([], [c for c in out.get("choices", []) if "layout" in c])
 
 

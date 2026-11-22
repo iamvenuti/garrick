@@ -43,6 +43,62 @@ def row(sid, since, where="cmux", thread="Acme Review, Pricing", waits="a questi
             "since": since, "where": where}
 
 
+def need(zone, text):
+    return status.attn_need("warning", text, "#todolist", zone=zone, group="todo", tz=zone)
+
+
+class TestTheLeadCountsOneZone(unittest.TestCase):
+    """W7: the lead sentence counts the rows of the zone in view and the rows that belong to no zone, never two zones added."""
+
+    NEEDS = [need("Work", "2 late actions"), need("Work", "A question"), need("Personal", "1 late action"),
+             need("Personal", "Another"), need("Personal", "A third"), need("", "A job failed")]
+
+    def card(self, view, zones=("Work", "Personal"), needs=None):
+        return status.waiting_card([], NOW, self.NEEDS if needs is None else needs, view, zones)
+
+    def test_two_zones_are_never_one_figure(self):
+        work = self.card("Work")
+        self.assertIn("<h2>Three things need you.</h2>", work)                      # Work's two and the job, not six
+        personal = self.card("Personal")
+        self.assertIn("<h2>Four things need you.</h2>", personal)                   # Personal's three and the job
+        self.assertNotIn("Six things", work + personal)
+
+    def test_the_rows_of_the_other_zone_wait_hidden_and_name_their_zone(self):
+        html = self.card("Work")
+        rows = re.findall(r'<div class="wrow wneed"([^>]*)>', html)
+        self.assertEqual(["", "", 'data-nz="Personal" hidden', 'data-nz="Personal" hidden', 'data-nz="Personal" hidden', ""],
+                         [r.strip() for r in rows])                                  # the rows in view are built as they always were
+        self.assertIn('data-view="Work"', html)
+        self.assertIn('data-zones="[&quot;Work&quot;, &quot;Personal&quot;]"', html)
+        self.assertIn('data-n="3"', html)
+
+    def test_the_group_counts_are_of_the_zone_in_view(self):
+        html = self.card("Personal")
+        self.assertIn('To do <span class="wgn">4</span>', html)
+
+    def test_a_card_with_no_zone_in_view_counts_as_it_always_did(self):
+        html = status.waiting_card([], NOW, self.NEEDS)
+        self.assertIn("<h2>Six things need you.</h2>", html)
+        self.assertNotIn("data-nz", html)
+        self.assertNotRegex(html, r'wneed"[^>]*\bhidden\b')
+
+    def test_a_row_of_a_zone_the_picker_cannot_show_is_never_hidden(self):
+        html = self.card("Work", zones=("Work",))
+        self.assertIn("<h2>Six things need you.</h2>", html)                        # no zone in view to hide Personal's rows for: as today
+        self.assertNotRegex(html, r'wneed"[^>]*\bhidden\b')
+
+    def test_the_script_hides_and_counts_what_the_zone_in_view_shows(self):
+        js = status.WAITING_JS
+        for word in ("function zoneView(z)", "r.hidden=!!w&&zs.indexOf(w)>=0&&w!==z", ".wneed:not([hidden])", "window.GarrickWaitingZone=zoneView",
+                     "garrick-graph-place"):
+            self.assertIn(word, js)
+        self.assertIn("if(window.GarrickWaitingZone)GarrickWaitingZone(z)", status.GRAPH_JS)
+
+    def test_the_page_picks_the_zone_the_graph_opens_on(self):
+        src = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn('view_zone = ("Work" if "Work" in zones_here else zones_here[0]) if zones_here else None', src)
+
+
 class Card(unittest.TestCase):
     def test_one_row_per_waiting_session_oldest_first(self):
         html = status.waiting_card([row("b", "2026-11-10T09:50:00Z", thread="Birch Entry"),

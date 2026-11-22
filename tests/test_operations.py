@@ -299,7 +299,7 @@ SHAPES = {
     "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
     "onclick: 'delete'": {"delete": ()},
-    "layout: 'layout'": {"layout": ("thread", "papers", "heading", "check", "plan")},     # the layout dialog's base (#604), added to by Object.assign
+    "layout: 'layout'": {"layout": ("thread", "papers", "heading", "join", "resume_from", "check", "plan")},     # the layout dialog's base (#604), added to by Object.assign
     "onclick: 'undo'": {"undo": ()},                     # offer(): the undo bar
     "poll: 'operations'": {"operations": ()},            # WORK_JS: the one verb that reads
     # TODO_JS send(verb,r,more,said); `more` is {date:v} from the date menu,
@@ -317,7 +317,7 @@ SHAPES = {
                                                          # Memory's form assigned to it (#108)
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
     "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
-    "park: v": {"park": (), "wake": ()},                 # PANEL_JS park(o): by name, or by file
+    "stchip: v": {"park": (), "wake": ()},               # PANEL_JS stchip(o), the card's state chip: by name, or by file
     "cont: 'continue'": {"continue": ()},                # PANEL_JS cont(o): Open in Claude on a thread (#180)
     # the page's own cache entries, which are never sent back: their verbs
     # are the zoned ones, and `op` is what GarrickAct adds to what it sends
@@ -354,7 +354,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb", "named: 'outbox-drop'"},
-           "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
+           "PANEL_JS": {"request: 'settings'", "deskReq: v", "stchip: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "MENU_SETTINGS_JS": {"tell: 'settings'"},
            "CHANNELS_JS": {"chSave: 'settings'"},

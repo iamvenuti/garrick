@@ -11,19 +11,19 @@ These are the rules in `System/rules.md` that this request carries out, word for
 
 ## Open: "open X"
 
-1. Resolve X. **A project's name alone** says which piece of work is meant
-   when the project is one piece of work: X is its hub. When the project is a
-   heading (`layout: thread-first` on its hub), its name does not: ask which
+1. Resolve X. **A project's name alone** says which job is meant
+   when the project is one job: X is its hub. When the project is separate jobs
+   (`layout: thread-first` on its hub), its name does not: ask which
    thread in one line that names them, "Which thread of Birch: Pricing or
    Freight?", and never guess. A thread's name is needed only to open that
    thread itself.
 2. Read that thread's `### Resume here` block. Nothing else: not the hub, not
    the working notes, not the dated entries, unless the user asks. For a
-   project that is one piece of work, read the hub's `### Resume here` block
+   project that is one job, read the hub's `### Resume here` block
    the same way, while it is there (an `### Outcome` in its place ends it), and
    add one line that lists the threads beside it, by name and status. A thread
    of such a project is opened by its own block: that one wins for "open <Thread>".
-   A question about a heading ("where are we on Birch") reads every thread
+   A question about separate jobs ("where are we on Birch") reads every thread
    under it, and each part of the answer names the thread it comes from. Never
    read a project or thread of another zone to settle a name.
 3. **Read the checkpoint beside it**, the `### Checkpoint` block under Resume

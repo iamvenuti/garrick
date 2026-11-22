@@ -1094,7 +1094,7 @@ class TestNewProjectDialog(ManageCase):
         text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
         self.assertIn("[['','None']].concat(p,[[NEW,'New party…']])", text)
         self.assertNotIn("Empty gives ", text)
-        self.assertIn("Is this project one piece of work, or a heading over separate pieces?", text)
+        self.assertIn("One job or separate jobs?", text)
         self.assertIn("'new project '+q.name+(np?' for new party '+q.new_party", text)
         self.assertNotIn("A project needs a name, its party and its first thread", text)
 

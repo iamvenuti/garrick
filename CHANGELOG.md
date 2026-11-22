@@ -4,6 +4,45 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-11-22
+
+This release cuts the number of sessions you have to approve, and the card on a project now says what the project is. A project is one job or separate jobs, and you switch it from its card in either direction. *Process the Inbox* and most Context answers do their work in the background. They come back with a result, and with a question only when they need one.
+
+**Upgrading.**
+- A project is one job or separate jobs, and its card switches it in either direction. A thread no longer chooses its own papers. If a project is one job but one of its threads keeps its own `Sources/` or `Deliverables/`, the check now reports it, and one yes in Nurture moves those papers into the project's.
+- The card on a project or thread row shows the state, and on a project the layout, as buttons beside the party: *Active* or *Parked*, *One job* or *Separate jobs*. *Park*, *Wake* and the layout rows have left the menu.
+- *Process the Inbox* files what it can in the background and asks you only about the items that need you, as rows in *Waiting on you now*. No session opens. With Ask set to *Read*, or with an assistant other than Claude, it opens your assistant as before.
+- Context answers that change a page (*Split*, *Shorten the line*, *Finish the correction*, *Ask my assistant to fix it*) now run in the background and commit, with Undo, instead of opening a session.
+- The nightly answers step no longer spends its turns on commands it may not run.
+
+### Added
+
+- **One job or separate jobs** (#632). A project's card offers *Split into separate jobs…* on a project that is one job, and *Join into one job…* on one that is separate jobs. Join shows its plan first and writes nothing until *Move them*. It moves each thread's `Sources/` and `Deliverables/` into the project's, with their ledger rows and links, in one commit with Undo. A file whose name is already taken is listed for you to place, never renamed or overwritten. The hub gets its Resume here block back, opening with the Next action of the thread you choose. *New project* asks "One job or separate jobs?", and *New thread* asks nothing about papers.
+- **A mixed project is found and mended** (#632). The check reports a project that is one job with a thread that keeps papers of its own. On such a project the layout button opens the Join plan, and Nurture offers the Join as a fix you approve with one yes. The nightly run never applies it, because it moves files.
+- **The state and the layout as buttons on the card** (#633). A click on *Active* parks the project after the same confirmation as before, and a click on *Parked* wakes it. A click on *One job* or *Separate jobs* opens the plan and writes nothing. A finished thread shows *Done*. Each button names its change for a screen reader ("Park Acme and its threads") and works from the keyboard.
+- **Process the Inbox in the background** (#634). One background run files what settles and commits once in each repository, through its own checks. It may write only in the inboxes, the two wikis, a project's or a thread's `Sources/`, and a zone's `Todo.md`, and it may use only the intake steps that file. A guard checks every file it writes before the write happens. If the workspace's rules or tools change during the run, nothing is kept. When the run cannot tell its own changes from someone else's, it leaves that repository exactly as it is and says where. It never sends, shares or deletes, and only one run goes at a time. An item it cannot settle stays in its inbox as a question with a button for each answer, and answering files that one item in the background. A question in one zone never names a party, person or subject of another walled zone. The row says what happened in one sentence.
+- **Context answers in the background** (#626). *Split the long sections*, *Shorten the line*, *Finish the correction* and *Ask my assistant to fix it* run in the background, one at a time for each zone or wiki, and the row shows the result with Undo. A split may add new notes in the finding's own folder only. A correction runs in the background when every page it changes is in the finding's own zone; otherwise it goes to your assistant. A wrong attribution and a hook of your own still open your assistant.
+- **A render helper for look checks** (#622). `tools/render.py` takes screenshots of a page at several widths and in both themes, with one headless shell for the whole list and a throwaway profile. It never starts the Chrome app, so no icon bounces in the Dock and no crash report lands in your Chrome folder. With no headless shell installed, it says how to install one. It is a development tool and is not shipped to workspaces.
+
+### Changed
+
+- The card has no thread count, its menu keeps only one-off actions, and the app icons sit on one row.
+- The Overview's lead sentence counts the zone in view.
+- The nightly answers call is told which tools it has. It looks with the read and search tools, runs only the two answer steps, and never waits for a file to change (#635). The skills say the same for an unattended run. When a shell command is refused, the ledger records the program's name when it is one it knows, never the arguments.
+- A nightly answer that is stopped twice at the time limit is held as *too long*, so the others go on (#629). It is tried again when its question changes, or after a week.
+- The nightly answers step commits only the pages listed for the answer it worked in, and counts any other change it leaves alone.
+- Nurture rewrites every history file's older `parent:` link to the current form (#627).
+- An unattended run never confirms an intake question for you.
+
+### Fixed
+
+- Settings shows the read guard's mode when only Claude is set up and the Codex folder is empty.
+
+### Removed
+
+- `--papers` from `scaffold.py thread` and `scaffold.py layout`, and *Own papers…*, *Project's papers…* and *Make a heading…* from the card. A request for them is refused with a sentence that names the project's switch.
+- The unused folder picker in the Mac app, and the `home` choice in the settings request.
+
 ## [0.74.0] - 2026-11-22
 
 Two features 0.73.0 shipped, the machine's role and the read guard, can now be set from Settings, and each has a docs page written for the person who uses it. The Threads card and the card that opens on a row are easier to read. The Garrick App has one home.

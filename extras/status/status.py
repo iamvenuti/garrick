@@ -7600,7 +7600,7 @@ if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuil
 /* Escape closes the card, unless a preview is open over it: that Escape is the preview's (NOTE_JS) */
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel&&!(window.GarrickNote&&GarrickNote.shown()))close()});
 function redo(){if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
-function show(z){zsel=z;ks=kindsFor(z);if(fq)fq.value='';q='';hi=-1;redo()}
+function show(z){zsel=z;if(window.GarrickWaitingZone)GarrickWaitingZone(z);ks=kindsFor(z);if(fq)fq.value='';q='';hi=-1;redo()}
 /* a pick is stored, leads the card (#72) and is what a reload opens on */
 var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){var z=zsl.value;st.set('garrick-graph-place',z);leadZone(z);if(!cardZone(z))held=true;show(z)};
 /* the legend is the filter: a kind's button shows or hides it, kept for the place (#250) */
@@ -7983,8 +7983,9 @@ def job_need(j: dict) -> dict:
     return dict({"kind": "job", "text": "%s failed: %s" % (j["title"], why), "late": since, "label": "See the log"}, **({"act": again} if again else {}))
 
 
-def need_row(n: dict) -> str:
-    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how long, one button."""
+def need_row(n: dict, view: Optional[str] = None, zones: Tuple[str, ...] = ()) -> str:
+    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how long, one button. In a card that has
+    a zone in view, a row of another zone is built hidden and says whose it is (`data-nz`), for WAITING_JS to show it in its turn; the rows in view are as they always were."""
     cls, path = NEED_ICON[n["level"]]
     icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
             'stroke-linejoin="round">%s</svg>' % path)
@@ -8000,24 +8001,26 @@ def need_row(n: dict) -> str:
         # The main button does the work, or the late lines themselves do; the link to where the item lives is secondary (#595).
         go = '<span class="wacts">%s%s</span>' % (n.get("act", ""), go.replace('class="act"', 'class="alt"', 1))
     lines = '<div class="wlate">%s</div>' % n["lines"] if n.get("lines") else ""
-    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go, lines)
+    mine = ' data-nz="%s" hidden' % E(n["zone"]) if view is not None and n.get("zone") and n["zone"] in zones and not in_view(n, view, zones) else ""
+    return '<div class="wrow wneed"%s><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s%s</div>' % (mine, cls, icon, E(n["text"]), where, late, go, lines)
 
 
-def need_groups(needs: List[dict]) -> str:
+def need_groups(needs: List[dict], view: Optional[str] = None, zones: Tuple[str, ...] = ()) -> str:
     """The rows in two groups (#559): Broken (a job that failed, an error the check found) and To do (late
     actions, the inboxes, files not committed, warnings). With a row in Broken, To do starts folded and says how
     many it holds."""
     broken = [n for n in needs if n.get("group") == "broken"]
     todo = [n for n in needs if n.get("group") != "broken"]
+    shown = lambda ns: sum(1 for n in ns if in_view(n, view, zones))                  # noqa: E731  what the zone in view counts
     html = ""
     if broken:
         html += ('<section class="wgroup" data-g="broken" aria-label="Broken"><h3 class="wgh">Broken <span class="wgn">%d</span></h3>%s</section>'
-                 % (len(broken), "".join(need_row(n) for n in broken)))
+                 % (shown(broken), "".join(need_row(n, view, zones) for n in broken)))
     if todo:
-        rows = "".join(need_row(n) for n in todo)
-        html += ('<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">%d</span></summary>%s</details>' % (len(todo), rows)
+        rows = "".join(need_row(n, view, zones) for n in todo)
+        html += ('<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">%d</span></summary>%s</details>' % (shown(todo), rows)
                  if broken else
-                 '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (len(todo), rows))
+                 '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (shown(todo), rows))
     return html
 
 
@@ -8275,23 +8278,35 @@ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();var at=items.index
 """
 
 
-def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None) -> str:
+def in_view(n: dict, view: Optional[str], zones: Tuple[str, ...]) -> bool:
+    """Does a row count in the lead sentence (W7)? Every row, when no zone is in view; otherwise a row with no zone (a job
+    that failed), a row of a zone the page cannot put in view, and the rows of the zone in view: never the rows of two
+    zones added into one figure."""
+    return view is None or not n.get("zone") or n["zone"] not in zones or n["zone"] == view
+
+
+def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None, view: Optional[str] = None,
+                 zones: Tuple[str, ...] = ()) -> str:
     """The Waiting on you now card: what waits on the user, each with an icon, one sentence, its zone, how late and
     one button. First the things the page knows from its records (`needs`: what failed, each zone's late actions,
-    the warnings), then one row per waiting session, oldest first, which the app keeps current."""
+    the warnings), then one row per waiting session, oldest first, which the app keeps current. With a zone `view`,
+    the lead sentence counts that zone's rows and the rows that belong to no zone; the rows of another zone are in
+    the card, hidden until that zone is in view (WAITING_JS), so the sentence and the rows in view always agree."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
     needs = needs or []
-    total = len(rows) + len(needs)
+    seen = [n for n in needs if in_view(n, view, zones)]
+    total = len(rows) + len(seen)
     # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
     html = card("waiting-now", lead_said(total), "",
                 '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows">%s</div>'
-                % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
+                % (need_groups(needs, view, zones), "".join(waiting_row(r, now) for r in rows)))
     # The region a screen reader listens to sits in the card but outside its body, which the calm rule hides: it says the
     # lead sentence again whenever the count changes, calm or not (#600). Visually hidden, never display:none.
     html = html[:html.rindex("</details>")] + ('<div class="srsay" id="wlive" role="status" aria-live="polite" aria-atomic="true">%s</div>'
                                               % E(lead_said(total))) + "</details>"
     # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
-    html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
+    zone_attrs = (' data-zone="%s" data-zones="%s"' % (E(view), E(json.dumps(list(zones), ensure_ascii=False)))) if view is not None else ""
+    html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"%s' % ("" if total else " calm", len(seen), zone_attrs), 1)
     return html
 
 
@@ -8326,7 +8341,7 @@ if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.cl
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
 /* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
-function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
+function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=c.dataset.zones?c.querySelectorAll('.wneed:not([hidden])').length:+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
 var s=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
 if(h)h.textContent=s;c.classList.toggle('calm',t<1);
 /* the live region says it only when it changes, so the build's own sentence is not read out again (#600) */
@@ -8338,6 +8353,14 @@ lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+/* the zone in view (W7): the rows of the other zones wait, hidden, until that zone is picked; the sentence counts what shows */
+function zoneView(z){var c=document.getElementById('waiting-now'),zs=[];if(!c||!c.dataset.zones)return;try{zs=JSON.parse(c.dataset.zones)}catch(e){}
+if(zs.indexOf(z)<0)return;c.dataset.zone=z;
+[].forEach.call(c.querySelectorAll('.wneed'),function(r){var a=r.querySelector('[data-tz-go]'),w=r.dataset.nz||(a&&a.dataset.tzGo)||'';r.hidden=!!w&&zs.indexOf(w)>=0&&w!==z});
+[].forEach.call(c.querySelectorAll('.wgroup'),function(g){var n=g.querySelectorAll('.wneed:not([hidden])').length,e=g.querySelector('.wgn');if(e)e.textContent=n;g.hidden=!n});
+lead(box.children.length)}
+window.GarrickWaitingZone=zoneView;
+try{var kept=localStorage.getItem('garrick-graph-place');if(kept)zoneView(kept)}catch(e){}
 window.GarrickNeedsLead=function(){lead(box.children.length)};
 })();
 """
@@ -9029,7 +9052,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
     needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
-    lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+    zones_here = tuple(T)                                                          # the zones the picker can put in view; Work first, as the graph does
+    view_zone = ("Work" if "Work" in zones_here else zones_here[0]) if zones_here else None
+    lead = waiting_card(waiting_now or [], now, needs, view_zone, zones_here) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)

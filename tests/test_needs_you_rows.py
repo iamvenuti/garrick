@@ -128,7 +128,9 @@ class Rows(unittest.TestCase):
         self.assertEqual(["Personal", "Work"], sorted(zones))
         self.assertEqual({"Work": "Acme Review/Threads/Pricing/Needs you/a.md", "Personal": "Garden/Threads/Beds/Needs you/a.md"},
                          {n["zone"]: n["q"] for n in self.needs()})
-        self.assertIn("<h2>Two things need you.</h2>", self.card(self.page()))
+        card = self.card(self.page())
+        self.assertIn("<h2>One thing needs you.</h2>", card)                       # W7: Work is in view; Personal's row is not added to it
+        self.assertRegex(card, r'data-nz="Personal" hidden')
 
     def test_a_question_text_cannot_break_the_markup(self):
         write(self.box / "a.md", question(ask='<img src=x onerror="1"> Which?'))

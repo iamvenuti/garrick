@@ -317,6 +317,82 @@ class TestShadowManageData(Case):
         self.assertEqual(view.mixed_papers(folder), status.mixed_papers(folder))
 
 
+# What status.py still reads from the folders for itself, by function, and why: no core module owns it yet. The acceptance
+# line "status.py has no direct read of Zones/, Wikis/ or a thread note" is met when this table is empty; until then it
+# is the list of what is left (#650 is `Part of`). A function that reads anew fails the test below, and one that stops
+# reading must leave the table, so the list never goes stale.
+LEFT = {
+    "example_zone": "the worked example's marker, .example.json",
+    "graph": "Explore: the notes of one zone or one wiki, for the graph",
+    "is_workspace": "whether a folder holds System/rules.md and Zones/",
+    "jobs": "the jobs folder's logs",
+    "launchd_jobs": "this Mac's launchd agents",
+    "question_needs": "the wiki questions that wait, for Waiting on you now",
+    "questions_in": "a wiki's question files",
+    "repos": "each repository's own state",
+    "system_notes": "the projects kept in System/, which the work reader does not cover",
+    "threads": "zone names only, while view.py is missing (a half-finished update)",
+    "todo": "each zone's open-line counts (no caller is left)",
+    "todo_list": "the Todo tab: each zone's Todo.md and the action lines in thread notes",
+    "visible_dirs": "the helper the others list folders with",
+    "wikis": "each wiki's log",
+}
+
+
+class TestWhatThePageStillReads(unittest.TestCase):
+    """The acceptance line of #650: status.py has no direct read of Zones/, Wikis/ or a thread note. It is not met yet, and
+    this says exactly what is left."""
+
+    @staticmethod
+    def readers():
+        import ast
+        tree = ast.parse((REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8"))
+        found = {}
+
+        class Walk(ast.NodeVisitor):
+            def __init__(self):
+                self.stack = []
+
+            def visit_FunctionDef(self, node):
+                self.stack.append(node.name)
+                self.generic_visit(node)
+                self.stack.pop()
+
+            def hit(self, why):
+                if self.stack:
+                    found.setdefault(self.stack[0], set()).add(why)
+
+            def visit_BinOp(self, node):
+                if isinstance(node.op, ast.Div) and isinstance(node.right, ast.Constant) and node.right.value in ("Zones", "Wikis"):
+                    self.hit("path " + node.right.value)
+                self.generic_visit(node)
+
+            def visit_Call(self, node):
+                f = node.func
+                name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+                if name in ("glob", "rglob", "iterdir", "walk", "visible_dirs", "listdir", "scandir"):
+                    self.hit("call " + name)
+                if name in ("Path", "joinpath", "join") and any(isinstance(a, ast.Constant) and a.value in ("Zones", "Wikis") for a in node.args):
+                    self.hit("path join")
+                self.generic_visit(node)
+
+        Walk().visit(tree)
+        return found
+
+    def test_what_the_page_still_reads_is_exactly_the_list_of_what_is_left(self):
+        self.assertEqual(sorted(LEFT), sorted(self.readers()))
+
+    def test_the_sections_that_moved_read_no_folder(self):
+        found = self.readers()
+        for name in ("inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
+                     "mixed_papers", "files_in", "open_naming", "threads_card", "build"):
+            self.assertNotIn(name, found, name)
+
+    def test_the_view_model_names_what_is_left_for_it(self):
+        for name in ("Todo lists", "waiting sessions", "settings", "operations journal", "the Explore graph", "repositories"):
+            self.assertIn(name, view.LEFT)
+
+
 class TestShadowInbox(Case):
     def test_inbox_matches_the_old_read_except_the_named_differences(self):
         old = {name: (folder, n) for name, folder, n in self.old["inboxes"](self.root)}

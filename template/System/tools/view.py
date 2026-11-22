@@ -53,8 +53,9 @@ wiki. A zone folder that is a link is no zone, and an Inbox or a note that resol
 the zone it sits in is left out, so a link into another zone shows none of that zone's work.
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
-folder, the operations journal, the App's own files under `System/`, the Todo lists, the
-check's kept result, the waiting sessions, the settings.
+folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
+Todo lists, the check's kept result, the waiting sessions, the settings, the wikis' logs and questions,
+the repositories, the Explore graph, the projects kept in `System/`, and the worked example's marker.
 """
 import datetime as dt
 import importlib.util
@@ -74,8 +75,9 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 # Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
-LEFT = ("jobs folder state", "operations journal", "System/ files of the App", "Todo lists", "the check's kept result",
-        "waiting sessions", "settings", "wiki lists", "repositories")
+LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App", "Todo lists",
+        "the check's kept result", "waiting sessions", "settings", "wiki logs and questions", "repositories",
+        "the Explore graph", "projects kept in System/", "the worked example's marker")
 
 _MODS: dict = {}
 

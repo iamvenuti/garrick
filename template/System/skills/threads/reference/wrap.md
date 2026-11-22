@@ -349,21 +349,25 @@ focus, as under *No name given*). Then:
 9. **The hub's `## Threads` line** changes only if the thread's purpose
    changed. Re-read the hub, change that one line, and commit that file by
    name before the call, as the ledger is.
-10. **Memory pointer.** If you, the assistant, keep a memory of your own, send
-    `memory`: the path of this thread's entry in your memory folder, and the
-    text, which says where its resume point is and nothing else: no status, no
-    summary, and it names the note's path, which the tool checks for. The tool
-    writes `source:` (the note) and `created:` (today) in its frontmatter, as
-    every learned entry's has (*Autonomy* in `System/rules.md`); it creates the
-    entry if missing, leaves it if present, and adds the two keys to one that has
-    neither. It writes nowhere else: a path that is not an entry file of a
-    folder called `memory` or `memories` under the home folder fails the wrap.
+10. **Memory pointer.** If you, the assistant, keep a memory of your own in a
+    folder the tool knows, send `memory`: the path of this thread's entry file,
+    and nothing else. The tool writes the pointer's words itself, from the
+    zone, project, thread and the note's path, so there is no text of yours in
+    it and no status:
     ```
     Acme, Pricing (Work zone). Resume from
     Zones/Work/Acme/Threads/Pricing/Pricing.md, the Resume here block. Read it
     before anything else in the thread.
     ```
-    No memory, no key.
+    It writes `source:` (the note) and `created:` (today) in its frontmatter, as
+    every learned entry's has (*Autonomy* in `System/rules.md`). It creates the
+    entry if missing, leaves it if it is this pointer, and fails the wrap, with
+    nothing written, if another file is there: it never rewrites one. The path
+    must resolve to a `.md` file directly inside
+    `~/.claude/projects/<folder>/memory/`, never `MEMORY.md` and never a link;
+    no other folder is accepted, and an assistant whose memory is anywhere else
+    leaves `memory` out. The entry for a finished thread is deleted by Finish,
+    not by a wrap. No memory, no key.
 11. **Make the one call**, from the workspace root:
     ```sh
     python3 System/tools/wrap.py <<'EOF'
@@ -378,7 +382,7 @@ focus, as under *No name given*). Then:
      "entry": "Sent the second draft to Dana. She owes the volumes; the tier-two rate stands as drafted.",
      "todo": {"add": ["[[Pricing]]: fill in the tier-two volume 📅 2026-09-30"], "tick": ["send the second draft"]},
      "checkpoint": "folded",
-     "memory": {"path": "<the entry file in your memory folder>", "text": "Acme, Pricing (Work zone). Resume from Zones/Work/Acme/Threads/Pricing/Pricing.md, the Resume here block."},
+     "memory": {"path": "<the entry file in your memory folder>"},
      "message": "Acme, Pricing: second draft sent; waiting on Dana's volumes"}
     EOF
     ```

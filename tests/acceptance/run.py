@@ -373,15 +373,18 @@ class Run:
         and the pointer."""
         note = self.thread_note(root)
         rel = note.relative_to(root).as_posix()
-        memory = self.home / (".claude/projects/acceptance/memory" if harness == "claude" else ".codex/memories")
-        memory.mkdir(parents=True, exist_ok=True)
+        # Claude Code's memory folder is the one the tool knows; Codex documents none, so that wrap sends no pointer.
+        memory = self.home / ".claude/projects/acceptance/memory"
         pointer = memory / "launch-plan.md"
+        if harness == "claude":
+            memory.mkdir(parents=True, exist_ok=True)
         words = {"zone": ZONE, "project": PROJECT, "thread": THREAD,
                  "resume": {"stands": "The board has decided; timing and budget are filled in and the outline waits for the distributor questions.",
                             "rows": {"Live artifact": "`Threads/Launch Plan/Outline.md`, the outline", "Rebuild with": "The sizing memo for the numbers",
                                      "Next action": NEXT_ACTION, "Keep in mind": "nothing", "Waiting on": "nobody", "Deadline": "none"}},
-                 "entry": entry, "message": "%s, %s: wrapped through the tool as %s" % (PROJECT, THREAD, harness),
-                 "memory": {"path": str(pointer), "text": "%s, %s (%s zone). Resume from %s, the Resume here block." % (PROJECT, THREAD, ZONE, rel)}}
+                 "entry": entry, "message": "%s, %s: wrapped through the tool as %s" % (PROJECT, THREAD, harness)}
+        if harness == "claude":
+            words["memory"] = {"path": str(pointer)}
         if todo:
             words["todo"] = {"add": ["[[%s]]: %s" % (THREAD, NEXT_ACTION)]}
         before = self.git(root, "Zones/" + ZONE, "rev-parse", "HEAD").stdout.strip()
@@ -399,7 +402,7 @@ class Run:
         text = note.read_text(encoding="utf-8")
         if text.count("### Resume here") != 1 or "| Next action | %s |" % NEXT_ACTION not in text or entry not in text:
             raise Fail("the wrap as %s left the note without its Resume here block or its dated entry" % harness)
-        if not pointer.is_file() or "source: file:%s" % rel not in pointer.read_text(encoding="utf-8"):
+        if harness == "claude" and (not pointer.is_file() or "source: file:%s" % rel not in pointer.read_text(encoding="utf-8")):
             raise Fail("the wrap as %s left no memory pointer with its source in %s" % (harness, memory.name))
         if harness == "claude":
             moved_to = list((note.parent / "history").glob("*.md"))
@@ -419,8 +422,8 @@ class Run:
             self.seed_old_entries(root, note)
             self.wrap_as(root, "claude", "Wrapped by the acceptance run, as Claude Code would.", todo=True)
             self.wrap_as(root, "codex", "Wrapped by the acceptance run, as Codex would.", todo=False)
-            s.note("the wrap ran twice through System/tools/wrap.py, as Claude Code and as Codex: each left a receipt of saved, a commit, the Resume here "
-                   "block and a memory pointer in its own assistant's folder; the first moved old entries to history in the same commit")
+            s.note("the wrap ran twice through System/tools/wrap.py, as Claude Code and as Codex: each left a receipt of saved, a commit and the Resume here "
+                   "block, and the Claude Code one a memory pointer the tool built; the first moved old entries to history in the same commit")
             s.note("the words of the wraps were written by a stand-in: no model chose them (skipped (stub))")
         done = list((root / "System" / "generated").glob("wrap-*.done"))
         if self.model != "claude" and not done:

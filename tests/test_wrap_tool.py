@@ -362,9 +362,9 @@ class Memory(Base):
     def text(self):
         return "Northwind, Pricing (Work zone). Resume from Zones/Work/Northwind/Threads/Pricing/Pricing.md, the Resume here block."
 
-    def test_the_pointer_is_written_with_its_origin_and_nothing_else_is(self):
+    def test_the_tool_builds_the_pointer_and_writes_it_with_its_origin(self):
         before = tree(self.base)
-        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
+        got = self.run_wrap(payload(memory={"path": str(self.entry())}))
         self.assertEqual("saved", got["outcome"], got)
         body = self.entry().read_text(encoding="utf-8")
         self.assertIn("source: file:Zones/Work/Northwind/Threads/Pricing/Pricing.md", body)
@@ -372,33 +372,59 @@ class Memory(Base):
         self.assertIn(self.text(), body)
         self.assertEqual(set(), outside_allowed(before, tree(self.base), self.root, self.entry()))
 
-    def test_a_pointer_that_is_there_is_left_as_it_is(self):
-        write(self.entry(), "---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n")
-        self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
-        self.assertEqual("---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n", self.entry().read_text(encoding="utf-8"))
+    def test_free_text_for_the_pointer_is_an_unknown_key(self):
+        before = tree(self.base)
+        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": "Acme wants 12% royalty. Zones/Work/Northwind/Threads/Pricing/Pricing.md"}))
+        self.assertEqual("failed", got["outcome"], got)
+        self.assertEqual(before, tree(self.base))
+        self.assertFalse(self.entry().exists())
 
-    def test_a_pointer_that_has_no_origin_gets_the_two_keys(self):
-        write(self.entry(), "Old pointer without keys.\n")
-        self.run_wrap(payload(memory={"path": str(self.entry()), "text": self.text()}))
-        self.assertTrue(self.entry().read_text(encoding="utf-8").startswith("---\nsource: file:"))
+    def test_a_pointer_the_tool_wrote_is_left_as_it_is(self):
+        self.run_wrap(payload(memory={"path": str(self.entry())}))
+        first = self.entry().read_bytes()
+        self.assertEqual("saved", self.run_wrap(payload(memory={"path": str(self.entry())}))["outcome"])
+        self.assertEqual(first, self.entry().read_bytes())
 
-    def test_a_memory_path_outside_a_memory_folder_writes_nothing(self):
+    def test_a_file_that_is_not_a_pointer_the_tool_wrote_is_never_rewritten(self):
+        for old in ("---\nsource: user\ncreated: 2026-10-01\n---\nMine.\n", "Old pointer without keys.\n"):
+            write(self.entry(), old)
+            before = tree(self.base)
+            got = self.run_wrap(payload(memory={"path": str(self.entry())}))
+            self.assertEqual("failed", got["outcome"], got)
+            self.assertEqual(old, self.entry().read_text(encoding="utf-8"))
+            self.assertEqual(before, tree(self.base))
+
+    def test_a_memory_path_outside_the_assistants_memory_roots_writes_nothing(self):
+        (self.home / "Documents" / "memory").mkdir(parents=True)
+        (self.home / ".ssh" / "memory").mkdir(parents=True)
+        (self.home / ".codex" / "memories").mkdir(parents=True)
+        (self.home / ".claude" / "projects" / "ws" / "notes").mkdir(parents=True)
+        real = self.base / "elsewhere"
+        real.mkdir()
+        write(real / "data.txt", "keep\n")
+        link = self.entry("link.md")
+        link.symlink_to(real / "data.txt")
         before = tree(self.base)
         elsewhere = {
             "the workspace": self.root / "Zones" / "Work" / "Northwind" / "memory" / "x.md",
             "a system file": self.root / "System" / "rules.md",
             "the home folder": self.home / "x.md",
             "another folder": self.base / "other" / "memory" / "x.md",
+            "a memory folder of any other program": self.home / "Documents" / "memory" / "x.md",
+            "a hidden one": self.home / ".ssh" / "memory" / "x.md",
+            "codex, which documents none": self.home / ".codex" / "memories" / "x.md",
+            "a claude project folder that is not memory": self.home / ".claude" / "projects" / "ws" / "notes" / "x.md",
+            "deeper than an entry": self.entry("sub") / "x.md",
             "the index": self.entry("MEMORY.md"),
             "not markdown": self.entry("x.txt"),
             "climbing out": Path(str(self.entry().parent) + "/../../x.md"),
             "relative": Path("memory/x.md"),
+            "a link to another file": link,
         }
         for what, path in elsewhere.items():
-            got = self.run_wrap(payload(memory={"path": str(path), "text": self.text()}))
+            got = self.run_wrap(payload(memory={"path": str(path)}))
             self.assertEqual("failed", got["outcome"], (what, got))
-        got = self.run_wrap(payload(memory={"path": str(self.entry()), "text": "Status: done, waiting on the buyer."}))
-        self.assertEqual("failed", got["outcome"])                               # the text must name the note
+        self.assertEqual("keep\n", (real / "data.txt").read_text())
         self.assertEqual(before, tree(self.base))
 
 
@@ -428,8 +454,7 @@ class Writes(Base):
         commit_all(self.work, "todo")
         before = tree(self.base)
         mem = self.home / ".claude" / "projects" / "ws" / "memory" / "pricing.md"
-        text = "Northwind, Pricing. Resume from Zones/Work/Northwind/Threads/Pricing/Pricing.md."
-        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"], "tick": ["send the sheet"]}, memory={"path": str(mem), "text": text}))
+        got = self.run_wrap(payload(todo={"add": ["[[Pricing]]: a new one"], "tick": ["send the sheet"]}, memory={"path": str(mem)}))
         self.assertEqual("saved", got["outcome"], got)
         self.assertEqual(set(), outside_allowed(before, tree(self.base), self.root, mem))
 

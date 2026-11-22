@@ -349,21 +349,40 @@ def write_state(ws: Path, data: dict) -> None:
     os.replace(tmp, str(path))
 
 
+def place_bits(v: dict) -> str:
+    bits = []
+    if v.get("filed"):
+        bits.append("filed %d" % v["filed"])
+    if v.get("questions"):
+        bits.append("%d question%s" % (v["questions"], "" if v["questions"] == 1 else "s"))
+    if v.get("needs"):
+        bits.append("%d item%s need%s you" % (v["needs"], "" if v["needs"] == 1 else "s", "s" if v["needs"] == 1 else ""))
+    return " \u00b7 ".join(bits)
+
+
 def result_line(places: dict) -> str:
     """The result as one sentence for each place that had something, never a figure over two: `Work: filed 4, 1 question`."""
-    parts = []
-    for place in sorted(places):
-        v = places[place]
-        bits = []
-        if v.get("filed"):
-            bits.append("filed %d" % v["filed"])
-        if v.get("questions"):
-            bits.append("%d question%s" % (v["questions"], "" if v["questions"] == 1 else "s"))
-        if v.get("needs"):
-            bits.append("%d item%s need%s you" % (v["needs"], "" if v["needs"] == 1 else "s", "s" if v["needs"] == 1 else ""))
-        if bits:
-            parts.append("%s: %s" % (place, " · ".join(bits)))
+    parts = ["%s: %s" % (place, place_bits(places[place])) for place in sorted(places) if place_bits(places[place])]
     return "; ".join(parts) if parts else "Nothing was filed."
+
+
+def sentence(state: dict, only=None) -> str:
+    """The result's sentence from a state, for the places in `only` alone when it is given (W4): the row shows the places it
+    lists and nothing of another zone. A state with no per-place lines gives its own sentence, which names no place."""
+    lines = state.get("lines")
+    if not isinstance(lines, dict):
+        return str(state.get("say") or "")
+    keys = sorted(k for k in lines if only is None or k in only)
+    out = "; ".join("%s: %s" % (k, lines[k]) for k in keys)
+    tail = str(state.get("tail") or "")
+    if tail:
+        out = (out + ". " if out else "") + tail
+    kept = [k for k in state.get("kept") or [] if only is None or k in only]
+    if kept:
+        out = (out + " " if out else "") + SAY_KEPT % ", ".join(kept)
+    if not out and state.get("state") == "done" and only is None:
+        out = "Nothing was filed."
+    return out
 
 
 # ---- availability, the lock, the call -------------------------------------------------------------------------------
@@ -628,18 +647,16 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
                 put_back(snap, repo, paths)
         backup.restore([f for f in folders.values() if repo_of(snap, f) in repos or (root_inbox and repo_of(snap, f) is None)])
 
-    def tail(say: str, repos) -> str:
-        places = sorted({place_of(ws, r) for r in repos})
-        return (say + " " if say else "") + SAY_KEPT % ", ".join(places) if places else say
-
     if failed or changed_system:
         undo({r for r in snap.repos if r not in keep}, root_inbox=True)
         backup.drop()
         if answer:
             set_question(ws, zone, answer["file"], reopen=True)
         base = SAY_SYSTEM if changed_system else SAY_FAILED
-        return finish(state="failed", say=tail(base, keep), refused=bool(changed_system or keep), system=changed_system,
-                      kept=sorted({place_of(ws, r) for r in keep}))
+        kept_places = sorted({place_of(ws, r) for r in keep})
+        out = {"state": "failed", "lines": {}, "tail": base, "kept": kept_places}
+        return finish(state="failed", say=sentence(out), refused=bool(changed_system or keep), system=changed_system,
+                      lines={}, tail=base, kept=kept_places)
     undo(bad)
     refused = []
     for repo, paths in moved.items():
@@ -665,15 +682,16 @@ def run(ws: Path, answer: Optional[dict] = None, runner: Optional[Callable] = No
         set_question(ws, zone, answer["file"], reopen=True)
     backup.drop()
     places = {p: v for p, v in places.items() if v["filed"] or v["questions"] or v["needs"]}
-    say = result_line(places)
+    lines = {p: place_bits(v) for p, v in places.items() if place_bits(v)}
+    tails = []
     if refused:
-        say = (say + ". " if places else "") + "A commit was refused, so those items stay in the inbox"
-    if bad and not places and not refused and not keep:
-        say = SAY_REFUSED
-    elif bad:
-        say = (say + ". " if places else "") + "A question named another zone, so nothing was kept in %s" % ", ".join(sorted({place_of(ws, r) for r in bad}))
-    return finish(state="done" if not (refused or keep or bad) else "failed", say=tail(say, keep) if keep else say, places=places,
-                  kept=sorted({place_of(ws, r) for r in keep}), refused=bool(keep or bad) or None)
+        tails.append("A commit was refused, so those items stay in the inbox")
+    if bad:
+        tails.append(SAY_REFUSED if not (lines or refused or keep) else "A question named another zone, so that part was not kept")
+    kept_places = sorted({place_of(ws, r) for r in keep})
+    out = {"state": "done", "lines": lines, "tail": ". ".join(tails), "kept": kept_places}
+    return finish(state="done" if not (refused or keep or bad) else "failed", say=sentence(out), places=places, lines=lines,
+                  tail=out["tail"], kept=kept_places, refused=bool(keep or bad) or None)
 
 
 # ---- starting a run from the page -----------------------------------------------------------------------------------

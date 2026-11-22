@@ -771,6 +771,26 @@ class TestTheRow(unittest.TestCase):
         self.assertIn("disabled", button)
         self.assertEqual("Processing the inbox…", said)
 
+    def test_the_row_shows_only_the_places_it_lists_w4(self):
+        both = self.state(say="Personal: filed 1; Work: filed 7 \u00b7 2 questions", places={"Work": {"filed": 7, "questions": 2, "needs": 0},
+                          "Personal": {"filed": 1, "questions": 0, "needs": 0}},
+                          lines={"Work": "filed 7 \u00b7 2 questions", "Personal": "filed 1"}, tail="", kept=["Personal"])
+        _, said = self.status.inbox_act(both, self.ws, ["Work"])
+        self.assertEqual("Work: filed 7 \u00b7 2 questions", said)
+        self.assertNotIn("Personal", said)
+        _, said = self.status.inbox_act(both, self.ws, ["Personal"])
+        self.assertIn("Personal: filed 1", said)
+        self.assertNotIn("Work", said)
+        self.assertIn("nothing was committed or put back in Personal", said)
+        _, said = self.status.inbox_act(both, self.ws)                               # no list: the whole sentence
+        self.assertIn("Work: filed 7", said)
+        self.assertIn("Personal: filed 1", said)
+
+    def test_a_place_the_row_does_not_list_is_not_named_by_a_kept_repository_either_w4(self):
+        state = self.state(state="failed", say="x", lines={}, tail=ir.SAY_FAILED, kept=["Personal"])
+        _, said = self.status.inbox_act(state, self.ws, ["Work"])
+        self.assertEqual(ir.SAY_FAILED, said)
+
     def test_a_run_that_died_is_not_shown_as_going_and_an_old_result_is_not_shown(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws, jobs = Path(tmp) / "w", Path(tmp) / "jobs"

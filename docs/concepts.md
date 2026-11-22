@@ -205,6 +205,10 @@ Each of Garrick's instruction files has a local file beside it for your own text
 
 The entry point any assistant reads, at the workspace root, in each zone, in `Wikis/` and in each wiki. The root one sends the assistant to `rules.md` and `context.md`, and each zone's or wiki's adds what holds only there. They are Garrick's, as shipped; never create a `CLAUDE.md` in the workspace, since Claude Code stops reading every `AGENTS.md` once one exists.
 
+### Decision note
+
+The short written decision behind a concept: the concept in one sentence, the concepts it touches, what was measured (or why nothing could be), and what would show it is wrong. A pull request that adds a heading to this page, or changes the first sentence under one, must link its decision note in its description, and a check refuses the merge without one. It is for people who change Garrick, not for those who use it. Decided in [#654](https://github.com/iamvenuti/garrick/issues/654). See [A decision note](../CONTRIBUTING.md#a-decision-note).
+
 ## Tools and assistants
 
 ### Skill

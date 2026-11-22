@@ -47,7 +47,8 @@ PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
 
 # What of docs/ a workspace gets, in System/garrick-docs/: every page outside
-# docs/assets/, and the images those pages show. A file a page only links to
+# docs/assets/ and docs/decisions/ (the notes behind the concepts, for
+# contributors), and the images those pages show. A file a page only links to
 # stays on GitHub, where the Guide sends that link.
 DOC_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
 DOC_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.S)
@@ -59,7 +60,7 @@ def shipped_docs(names, read):
     installer, update.py's shipped() and its release_hashes() all ask this,
     so the three agree on what Garrick writes."""
     names = set(names)
-    pages = sorted(n for n in names if n.endswith(".md") and not n.startswith("assets/"))
+    pages = sorted(n for n in names if n.endswith(".md") and not n.startswith(("assets/", "decisions/")))
     out = set(pages)
     for page in pages:
         for target in DOC_IMAGE.findall(DOC_CODE.sub("", read(page))):

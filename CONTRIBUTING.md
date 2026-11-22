@@ -34,6 +34,30 @@ python3 tests/shard.py --list 2/4
 
 Keep commits small, with a subject line that says what changed.
 
+## A decision note
+
+A pull request that adds a heading to `docs/concepts.md`, or changes the first sentence under one, adds a concept, and a concept is decided before it is built. A check on every pull request (`tests/concept_gate.py`) reads the description and fails the merge when such a heading has no decision note linked. A wording fix below an unchanged first sentence needs nothing.
+
+A decision note holds four things:
+
+- **The concept**, in one sentence.
+- **What it touches**: the concepts it changes or sits beside, by heading.
+- **What was measured**, or why nothing could be.
+- **What would show it is wrong**: the observation that would make us undo it.
+
+It is either a comment on the issue, or a file in `docs/decisions/` named `<issue>-<slug>.md`, which starts with `concept:` (the heading's text, as in `docs/concepts.md`) and `issue:` (the issue's address) in its frontmatter, then the four paragraphs above in bold. `docs/decisions/654-decision-note.md` shows the shape.
+
+The description names it on one line per heading, with the heading's text on the line:
+
+```
+## Decisions
+
+- Decision note: docs/decisions/654-decision-note.md
+- Some other concept: https://github.com/iamvenuti/garrick/issues/654#issuecomment-1234567
+```
+
+A file must be added or changed by the pull request and have the heading as its `concept:`. A link to an issue comment must point at an issue of this repository, and a line may name only one heading. A bare issue link does not count. The check reads the description again when you edit it.
+
 ## Reporting a way through the walls
 
 Not as an issue. See [SECURITY.md](SECURITY.md).

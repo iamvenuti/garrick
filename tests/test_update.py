@@ -1690,7 +1690,8 @@ class ExtrasCase(Case):
     def setUp(self):
         super().setUp()
         # The page waits for the view model (System/tools/view.py); a stand-in keeps these tests about what they test.
-        (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
+        if not (self.root / "System/tools/view.py").is_file():
+            (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
         for patch in (mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
                       mock.patch.object(update, "app_folders", lambda: [self.base / "Applications"]),
                       mock.patch.object(update, "on_mac", lambda: False)):
@@ -2790,7 +2791,8 @@ class TestExtrasWaitForTheReader(Case):
     def setUp(self):
         super().setUp()
         # The page also waits for the view model (System/tools/view.py); a stand-in is in place so only work.py is in question.
-        (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
+        if not (self.root / "System/tools/view.py").is_file():
+            (self.root / "System/tools/view.py").write_text("# view model, stand-in\n")
 
     def older(self):
         self.as_if_older(self.PAGE, "# status, older\n")
@@ -2836,6 +2838,7 @@ class TestStatusWaitsForTheViewModel(Case):
         self.as_if_older(self.PAGE, "# status, older\n")
 
     def run_with(self, has_view):
+        """An update of a workspace with no view.py, from a template that has it or lacks it, whatever the real one does."""
         self.older()
         if (self.root / self.TOOL).exists():
             (self.root / self.TOOL).unlink()
@@ -2843,13 +2846,19 @@ class TestStatusWaitsForTheViewModel(Case):
         stamp = self.stamp()
         stamp["files"].pop(self.TOOL, None)
         self.set_stamp(stamp)
-        p = self.plan()
-        if has_view:
-            p["files"][self.TOOL] = (b"# view model\n", 0o644)
-            p["actions"]["add"].append(self.TOOL)
-        else:
-            self.assertNotIn(self.TOOL, p["actions"]["add"])
-        return update.apply(self.root, p)
+        real = update.shipped
+
+        def fake(zones):
+            files = dict(real(zones))
+            files.pop(self.TOOL, None)
+            if has_view:
+                files[self.TOOL] = (b"# view model\n", 0o644)
+            return files
+
+        with mock.patch.object(update, "shipped", fake):
+            p = self.plan()
+            self.assertEqual(has_view, self.TOOL in p["actions"]["add"])
+            return update.apply(self.root, p)
 
     def test_the_page_waits_when_view_py_is_in_neither_place(self):
         result = self.run_with(False)

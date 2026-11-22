@@ -114,8 +114,9 @@ enum GarrickSession {
 	// and it carries nothing else; nil for anything else, a link to any other app, host or route included.
 	static func link(key: String, text: String) -> URL? {
 		guard let route = routes[key], let url = URL(string: text), url.scheme == route.scheme, url.host == route.host,
-		      url.path == route.path, url.user == nil, url.password == nil, url.port == nil, url.fragment == nil,
-		      let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+		      let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.path == route.path,
+		      url.user == nil, url.password == nil, url.port == nil, url.fragment == nil,
+		      let items = parts.queryItems,
 		      items.map({ $0.name }).sorted() == route.names.sorted() else { return nil }
 		return url
 	}

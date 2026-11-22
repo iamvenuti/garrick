@@ -21,6 +21,8 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import GIT_ENV, git, git_init, write  # noqa: E402
+from panel_case import PanelCase, commit_all  # noqa: E402
+from test_questions_panel import ACME, question  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 JOBS = REPO / "extras" / "jobs"
@@ -36,12 +38,20 @@ def load(name, path):
 
 
 work_in = load("garrick_work_in", JOBS / "work_in.py")
+REAL_LISTED = work_in.listed_paths                   # the Case below replaces it, since most tests do not care which pages are listed
 agent = work_in.agent                                 # the module work_in calls, so the patches below reach it
 import finding_queue as fq  # noqa: E402
 
 DAY = dt.date(2026, 11, 13)
 DONE = "WORKED 1 HELD 0\n" + work_in.SENTINEL
 TWO_PLACES = [("Zones/Work", "Work", 1), ("Wikis/Knowledge", "the Knowledge wiki", 2)]
+
+
+class Everything:
+    """The paths `question-work` would list, when a test does not care which: any path."""
+
+    def __contains__(self, item):
+        return True
 
 
 def expand(places):
@@ -55,6 +65,9 @@ class Case(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.ws = Path(self.tmp.name).resolve() / "ws"
+        listing = mock.patch.object(work_in, "listed_paths", return_value=Everything())
+        listing.start()
+        self.addCleanup(listing.stop)
         patch = mock.patch.dict(os.environ, {k: v for k, v in GIT_ENV.items() if k.startswith(("GIT_", "HOME"))})
         patch.start()
         self.addCleanup(patch.stop)
@@ -207,8 +220,8 @@ class TestOneCallForEachAnswer(Case):
             calls.append(prompt)
             code, text, wrote = runs[len(calls) - 1]
             now[0] += spend[len(calls) - 1]
-            if wrote:
-                write(self.ws / wrote, "# Answered %d\n" % len(calls))
+            for name in ([wrote] if isinstance(wrote, str) else wrote or []):
+                write(self.ws / name, "# Answered %d\n" % len(calls))
             return code, text
         out = io.StringIO()
         with mock.patch.object(work_in, "answers", return_value=expand(places)), mock.patch.object(agent, "run", fake), \
@@ -451,6 +464,57 @@ class TestAQuestionStoppedTwice(TestOneCallForEachAnswer):
         self.assertIn("could not be worked in", q["sentence"])
         self.assertIn("longer than a night", q["why"])
         self.assertNotRegex(q["why"] + q["sentence"], r"questions/|\.md|exit|124")
+
+
+class TestOnlyTheListedPathsAreCommitted(TestOneCallForEachAnswer):
+    """W6: the commit holds the paths `question-work` listed for that answer. Any other path the wiki holds changed is left as it is,
+    and the summary line says how many, by place, never a page's title."""
+
+    def run_listed(self, listed, runs):
+        with mock.patch.object(work_in, "listed_paths", return_value=listed):
+            return self.timed([10], runs, places=[("Zones/Work", "Work", 1)])
+
+    def test_the_listed_page_is_committed_and_another_changed_path_is_left_and_counted(self):
+        listed = {"Meetings/wiki/a1.md"}          # another writer's file appears while the call runs
+        code, calls, said = self.run_listed(listed, [(0, DONE, ["Wikis/Meetings/wiki/a1.md", "Wikis/Meetings/wiki/other.md"])])
+        self.assertEqual(0, code)
+        self.assertEqual(["Meetings/wiki/a1.md"], git(self.ws / "Wikis", "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("?? Meetings/wiki/other.md", git(self.ws / "Wikis", "status", "--porcelain").strip())      # left exactly as it was
+        self.assertTrue((self.ws / "Wikis" / "Meetings" / "wiki" / "other.md").exists())
+        self.assertIn("1 other changed path in the wiki left as it is", said)
+        self.assertNotIn("other.md", said)                                                                         # by count and place, never a title
+
+    def test_a_page_the_call_wrote_that_is_not_listed_is_not_committed_either(self):
+        code, calls, said = self.run_listed({"Meetings/wiki/a1.md"}, [(0, DONE, "Wikis/Meetings/wiki/a9.md")])
+        self.assertEqual([], [l for l in self.log() if l.startswith("Answers worked in")])
+        self.assertIn("1 other changed path in the wiki left as it is", said)
+
+    def test_with_no_list_nothing_is_kept(self):
+        code, calls, said = self.run_listed(None, [(0, DONE, "Wikis/Meetings/wiki/a1.md")])
+        self.assertFalse((self.ws / "Wikis" / "Meetings" / "wiki" / "a1.md").exists())
+        self.assertEqual("", git(self.ws / "Wikis", "status", "--porcelain").strip())
+        self.assertEqual({"Zones/Work": {"why": "incomplete", "day": "2026-11-13"}}, self.held())
+
+    def test_the_real_list_is_the_pages_the_question_names_its_own_file_and_its_raw_answer(self):
+        pa = work_in.page_action()
+        self.assertIsNotNone(pa)
+        self.assertTrue(callable(pa.question_pages) and callable(pa.own_record))
+        self.assertIsNone(REAL_LISTED(self.ws, "Meetings", "questions/missing.md", self.ws / "Wikis"))      # unreadable: no list
+
+
+class TestTheRealList(PanelCase):
+    """W6: the list the step holds a commit to, from the page's own reading of the question."""
+
+    def test_it_is_the_pages_the_question_names_its_own_file_and_its_raw_answer_from_the_top_of_the_repository(self):
+        q = "questions/261001 - acme.md"
+        write(self.meetings / q, question(ACME, status="answered", pages="[[wiki/sources/260310-acme-kickoff]]",
+                                          extra='answer: "[[raw/answers/261005 - acme]]"\n'))
+        write(self.meetings / "raw" / "answers" / "261005 - acme.md",
+              "---\ntype: answer\nanswered: 2026-10-05\nzone: Work\nparties: [acme]\nquestion: \"[[questions/261001 - acme]]\"\n---\n\nQuestion: x\n\n```\n500\n```\n")
+        commit_all(self.meetings, "a question")
+        self.assertEqual({"wiki/sources/260310-acme-kickoff.md", q, "raw/answers/261005 - acme.md"},
+                         REAL_LISTED(self.root, "Meetings", q, self.meetings))
+        self.assertIsNone(REAL_LISTED(self.root, "Meetings", "questions/261001 - nothing.md", self.meetings))
 
 
 if __name__ == "__main__":

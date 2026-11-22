@@ -56,6 +56,7 @@ SENTINEL = "END OF WORK-IN"
 COUNTS = re.compile(r"^WORKED (\d+) HELD (\d+)\s*$", re.M)
 EXIT_NO_PANEL = 64
 STOPPED: List[str] = []      # the places whose call was stopped at its time limit, in this run
+LEFT_ALONE: Dict[str, int] = {}      # how many other changed paths in the wiki the commits left as they were, by place (W6)
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
 REASONS = ("cap", "assistant", "incomplete", "held", "commit", "long")
@@ -67,6 +68,43 @@ ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
          "Bash(python3 System/status/page_action.py question-done:*)"]
 MIN_LEFT = 60        # seconds: start no place with less than this left of the step's limit
 MARGIN = 20          # seconds kept back from the limit for the commit and the restore
+
+
+_PA = None
+
+
+def page_action():
+    """page_action.py of the status page extra, or None where there is none: it knows which pages a question may change."""
+    global _PA
+    if _PA is None:
+        path = STATUS / "page_action.py"
+        if not path.is_file():
+            return None
+        sys.path.insert(0, str(STATUS))
+        spec = importlib.util.spec_from_file_location("garrick_work_in_page_action", str(path))
+        _PA = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PA)
+    return _PA
+
+
+def listed_paths(ws: Path, wiki: str, rel: str, top: Path) -> Optional[Set[str]]:
+    """The paths this one answer may change, from the repository's top: the pages `question-work` lists for it, the question's own
+    file (which `question-done` marks) and the raw answer it cites. None when they cannot be listed: then nothing is kept (W6)."""
+    pa = page_action()
+    if pa is None:
+        return None
+    try:
+        q = pa.WikiQuestion(ws, {"wiki": wiki, "file": rel})
+        wall = pa.wall_sentence(ws)
+        record = pa.own_record(q, wall)
+        pages, _, _ = pa.question_pages(q, wall)
+        files = list(pages) + [q.path]
+        for name in (record, record + ".md"):
+            if (q.dir / name).is_file():
+                files.append((q.dir / name).resolve())
+        return {os.path.relpath(str(f), str(top.resolve())).replace(os.sep, "/") for f in files}
+    except Exception:
+        return None
 
 
 def panel():
@@ -176,9 +214,16 @@ def restore(repo: Path, before: Set[str], rel: str) -> None:
                 pass
 
 
-def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> Optional[str]:
-    """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why."""
+def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int, listed=None) -> Optional[str]:
+    """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why. With
+    `listed` (the paths `question-work` named for this answer), only those are committed; any other path the wiki holds changed
+    is left exactly as it is, and counted for the step's summary line (W6)."""
     paths = sorted(changes(repo, rel) - before)
+    if listed is not None:
+        others = [p for p in paths if p not in listed]
+        paths = [p for p in paths if p in listed]
+        if others:
+            LEFT_ALONE[place] = LEFT_ALONE.get(place, 0) + len(others)
     if not paths:
         return None
     git(repo, "add", "-A", "--", *paths)
@@ -235,10 +280,14 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
     if repo is None:
         return "assistant", 0
     before = changes(repo, folder)
+    listed = listed_paths(ws, wiki, rel, repo)
     extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
     code, text = agent.run(tier, prompt_for(scope, place, wiki, rel), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_TIMEOUT:
         STOPPED.append(place)
+    if listed is None:
+        restore(repo, before, folder)                 # which pages this answer may change cannot be told: nothing is kept (W6)
+        return "incomplete", 0
     if code == agent.EXIT_CAP:
         restore(repo, before, folder)
         return "cap", 0
@@ -250,7 +299,7 @@ def work_place(ws: Path, scope: str, place: str, wiki: str, rel: str, tier: str,
     if worked + held == 0:
         restore(repo, before, folder)                 # a call that worked nothing in and held nothing back did not finish (#629)
         return "incomplete", 0
-    why = commit(repo, before, folder, place, worked)
+    why = commit(repo, before, folder, place, worked, listed)
     if why:
         return why, 0
     return ("held" if held else None), worked
@@ -277,6 +326,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         del stops[key]                                # answered or gone: no longer counted
     total = 0
     del STOPPED[:]
+    LEFT_ALONE.clear()
     deadline = time.time() + args.limit if args.limit else None
     for scope, group in itertools.groupby(items, key=lambda i: i[0]):
         group = list(group)
@@ -304,8 +354,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 reason = reason or why
         n_left = len(group) - worked_in
-        print("work_in: %s: %d worked in, %d left%s%s" % (place, worked_in, n_left, " (%s)" % reason if reason else "",
-                                                        ", a call was stopped at its time limit" if place in STOPPED else ""))
+        print("work_in: %s: %d worked in, %d left%s%s%s" % (
+            place, worked_in, n_left, " (%s)" % reason if reason else "", ", a call was stopped at its time limit" if place in STOPPED else "",
+            ", %d other changed path%s in the wiki left as %s" % (LEFT_ALONE[place], "" if LEFT_ALONE[place] == 1 else "s",
+                                                              "it is" if LEFT_ALONE[place] == 1 else "they are") if LEFT_ALONE.get(place) else ""))
         if reason is None:
             held.pop(scope, None)
         else:

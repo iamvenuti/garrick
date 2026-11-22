@@ -974,6 +974,13 @@ class LookItems(unittest.TestCase):
         self.assertIn('.qhelp::after{content:"";position:absolute;inset:-4px}', html)             # 17px and 4px either side: 25
         self.assertIn(".grip::after,.hide::after,.totab::after,.tick::after,.pchev::after", html)  # the rest were already padded out
 
+    def test_the_help_mark_hit_area_stays_inside_its_section_so_no_section_scrolls_sideways(self):
+        # The 4px hit area of a "?" at the end of a row reached past the section's box and made it scroll by 3px (1280px and
+        # 375px). The mark keeps 4px of margin on that side, and a wall row may wrap at 375px instead of pushing its edge.
+        html = page_html()
+        self.assertIn('dialog.settings .setsec .qhelp{margin-right:4px}', html)
+        self.assertIn(".wallrow{display:flex;flex-wrap:wrap;", html)
+
     def test_the_guide_shows_a_zone_command_only_behind_details(self):
         gd = status.guide_mod()
         text = "# Zones\n\nChange a flag:\n\n```\npython3 System/tools/scaffold.py zone --name Garden --walled\n```\n\nList them:\n\n```\nls Zones\n```\n"

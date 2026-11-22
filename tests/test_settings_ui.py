@@ -66,6 +66,10 @@ class Rows(HTMLParser):
         if tag in ("input", "select", "textarea"):
             row = next((f for f in reversed(self.stack) if f["row"]), None)
             self.controls.append((tag, a, row))
+        elif tag == "button" and "qhelp" not in classes:
+            row = next((f for f in reversed(self.stack) if f["row"]), None)
+            if row is not None:                                   # a button that stands in a setting row: the row needs its own "?"
+                self.controls.append((tag, a, row))
         if "sethelp" in classes:
             self._help = {"id": a.get("id"), "text": ""}
         if tag not in ("input", "br", "img", "hr", "meta", "link", "path", "circle", "rect"):

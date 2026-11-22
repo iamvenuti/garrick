@@ -486,6 +486,13 @@ class TestWalls(Case):
         self.assertIsNone(garden["projects"]["Twin"]["hub"])
         self.assertNotIn("files", garden["projects"]["Twin"])
 
+    def test_a_todo_note_that_is_a_link_out_of_its_zone_names_nothing(self):
+        (self.root / "Zones" / "Garden" / "Todo.md").symlink_to(self.root / "Zones" / "Home" / "Todo.md")
+        write(self.root / "Zones" / "Home" / "Todo.md", "# Home\n\n- [ ] See [[Fence]]\n")
+        model = view.build(self.root)
+        self.assertEqual([["Fence"]], next(z for z in model["zones"] if z["name"] == "Home")["open_links"])
+        self.assertEqual([], next(z for z in model["zones"] if z["name"] == "Garden")["open_links"])
+
     def test_a_scope_holds_its_zones_alone(self):
         scoped = view.build(self.root, scope=["Garden"])
         self.assertEqual(["Garden"], [z["name"] for z in scoped["zones"]])

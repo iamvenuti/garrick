@@ -5852,8 +5852,8 @@ OWNER_HEAD = re.compile(r"^\s*(?P<who>(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z
 
 
 def known_owners(ctx: Optional[dict], me: str = "") -> set:
-    """The names a bare "Name:" head may be: the people and parties of System/context.md (full name and first
-    name), and the user's own name, lower case."""
+    """The names a bare "Name:" head may be: the people (System/names.md, or System/context.md until an update has moved them) and the parties of
+    System/context.md (full name and first name), and the user's own name, lower case."""
     names = set()
     for person in (ctx or {}).get("people") or []:
         full = str(person.get("name") or "").strip()

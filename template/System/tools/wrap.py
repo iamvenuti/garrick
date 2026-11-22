@@ -421,6 +421,7 @@ class Snapshot:
     def __init__(self):
         self.files: Dict[Path, Optional[bytes]] = {}
         self.folders: List[Path] = []
+        self.existed: Dict[Path, bool] = {}
 
     def take(self, path: Path) -> None:
         if path not in self.files:
@@ -428,6 +429,7 @@ class Snapshot:
 
     def take_folder(self, folder: Path) -> None:
         self.folders.append(folder)
+        self.existed[folder] = folder.is_dir()
         if folder.is_dir():
             for p in folder.rglob("*"):
                 if p.is_file():
@@ -446,6 +448,12 @@ class Snapshot:
                         path.unlink()
                 elif not path.is_file() or path.read_bytes() != data:
                     path.write_bytes(data)
+            except OSError:
+                pass
+        for folder, there in self.existed.items():          # a folder this run made, and nothing now in it
+            try:
+                if not there and folder.is_dir() and not any(folder.iterdir()):
+                    folder.rmdir()
             except OSError:
                 pass
 

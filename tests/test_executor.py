@@ -400,12 +400,11 @@ class TestTheSkillsDegrade(unittest.TestCase):
             self.assertIn(fallback, self.threads)
         self.assertIn("Without the status page", self.todo)
         self.assertIn("edit the line by hand", self.flat(self.todo))
-        self.assertIn("Without the status page, edit the line by hand and let step 12 commit it.", flat)
 
     def test_nothing_the_executor_does_is_done_by_hand_beside_it(self):
         flat = self.flat(self.threads)
         self.assertIn("do not also run `scaffold.py` or commit by hand for them: it has done both", flat)
-        self.assertIn("**Where `System/status/page_action.py` exists, tick through it, before appending anything**", flat)
+        self.assertIn("A wrap's own ticks never go through this executor: the wrap tool ticks them.", flat)
 
     def test_the_skills_stay_harness_neutral(self):
         for text in (self.threads, self.todo):

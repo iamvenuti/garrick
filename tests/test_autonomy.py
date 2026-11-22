@@ -456,7 +456,7 @@ class CheckpointDialogueTest(unittest.TestCase):
                              "## The rules behind this request"))
         self.assertIn('The Deadline row reads "not given" where nobody has dated the work, and "none" only '
                       "where somebody said there is none.", rules)
-        self.assertIn("| Deadline | <date, and what breaks if it slips; none; or not given> |", self.wrap_wording())
+        self.assertIn("| Deadline | the date and what breaks if it slips; `none`; or `not given` |", self.wrap_wording())
         self.assertIn("one nobody dated goes on the list with no 📅", self.wrap_wording())
 
     def test_a_wrap_after_two_checkpoints_files_each_action_once(self):

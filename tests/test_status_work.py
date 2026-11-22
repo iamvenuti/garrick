@@ -678,6 +678,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"machine-role", "read-guard"}
         # A new session in the Claude or Codex app (#652) only reads: it builds a link and commits nothing in any zone.
         unzoned |= {"session-url"}
+        # A card opened (#651) adds one to a count under System/, outside every zone: no commit, no lock.
+        unzoned |= {"count-card"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

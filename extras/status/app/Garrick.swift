@@ -1344,6 +1344,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// the page, with no toast and no rebuild, or asking would rebuild the page
 	// it asks from.
 	func reading(_ request: [String: Any]) -> Bool {
+		// A card opened is counted ("count-card", #651) without a word and without a rebuild: the page is already showing it.
+		if request["verb"] as? String == "count-card" { return true }
 		// A layout dialog's plan (#604) only shows what a change would do: no toast, and no rebuild under the dialog.
 		// Only the JSON boolean true counts: the number 1 bridges to Bool in Swift, and the page's rule is `is True`.
 		if request["verb"] as? String == "layout", let flag = request["check"] as? NSNumber,

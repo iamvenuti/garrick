@@ -24,7 +24,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 # The class of each kind of row: an element with one of these, holding a control, is a setting row.
 ROW_CLASSES = ("launcher-row", "zrow", "gkrow", "wallrow", "mkind", "mlists", "mpin", "setrelrow", "nsitem", "nsq", "rgrow")
-CONTROL = re.compile(r"<(?:input|select|textarea)\b|class=\"(?:zbtn|wchange|rgchoice)\"|data-rolechange")
+CONTROL = re.compile(r"<(?:input|select|textarea)\b|<button\b[^>]*class=\"act\"|class=\"(?:zbtn|wchange|rgchoice)\"|data-rolechange")
 OPEN = re.compile(r'<(div|li|label|p)\b([^>]*)>')
 
 # (a pattern found in the row's own markup, the key, the row's name, its text), the first that matches wins. The text is
@@ -83,7 +83,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "The shortcut your own dictation tool starts on. Click the box and press it. Pause the tool first if it takes the keys."),
     (r'id="menu-finder"', "menu-finder", "Finder menu",
      "Adds Garrick to Finder's right-click menu on a project or thread folder. macOS asks you to switch it on in System "
-     "Settings, and this button opens that place."),
+     "Settings, and this button opens that place. Pick it if you often start from Finder."),
     # Notifications
     (r'data-nt="needs-you"', "nt-needs-you", "A session needs me",
      "A notice when a session waits for you: a permission, a question or an approval. It is sent once for each wait. Turn it "
@@ -161,6 +161,9 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "The colour of this kind of note in Explore's graph. Pick one that stands out from its neighbours, or leave it on its "
      "default. Reset colours puts every kind back."),
     # About
+    (r'id="rel-check"', "rel-check", "Check for updates",
+     "Looks now at Garrick's public release page to see whether a newer version is out, and shows the answer here. Nothing "
+     "about your work is sent. Press it when you want to know today, without waiting for the automatic check."),
     (r'id="rel-on"', "rel-on", "Check for a newer Garrick",
      "Looks once in a while at Garrick's public release page to see whether a newer version is out, and tells you. Nothing "
      "about your work is sent. Turn it on if you want to hear about updates."),

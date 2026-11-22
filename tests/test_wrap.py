@@ -277,7 +277,7 @@ class FailedWrapTest(unittest.TestCase):
         self.assertEqual("resume", band_slot(wl.finished(self.done), 2000.0))
         wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
         self.assertIn("there was nothing to commit because the note was already current", wrap)
-        self.assertIn("once the commit has succeeded or there was nothing to commit", BAND.read_text(encoding="utf-8"))
+        self.assertIn("only once the commit has succeeded", BAND.read_text(encoding="utf-8"))
 
     def test_the_command_line_abandon_writes_no_record(self):
         import io
@@ -303,11 +303,14 @@ class FailedWrapTest(unittest.TestCase):
         self.assertIn("python3 System/tools/wrap_lock.py end --abandon", wrap)       # the one recovery, for a wrap that was killed
         self.assertNotIn("13. **Release the lock**", wrap)
 
-    def test_the_bands_own_prompts_release_the_lock_the_same_way(self):
+    def test_the_bands_own_prompts_leave_the_lock_to_the_wrap_tool(self):
         text = BAND.read_text(encoding="utf-8")
-        self.assertNotIn("and remove it as the last step", text)
-        self.assertIn("wrap_lock.py end --abandon ${n.rel}", text)             # the lock the band took
-        self.assertIn("end --abandon\\` when the wrap failed or the commit was refused", text)   # the lock the wrap takes
+        self.assertNotIn("wrap_lock.py end", text.split("export function wrapPrompt", 1)[1].split("// Close ends", 1)[0])
+        prompt = text.split("export function wrapPrompt", 1)[1].split("// Close ends", 1)[0]
+        self.assertNotIn("wrap_lock.py start", prompt)
+        self.assertNotIn("wrap_lock.py end", prompt)
+        self.assertIn('pass `"lock": "held"` to the wrap tool', prompt)       # the lock the band took
+        self.assertIn("takes the wrap lock and releases it", prompt)          # the lock the tool takes
 
 
 class WordsTest(unittest.TestCase):

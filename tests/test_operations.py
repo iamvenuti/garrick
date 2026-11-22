@@ -839,6 +839,63 @@ class TestJoin(JournalCase):
         self.assertEqual("a19f3c80", reply["op"])
 
 
+class TestTwoWorkspaces(JournalCase):
+    """#641: the journal is one file per machine account, so the workspace is part of a request's identity."""
+
+    def begin(self, workspace, op, now=1000.0, **extra):
+        run, reply = ops.start(self.folder, dict(REQUESTS["todo-add"], op=op, **extra), now=now, workspace=workspace)
+        if run is not None:
+            self.runs.append(run)
+        return run, reply
+
+    def test_the_key_names_the_workspace_root_resolved(self):
+        req = REQUESTS["todo-add"]
+        with tempfile.TemporaryDirectory() as t:
+            a, b = Path(t) / "A", Path(t) / "B"
+            a.mkdir()
+            b.mkdir()
+            self.assertNotEqual(ops.identity_key("todo-add", req, a), ops.identity_key("todo-add", req, b))
+            self.assertEqual(ops.identity_key("todo-add", req, a), ops.identity_key("todo-add", req, a / "." / ""))
+            self.assertNotEqual(ops.identity_key("todo-add", req, a), ops.identity_key("todo-add", req))
+
+    def test_two_workspaces_with_the_same_zone_and_line_never_join(self):
+        first, _ = self.begin("/ws/one", "a19f3c80")
+        first.running()
+        run, reply = self.begin("/ws/two", "b29f3c80", now=1010.0)
+        self.assertIsNotNone(run)                                               # its own operation, not a join
+        self.assertIsNone(reply)
+        again, joined = self.begin("/ws/one", "c39f3c80", now=1020.0)
+        self.assertIsNone(again)
+        self.assertEqual("a19f3c80", joined["op"])                              # the same workspace still joins
+
+    def test_two_workspaces_never_replay_each_others_save(self):
+        first, _ = self.begin("/ws/one", "a19f3c80")
+        first.finish("saved", REQUESTS["todo-add"], said="Added")
+        first.close(REQUESTS["todo-add"])
+        run, reply = self.begin("/ws/two", "b29f3c80", now=1010.0)
+        self.assertIsNotNone(run)
+        self.assertIsNone(reply)
+        run.close(REQUESTS["todo-add"])
+        _, replayed = self.begin("/ws/one", "c39f3c80", now=1020.0)
+        self.assertEqual("a19f3c80", replayed["op"])
+
+    def test_a_row_written_before_the_workspace_was_kept_matches_nothing_and_is_left_as_it_is(self):
+        old_key = ops.hashlib.sha256(json.dumps(
+            {"verb": "todo-add", "zone": "Work", "fields": {k: ops._norm(k, REQUESTS["todo-add"].get(k)) for k in sorted(ops.OPS["todo-add"].identity)}},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        self.folder.mkdir(parents=True, exist_ok=True)
+        old = {"op": "d49f3c80", "key": old_key, "verb": "todo-add", "zone": "Work", "state": "completed", "phase": "", "at": 900.0,
+               "request": {}, "done": 905.0, "outcome": "saved", "say": "Added", "label": "x"}
+        (self.folder / ops.FILE).write_text(json.dumps(old) + "\n", encoding="utf-8")
+        before = (self.folder / ops.FILE).read_text(encoding="utf-8")
+        for workspace in ("/ws/one", ""):
+            run, reply = self.begin(workspace, "e59f3c80" if workspace else "f69f3c80", now=1000.0)
+            self.assertIsNotNone(run, workspace)
+            self.assertIsNone(reply, workspace)
+        self.assertTrue(before.strip() in (self.folder / ops.FILE).read_text(encoding="utf-8"))   # its row is as it was written
+        self.assertEqual(old, next(r for r in self.j.records() if r["op"] == "d49f3c80"))
+
+
 class TestRepeatedLater(JournalCase):
     """#137: past the double click's window, a request the record holds is not
     run again unasked. It is told what was done and when, and asked."""

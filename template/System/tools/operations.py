@@ -403,9 +403,21 @@ def lines_of(req: dict) -> List[str]:
     return out
 
 
-def identity_key(verb: str, req: dict) -> str:
-    """sha256 of the canonical JSON of the verb, the zone and the verb's
-    identity fields. Field order, a missing field against a null or empty
+def workspace_id(workspace) -> str:
+    """The workspace root's resolved path, the one string that says which workspace a request is for. Empty when none
+    is given: such a request matches only another that named none."""
+    if not workspace:
+        return ""
+    try:
+        return str(Path(str(workspace)).expanduser().resolve())
+    except (OSError, RuntimeError):
+        return str(workspace)
+
+
+def identity_key(verb: str, req: dict, workspace="") -> str:
+    """sha256 of the canonical JSON of the verb, the workspace root, the zone
+    and the verb's identity fields. A row journalled before 0.76.0 was hashed
+    without the workspace, so it matches nothing. Field order, a missing field against a null or empty
     one, and a client's own `op` or `key`-like extras do not change it.
     The lines of a batch are one set, in whatever order they were ticked,
     and a batch of one is the request that names that line by `key`."""
@@ -415,7 +427,7 @@ def identity_key(verb: str, req: dict) -> str:
         lines = sorted(lines_of(req), key=str)
         del fields["keys"]
         fields["key"] = lines[0] if len(lines) == 1 else (lines or None)
-    body = {"verb": verb, "zone": _norm("zone", req.get("zone")), "fields": fields}
+    body = {"verb": verb, "workspace": workspace_id(workspace), "zone": _norm("zone", req.get("zone")), "fields": fields}
     canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
@@ -857,7 +869,7 @@ class Run:
                 pass
 
 
-def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tuple[Optional[Run], Optional[dict]]:
+def start(folder, req: dict, now: Optional[float] = None, via: str = "", workspace="") -> Tuple[Optional[Run], Optional[dict]]:
     """Begin the journal entry for a request of a declared verb. `via` names
     the caller that sent it, one of CALLERS, and goes into the record.
 
@@ -867,7 +879,13 @@ def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tupl
     None) when nothing can be recorded here: the caller then does exactly
     what it would without this module. A request whose `confirm` names the
     action it would be asked about carries on. Raises BadOp for an op of the
-    wrong shape."""
+    wrong shape.
+
+    `workspace` is the workspace root the request is for. It is part of the
+    request's identity, and the record keeps it: the journal is one file per
+    machine account, and two workspaces on it never join or replay each
+    other's action. A row with no workspace, written before 0.76.0, is never
+    joined, replayed or asked about, and is left as it is."""
     now = time.time() if now is None else now
     verb = req["verb"]
     op = req.get("op")
@@ -878,7 +896,8 @@ def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tupl
     journal = Journal(folder)
     if not journal.usable():
         return None, None
-    key = identity_key(verb, req)
+    where = workspace_id(workspace)
+    key = identity_key(verb, req, where)
     zone = req.get("zone") if isinstance(req.get("zone"), str) else ""
     try:
         fd = os.open(str(journal.run_path(op)), os.O_RDWR | os.O_CREAT, 0o600)
@@ -892,7 +911,7 @@ def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tupl
     try:
         with journal.lock():
             journal.settle_dead(now)
-            how, earlier = repeats(list(journal.latest().values()), key, zone, op, now)
+            how, earlier = repeats([r for r in journal.latest().values() if r.get("workspace") == where], key, zone, op, now)
             if how == "join":
                 return _release(journal, fd, op), {"ok": True, "say": label(verb, req, already=True),
                                                    "op": earlier["op"], "state": "running"}
@@ -901,7 +920,7 @@ def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tupl
                                                    "state": "completed", "outcome": "saved"}
             if how == "ask" and req.get("confirm") != earlier["op"]:
                 return _release(journal, fd, op), asked(earlier, now)
-            rec = {"op": op, "key": key, "verb": verb, "zone": zone, "state": "queued", "phase": "", "at": now,
+            rec = {"op": op, "key": key, "workspace": where, "verb": verb, "zone": zone, "state": "queued", "phase": "", "at": now,
                    "request": _request(verb, req), "done": None, "outcome": None, "say": None,
                    "label": label(verb, req)}
             if via in CALLERS:

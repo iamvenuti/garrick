@@ -586,7 +586,8 @@ Every failure the app can show has one plain sentence and one next step. The too
 | Ask could not start its server | `ask.py`, shown in the Ask window | Ask did not start. | *Try again* under the answer, which sends the same request once more |
 | Ask lost its server before the answer | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*, which says what the server said; no second try is offered, since the request may have gone through |
 | Ask did not answer in time | `ask.py`, shown in the Ask window | Ask has not answered yet, and it may still finish. | *Details*, which says to look at the Todo list or the thread before asking again |
-| Ask stopped on an error | `ask.py`, shown in the Ask window | Ask could not answer this. | *Try again* |
+| Ask could not take the request | `ask.py`, shown in the Ask window | Ask could not answer this. | *Try again* |
+| Ask stopped on an unexpected error | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*; no second try is offered, since part of the request may have run |
 | The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
 | The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |

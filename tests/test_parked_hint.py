@@ -207,6 +207,15 @@ class TheHint(Workspace):
         self.assertEqual("", self.fire("fix the roof repair", self.where("Zones", "Work")))
         self.assertIn("Roof repair", self.said("fix the roof repair", self.where("Zones", "Personal")))
 
+    def test_a_zone_folder_that_is_a_link_to_another_zone_gives_nothing(self):
+        import shutil
+        shutil.rmtree(self.where("Zones", "Work"))
+        os.symlink("Personal", str(self.where("Zones", "Work")))
+        self.fire("anything", self.root)
+        cache = json.loads((self.root / "System" / "generated" / "parked-hints.json").read_text())
+        self.assertEqual([], [e for e in cache["entries"] if e["zone"] == "Work"])
+        self.assertEqual(1, len([e for e in cache["entries"] if "Roof repair" in e["say"]]))
+
     def test_a_cache_that_does_not_read_as_one_is_made_again(self):
         work = self.where("Zones", "Work")
         cache = self.root / "System" / "generated" / "parked-hints.json"

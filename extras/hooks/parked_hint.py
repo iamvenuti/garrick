@@ -97,6 +97,8 @@ def note_paths(root):
         if zone.startswith((".", "_")) or not os.path.isdir(zdir):
             continue
         zone_real = os.path.realpath(zdir)
+        if (zone_real == base or zone_real.startswith(base + os.sep)) and zone_real != os.path.join(base, "Zones", zone):
+            continue                    # a zone folder that is a link to another place in the workspace
         for project in sorted(os.listdir(zdir)):
             pdir = os.path.join(zdir, project)
             if project.startswith((".", "_")) or project in ("Inbox", "archive") or not os.path.isdir(pdir) \

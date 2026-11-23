@@ -1327,6 +1327,9 @@ def work_notes(root: PathLike) -> Dict[str, dict]:
         return out
     for zone in zone_dirs:
         zone_real = os.path.realpath(str(zone))
+        if (zone_real == root_real or zone_real.startswith(root_real + os.sep)) \
+                and zone_real != os.path.join(root_real, "Zones", zone.name):
+            continue                    # a zone folder that is a link to another place in the workspace
         try:
             projects = sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))
                               and p.name not in ("Inbox", "archive") and kept(p, zone_real))

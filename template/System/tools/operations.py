@@ -347,6 +347,8 @@ DECLARED: Dict[str, Op] = {
     # Connected services (#683): a service by its plain name, Check it or Leave it; the handler writes the patterns into the
     # read guard's two lists in the workspace's settings file. `add` is Add a service. Only the app's bridge.
     "connected-service": _op(("service", "choice", "add"), (), "workspace", retry="safe"),
+    # Answers (#683): Faster, Balanced or Fuller for Ask or Telegram, kept as the channel's tier and effort. Only the app's bridge.
+    "channel-answers": _op(("channel", "answers"), (), "workspace", retry="safe"),
     # The wrap (#645): the assistant's words in `input`, one JSON object, handed to System/tools/wrap.py, which does the lock,
     # the writes and the commit in the zone and answers with its receipt. A second run writes a second dated entry.
     "wrap": _op(("zone", "project", "thread", "input"), ("project", "thread"), "zone", True),

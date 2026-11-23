@@ -373,7 +373,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "outbox-drop",
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
-         "connected-service",
+         "connected-service", "channel-answers",
          "count-card",
          "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
@@ -2128,6 +2128,35 @@ def set_connected_service(ws: Path, req: dict) -> dict:
     name = " ".join(req["service"].split())
     said = "%s is now %s." % (name, "Check it" if req["choice"] == "check" else "Leave it")
     return {"say": said, "logged": "Connected services: %s" % said}
+
+
+ANSWER_WORDS = {"faster": "Faster", "balanced": "Balanced", "fuller": "Fuller"}
+
+
+def set_channel_answers(ws: Path, req: dict) -> str:
+    """Settings › Ask and Telegram › Answers (#683): `channel`, `ask` or `telegram`, takes `answers`, `faster`, `balanced` or
+    `fuller`, saved as the tier and effort channels.ANSWERS gives it, through the same check and save as Settings' channels.
+    The channel's autonomy stays as kept. Custom is no choice to send: it is only what another stored pair shows as."""
+    lib = channels_lib()
+    channel, answers = req.get("channel"), req.get("answers")
+    if channel not in lib.CHANNELS:
+        raise Refused("there is no channel called %r" % (channel,))
+    if answers not in lib.ANSWERS:
+        raise Refused("answers are %s, not %r" % (", ".join(ANSWER_WORDS[k] for k in lib.ANSWERS), answers))
+    tier, effort = lib.ANSWERS[answers]
+    try:
+        kept = prefs().read(ws).get("channels")
+        merged = dict(kept) if isinstance(kept, dict) else {}
+        merged.update(lib.clean({channel: {"tier": tier, "effort": effort}}, merged))
+    except ValueError as e:
+        raise Refused(str(e))
+    keep = prefs()
+    keep.migrate(ws)
+    try:
+        keep.save(ws, {"channels": merged})
+    except ValueError as e:
+        raise Refused("%s; update Garrick to keep it" % e)
+    return "Answers for %s: %s" % ("Ask" if channel == "ask" else "Telegram", ANSWER_WORDS[answers])
 
 
 _CHANNELS = None
@@ -6389,6 +6418,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_read_guard(ws, req)
     if req["verb"] == "connected-service":
         return set_connected_service(ws, req)
+    if req["verb"] == "channel-answers":
+        return set_channel_answers(ws, req)
     if req["verb"] == "wrap":
         return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
@@ -6417,7 +6448,7 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "machine-role", "read-guard",
-         "connected-service",
+         "connected-service", "channel-answers",
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
@@ -6433,7 +6464,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "outbox-drop",
              "inbox-run", "intake-answer",
              "machine-role", "read-guard",
-         "connected-service",
+         "connected-service", "channel-answers",
              "count-card",
              "session-url")
 

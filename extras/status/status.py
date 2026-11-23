@@ -4571,10 +4571,23 @@ def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
 LEVEL_SAID = {"read": "answers from your workspace, changes nothing",
               "act": "may also make changes you would make by hand, and asks before anything is sent, shared or deleted",
               "full": "as Act, and also sends what you asked for without asking you first"}
-# What a larger model and more effort do (#675), from what the engine passes on: the model's size and the assistant's effort setting,
-# and, for one message that starts with deep:, the large size at high effort.
-SIZE_SAID = ("A larger size and more effort give fuller answers, and take longer and cost more. "
-             "A message that starts with <code>deep:</code> runs once on the large size at high effort.")
+# Answers (#683): one choice in place of the model's size and effort, each with its line; Custom only for another stored pair.
+ANSWER_CHOICES = (("faster", "Faster", "Short answers, soonest."), ("balanced", "Balanced", "Right for most questions."),
+                  ("fuller", "Fuller", "More thought. Slower, and it costs more."))
+ANSWER_CUSTOM = ("custom", "Custom", "Set by your assistant.")
+
+
+def channel_answers(channel: str, cfg: dict, off: bool = False) -> str:
+    """Settings › Ask and Telegram › Answers (#683): Faster, Balanced or Fuller, from the stored tier and effort, and Custom,
+    selected, when the stored pair is none of the three. A pick saves through `channel-answers`; Custom is never sent."""
+    now = channels_mod().answers_of(cfg[channel].get("tier"), cfg[channel].get("effort"))
+    choices = ANSWER_CHOICES + ((ANSWER_CUSTOM,) if now == "custom" else ())
+    body = "".join('<label class="rgchoice chanswer"%s><input type="radio" name="ch-%s-answers" value="%s"%s%s> <span><b>%s</b><small>%s</small></span></label>'
+                   % (' data-custom="1"' if k == "custom" else "", channel, k, " checked" if k == now else "",
+                      ' disabled title="%s"' % E(NOT_SET_UP) if off else "", E(v), E(said)) for k, v, said in choices)
+    return set_row(row_label("Answers", "", ""),
+                   '<span class="rgmode chanswers" id="ch-%s-answers" data-answers="%s" data-was="%s" role="radiogroup" aria-label="Answers">%s</span>'
+                   % (channel, channel, now, body))
 
 
 def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
@@ -4598,9 +4611,7 @@ def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
         if channel == "telegram":
             line, off = telegram_service_row(ws, {"channels": ch})
             body += line
-        body += select(channel, "tier", ch["tiers"], TIER_NAMES, "Model size", off)
-        body += select(channel, "effort", ch["efforts"], {}, "Effort", off)
-        body += '<p class="chnote schint" data-for="%s-size">%s</p>' % (channel, SIZE_SAID)
+        body += channel_answers(channel, cfg, off)
         body += select(channel, "autonomy", ch["levels"][channel], LEVEL_NAMES, "How far it may go", off)
         body += '<ul class="chlevels" data-for="%s-levels">%s</ul>' % (
             channel, "".join("<li><b>%s</b> %s</li>" % (E(LEVEL_NAMES[v]), E(LEVEL_SAID[v])) for v in ch["levels"][channel]))
@@ -4631,9 +4642,16 @@ def channels_settings(ws: Path, data: Optional[dict] = None) -> str:
 CHANNELS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var boxes=document.querySelectorAll('.chsec');if(!host||!boxes.length)return;boxes.forEach(function(b){b.hidden=false});
-function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
+function chSave(sel){var c=sel.dataset.channel,o={};o[c]={autonomy:document.getElementById('ch-'+c+'-autonomy').value};
 host.postMessage({act:{verb:'settings',channels:o}})}
-document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
+document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})});
+/* Answers (#683): Faster, Balanced or Fuller, saved as its pair by the page's own verb; Custom goes once one of the three is saved */
+document.querySelectorAll('.chanswers').forEach(function(g){g.addEventListener('change',function(e){var i=e.target;e.stopPropagation();
+if(!i.matches('input[type=radio]')||i.value==='custom')return;host.postMessage({act:{verb:'channel-answers',channel:g.dataset.answers,answers:i.value}})})});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='channel-answers'){var g=document.getElementById('ch-'+q.channel+'-answers');
+if(g){if(out&&out.ok){g.dataset.was=q.answers;var c=g.querySelector('[data-custom]');if(c)c.remove()}
+else{var b=g.querySelector('input[value="'+g.dataset.was+'"]');if(b)b.checked=true}}return}
+if(prev)return prev(q,out)}})();
 """
 
 def copy(label: str, text: str, say: str) -> str:

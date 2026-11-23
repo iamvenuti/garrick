@@ -114,7 +114,7 @@ class TestOneGrid(LayoutCase):
         bare = [dom.text_of(n)[:50] for n in dom.walk() if "srow" in classes(n) and "launcher-row" in classes(n)
                 and not any("qhelp" in classes(k) for k in n["kids"])]
         # a row the help table does not know is a row without one: the table names them, and these are all that is left
-        self.assertEqual([], [b for b in bare if not re.match(r"(Out of everyday|Kept only|Never archive|Page domains|Look for|Reset view|Close the Ask|Without being asked)", b)], bare)
+        self.assertEqual([], [b for b in bare if not re.match(r"(Out of everyday|Kept only|Never archive|Page domains|Look for|Reset view|Close the Ask|Without being asked|Answers)", b)], bare)    # Answers: its "?" text comes with #681
 
     def test_the_grid_has_one_control_column_and_one_help_column(self):
         css = status.SETTINGS_CSS
@@ -255,13 +255,13 @@ class TestPlainWords(LayoutCase):
         for part in ("answers from your workspace and changes nothing", "asks before anything is sent, shared or deleted", "without asking you first"):
             self.assertIn(part, text)
 
-    def test_model_size_and_effort_have_one_line_between_them(self):
+    def test_answers_takes_the_place_of_model_size_and_effort_with_no_note(self):
         _, markup = self.dom()
         ask = markup.split('id="channels-ask"')[1].split("</section>")[0]
-        self.assertEqual(1, ask.count('data-for="ask-size"'))
-        self.assertIn("A larger size and more effort give fuller answers, and take longer and cost more", ask)
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k in ("ch-ask-tier", "ch-ask-effort"))
-        self.assertIn("take longer and cost more", text)
+        self.assertEqual(0, ask.count('data-for="ask-size"'))                               # the note goes (#683)
+        self.assertIn('data-answers="ask"', ask)
+        for gone in ("Model size", "Effort", "A larger size and more effort"):
+            self.assertNotIn(gone, ask)
 
     def test_older_material_says_what_the_user_sees(self):
         _, markup = self.dom()

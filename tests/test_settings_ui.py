@@ -462,6 +462,55 @@ class TestConnectedServices(SettingsCase):
         self.assertIn(htmllib.escape(ISSUE["rg-services"]), sec)
 
 
+class TestAnswers(SettingsCase):
+    """Answers (#683): one choice for Ask and one for Telegram, in place of Model size and Effort."""
+
+    def group(self, channel, markup=None):
+        markup = markup or self.full()
+        m = re.search(r'<span class="rgmode chanswers" id="ch-%s-answers".*?</span></label></span>' % channel, markup, re.S)
+        self.assertIsNotNone(m, channel)
+        return m.group(0)
+
+    def checked(self, group):
+        return re.findall(r'value="([a-z]+)" checked', group)
+
+    def test_fuller_stored_shows_fuller_and_another_pair_shows_custom(self):
+        self.settings_file(channels={"ask": {"tier": "opus", "effort": "high"}, "telegram": {"tier": "opus", "effort": "low"}})
+        markup = self.full()
+        ask, telegram = self.group("ask", markup), self.group("telegram", markup)
+        self.assertEqual(["fuller"], self.checked(ask))
+        self.assertNotIn("Custom", ask)
+        self.assertEqual(["custom"], self.checked(telegram))
+        self.assertIn("<b>Custom</b><small>Set by your assistant.</small>", telegram)
+        for value, name, said in (("faster", "Faster", "Short answers, soonest."), ("balanced", "Balanced", "Right for most questions."),
+                                  ("fuller", "Fuller", "More thought. Slower, and it costs more.")):
+            self.assertIn('value="%s"' % value, ask)
+            self.assertIn("<b>%s</b><small>%s</small>" % (name, said), ask)
+
+    def test_a_pick_of_balanced_stores_medium_and_medium_and_custom_goes(self):
+        self.settings_file(channels={"ask": {"tier": "opus", "effort": "low", "autonomy": "read"}})
+        self.assertEqual(["custom"], self.checked(self.group("ask")))
+        import page_action as pa
+        pa.set_channel_answers(self.root, {"verb": "channel-answers", "channel": "ask", "answers": "balanced"})
+        kept = json.loads((self.root / "System" / "garrick-settings.json").read_text())["channels"]["ask"]
+        self.assertEqual({"tier": "sonnet", "effort": "medium", "autonomy": "read"}, kept)
+        ask = self.group("ask")
+        self.assertEqual(["balanced"], self.checked(ask))
+        self.assertNotIn("custom", ask)
+        self.assertIn("if(c)c.remove()", status.CHANNELS_JS)                                 # and at once, before the page is built again
+
+    def test_the_technical_words_are_not_in_the_dialog(self):
+        self.assistants(registered=True)
+        self.settings_file(**{"read-guard": "enforce"})
+        dialog = re.sub(r"<script\b.*?</script>|<style\b.*?</style>", "", self.full(), flags=re.S)
+        # "Effort" stays only as the name of a preview feature (the effort ledger, under About), which is not this choice
+        dialog = re.sub(r'<section class="setsec[^"]*" id="preview-settings".*?</section>', "", dialog, flags=re.S)
+        visible = re.sub(r"<[^>]+>", " ", dialog)
+        for word in ("Model size", "Effort", "Page types", "Page domains", "frontmatter"):
+            self.assertNotIn(word, visible, word)
+            self.assertNotIn(word, dialog, word)
+
+
 class TestEverySettingHasItsOwnHelp(SettingsCase):
     def setUp(self):
         super().setUp()
@@ -473,14 +522,16 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
         bare = []
         for tag, attrs, row in self.parsed.controls:
             if attrs.get("type") == "hidden" or attrs.get("name") in ("role-pick", "rg-mode", "rg-cross") or attrs.get("class") in ("rgnew",) \
-                    or attrs.get("id") in ("role-name", "role-server") or (attrs.get("name") or "").startswith("rg-svc-"):
+                    or attrs.get("id") in ("role-name", "role-server") or (attrs.get("name") or "").startswith("rg-svc-") \
+                    or attrs.get("name") in ("ch-ask-answers", "ch-telegram-answers"):
                 continue                                          # the dialog's fields, choices that carry their lines, the services under their fold's "?"
             if row is None or not row["help"]:
                 bare.append((tag, attrs.get("id") or attrs.get("data-launcher") or attrs.get("data-nt") or attrs.get("name") or attrs.get("class")))
         self.assertEqual([], bare)
 
     def test_every_row_of_a_known_kind_was_given_one_by_the_table(self):
-        self.assertEqual([], sh.unknown_rows(self.markup))
+        # Answers (#683) has its "?" text from #681, in the help table of that branch
+        self.assertEqual([], [r for r in sh.unknown_rows(self.markup) if "<span>Answers</span>" not in r])
 
     def test_each_question_mark_has_one_text_and_each_id_is_used_once(self):
         targets = self.parsed.targets

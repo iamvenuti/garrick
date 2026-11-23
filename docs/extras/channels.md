@@ -8,7 +8,9 @@ The Ask box and the [Telegram channel](telegram.md) answer you, and can do work 
 | Effort | low, medium, high | medium |
 | How far it may go (autonomy) | Read, Act, Full | Act |
 
-Start a message with `deep:` and that one request runs on the large model at high effort. Your settings do not change. Garrick's code finds the word; no model decides it.
+Settings shows the tier and the effort as one choice, *Answers*: **Faster** ("Short answers, soonest.") keeps small and low, **Balanced** ("Right for most questions.") medium and medium, and **Fuller** ("More thought. Slower, and it costs more.") large and high. A pair that is none of the three, such as large and low, set by your assistant or by hand, shows as **Custom** ("Set by your assistant.") until you pick one of the three; nothing changes a stored pair on its own. The stored keys and values stay as the table says.
+
+Start a message with `deep:` and that one request runs on the large model at high effort, one Fuller answer. Your settings do not change. Garrick's code finds the word; no model decides it.
 
 ## The three levels
 

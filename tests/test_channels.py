@@ -126,6 +126,43 @@ class TestSettings(EngineCase):
             self.assertFalse(self.channels.wants_action(text), text)
 
 
+class TestAnswers(EngineCase):
+    """Answers (#683): Faster, Balanced or Fuller, each kept as the tier and effort it stands for; the stored keys do not change."""
+
+    def answers(self, channel, answers, via="page"):
+        return self.pa.perform(self.root, {"verb": "channel-answers", "channel": channel, "answers": answers},
+                               self.pa.ops_lib(self.root), via=via)[0]
+
+    def test_each_choice_stores_its_pair_and_keeps_the_autonomy(self):
+        self.settings(ask={"autonomy": "full"})
+        for answers, pair in (("fuller", ("opus", "high")), ("faster", ("haiku", "low")), ("balanced", ("sonnet", "medium"))):
+            with self.subTest(answers=answers):
+                out = self.answers("ask", answers)
+                self.assertTrue(out["ok"], out)
+                got = self.channels.settings(self.root)["ask"]
+                self.assertEqual(pair + ("full",), (got["tier"], got["effort"], got["autonomy"]))
+        self.assertTrue(self.answers("telegram", "fuller")["ok"])
+        self.assertEqual({"tier": "opus", "effort": "high", "autonomy": "act"}, self.channels.settings(self.root)["telegram"])
+
+    def test_a_pair_that_is_none_of_the_three_reads_as_custom(self):
+        self.assertEqual("custom", self.channels.answers_of("opus", "low"))
+        self.assertEqual("fuller", self.channels.answers_of("opus", "high"))
+        self.assertEqual("balanced", self.channels.answers_of(*self.channels.ANSWERS["balanced"]))
+
+    def test_custom_and_anything_else_is_refused_and_nothing_is_written(self):
+        self.settings(ask={"tier": "opus", "effort": "low"})
+        for channel, answers in (("ask", "custom"), ("ask", "large"), ("ask", None), ("email", "faster")):
+            with self.subTest(channel=channel, answers=answers):
+                self.assertFalse(self.answers(channel, answers)["ok"])
+        self.assertEqual(("opus", "low"), tuple(self.channels.settings(self.root)["ask"][k] for k in ("tier", "effort")))
+
+    def test_it_is_the_pages_own_verb(self):
+        self.assertIn("channel-answers", self.pa.PAGE_ONLY)
+        self.assertIn("channel-answers", self.pa.ops_lib(self.root).DECLARED)
+        self.assertFalse(self.answers("ask", "fuller", via="ask")["ok"])
+        self.assertEqual("sonnet", self.channels.settings(self.root)["ask"]["tier"])
+
+
 class TestCapability(EngineCase):
     def test_an_assistant_that_can_do_the_three_things_passes(self):
         self.assertEqual((True, []), (self.cap_ok["ok"], self.cap_ok["failed"]))

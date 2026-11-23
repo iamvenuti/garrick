@@ -1291,8 +1291,8 @@ class TestZoneColours(StatusCase):
         start = html.index('id="zone-settings"')
         section = html[start:html.index("</section>", start)]
         self.assertIn('<section class="setsec apponly" id="zone-settings">', html)           # the app saves it; a browser cannot
-        self.assertEqual(2, section.count('class="zrow"'))
-        self.assertIn('<div class="zrow" data-zone="Work"><span class="zprev zc zc-teal">', section)
+        self.assertEqual(2, section.count('launcher-row srow zrow"'))
+        self.assertIn('<div class="launcher-row srow zrow" data-zone="Work"><div class="slab"><span class="zprev zc zc-teal">', section)
         self.assertIn('<option value="Teal" selected>Teal</option>', section)
         self.assertIn('<option value="briefcase" selected>Briefcase</option>', section)
         work = section[section.index('data-zone="Work"'):]
@@ -1343,7 +1343,7 @@ class TestGraphColours(StatusCase):
         section = self.section(html)
         self.assertIn('<section class="setsec apponly" id="graph-colour-settings"><h3>Graph colours', html)   # the app saves it
         data = graph_data(html)
-        rows = re.findall(r'<div class="gkrow" data-kind="([^"]+)" data-def="([^"]+)">', section)
+        rows = re.findall(r'<div class="launcher-row srow gkrow" data-kind="([^"]+)" data-def="([^"]+)">', section)
         shipped = dict((k, c) for k, _, c in status.KINDS)
         self.assertEqual([(k, shipped[k]) for k, _, _ in status.KINDS], rows[:len(status.KINDS)])   # every kind, as shipped
         self.assertEqual(data["keys"], [k for k, _ in rows])
@@ -1358,8 +1358,8 @@ class TestGraphColours(StatusCase):
             self.assertNotIn('data-v="%s"' % ring, section)
         thread = section[section.index('data-kind="thread"'):]
         self.assertIn('<i class="zsw" style="background:%s"></i>Threads</span>' % shipped["thread"], thread)
-        self.assertIn('<span>Default</span></button>', thread[:thread.index("</div>")])
-        self.assertIn('<button class="act" type="button" id="graph-reset">Reset colours</button>', section)
+        self.assertIn("<span>Default</span></button>", thread)
+        self.assertIn('<button class="act lg" type="button" id="graph-reset">Reset colours</button>', section)
         self.assertNotIn('id="graph-colour-settings"', self.page(show_graph=False))
 
     def test_a_kind_found_from_pages_has_a_row(self):
@@ -1372,7 +1372,7 @@ class TestGraphColours(StatusCase):
         i = data["keys"].index("domain")
         self.assertEqual("var(--zc-olive)", data["colors"][i])
         shipped = next(c for k, _, c in status.page_kinds({"Meetings": {"domain": 3}}) if k == "domain")
-        self.assertIn('<div class="gkrow" data-kind="domain" data-def="%s"><span class="zprev"><i class="zsw" style="background:var(--zc-olive)">'
+        self.assertIn('<div class="launcher-row srow gkrow" data-kind="domain" data-def="%s"><div class="slab"><span class="zprev"><i class="zsw" style="background:var(--zc-olive)">'
                       '</i>Domains</span>' % shipped, self.section(html))
 
     def test_an_odd_type_makes_a_kind_settings_can_save(self):
@@ -1381,7 +1381,7 @@ class TestGraphColours(StatusCase):
             write(m / ("d%d.md" % i), "---\ntitle: Draft %d\ntype: _Draft\n---\n" % i)
         html = self.page()
         self.assertIn("draft", graph_data(html)["keys"])
-        self.assertIn('<div class="gkrow" data-kind="draft"', self.section(html))
+        self.assertIn('<div class="launcher-row srow gkrow" data-kind="draft"', self.section(html))
 
     def test_a_cards_links_follow_the_theme(self):
         self.assertIn("<i style=\"background:'+esc(G.colors[m.k]||'var(--muted)')+'\"></i>", status.GRAPH_JS)
@@ -2781,7 +2781,7 @@ class TestExploreFollowsTheZoneInView(StatusCase):
     def test_on_by_default_and_only_with_the_graph(self):
         html = self.page()
         self.assertIn('<section class="setsec" id="follow-settings"><h3>Explore', html)
-        self.assertIn('<input type="checkbox" id="graph-follow" checked> <span>Follow the zone in view', html)
+        self.assertIn('<label class="launcher-choice" for="graph-follow"><span>Follow the zone in view', html)
         self.assertIn(status.FOLLOW_JS, html)
         bare = self.page(show_graph=False)
         self.assertNotIn("graph-follow", bare)

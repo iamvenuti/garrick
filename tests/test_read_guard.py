@@ -253,10 +253,12 @@ class WarnOnly(GuardCase):
         self.call("Grep", {"pattern": "birch", "path": str(self.root / "Wikis")})
         text = self.log_text()
         self.assertTrue(text)
-        for word in ("Birch", "birch", "secret", "pricing", "Personal", str(self.root), "Notes", "Wikis", "Meetings"):
+        # since 0.79.0 (#674) a line names the file by its path from the workspace and its zone, for the list in Settings: still never the
+        # path of this computer, and never what a file says
+        for word in (str(self.root), "Decisions"):
             self.assertNotIn(word, text)
         for line in self.log_lines():
-            self.assertEqual({"t", "tool", "decision", "zone", "id", "kind"} - {"kind"} | ({"kind"} & set(line)), set(line))
+            self.assertEqual({"t", "tool", "decision", "zone", "id"}, set(line) - {"kind"} - {"project", "session", "file", "part", "file_zone", "outside", "source", "held_zone"})
             self.assertRegex(line["id"], r"^[0-9a-f]{12}$")
 
     def test_a_root_session_is_not_logged(self):

@@ -108,9 +108,9 @@ class TestBuildCheck(unittest.TestCase):
         why = {"claude-new": None, "codex-new": status.NO_NEW_SESSION % "Codex", "finder": None, "cmux": None, "codex": None,
                "claude": None}
         dialog = status.launcher_choices(("finder", "claude-new"), why=why)
-        self.assertIn('data-launcher="claude-new"> <i class="lico" aria-hidden="true" style="--ic:var(--icon-claude)"></i>'
+        self.assertIn('for="launch-claude-new"><i class="lico" aria-hidden="true" style="--ic:var(--icon-claude)"></i>'
                       '<span>New session in Claude</span>', dialog)
-        self.assertIn('data-launcher="codex-new" disabled>', dialog)
+        self.assertIn('data-launcher="codex-new" disabled', dialog)
         self.assertIn("New session in Codex<small>Installed, but this version cannot open a new session: update the Codex app</small>",
                       dialog)
         self.assertIn('name="garrick-default" value="claude-new"', dialog)

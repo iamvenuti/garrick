@@ -2698,7 +2698,7 @@ MENU_SETTINGS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
-var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
+var LOGIN='Starts the app when you log in, with the window as you left it',show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
 var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app',
 dictationkey:'Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys'};
 var dict=document.getElementById('menu-dictation'),dkey=document.getElementById('menu-dictkey'),FIELD={hotkey:'menu-hotkey',askhotkey:'menu-askkey',dictationkey:'menu-dictkey'};
@@ -2727,7 +2727,8 @@ if(dkey){dkey.closest('.launcher-row').style.display='dictation' in a&&m==='key'
 var fin=document.getElementById('menu-finder');
 if(fin){var fs=a.finder,fn=document.getElementById('menu-finder-note');fin.closest('.launcher-row').style.display='finder' in a?'':'none';fin.hidden=fs==='missing';
 if(fn)fn.textContent=FIND[fs]||FIND.off}
-if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
+/* Open at login says nothing of macOS until the app has answered, and then the reason only when it has one (#673) */
+var ln=document.getElementById('menu-login-note');if(ln)ln.textContent=window.GarrickApp&&a.login==null?(a.said&&a.said.login)||'Needs macOS 13 or later':LOGIN;key.value=a.hotkey||''}
 window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 /* the app's settings: kept by the app, so a change here does not rebuild the page */
 function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
@@ -4380,7 +4381,8 @@ def machine_record(ws: Path, data: Optional[dict] = None) -> Tuple[str, str, str
 
 
 SETGUARD_JS = getattr(settings_mod("settings_guard"), "JS", "")
-SETGUARD_CSS = getattr(settings_mod("settings_guard"), "CSS", "")
+SETGUARD_CSS = getattr(settings_mod("settings_guard"), "CSS", "") + getattr(settings_mod("settings_readguard"), "CSS", "")
+SETRG_JS = getattr(settings_mod("settings_readguard"), "JS", "")
 
 
 def machine_settings(ws: Path, data: Optional[dict] = None) -> str:
@@ -4389,46 +4391,75 @@ def machine_settings(ws: Path, data: Optional[dict] = None) -> str:
     if guard is None:
         return ""
     role, name, server = machine_record(ws, data)
-    return guard.machine_section(role, name, server, help_button, help_text)
+    return settings_mod("settings_readguard").machine_section(guard, role, name, server, help_button, help_text)
 
 
 def read_guard_block(ws: Path, data: Optional[dict] = None) -> str:
     """The Read guard block of Settings › Walls: Off, Watch only or On, Refuse or Ask me, and the two tool lists (#621). In the
     app only. Empty where settings_guard.py is not there."""
     guard = settings_mod("settings_guard")
-    data = _data(ws, data, "guard", "machine")
+    data = _data(ws, data, "guard", "machine", "walls")
     read = data.get("read_guard")
     if guard is None or not read:
         return ""
     state = dict(read["state"], would={z: [dict(i, when=dt.datetime.fromisoformat(i["when"]) if isinstance(i.get("when"), str) else i.get("when"))
                                            for i in items] for z, items in (read["state"].get("would") or {}).items()})
-    return guard.guard_block(state, bool(read.get("codex")), help_button, help_text, machine_record(ws, data)[0])
+    # the page is built for the whole workspace, so the list may name every zone's files (scope None); each zone's walled flag is what a
+    # narrower page would hold back by (settings_guard.may_name)
+    shown = {"scope": None, "walled": (data.get("walls") or {}).get("flags") or {}}
+    return settings_mod("settings_readguard").guard_block(guard, state, bool(read.get("codex")), help_button, help_text, machine_record(ws, data)[0], shown)
 
 
 def walls_settings(ws: Path, folder: Optional[Path] = None, data: Optional[dict] = None) -> str:
     """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
     "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
     nothing and runs nothing: the assistant asks for the yes and runs scaffold.py. No command and no code on the row. Nothing without
-    zones. The note about flags read from the Parties and Zones tables moves here with the rows."""
-    data = _data(ws, data, "walls", "guard", "machine")
+    zones. The note about flags read from the Parties and Zones tables moves here with the rows. The read guard is its own section,
+    after this one (#673)."""
+    data = _data(ws, data, "walls")
     ctx = data.get("walls") or {}
     flags = ctx.get("flags") or {}
     if not flags:
         return ""
-    guard = read_guard_block(ws, data)
     where = str(folder or ws)
     rows = ""
     for z, walled in sorted(flags.items()):
         ask = "Make %s %s" % (z, "open" if walled else "walled")
-        rows += ('<li class="wallrow" data-zone="%s"><b>%s</b><span class="st %s">%s</span>'
-                 '<button class="wchange" type="button" data-request="%s" data-folder="%s" title="%s" aria-label="%s">Change\u2026</button></li>'
+        rows += ('<li class="launcher-row srow wallrow" data-zone="%s"><div class="slab"><b>%s</b></div><div class="sctl"><span class="st %s">%s</span>'
+                 '<button class="act sm wchange" type="button" data-request="%s" data-folder="%s" title="%s" aria-label="%s">Change…</button></div></li>'
                  % (E(z), E(z), "good" if walled else "idle", "Walled" if walled else "Open", E(ask), E(where),
-                    E("Hand \u201c%s\u201d to your assistant, which asks you before it changes anything" % ask), E("Change %s: ask my assistant to %s" % (z, ask[0].lower() + ask[1:]))))
+                    E("Hand “%s” to your assistant, which asks you before it changes anything" % ask), E("Change %s: ask my assistant to %s" % (z, ask[0].lower() + ask[1:]))))
     note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
             'accepted.</p>' if ctx.get("pending") else "")
-    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s%s</section>'
+    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s</section>'
             % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
-               help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note, guard))
+               help_text("walls", "<i>Change…</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note))
+
+
+def read_guard_section(ws: Path, data: Optional[dict] = None) -> str:
+    """Settings › Read guard (#674): its own section, after Which zones are walled, so the list of sections names it (#673). In the
+    app only; empty where the read guard cannot be read."""
+    return read_guard_block(ws, data)
+
+
+def row_label(text: str, hint: str = "", target: str = "", hint_id: str = "") -> str:
+    """The label cell of a setting row (#673): its name and, under it in one line, what it does or why it cannot be used.
+    `text` and `hint` are HTML, already escaped; `target` is the id of the control the label names."""
+    small = '<small%s>%s</small>' % (' id="%s"' % hint_id if hint_id else "", hint) if hint else ""
+    return '<label class="launcher-choice"%s><span>%s%s</span></label>' % (' for="%s"' % target if target else "", text, small)
+
+
+def set_row(label: str, control: str, cls: str = "", attrs: str = "") -> str:
+    """One setting row as three columns (#673): the label cell, the control cell, and, where settings_help.py adds it, the
+    "?". Every row of every section is built by this, so the control column and the "?" column stand at one place in all of
+    them. `launcher-row` stays on the row: the page's script finds a row by it. `cls` and `attrs` are HTML."""
+    return ('<div class="launcher-row srow%s"%s><div class="slab">%s</div><div class="sctl">%s</div></div>'
+            % (" " + cls if cls else "", " " + attrs if attrs else "", label, control))
+
+
+def hotkey_field(field: str, placeholder: str, name: str) -> str:
+    return ('<span class="hotkey"><input type="text" id="%s" readonly placeholder="%s" aria-label="%s">'
+            '<button class="act" type="button" id="%s-clear">Clear</button></span>' % (field, E(placeholder), E(name), field))
 
 
 def menu_settings() -> str:
@@ -4437,44 +4468,37 @@ def menu_settings() -> str:
     shortcut that opens either, the one that opens the Ask box, whether it
     answers, and the dictation the box starts once it opens. The app keeps
     them all, so they hold when the window is closed."""
+    def R(label: str, control: str, hidden: bool = False) -> str:
+        return set_row(label, control, attrs='style="display:none"' if hidden else "")
+    rows = (
+        R(row_label("Show the menu", "Marked in red when something on the Status tab failed", "menu-show"), '<input type="checkbox" id="menu-show">') +
+        R(row_label("Shows as", "A panel opens when the pointer rests on the top third of its edge, or on the notch", "menu-style"),
+          '<select id="menu-style" class="menu-style"><option value="icon">Menu bar icon</option><option value="left">Panel from the left</option>'
+          '<option value="right">Panel from the right</option><option value="top">Panel from the top</option></select>', True) +
+        R(row_label("Open at login", MENU_LOGIN, "menu-login", "menu-login-note"), '<input type="checkbox" id="menu-login">') +
+        R(row_label("Hotkey", "Opens the menu or the panel from any app", "menu-hotkey", "menu-hotkey-note"),
+          hotkey_field("menu-hotkey", "Click, then press keys", "Hotkey")) +
+        R(row_label("Answer in the Ask box", "Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel&#39;s field opens your assistant", "menu-ask"),
+          '<input type="checkbox" id="menu-ask">', True) +
+        R(row_label("Ask hotkey", "Opens the Ask box from any app", "menu-askkey", "menu-askkey-note"), hotkey_field("menu-askkey", "None", "Ask hotkey"), True) +
+        R('<span class="launcher-choice"><span>Close the Ask box with<small id="menu-askclose-note">One way always stays on</small></span></span>',
+          '<label class="sopt"><input type="checkbox" id="menu-askclose-esc"> Escape</label>'
+          '<label class="sopt"><input type="checkbox" id="menu-askclose-click"> A click outside it</label>', True) +
+        R(row_label("Then start dictation", "Once the Ask box opens, start dictation in it too", "menu-dictation", "menu-dictation-note"),
+          '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
+          '<option value="fn">Press Fn</option><option value="fn2">Press Fn twice</option><option value="key">Press a shortcut</option></select>', True) +
+        R(row_label("Dictation shortcut", "Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys", "menu-dictkey", "menu-dictkey-note"),
+          hotkey_field("menu-dictkey", "Click, then press keys", "Dictation shortcut"), True) +
+        R(row_label("Finder menu", "Right-click a project or thread folder in Finder to open it from there", "menu-finder", "menu-finder-note"),
+          '<button class="act sm" type="button" id="menu-finder">Open Login Items &amp; Extensions</button>', True))
     return ('<section class="setsec apponly" id="menu-settings" hidden>' + set_head("Menu bar", "menu", 'Keep your live projects '
             'one click away from any app: in the menu bar, or in a panel at the edge of the screen.') + help_text("menu", 'A menu of the live '
             'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
-            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.') +
-            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show the menu'
-            '<small>Marked in red when something on the Status tab failed</small></span></label></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-style"><span>Shows as'
-            '<small>A panel opens when the pointer rests on the top third of its edge, or on the notch</small></span></label>'
-            '<select id="menu-style" class="menu-style"><option value="icon">Menu bar icon</option><option value="left">Panel from the left</option>'
-            '<option value="right">Panel from the right</option><option value="top">Panel from the top</option></select></div>'
-            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'
-            '<small id="menu-login-note">Starts the app when you log in, with the window as you left it</small></span></label></div>'
-            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small id="menu-hotkey-note">Opens the menu '
-            'or the panel from any app</small></span></label>'
-            '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
-            '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice"><input type="checkbox" id="menu-ask"> <span>Answer in the Ask box'
-            '<small>Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel\'s field opens your assistant</small></span></label></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-askkey"><span>Ask hotkey<small id="menu-askkey-note">'
-            'Opens the Ask box from any app</small></span></label>'
-            '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
-            '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
-            '<div class="launcher-row" style="display:none"><span class="launcher-choice"><span>Close the Ask box with'
-            '<small id="menu-askclose-note">One way always stays on</small></span></span>'
-            '<span class="askclose"><label><input type="checkbox" id="menu-askclose-esc"> Escape</label> '
-            '<label><input type="checkbox" id="menu-askclose-click"> A click outside it</label></span></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictation"><span>Then start dictation'
-            '<small id="menu-dictation-note">Once the Ask box opens, start dictation in it too</small></span></label>'
-            '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
-            '<option value="fn">Press Fn</option><option value="fn2">Press Fn twice</option><option value="key">Press a shortcut</option></select></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictkey"><span>Dictation shortcut'
-            '<small id="menu-dictkey-note">Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys</small></span></label>'
-            '<span class="hotkey"><input type="text" id="menu-dictkey" readonly placeholder="Click, then press keys" aria-label="Dictation shortcut">'
-            '<button class="act" type="button" id="menu-dictkey-clear">Clear</button></span></div>'
-            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-finder"><span>Finder menu'
-            '<small id="menu-finder-note">Right-click a project or thread folder in Finder to open it from there</small></span></label>'
-            '<button class="act" type="button" id="menu-finder">Open Login Items &amp; Extensions</button></div></section>')
+            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.') + rows + '</section>')
 
+
+# What Open at login says before the app has said that it cannot (#673): the way it works, never a refusal.
+MENU_LOGIN = "Starts the app when you log in, with the window as you left it"
 
 
 # ---- Settings › Channels (#571, #570) --------------------------------------------------------------
@@ -4516,7 +4540,7 @@ def telegram_service_row(ws: Optional[Path] = None, data: Optional[dict] = None)
     if not row:
         return "", False
     off = row["state"] == "off"
-    button = request_button("Set up Telegram", "set up Telegram", ws) if ws is not None and row["state"] in ("off", "unpaired") else ""
+    button = request_button("Set up Telegram", "set up Telegram", ws, "act sm") if ws is not None and row["state"] in ("off", "unpaired") else ""
     return ('<p class="chnote" id="telegram-service" data-state="%s">%s%s</p>' % (E(row["state"]), E(row["said"]), (" " + button) if button else ""),
             off)
 
@@ -4524,61 +4548,92 @@ def telegram_service_row(ws: Optional[Path] = None, data: Optional[dict] = None)
 def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
     """The actions waiting for your yes, each with what it would do, where, and how long it has left. Its own heading,
     outside both channels' blocks: the list covers Ask and Telegram."""
-    rows = ((_data(ws, data, "channels").get("channels") or {}) if ws is not None or data is not None else {}).get("held")
+    if ws is None and data is None:               # asked for by itself (a caller with no workspace): the hold module's own list
+        try:
+            rows = channel_mod("hold").listing()
+        except Exception:
+            return ""
+    else:
+        rows = (_data(ws, data, "channels").get("channels") or {}).get("held")
     if rows is None:
         return ""
-    head = '<p class="chnote"><b>Waiting for your yes</b></p>'
     if not rows:
-        return '<div id="held-actions">%s<p class="chnote">Nothing is waiting for your yes.</p></div>' % head
+        return '<div id="held-actions"><p class="chnote">Nothing is waiting for your yes.</p></div>'
     items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
                                                                        E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
                     for r in rows)
-    return '<div id="held-actions">%s<p class="chnote">Nothing runs until you say so:</p><ul>%s</ul></div>' % (head, items)
+    return '<div id="held-actions"><p class="chnote">Nothing runs until you say so:</p><ul>%s</ul></div>' % items
 
 
-def channels_settings(ws: Path, data: Optional[dict] = None) -> str:
-    """Settings › Channels: Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections that save are."""
+# What each choice of "How far it may go" lets the assistant do, as channels.py and engine.py have it (#675): Read answers from
+# the workspace with read tools only; Act adds the file tools and the named commands (notes, the inbox, Todo, threads, commits),
+# and holds anything that leaves the computer for your yes; Full, for Ask only, runs what Act would have held, without asking.
+LEVEL_SAID = {"read": "answers from your workspace, changes nothing",
+              "act": "may also make changes you would make by hand, and asks before anything leaves the computer",
+              "full": "as Act, and also sends what you asked for without asking you first"}
+# What a larger model and more effort do (#675), from what the engine passes on: the model's size and the assistant's effort setting,
+# and, for one message that starts with deep:, the large size at high effort.
+SIZE_SAID = ("A larger size and more effort give fuller answers, and take longer and cost more. "
+             "A message that starts with <code>deep:</code> runs once on the large size at high effort.")
+
+
+def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
+    """Settings › Channels (#571): the heading, then one section each for Ask, Telegram and what waits for your yes, so each has
+    its own entry in the list of sections (#673). Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections
+    that save are. Empty where the channels cannot be read."""
     ch = _data(ws, data, "channels").get("channels")
     if not ch:
-        return ""
+        return []
     cfg, cap = ch["settings"], ch["capability"]          # what the last check found; the page never runs one
 
     def select(channel: str, key: str, values, names, label: str, off: bool = False) -> str:
         opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
                        for v in values)
-        return ('<div class="launcher-row"><label class="launcher-choice" for="ch-%s-%s"><span>%s</span></label>'
-                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s"%s>%s</select></div>'
-                % (channel, key, E(label), channel, key, channel, key,
-                   ' disabled title="%s"' % E(NOT_SET_UP) if off else "", opts))
-    body = ""
-    for channel in ch["names"]:
-        body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
-        off = False
+        return set_row(row_label(E(label), "", "ch-%s-%s" % (channel, key)),
+                       '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s"%s>%s</select>'
+                       % (channel, key, channel, key, ' disabled title="%s"' % E(NOT_SET_UP) if off else "", opts))
+
+    def block(channel: str) -> str:
+        body, off = "", False
         if channel == "telegram":
             line, off = telegram_service_row(ws, {"channels": ch})
             body += line
         body += select(channel, "tier", ch["tiers"], TIER_NAMES, "Model size", off)
         body += select(channel, "effort", ch["efforts"], {}, "Effort", off)
+        body += '<p class="chnote schint" data-for="%s-size">%s</p>' % (channel, SIZE_SAID)
         body += select(channel, "autonomy", ch["levels"][channel], LEVEL_NAMES, "How far it may go", off)
+        body += '<ul class="chlevels" data-for="%s-levels">%s</ul>' % (
+            channel, "".join("<li><b>%s</b> %s</li>" % (E(LEVEL_NAMES[v]), E(LEVEL_SAID[v])) for v in ch["levels"][channel]))
+        return ('<section class="setsec setsub apponly chsec" id="channels-%s" hidden><h3>%s</h3>%s</section>'
+                % (channel, E(CHANNEL_NAMES[channel]), body))
     limit = ""
     if not cap.get("ok"):
         limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
                  % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
     lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
-    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s</section>'
+    held = held_list(ws, {"channels": ch})
+    head = ('<section class="setsec apponly chsec" id="channels-settings" hidden>%s%s%s</section>'
             % (set_head("Channels", "channels", lede),
                help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking you first; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
                          "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
-                         "walled zone sent to Telegram is held on Telegram&#39;s servers."),
-               body, limit, held_list(ws, {"channels": ch})))
+                         "walled zone sent to Telegram is held on Telegram&#39;s servers."), limit))
+    out = [head] + [block(c) for c in ch["names"]]
+    if held:
+        out.append('<section class="setsec setsub apponly chsec" id="channels-held" hidden><h3>Waiting for your yes</h3>%s</section>' % held)
+    return out
+
+
+def channels_settings(ws: Path, data: Optional[dict] = None) -> str:
+    """Settings › Channels, as one piece of markup: channels_sections() joined."""
+    return "".join(channels_sections(ws, data))
 
 
 CHANNELS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-var box=document.getElementById('channels-settings');if(!host||!box)return;box.hidden=false;
+var boxes=document.querySelectorAll('.chsec');if(!host||!boxes.length)return;boxes.forEach(function(b){b.hidden=false});
 function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
 host.postMessage({act:{verb:'settings',channels:o}})}
-box.querySelectorAll('select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
+document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
 """
 
 def copy(label: str, text: str, say: str) -> str:
@@ -4646,13 +4701,12 @@ def release_controls(on: bool, every: int) -> str:
     closes, with the rest, as `release-notice` and `release-notice-every`.
     RELEASE_JS fills the line and the report."""
     option = lambda days, label: '<option value="%d"%s>%s</option>' % (days, " selected" if every == days else "", label)
-    return ('<div class="setrel apponly" id="release-settings"><p class="setrelrow"><button type="button" class="act" '
-            'id="rel-check">Check for updates</button><span class="hint" id="rel-line" role="status"></span></p>'
-            '<div class="setrelbox" id="rel-detail" hidden></div>'
-            '<p class="setrelrow"><label><input type="checkbox" id="rel-on"%s> <span>Check for a newer Garrick</span></label> '
-            '<select id="rel-every" aria-label="How often"%s>%s%s</select></p>'
-            '</div>'
-            % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
+    return ('<div class="setrel apponly" id="release-settings">%s<div class="setrelbox" id="rel-detail" hidden></div>%s</div>'
+            % (set_row('<label class="launcher-choice" for="rel-check"><span>Look for a newer Garrick now<small id="rel-line" role="status"></small></span></label>',
+                       '<button type="button" class="act lg" id="rel-check">Check for updates</button>', "setrelrow"),
+               set_row(row_label("Check for a newer Garrick", "", "rel-on"),
+                       '<input type="checkbox" id="rel-on"%s> <select id="rel-every" aria-label="How often"%s>%s%s</select>'
+                       % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")), "setrelrow")))
 
 
 def usage_on(ws: Optional[Path], data: Optional[dict] = None) -> bool:
@@ -4674,8 +4728,8 @@ def usage_control(on: bool) -> str:
     """Settings › About Garrick's switch for counting which cards are opened (#651), in the app only: the setting is saved
     when Settings closes, with the rest, as `usage-counts`. USAGE_JS reads the box, so a card opened after it is cleared is
     not counted."""
-    return ('<div class="setrel apponly" id="usage-settings"><p class="setrelrow"><label><input type="checkbox" id="usage-on"%s> '
-            '<span>Count which cards I open</span></label></p></div>' % (" checked" if on else ""))
+    return ('<div class="setrel apponly" id="usage-settings">%s</div>'
+            % set_row(row_label("Count which cards I open", "", "usage-on"), '<input type="checkbox" id="usage-on"%s>' % (" checked" if on else ""), "setrelrow"))
 
 
 def stale_band_lines(ws: Optional[Path], data: Optional[dict] = None) -> str:
@@ -4748,34 +4802,41 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
     docs, not here (#227). Kept in this viewer's own storage, so the page
     still writes nothing. `agent`, given where the desk can open cmux tabs,
     adds which assistant a tab starts under Open in cmux (#279); the app
-    saves that one in System/desk.json when Settings closes."""
+    saves that one in System/desk.json when Settings closes. Each row is a name and, in the
+    control column, its checkbox and its radio, under the heads *Show on cards* and *Click a name to* (#673, #675)."""
     why = launcher_state() if why is None else why
     rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
     rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
               LAUNCH_ICON % "var(--icon-%s)" % k.replace("-new", ""))
              for k, _, _, _ in LAUNCHERS]
-    row = ('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> %s<span>%s%s</span></label>'
-           '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>')
-    html = [row % (k, "" if ok else " disabled", icon, E(label), "<small>%s</small>" % note if note else "", k, "" if ok else " disabled")
-            for k, label, ok, note, icon in rows]
+
+    def row(k: str, label: str, ok: bool, note: str, icon: str) -> str:
+        box = ('<label class="sbox"><input type="checkbox" id="launch-%s" data-launcher="%s"%s aria-label="Show %s on the cards"></label>'
+               % (k, k, "" if ok else " disabled", E(label)))
+        pick = ('<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label>'
+                % (k, "" if ok else " disabled"))
+        name = '<label class="launcher-choice" for="launch-%s">%s<span>%s%s</span></label>' % (k, icon, E(label), "<small>%s</small>" % note if note else "")
+        return set_row(name, box + pick)
+    html = [row(k, label, ok, note, icon) for k, label, ok, note, icon in rows]
     # Explore's Preview (#219), after the note it reads: a box and no Default, since it opens
     # nothing, and only where the host reads a note for the page, as the card offers it
-    html.insert(1, '<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
-                   '%s<span>Preview</span></label></div>' % GLASS)
+    html.insert(1, set_row('<label class="launcher-choice" for="launch-preview">%s<span>Preview</span></label>' % GLASS,
+                           '<label class="sbox"><input type="checkbox" id="launch-preview" data-launcher="preview" aria-label="Show Preview on the cards"></label>',
+                           "apponly"))
     if agent is not None:
         at = next(i for i, h in enumerate(html) if 'data-launcher="cmux"' in h) + 1
-        html.insert(at, '<div class="launcher-row apponly launcher-sub" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
-                        '<span>A cmux tab starts</span></label>'
-                        '<select id="desk-agent" class="menu-style">%s</select></div>'
-                        % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
-                                  for k, label in DESK_AGENTS))
-    html = "".join(html)
-    return ('<section class="setsec" id="launcher-settings">%s%s%s</section>'
+        html.insert(at, set_row(row_label("A cmux tab starts", "", "desk-agent"),
+                                '<select id="desk-agent" class="menu-style">%s</select>'
+                                % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
+                                          for k, label in DESK_AGENTS), "apponly launcher-sub", 'id="desk-agent-row"'))
+    head = ('<div class="srow shead" aria-hidden="true"><div class="slab"></div><div class="sctl"><span class="shcol">Show on cards</span>'
+            '<span class="shcol">Click a name to</span></div></div>')
+    return ('<section class="setsec" id="launcher-settings">%s%s%s%s</section>'
             % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
                         "thread&#39;s name does."), help_text("launchers", 'Tick what project and thread cards offer; Default is what '
                'clicking a thread&#39;s name does. A greyed row says why it cannot work here. Preview reads the note without opening '
                'anything. Saved as you change it.'),
-               html))
+               head, "".join(html)))
 
 
 def follow_settings() -> str:
@@ -4784,35 +4845,40 @@ def follow_settings() -> str:
     window, as the graph's other choices are, so it is not known when the page
     is built; only on a page with the graph. Explore's colours are no switch
     here: every place takes its kinds' colours (#292)."""
-    row = '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="%s"%s> <span>%s<small>%s</small></span></label></div>'
+    row = set_row(row_label("Follow the zone in view", "Explore shows the zone you are reading on the Threads card", "graph-follow"),
+                  '<input type="checkbox" id="graph-follow" checked>')
     return ('<section class="setsec" id="follow-settings">%s%s%s</section>'
             % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading."),
                help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
                'switches to it once it has filled the window for a moment. With the zones side by side, point at a column or open a '
                'project or thread in it. The switch is for this page only: the zone you pick in Explore&#39;s drop-down still leads '
                'the card and is what the page opens on. Picking a wiki pauses it until the page reloads. Kept in this window.'),
-               row % ("graph-follow", " checked", "Follow the zone in view", "Explore shows the zone you are reading on the Threads card")))
+               row))
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
     """Settings › Preview features: each flag's name and whether it is on,
-    what it does as the row's tooltip (#227), since it is switched in a file."""
+    what it does as the row's tooltip (#227), since it is switched in a file. The file is named
+    behind the "?" and in the tooltip, not on the page (#675)."""
     def chip(k: str, on: bool) -> str:
         return "on" if on else "off"
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
                    % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
-            % (set_head("Preview features", "preview", "Off until you switch them on in a file."), rows,
-               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Your assistant can '
-               'switch one on, then rebuild the page. Point at a feature for what it does.')))
+            % (set_head("Preview features", "preview", "Off until you ask your assistant to switch one on."), rows,
+               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Each is off until it is '
+               'switched on in <code>System/garrick-flags.json</code>: ask your assistant to switch one on, and it rebuilds the page. '
+               'Point at a feature for what it does.')))
 
 
 # The foot of Settings, under the last section: the cards hidden in this
 # window, when there are any, then Reset view, its explanation as its tooltip
 # and behind its "?".
 VIEW_HELP = "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."
-VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="hidden-cards" hidden></div><div class="gacts">'
-        '<button class="act" type="button" id="reset-view" title="%s">Reset view</button>%s</div>%s</div></div>'
+VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="hidden-cards" hidden></div>'
+        '<div class="launcher-row srow"><div class="slab"><label class="launcher-choice" for="reset-view"><span>Reset view'
+        '<small>Show every card again, in its first place</small></span></label></div><div class="sctl">'
+        '<button class="act lg" type="button" id="reset-view" title="%s">Reset view</button></div>%s</div>%s</div></div>'
         % (E(VIEW_HELP + " Reset view puts every card back in place and shown, in the order this Garrick builds, "
                          "folds, graph and filter as built."),
            help_button("Reset view", "view"), help_text("view", E(VIEW_HELP))))
@@ -4821,20 +4887,22 @@ VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="
 # Settings is one column of sections, read in order and grouped by what
 # people come for (#205), with the list of them beside it: a click there
 # brings a section into view, and the one being read is marked as the column
-# scrolls (JS). Each section is filed under a group's key in settings().
-SET_GROUPS = (("look", "How Garrick looks and opens things"), ("tell", "What it tells you"),
-              ("keep", "How it keeps older material"), ("walls", "Walls"), ("machine", "This computer"), ("about", "About Garrick"))
-SET_SECTION = re.compile(r'<section class="setsec[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
+# scrolls (JS). Each section is filed under a group's key in settings(). The group names are short, so each fits on one line of
+# the list (#673).
+SET_GROUPS = (("look", "Look and open"), ("tell", "Notices"), ("keep", "Older material"), ("walls", "Walls"), ("machine", "This computer"),
+              ("about", "About"))
+SET_SECTION = re.compile(r'<section class="setsec( setsub)?[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
 
 
 def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
     """The list of Settings' sections, by group, each a link named as the
-    section's heading. A section a host hides (.apponly in a browser, Menu
-    bar until the app answers) is taken out of the list by JS when Settings
+    section's heading: every section that has a heading, a part of one (Ask, Telegram, what waits for your yes, the read guard)
+    indented under the section it belongs to (#673). A section a host hides (.apponly in a
+    browser, Menu bar until the app answers) is taken out of the list by JS when Settings
     opens, and a group with none left goes with it."""
     out = ""
     for key, title, secs in groups:
-        items = "".join('<li><a href="#%s" data-setgo="%s">%s</a></li>' % (m.group(1), m.group(1), m.group(2))
+        items = "".join('<li%s><a href="#%s" data-setgo="%s">%s</a></li>' % (' class="setsub"' if m.group(1) else "", m.group(2), m.group(2), m.group(3))
                         for m in (SET_SECTION.match(h) for h in secs) if m)
         if items:
             out += ('<div class="setnavgrp"><p class="setnavh" id="sn-%s">%s</p><ul aria-labelledby="sn-%s">%s</ul></div>'
@@ -4854,15 +4922,15 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     About Garrick, and the preview features with which are switched on;
     Reset view at the foot. Each section shows its choices and one line at
     most saying what they are for; how a feature works is behind its "?"
-    and in docs/extras/status-page.md (#227)."""
+    and in docs/extras/status-page.md (#227). Every setting row is one grid (#673)."""
     data = settings_data(ws)
     agent = desk_agent(ws, data) if "cmux" in installed and CMUXLIB.is_file() else None
     filed = {"look": [launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
-             "tell": [notify_settings(ws, CMUXLIB.is_file(), data), channels_settings(ws, data)],
+             "tell": [notify_settings(ws, CMUXLIB.is_file(), data)] + channels_sections(ws, data),
              "keep": [memory_settings(ws, link, data)],
-             "walls": [walls_settings(ws, None, data)],
+             "walls": [walls_settings(ws, None, data), read_guard_section(ws, data)],
              "machine": [machine_settings(ws, data)],
              "about": [about_garrick(release_number(ws, data), ws, data), preview_section(preview_flags(ws, data))]}
     helper = settings_mod("settings_help")          # a "?" on each setting row, beside its section's (#621)
@@ -5058,9 +5126,9 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
         if kind == "col":
             return swatch_pick("col", "Colour", zone, chosen, ZONE_COLOURS, "No colour", zone_swatch(""), zone_swatch)
         return swatch_pick("ico", "Icon", zone, chosen, ZONE_ICONS, "No icon", '<i class="znone"></i>', zone_icon)
-    rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>%s%s</div>'
-                   % (E(z), zone_class(z, styles), zone_name(z, styles),
-                      pick("col", z, styles.get(z, {}).get("color")), pick("ico", z, styles.get(z, {}).get("icon")))
+    rows = "".join(set_row('<span class="zprev%s">%s</span>' % (zone_class(z, styles), zone_name(z, styles)),
+                           pick("col", z, styles.get(z, {}).get("color")) + pick("ico", z, styles.get(z, {}).get("icon")),
+                           "zrow", 'data-zone="%s"' % E(z))
                    for z in zones)
     return ('<section class="setsec apponly" id="zone-settings">%s%s%s<script type="application/json" id="zone-icons">%s</script></section>'
             % (set_head("Zones", "zones", "A colour and an icon for each zone, so you can tell them apart at a glance."),
@@ -5110,12 +5178,12 @@ def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, s
     if not kinds:
         return ""
     dot = lambda colour: '<i class="zsw" style="background:%s"></i>' % E(colour)
-    rows = "".join('<div class="gkrow" data-kind="%s" data-def="%s"><span class="zprev">%s%s</span>%s</div>'
-                   % (E(k), E(c), dot(graph_colours([k], [c], chosen)[0]), E(said),
-                      swatch_pick("col", "Colour", said, chosen.get(k), GRAPH_COLOURS, "Default", dot(c), zone_swatch))
+    rows = "".join(set_row('<span class="zprev">%s%s</span>' % (dot(graph_colours([k], [c], chosen)[0]), E(said)),
+                           swatch_pick("col", "Colour", said, chosen.get(k), GRAPH_COLOURS, "Default", dot(c), zone_swatch),
+                           "gkrow", 'data-kind="%s" data-def="%s"' % (E(k), E(c)))
                    for k, said, c in kinds)
     return ('<section class="setsec apponly" id="graph-colour-settings">%s%s%s<div class="gacts">'
-            '<button class="act" type="button" id="graph-reset">Reset colours</button></div></section>'
+            '<button class="act lg" type="button" id="graph-reset">Reset colours</button></div></section>'
             % (set_head("Graph colours", "graphcol", "A colour for each kind of note in Explore."),
                help_text("graphcol", 'Each kind of note in Explore&#39;s legend takes the colour chosen here, in its legend dot '
                'and on the graph, with a shade for the light theme and one for the dark. <em>Default</em> keeps the colour Garrick '
@@ -5133,7 +5201,8 @@ def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -
     page_action.py when Settings closes (NOTIFY_JS). `desk` says the cmux
     extra is here, whose Desk replies also get through at night. A job
     whose plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its own way,
-    which the explanation behind the "?" says, rather than a line of state."""
+    which the explanation behind the "?" says: such a notice has no switch, so it is not in the list of them, and one
+    line under the list says what sends it (#673)."""
     note = _data(ws, data, "notifications").get("notifications")
     if not note:
         return ""
@@ -5143,15 +5212,22 @@ def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -
         return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
     after = ('<input type="number" id="n-after" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
              % (note["after_max"], cfg["after"]))
-    words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
 
     def row(e, label):
-        said = own.get(e)
-        if said:         # a job sends this its own way: the box keeps what is saved, and shows as not in use
-            return ('<label class="nsown nsitem" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
-                    % (E(said), box('data-nt="%s" disabled aria-disabled="true"' % e, cfg["tell"][e]), E(label), E(said)))
-        return '<label class="nsitem">%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
-    tell = "".join(row(e, label) for e, label in note["tell"])
+        target = "nt-" + e
+        control = box('data-nt="%s" id="%s"' % (e, target), cfg["tell"][e], label if e == "finished" else "")
+        if e == "finished":
+            control += ' <span class="nsafter">after %s min</span>' % after
+        return set_row(row_label(E(label), "", target), control, "nsitem")
+    tell = "".join(row(e, label) for e, label in note["tell"] if e not in own)
+    # a notice a job sends its own way has no switch: it keeps what is saved, out of sight, so closing Settings saves it as it was
+    kept = "".join('<input type="checkbox" data-nt="%s" disabled hidden%s>' % (e, " checked" if cfg["tell"][e] else "") for e, _ in note["tell"] if e in own)
+    said = ""
+    if own:
+        names = {e: label for e, label in note["tell"]}
+        said = ('<p class="chnote nsown" id="n-own">%s%s</p>'
+                % (" ".join("%s. %s" % (E(names[e][:1].upper() + names[e][1:]), E(own[e])) for e in own if e in names),
+                   " To change it, ask your assistant to change the job&#39;s setting."))
     q = cfg["quiet"]
     rule = ("At night only &#8220;a session needs me&#8221; gets through%s."
             % (", and so do cmux&#39;s notices about starting or closing the day" if desk else ""))
@@ -5162,13 +5238,13 @@ def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -
                  'covers a line a job sends of its own. With every choice off, Garrick sends nothing. '
                  'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. Its row says so. '
                  'Saved when you close Settings.')
-    return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
-            '<span class="nslab">Tell me when</span><span class="nsopts nscol">%s</span></div>'
-            '<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
-            '<span>to</span><input type="time" id="n-to" value="%s" aria-label="Quiet until"></div><p class="hint nsrule">%s</p>'
-            '</div><p class="hint" id="n-said" role="status" hidden></p></section>'
+    quiet = set_row(row_label("Quiet from", rule, "n-quiet"),
+                    '%s <input type="time" id="n-from" value="%s" aria-label="Quiet from"><span>to</span>'
+                    '<input type="time" id="n-to" value="%s" aria-label="Quiet until">' % (box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"])), "nsq")
+    return ('<section class="setsec apponly" id="notify-settings">%s%s<p class="chnote nslab">Tell me when</p><div class="nsimple">%s%s</div>%s%s'
+            '<p class="hint" id="n-said" role="status" hidden></p></section>'
             % (set_head("Notifications", "notify", "Notices appear on this Mac."), help_text("notify", help_html),
-               tell, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
+               tell, kept, said, quiet))
 
 
 def script_json(data) -> str:
@@ -5975,11 +6051,6 @@ justify-content:center;font-size:var(--fs-h2);line-height:1;border:0;background:
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
 dialog.settings .setsec{margin-top:26px}dialog.settings .setsec:first-of-type{margin-top:0}
 .launcher-choice{display:flex;align-items:center;gap:12px;padding:3px 0;font-size:var(--fs-meta)}
-/* Settings › Menu bar as one form: the name on the left, every control in one column on the right, of one width,
-   a tick at that column's left edge as a field starts there, and a hotkey's Clear as an × inside its field */
-#menu-settings .launcher-row{display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px;align-items:center;min-height:32px}
-#menu-settings .launcher-row>.launcher-choice:only-child{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px}
-#menu-settings .launcher-choice:only-child>span{grid-column:1;grid-row:1}#menu-settings .launcher-choice:only-child>input{grid-column:2;grid-row:1;justify-self:start;margin:0}
 #menu-settings .menu-style{width:100%}#menu-settings .hotkey{position:relative;display:block;width:100%}
 #menu-settings .hotkey input{width:100%;box-sizing:border-box;padding-right:26px}
 #menu-settings .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
@@ -6006,17 +6077,16 @@ dialog.settings[open]{display:flex;flex-direction:column}
 .setnavgrp+.setnavgrp{margin-top:14px}.setnavh{margin:0 0 4px 8px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .setnav ul{list-style:none;margin:0;padding:0}.setnav a{display:block;padding:5px 8px;border-radius:7px;font-size:var(--fs-meta);color:var(--ink2);text-decoration:none}
 .setnav a:hover{background:var(--wash);color:var(--ink)}.setnav a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.setnav a[aria-current]{background:var(--wash);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
+.setnav li.setsub a{padding-left:22px}.setnav a[aria-current]{background:var(--wash);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
 .setmain{position:relative;overflow:auto;overscroll-behavior:contain;padding:18px 32px 28px}.setmain>*{max-width:46rem}
 .setgroup+.setgroup{margin-top:30px;padding-top:16px;border-top:1px solid var(--line)}
 .setgrp{margin:0 0 12px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .wallrows{list-style:none;margin:8px 0 0;padding:0}.wallrow{display:flex;flex-wrap:wrap;align-items:center;gap:0 10px;padding:8px 0;border-top:1px solid var(--line)}
-.wallrow b{min-width:7em}.wallrow .wchange{margin-left:auto;border:0;background:none;color:var(--accent);font:inherit;font-size:var(--fs-meta);text-decoration:underline;cursor:pointer;padding:6px 4px;min-height:40px}
-.wallrow .wchange:hover{color:var(--ink)}
+.wallrow b{min-width:7em}
 dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.45;color:var(--ink2)}
 @media (max-width:759px){.setbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 .setnav{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;padding:6px 12px;border-right:0;border-bottom:1px solid var(--line)}
-.setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}
+.setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}.setnav li.setsub a{padding-left:8px}
 .setnav a[aria-current]{box-shadow:inset 0 -2px 0 var(--accent)}.setmain{padding:14px 16px 22px}.sethead{padding:14px 52px 10px 16px}}
 /* a section's explanation, word for word, behind the "?" beside its heading; each row's own line always shows */
 .qhelp{position:relative;flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
@@ -6029,21 +6099,44 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:var(--fs-meta)}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
 .setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:var(--fs-meta);margin:6px 0}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:var(--fs-meta);font-weight:600}.setlink small{display:block;font-size:var(--fs-meta);color:var(--muted)}
-/* Settings › Notifications: the six notices, the minutes a long task takes, and quiet hours */
+/* Settings › Notifications: the notices as rows, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
-#notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:var(--fs-meta)}
-#notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
-#notify-settings .nslab{flex:0 0 92px;font-weight:560;color:var(--ink2)}
-#notify-settings .nsopts{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;flex:1;min-width:0}
-#notify-settings .nsopts.nscol{flex-direction:column;align-items:flex-start;gap:5px}
-#notify-settings .nsimple label{display:inline-flex;align-items:center;gap:6px}
-#notify-settings .nsimple input[type=checkbox]{accent-color:var(--accent)}
-#notify-settings .nsown{align-items:flex-start;color:var(--muted)}#notify-settings .nsown input{visibility:hidden;width:0;margin:0 8px 0 0}#notify-settings .nsown small{display:block}#notify-settings .nsown::before{content:"\2013";flex:none;width:16px;text-align:center}
-#notify-settings .nsafter{white-space:nowrap}#notify-settings .nsq{align-items:center;gap:6px}#notify-settings .nsrule{margin:-4px 0 0 24px;font-size:var(--fs-meta)}
+#notify-settings .nslab{margin:6px 0 2px;font-weight:560;color:var(--ink2)}
+#notify-settings .nsafter{white-space:nowrap}
 #notify-settings input[type=time],#notify-settings input[type=number]{font:inherit;font-size:var(--fs-meta);
 color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px}
 #notify-settings input[type=number]{width:52px;padding:2px 5px}
+#notify-settings .nsq .sctl{gap:6px 8px}
 #n-said{margin-top:8px}#n-said.bad{color:var(--critical,#C0392B)}
+/* Settings as one grid (#673): every setting row is three columns, its label with the line under it, its control, and its "?".
+   The control column has one width and so one left edge in every section; a control that is a group starts at that edge and
+   wraps inside it. One checkbox size, one radio size, one text size for hints and status lines, one look for each kind of action. */
+dialog.settings{--sctl:232px;--sgap:12px;--sq:20px}
+dialog.settings .srow{display:grid;grid-template-columns:minmax(0,1fr) var(--sctl) var(--sq);column-gap:var(--sgap);align-items:center;min-height:32px;padding:2px 0}
+dialog.settings .srow>.slab{grid-column:1;min-width:0}
+dialog.settings .srow>.sctl{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;min-width:0}
+dialog.settings .srow>.qhelp{grid-column:3;margin:0;justify-self:start}
+dialog.settings .srow>.sctl>select,dialog.settings .mkrow>.sctl>select,dialog.settings .srow>.sctl>.hotkey,dialog.settings .srow>.sctl>.zpick:only-child{width:100%;box-sizing:border-box}
+dialog.settings .zrow>.sctl{gap:6px 8px}dialog.settings .zrow>.sctl>.zpick{flex:1 1 0;min-width:0}dialog.settings .zrow .zbtn,dialog.settings .gkrow .zbtn{width:100%;min-width:0;box-sizing:border-box}
+dialog.settings .srow>.sctl>input[type=text],dialog.settings .srow>.sctl>textarea,dialog.settings .mkrow>.sctl>textarea{flex:1 1 100%;width:100%;box-sizing:border-box;min-width:0}
+dialog.settings .srow .launcher-choice{display:block;padding:0;font-size:var(--fs-meta)}
+dialog.settings .srow .launcher-choice small,dialog.settings small.shint{display:block;margin-top:1px;font-size:var(--fs-meta);color:var(--muted)}
+dialog.settings input[type=checkbox],dialog.settings input[type=radio]{width:16px;height:16px;margin:0;flex:none;accent-color:var(--accent)}
+dialog.settings select{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px;min-width:0}
+dialog.settings h3{gap:var(--sgap)}
+dialog.settings .shead{min-height:0;padding:0 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}
+dialog.settings .shead .sctl{align-items:flex-start}
+dialog.settings .shcol{display:inline-block}
+dialog.settings .sbox{display:inline-flex;align-items:center;width:112px}
+dialog.settings .shead .shcol:first-child{width:112px}
+dialog.settings .chnote,dialog.settings .hint,dialog.settings .muted{font-size:var(--fs-meta)}
+dialog.settings .chnote{margin:4px 0}
+dialog.settings .act.sm{padding:2px 9px;min-height:0;line-height:1.5;font-size:var(--fs-meta)}
+dialog.settings .act.lg{padding:6px 14px;line-height:1.3;font-size:var(--fs-meta)}
+dialog.settings a.setlink,dialog.settings .setlinks a{color:var(--accent);text-decoration:underline}
+@media (max-width:759px){dialog.settings{--sctl:100%}dialog.settings .srow{grid-template-columns:minmax(0,1fr) var(--sq)}
+dialog.settings .srow>.slab{grid-column:1;grid-row:1}dialog.settings .srow>.qhelp{grid-column:2;grid-row:1}dialog.settings .srow>.sctl{grid-column:1/-1;grid-row:2}
+dialog.settings .shead{display:none}}
 """
 
 # What a note's panel in the graph and a thread's card in the list both show,
@@ -6305,8 +6398,9 @@ function snMark(id){snav.querySelectorAll('a[data-setgo]').forEach(function(a){i
 if(a.hasAttribute('aria-current'))return;a.setAttribute('aria-current','true');var n=snav;        /* kept in view, down the list or along the strip */
 if(a.offsetTop<n.scrollTop||a.offsetTop+a.offsetHeight>n.scrollTop+n.clientHeight)n.scrollTop=a.offsetTop-12;
 if(a.offsetLeft<n.scrollLeft||a.offsetLeft+a.offsetWidth>n.scrollLeft+n.clientWidth)n.scrollLeft=a.offsetLeft-12})}
-function snSpy(){if(snHold){snMark(snHold);return}var secs=[].filter.call(sm.querySelectorAll('.setsec'),snShown),top=sm.getBoundingClientRect().top+48,cur=secs[0];if(!cur)return;
-if(sm.scrollTop+sm.clientHeight>=sm.scrollHeight-2)cur=secs[secs.length-1];else secs.forEach(function(s){if(s.getBoundingClientRect().top<=top)cur=s});snMark(cur.id)}
+function snSpy(){if(snHold){snMark(snHold);return}var secs=[].filter.call(sm.querySelectorAll('.setsec'),snShown),top=sm.getBoundingClientRect().top+36,cur=secs[0];if(!cur)return;
+/* the section whose heading is nearest the top of the pane: the last heading at or above a line just under it (#673) */
+if(sm.scrollTop+sm.clientHeight>=sm.scrollHeight-2)cur=secs[secs.length-1];else secs.forEach(function(s){var h=s.querySelector('h3')||s;if(h.getBoundingClientRect().top<=top)cur=s});snMark(cur.id)}
 function snSync(){snav.querySelectorAll('a[data-setgo]').forEach(function(a){a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))});
 snav.querySelectorAll('.setnavgrp').forEach(function(g){g.hidden=!g.querySelector('li:not([hidden])')});
 sm.querySelectorAll('.setgroup').forEach(function(g){g.hidden=![].some.call(g.querySelectorAll('.setsec'),snShown)});snSpy()}
@@ -6325,7 +6419,7 @@ sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.oncha
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
 c.onchange=function(){var p=lprefs(),moved=!c.checked&&dpref()===c.dataset.launcher;p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,moved?'note':dpref());lpChanged=true;radios();
-say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.'+(moved?' Clicking a thread now opens the note.':''));daRow()}});radios();
+say((c.checked?'Showing ':'Hiding ')+c.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.'+(moved?' Clicking a thread now opens the note.':''));daRow()}});radios();
 /* which assistant a cmux tab starts (#279): shown while Open in cmux is on, saved through the desk when Settings closes */
 var daSel=document.getElementById('desk-agent');function daRow(){var r=document.getElementById('desk-agent-row'),c=sd.querySelector('input[data-launcher="cmux"]');
 if(r)r.style.display=!c||c.disabled||!c.checked?'none':''}daRow();if(daSel)daSel.onchange=function(){daChanged=true;say('A cmux tab now starts '+daSel.options[daSel.selectedIndex].text+'.')};
@@ -6433,7 +6527,7 @@ function items(head,list,said){if(!list||!list.length)return;add('p',head);var u
 function go(m){if(busy)return;busy=true;btn.disabled=true;box.hidden=true;put('Updating\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update',held:m}})}
 /* a Garrick file with changes not committed: nothing was applied, and the three answers are asked here */
 function held(r){var p=add('p',r.line||'');items('These files, by repository:',r.uncommitted,function(x){return x.path+' ('+(x.repo==='.'?'the workspace':x.repo)+')'});
-var row=add('p','');[['Commit these and update','commit'],['Update the rest','rest'],['Cancel','']].forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b[0];
+var row=add('p','');[['Commit these and update','commit'],['Update the rest','rest'],['Cancel','']].forEach(function(b){var e=document.createElement('button');e.type='button';e.className='act sm';e.textContent=b[0];
 e.onclick=function(){if(b[1])go(b[1]);else{box.textContent='';box.hidden=true;put('Nothing was changed.')}};row.appendChild(e);row.appendChild(document.createTextNode(' '))})}
 function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits'&&r.state!=='held')return;box.hidden=false;
 if(r.state==='held'){held(r);return}
@@ -6449,7 +6543,7 @@ function done(){busy=false;btn.disabled=false}
 /* a newer release: ask first. Nothing is posted until Update now is pressed; Not now changes and stores nothing */
 function offer(r){box.textContent='';box.hidden=false;put(r.line+at(r));
 if(r.url){var p=add('p','');var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
-var row=add('p','');[['Update now',1],['Not now',0]].forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b[0];
+var row=add('p','');[['Update now',1],['Not now',0]].forEach(function(b){var e=document.createElement('button');e.type='button';e.className='act sm';e.textContent=b[0];
 e.onclick=function(){if(b[1]){if(busy)return;go()}else{box.textContent='';box.hidden=true;done()}};row.appendChild(e);row.appendChild(document.createTextNode(' '))});
 busy=false;btn.disabled=false}
 btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can ask GitHub.');return}busy=true;btn.disabled=true;box.hidden=true;put('Asking GitHub\u2026');
@@ -6506,21 +6600,21 @@ GRADES_SAID = ("working pages are read by every answer, dormant ones only by a s
 
 
 def memory_moves(c: dict) -> int:
-    """How many pages the next pass would give another grade (down, or back up); 0 for a wiki switched off."""
+    """How many pages the next pass would move (down, or back up); 0 for a wiki switched off."""
     return sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake")) if c.get("on", True) else 0
 
 
 def memory_said(w: str, c: dict) -> str:
-    """One wiki's line: "Meetings: 600 working · 17 dormant · 12 would change grade".
-    MEMORY_JS says it the same way when the counts come back for unsaved values. One word for each grade, as the
-    lede says them."""
+    """One wiki's line: "Meetings: 600 working · 17 dormant. 12 pages would move."
+    MEMORY_JS says it the same way when the counts come back for unsaved values. The grades are said once, in the section's
+    own line above; the moves are said as what the user would see (#675)."""
     grades = "%s: %d working · %d dormant" % (w, c.get("working", 0), c.get("dormant", 0))
     if c.get("archived"):
         grades += " · %d archived" % c["archived"]
     if not c.get("on", True):
         return grades + " · off"
     moves = memory_moves(c)
-    return grades + (" · %d would change grade" % moves if moves else " · none would change grade")
+    return grades + (". %d page%s would move." % (moves, "" if moves == 1 else "s") if moves else ". No page would move.")
 
 
 def memory_list(values) -> str:
@@ -6530,6 +6624,12 @@ def memory_list(values) -> str:
 def said_html(text: str) -> str:
     """A sentence fade.py words for the page, escaped, its `code` drawn as code."""
     return re.sub(r"`([^`]+)`", r"<code>\1</code>", E(text))
+
+
+def sub_row(label: str, control: str) -> str:
+    """A line of a group that has one "?" for all of it (a kind of page's months, its lists): the label cell and the control cell, in the
+    group's own columns, which are the grid's (#673). It is no row of its own: the group is."""
+    return '<div class="mkrow"><div class="slab">%s</div><div class="sctl">%s</div></div>' % (label, control)
 
 
 def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dict] = None) -> str:
@@ -6542,13 +6642,14 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
     the morning digest's line. How the grades, the steps and age work is
     behind the "?" and in the docs; how age is counted and what wakes a page
     are fade.py's own sentences (AGE_SAID, WAKE_SAID), shown as they are, so
-    the page cannot promise what the code does not do. In the app only, as
+    the page cannot promise what the code does not do. The rows say what the user sees: how long a page stays in everyday
+    answers, and when it is kept only in the archive (#675). In the app only, as
     the other sections that save are."""
     mem = _data(ws, data, "memory").get("memory")
     if mem is None:
         return ""
     age = mem.get("age_said")
-    head = set_head("Manage older material", "memory", "Old meetings and reading change grade after the months set here: %s." % GRADES_SAID) + help_text("memory", (
+    head = set_head("Manage older material", "memory", "Old meetings and reading move out of everyday answers after the months set here: %s." % GRADES_SAID) + help_text("memory", (
         'A page older than its kind&#39;s months becomes dormant, and later archived. &#8220;What would fade&#8221; writes the full '
         'list; &#8220;fade the meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
         'Saved when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "")))
@@ -6565,13 +6666,13 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
 
     def full_list(w):
         path = mem["full_list"].get(w)
-        return (' <a class="mfull" href="%s">Full list</a>' % E(link(ws / path))) if link is not None and path else ""
+        return (' <a class="act sm mfull" href="%s">Full list</a>' % E(link(ws / path))) if link is not None and path else ""
 
     def review(w, c):
-        """*Review the 12*, beside a count with something to move: hands "what would fade in Meetings" to the assistant, which
+        """*Review them*, beside a count with something to move: hands "what would fade in Meetings" to the assistant, which
         shows the list and asks for the yes. It moves nothing itself; no button when nothing would move."""
         n = memory_moves(c)
-        return " " + request_button("Review the %d" % n, "what would fade in %s" % w, ws) if n else ""
+        return " " + request_button("Review them", "what would fade in %s" % w, ws, "act sm") if n else ""
 
     blocks, advanced = "", ""
     for w in MEMORY_WIKIS:
@@ -6581,25 +6682,32 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
                 continue
             never = k.get("archived") is None
             dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
+            shown = name[:1].upper() + name[1:]
             kind_rows += (
-                '<div class="mkind" data-mkind="%s" data-mwiki="%s"><span class="mkname">%s</span>'
-                '<label>dormant after %s months</label><label>archived after %s months</label><label class="mnever">%s never archived</label></div>'
-                % (E(name), E(w), E(name[:1].upper() + name[1:]),
-                   num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
-                   num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
-                       "%s: months to archived" % name, never),
-                   box('data-mk="never"', never, "%s: never archived" % name)))
-            advanced += ('<div class="mlists" data-mkl="%s"><b>%s</b>'
-                         '<label class="mlist">Page types <textarea rows="1" data-mk="types" placeholder="none" title="%s" aria-label="%s page types">%s</textarea></label>'
-                         '<label class="mlist">Page domains <textarea rows="1" data-mk="domains" placeholder="none" title="%s" aria-label="%s page domains">%s</textarea></label></div>'
-                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("types"))),
-                            E(memory_list(k.get("domains"))), E(name), E(memory_list(k.get("domains")))))
-        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages become dormant, then archived'
-                   '</span></label></div>%s%s</div>'
-                   % (E(w), box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), E(w), kind_rows,
+                '<div class="mkind" data-mkind="%s" data-mwiki="%s"><p class="mkname">%s</p>%s%s%s</div>'
+                % (E(name), E(w), E(shown),
+                   sub_row(row_label("Out of everyday answers after", "", ""),
+                           '%s months' % num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name)),
+                   sub_row(row_label("Kept only in the archive after", "", ""),
+                           '%s months' % num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
+                                             "%s: months to archived" % name, never)),
+                   sub_row(row_label("Never archive", "", ""), box('data-mk="never"', never, "%s: never archived" % name))))
+            advanced += ('<div class="mlists" data-mkl="%s"><p class="mkname">%s</p>%s%s</div>'
+                         % (E(name), E(shown),
+                            sub_row(row_label("Page types", "", ""),
+                                    '<textarea rows="1" data-mk="types" placeholder="none" title="%s" aria-label="%s page types">%s</textarea>'
+                                    % (E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("types"))))),
+                            sub_row(row_label("Page domains", "", ""),
+                                    '<textarea rows="1" data-mk="domains" placeholder="none" title="%s" aria-label="%s page domains">%s</textarea>'
+                                    % (E(memory_list(k.get("domains"))), E(name), E(memory_list(k.get("domains")))))))
+        blocks += ('<div class="mwiki" data-mw="%s">%s%s%s</div>'
+                   % (E(w),
+                      set_row(row_label("Let old %s pages fade" % E(w), "Out of everyday answers first, then kept only in the archive. Nothing is deleted.", ""),
+                              box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w)),
+                      kind_rows,
                       '<p class="mcount"><span data-mc="line">%s</span>%s%s</p>' % (E(memory_said(w, grades[w])), full_list(w), review(w, grades[w]))
                       if w in grades else ""))
-    pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
+    pin_rows = "".join(set_row(row_label(E(said), "", ""), box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), "mpin")
                        for key, said in MEMORY_PINS)
     wake = mem.get("wake_said")
     nightly = cfg.get("nightly") or {}
@@ -6610,42 +6718,40 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
             '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">A page belongs to a kind when its page type or its domain is listed. Separate entries with commas.</p>%s'
             '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">While any of these holds, a page stays working, however '
             'old. Person, organisation and topic pages, and the wiki&#39;s own lists, never move.</p><div class="mpins">%s</div>'
-            '<h4 class="nsub">Bringing a page back</h4>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Propose bringing back a dormant page that active work links again'
-            '<small>Off, only <code>pinned: true</code> brings a page back</small></span></label></div>%s'
-            '<h4 class="nsub">Search and the morning digest</h4>'
-            '<div class="launcher-row"><span class="mreach">Without being asked, search reads <select id="m-reach" aria-label="How far search reaches unasked">'
-            '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select></span></div>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Say in the morning digest which pages would change grade'
-            '<small>Once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div></details></section>'
+            '<h4 class="nsub">Bringing a page back</h4>%s%s'
+            '<h4 class="nsub">Search and the morning digest</h4>%s%s</details></section>'
             % (head, blocks, advanced, pin_rows,
-               box('id="m-wake"', cfg.get("wake", True) is not False, "Propose bringing back a dormant page that active work links again"),
+               set_row(row_label("Propose bringing back a page that has gone quiet when active work links it again", "Off, only <code>pinned: true</code> brings a page back", "m-wake"),
+                       box('id="m-wake"', cfg.get("wake", True) is not False, "Propose bringing back a dormant page that active work links again")),
                '<p class="hint msaid">%s</p>' % said_html(wake) if isinstance(wake, str) else "",
-               " selected" if reach == "working" else "", " selected" if reach != "working" else "",
-               box('id="m-night"', nightly.get("on", True) is not False, "Say in the morning digest which pages would change grade"),
-               num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")))
+               set_row(row_label("Without being asked, search reads", "", "m-reach"),
+                       '<select id="m-reach" aria-label="How far search reaches unasked">'
+                       '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select>'
+                       % (" selected" if reach == "working" else "", " selected" if reach != "working" else "")),
+               set_row(row_label("Say in the morning digest which pages would move", "Once at least this many pages would", "m-night"),
+                       '%s %s pages' % (box('id="m-night"', nightly.get("on", True) is not False, "Say in the morning digest which pages would move"),
+                                        num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")),
+                       "mafter")))
 
 
 MEMORY_CSS = r"""
-/* Settings › Manage older material: per wiki its switch, its kinds' months and its count; the rest under Advanced */
+/* Settings › Manage older material: per wiki its switch, its kinds' months and its count, as rows of the one grid; the rest under Advanced */
 #memory-settings input[type=number]{font:inherit;font-size:var(--fs-meta);width:56px;padding:2px 5px;color:var(--ink);background:var(--surface);
 border:1px solid var(--line);border-radius:7px}#memory-settings input[type=number]:disabled{opacity:.45}
-#memory-settings input[type=text],#memory-settings select{font:inherit;font-size:var(--fs-meta);padding:2px 6px;color:var(--ink);background:var(--surface);
+#memory-settings input[type=text],#memory-settings select,#memory-settings textarea{font:inherit;font-size:var(--fs-meta);padding:2px 6px;color:var(--ink);background:var(--surface);
 border:1px solid var(--line);border-radius:7px;min-width:0}
-#memory-settings input[type=checkbox]{accent-color:var(--accent)}
 .mgrades{display:flex;flex-direction:column;gap:8px}.mwiki{border-bottom:1px solid var(--line);padding-bottom:8px}
-.mkind{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:2px 0 2px 28px;font-size:var(--fs-meta);color:var(--ink2)}
-.mkind label{display:flex;align-items:center;gap:5px}.mkname{flex:0 0 92px;font-weight:560;color:var(--ink)}
-.mcount{margin:4px 0 0 28px;font-size:var(--fs-meta);color:var(--ink2)}.mcount .mfull{margin-left:6px}
+.mkname{margin:8px 0 0;font-size:var(--fs-meta);font-weight:560;color:var(--ink)}
+.mkind,.mlists{display:grid;grid-template-columns:minmax(0,1fr) var(--sctl) var(--sq);column-gap:var(--sgap);align-items:center;margin-top:2px}
+.mkind>.mkname,.mlists>.mkname{grid-column:1/-1}.mkrow{display:contents}.mkrow>.slab{grid-column:1;min-width:0}
+.mkrow>.sctl{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;min-width:0}.mkind>.qhelp,.mlists>.qhelp{grid-column:3;grid-row:2;margin:0}
+.mwiki>.srow:first-child .launcher-choice{font-weight:560}
+.mcount{margin:4px 0 0;font-size:var(--fs-meta);color:var(--ink2)}.mcount .act{margin-left:8px}.mcount [data-request][hidden]{display:none}
 .madv{margin-top:8px}.madv>summary{display:block;list-style:none;cursor:pointer;font-size:var(--fs-meta);font-weight:560;color:var(--ink2);padding:3px 0}
 .madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\25B8';display:inline-block;width:14px}
 .madv[open]>summary::before{content:'\25BE'}.madv>:not(summary){margin-left:18px}
-.mlists{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 10px;margin:6px 0;font-size:var(--fs-meta)}.mlists b{flex:1 0 100%;font-weight:560}
-.mlist{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:start;gap:8px;color:var(--ink2);flex:1 1 100%;min-width:0;line-height:1.4}
-.mlist textarea{width:100%;box-sizing:border-box;min-width:0;resize:none;overflow:hidden;white-space:normal;overflow-wrap:break-word;font:inherit;font-size:var(--fs-meta);padding:2px 6px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
-.mcount .act{margin-left:8px}.mcount [data-request][hidden]{display:none}
-.mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta)}
-.mreach,.mafter{font-size:var(--fs-meta);color:var(--ink2)}.mreach{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.mreach select{max-width:100%}
+.mlist textarea{width:100%;box-sizing:border-box;min-width:0;resize:none;overflow:hidden;white-space:normal;overflow-wrap:break-word}
+.mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}
 .mafter{white-space:nowrap}#memory-settings{min-width:0;overflow-wrap:anywhere}
 #memory-settings .msaid,#memory-settings .mlede{margin:6px 0}
 """
@@ -6670,7 +6776,7 @@ l=sec.querySelector('[data-mkl="'+f.dataset.mkind+'"]'),t=function(k){return l&&
 m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(t('types')),domains:list(t('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
 return m}
 function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' dormant'+(c.archived?' · '+c.archived+' archived':'');
-if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · '+mv+' would change grade':' · none would change grade')}
+if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?'. '+mv+' page'+(mv===1?'':'s')+' would move.':'. No page would move.')}
 function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
 if(c&&e)e.textContent=line(w.dataset.mw,c)})}
 function tell(t){said.textContent=t;said.hidden=false}
@@ -8725,7 +8831,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

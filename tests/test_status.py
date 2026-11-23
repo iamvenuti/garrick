@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(28, html.count("</script>"))         # (#651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(29, html.count("</script>"))         # (#674: the read guard section's mode script; #651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -644,7 +644,7 @@ class TestContextTab(StatusCase):
 
     def test_settings_lists_every_zone_with_its_state_and_holds_no_code(self):
         walls = self.walls()
-        self.assertEqual(["Personal", "Work"], re.findall(r'<li class="wallrow" data-zone="(\w+)">', walls))
+        self.assertEqual(["Personal", "Work"], re.findall(r'<li class="launcher-row srow wallrow" data-zone="(\w+)">', walls))
         self.assertEqual(["Walled", "Walled"], re.findall(r'<span class="st \w+">(\w+)</span>', walls))
         self.assertNotIn("<code", walls)
         self.assertNotIn("scaffold.py", walls)
@@ -655,7 +655,7 @@ class TestContextTab(StatusCase):
         before = tree()
         html = self.page()
         walls = self.walls(html)
-        buttons = re.findall(r'<button class="wchange" type="button" data-request="([^"]*)" data-folder="([^"]*)"', walls)
+        buttons = re.findall(r'<button class="act sm wchange" type="button" data-request="([^"]*)" data-folder="([^"]*)"', walls)
         self.assertEqual([("Make Personal open", str(self.root)), ("Make Work open", str(self.root))], buttons)
         self.assertNotIn("data-act", walls)                              # no verb of the page's: nothing here writes or runs
         self.assertIn("button[data-request]", html)                      # the existing hand-off, which Process the Inbox uses, takes it
@@ -668,9 +668,9 @@ class TestContextTab(StatusCase):
               .replace("| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|", "| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|")
               .replace("| yes | acmecorp.example |", "| acmecorp.example |").replace("| yes | birchco.example", "| birchco.example"))
         walls = self.walls()
-        self.assertRegex(walls, r'data-zone="Work"><b>Work</b><span class="st idle">Open</span>')
+        self.assertRegex(walls, r'data-zone="Work"><div class="slab"><b>Work</b></div><div class="sctl"><span class="st idle">Open</span>')
         self.assertIn('data-request="Make Work walled"', walls)
-        self.assertRegex(walls, r'data-zone="Personal"><b>Personal</b><span class="st good">Walled</span>')
+        self.assertRegex(walls, r'data-zone="Personal"><div class="slab"><b>Personal</b></div><div class="sctl"><span class="st good">Walled</span>')
         self.assertNotIn("until the update to zone walls is accepted", walls)
 
     def test_settings_holds_the_walls_rows_and_no_allowed_by_you(self):
@@ -1735,7 +1735,7 @@ class TestSettings(StatusCase):
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
         for key, lede in (("launchers", "Which apps a project or thread can open in"),
-                          ("preview", "Off until you switch them on in a file.")):
+                          ("preview", "Off until you ask your assistant to switch one on.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
@@ -1765,7 +1765,7 @@ class TestSettings(StatusCase):
         dialog = self.dialog()
         foot = dialog[dialog.index('<div class="setfoot">'):]
         self.assertGreater(dialog.index('<div class="setfoot">'), dialog.index('id="help-preview"'))   # after the last section
-        button = re.search(r'<button class="act" type="button" id="reset-view" title="([^"]*)">Reset view</button>', foot)
+        button = re.search(r'<button class="act lg" type="button" id="reset-view" title="([^"]*)">Reset view</button>', foot)
         self.assertIsNotNone(button)
         self.assertTrue(htmllib.unescape(button.group(1)).startswith(
             "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."))
@@ -1784,7 +1784,8 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "channels-settings", "memory-settings", "allowed-settings", "walls-settings", "machine-settings", "about-settings",
+             "notify-settings", "channels-settings", "channels-ask", "channels-telegram", "channels-held", "memory-settings", "allowed-settings", "walls-settings",
+             "readguard-settings", "machine-settings", "about-settings",
              "preview-settings"]
 
     def dialog(self, **kw):
@@ -1805,14 +1806,14 @@ class TestSettingsLayout(StatusCase):
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
         self.assertEqual(heads, dict(re.findall(r'data-setgo="([a-z-]+)">([^<]+)</a>', nav)))   # named as its heading
         self.assertEqual("Manage older material", heads["memory-settings"])
-        shown = [t for k, t in status.SET_GROUPS if k != "walls"]                   # Walls has a section only once something is allowed (#542)
+        shown = [t for k, t in status.SET_GROUPS]                                   # the read guard is a section of its own now, so Walls always has one (#673)
         self.assertEqual(shown, re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
         self.assertEqual(shown, re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
         main = dialog[dialog.index('<div class="setmain" id="settings-main">'):]
         self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
         self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
         self.assertNotIn("setcols", dialog)
-        self.assertEqual(len(built) - 1, dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
+        self.assertEqual(len(built) - 1 - dialog.count('class="setsec setsub'), dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
         self.assertNotIn('id="catch-settings"', dialog)                            # nor does anything else (#226)
         for lede in re.findall(r'<p class="setlede">(.*?)</p>', dialog):
             self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 0, lede)   # one sentence at most
@@ -1952,19 +1953,21 @@ class TestLaunchers(StatusCase):
         dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_CODEX_CLI,
                                                                    "cmux": status.NOT_INSTALLED})
         icon = lambda k: '<i class="lico" aria-hidden="true" style="--ic:var(--icon-%s)"></i>' % k
-        self.assertIn('<input type="checkbox" data-launcher="codex" disabled> %s<span>Open in Codex<small>%s</small>'
+        self.assertIn('id="launch-codex" data-launcher="codex" disabled', dialog)
+        self.assertIn('for="launch-codex">%s<span>Open in Codex<small>%s</small>'
                       % (icon("codex"), htmllib.escape(status.NO_CODEX_CLI, quote=False)), dialog)
-        self.assertIn('<input type="checkbox" data-launcher="cmux" disabled> %s<span>Open in cmux<small>%s</small>'
+        self.assertIn('id="launch-cmux" data-launcher="cmux" disabled', dialog)
+        self.assertIn('for="launch-cmux">%s<span>Open in cmux<small>%s</small>'
                       % (icon("cmux"), status.NOT_INSTALLED), dialog)
-        self.assertIn('data-launcher="claude"> %s<span>Open in Claude</span>' % icon("claude"), dialog)   # no line saying it is there
-        self.assertIn('data-launcher="finder"> %s<span>Reveal in Finder</span>' % icon("finder"), dialog)
+        self.assertIn('for="launch-claude">%s<span>Open in Claude</span>' % icon("claude"), dialog)   # no line saying it is there
+        self.assertIn('for="launch-finder">%s<span>Reveal in Finder</span>' % icon("finder"), dialog)
 
     def test_each_row_carries_its_card_icon(self):
         dialog = status.launcher_choices(("finder",), why={})
-        self.assertIn('data-launcher="note"> <i class="lico" aria-hidden="true" style="--ic:var(--icon-note)"></i>'
+        self.assertIn('for="launch-note"><i class="lico" aria-hidden="true" style="--ic:var(--icon-note)"></i>'
                       '<span>Open the note</span>', dialog)                      # never Obsidian's, installed or not (#318)
         self.assertNotIn("obsidian", dialog.lower())
-        self.assertIn('data-launcher="preview"> <svg class="lico lglass"', dialog)        # Preview's magnifier, as on the card
+        self.assertIn('for="launch-preview"><svg class="lico lglass"', dialog)        # Preview's magnifier, as on the card
         glass = re.search(r"var GLASS='(.*?)'\s*\+'(.*?)';", status.NOTE_JS, re.S)
         self.assertIn(glass.group(2), status.GLASS)
         self.assertIn(".lico{display:none}", status.SETTINGS_CSS)                        # a browser, whose cards show words, shows none
@@ -1994,7 +1997,7 @@ class TestLaunchers(StatusCase):
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
         self.assertEqual(["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
                          re.findall(r'name="garrick-default" value="([a-z-]+)"', dialog))
-        self.assertIn('<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
+        self.assertIn('<div class="launcher-row srow apponly"><div class="slab"><label class="launcher-choice" for="launch-preview">'
                       '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
         self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new']", status.PANEL_JS)
         self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"), status.LAUNCH_KEYS)
@@ -2058,7 +2061,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_previews_left(self):
         html = self.page()
         self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
-        self.assertIn("Your assistant can switch one on", html)          # no file or setting is named in a help text (#621)
+        self.assertIn("ask your assistant to switch one on", html)          # no file or setting is named in a help text (#621)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])
@@ -3931,7 +3934,7 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
         advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
-        self.assertIn('<div class="mlists" data-mkl="meetings"><b>Meetings</b>', advanced)
+        self.assertIn('<div class="mlists" data-mkl="meetings"><p class="mkname">Meetings</p>', advanced)
         self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
         self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
@@ -3939,8 +3942,8 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
-        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · 7 would change grade'
-                      '</span> <button class="act" type="button" data-request="what would fade in Meetings"', sec)       # no list written yet: no link
+        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived. 7 pages would move.'
+                      '</span> <button class="act sm" type="button" data-request="what would fade in Meetings"', sec)       # no list written yet: no link
         self.assertIn("Knowledge: ", sec)
         self.assertNotIn('class="hint msaid"', sec)            # a fade.py older than its sentences: no rule worded here in its place
 
@@ -3956,7 +3959,7 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<option value="working" selected>', sec)
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
-        self.assertIn("2 would change grade</span>", sec)                                   # 24 // 12, never archived, no waking
+        self.assertIn("2 pages would move.</span>", sec)                                   # 24 // 12, never archived, no waking
         self.assertRegex(sec, r'data-mc="line">Knowledge: [^<]* · off</span>')
 
     def test_left_out_without_fade_and_said_when_it_fails(self):
@@ -3987,18 +3990,18 @@ class TestMemorySettings(StatusCase):
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
-        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · 4 would change grade", status.memory_said("Meetings", c))
-        self.assertEqual("Meetings: 3 working · 2 dormant · none would change grade",
+        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived. 4 pages would move.", status.memory_said("Meetings", c))
+        self.assertEqual("Meetings: 3 working · 2 dormant. No page would move.",
                          status.memory_said("Meetings", dict(c, to_archive=0, archived=0)))
         self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · off", status.memory_said("Meetings", dict(c, on=False)))
-        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' would change grade'", "' · none would change grade'"):
+        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' would move.'", "'. No page would move.'"):
             self.assertIn(words, status.MEMORY_JS)
         self.assertIn("textContent", status.MEMORY_JS)
         self.assertNotIn("innerHTML", status.MEMORY_JS)
 
     def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        self.assertIn('<p class="setlede">Old meetings and reading change grade after the months set here: %s.</p>' % status.GRADES_SAID, sec)
+        self.assertIn('<p class="setlede">Old meetings and reading move out of everyday answers after the months set here: %s.</p>' % status.GRADES_SAID, sec)
         shown = sec[:sec.index('<details class="madv">')]
         for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
                      "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
@@ -4014,15 +4017,15 @@ class TestMemorySettings(StatusCase):
         sec = htmllib.unescape(self.section())
         visible = re.sub(r"<[^>]+>", " ", sec[:sec.index('id="help-memory"')] + sec[sec.index("</p>", sec.index('id="help-memory"')):])
         self.assertEqual(1, visible.count("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; nothing is deleted"))
-        for old in ("leave the index", "next pass moves", "nothing to move", "Let old Meetings pages fade", "Put aside"):
+        for old in ("leave the index", "next pass moves", "nothing to move", "Put aside"):
             self.assertNotIn(old, sec)
-        self.assertIn("Let old Meetings pages become dormant, then archived", sec)
+        self.assertIn("Let old Meetings pages fade", sec)
 
     def test_a_count_with_something_to_move_has_a_review_button_and_one_without_has_none(self):
         sec = self.section()
         meetings = sec.split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
-        self.assertRegex(meetings, r'<button class="act" type="button" data-request="what would fade in Meetings" data-folder="[^"]+" '
-                                   r'title="[^"]*">Review the 7</button>')
+        self.assertRegex(meetings, r'<button class="act sm" type="button" data-request="what would fade in Meetings" data-folder="[^"]+" '
+                                   r'title="[^"]*">Review them</button>')
         write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"wikis": {"Meetings": False}}}))
         off = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
         self.assertNotIn("data-request", off)                                           # nothing would move: no button
@@ -4035,8 +4038,8 @@ class TestMemorySettings(StatusCase):
         self.assertLess(adv, sec.index("Which pages each kind takes"))
         self.assertNotIn('<details class="madv" open', sec)                              # closed, so its content is hidden
         advanced = sec[adv:]
-        self.assertIn(">Page types <textarea", advanced)
-        self.assertIn(">Page domains <textarea", advanced)
+        self.assertIn("Page types", advanced)
+        self.assertIn("Page domains", advanced)
         self.assertNotIn("<code>type</code>", advanced)
         self.assertNotIn('<input type="text" data-mk=', sec)
         self.assertIn(".mlist textarea{width:100%", status.MEMORY_CSS)                    # a row of its own, the width of the section
@@ -4064,7 +4067,7 @@ class TestMemorySettings(StatusCase):
         self.assertFalse((self.root / "System" / "generated").exists())             # building the page writes nothing
         fade.propose(self.root, "Meetings")
         meetings = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
-        self.assertRegex(meetings, r'<a class="mfull" href="[^"]+Meetings\.md[^"]*">Full list</a>')
+        self.assertRegex(meetings, r'<a class="act sm mfull" href="[^"]+Meetings\.md[^"]*">Full list</a>')
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_script_parses(self):

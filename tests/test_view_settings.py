@@ -2,10 +2,10 @@
 
     cd tests && python3 -m unittest test_view_settings
 
-The shadow test. `golden/settings_0780/` holds the Settings dialog as v0.78.0's page drew it on three fixture workspaces,
-byte for byte, with the workspace's own path written as `<ROOT>`. The page built from the document must match them: the
-same markup, from the same files. (The goldens were written by v0.78.0's own code, before any Settings markup changed.
-They stand until a Settings item changes markup on purpose; `GARRICK_WRITE_GOLDEN=<folder>` writes them again.)
+The shadow test of #650 held the Settings dialog byte for byte against what v0.78.0 drew on three fixture workspaces (a bare
+one, one with everything set, one whose readers fail), and so did the whole page built from the demo and the worked example
+workspaces. It passed in the commit that moved the reads, before #673 changed any markup, and left with that markup: the golden
+files went with it. What stays is the document's own tests: what it holds from each file, and that it reads nothing it was not asked for.
 
 Also here: the document is JSON, builds nothing it was not asked for, writes nothing, and a reader that fails leaves its
 field empty instead of raising.
@@ -35,7 +35,6 @@ sys.path.insert(0, str(TOOLS))
 import view  # noqa: E402
 import view_settings  # noqa: E402
 
-GOLDEN = Path(__file__).resolve().parent / "golden" / "settings_0780"
 EXTRAS = REPO / "extras" / "status"
 
 
@@ -92,25 +91,6 @@ class Fixtures(SettingsCase):
 
     def cases(self):
         return {"bare": self.bare, "rich": self.rich, "broken": self.broken}
-
-
-class TestTheShadow(Fixtures):
-    def check(self, name, markup):
-        out = os.environ.get("GARRICK_WRITE_GOLDEN")
-        if out:
-            Path(out).mkdir(parents=True, exist_ok=True)
-            Path(out, name + ".html").write_text(markup, encoding="utf-8")
-        else:
-            self.assertEqual(GOLDEN.joinpath(name + ".html").read_text(encoding="utf-8"), markup, name)
-
-    def test_a_bare_workspace_draws_what_v0780_drew(self):
-        self.check("bare", self.bare())
-
-    def test_a_workspace_with_everything_set_draws_what_v0780_drew(self):
-        self.check("rich", self.rich())
-
-    def test_a_workspace_whose_readers_fail_draws_what_v0780_drew(self):
-        self.check("broken", self.broken())
 
 
 class TestTheDocument(Fixtures):

@@ -26,6 +26,7 @@ from test_status import REPO, StatusCase, status  # noqa: E402
 sys.path.insert(0, str(REPO / "extras" / "status"))
 import settings_guard as sg  # noqa: E402
 import settings_help as sh  # noqa: E402
+import settings_readguard as rgs  # noqa: E402
 
 # The texts of #621, word for word.
 ISSUE = {
@@ -162,7 +163,7 @@ class TestThisMachine(SettingsCase):
 
     def test_the_change_button_is_the_apps_and_a_browser_is_told_where_to_change_it(self):
         sec = self.section(self.full(), "machine-settings")
-        self.assertRegex(sec, r'<button class="act apponly"[^>]*id="role-change"')
+        self.assertRegex(sec, r'<button class="act sm apponly"[^>]*id="role-change"')
         self.assertIn('class="hint nohost-only">The role is changed in Garrick.app.</p>', sec)
         self.assertIn(".nohost-only{display:none}.nohost .nohost-only{display:block}", sg.CSS)
         self.assertNotRegex(sec, r"machine\.py|python3|set --role|System/tools")                 # no command to copy
@@ -198,16 +199,18 @@ class TestThisMachine(SettingsCase):
 
 class TestReadGuardBlock(SettingsCase):
     def block(self, **kw):
-        return self.section(self.full(), "walls-settings")
+        return self.section(self.full(), "readguard-settings")        # its own section since 0.79.0 (#673)
 
     def test_the_four_rows_and_their_defaults(self):
         self.assistants()
         sec = self.block()
         self.assertIn('id="readguard-settings"', sec)
-        self.assertRegex(sec, r'class="apponly"|rgblock apponly')
+        self.assertRegex(sec, r'setsec apponly')
         self.assertRegex(sec, r'<input type="radio" name="rg-mode" value="off" checked>')            # Off
         self.assertRegex(sec, r'<input type="radio" name="rg-cross" value="deny" checked>')          # Refuse
-        for label in ("Off", "Watch only", "On", "Refuse", "Ask me"):
+        for label in ("Off", "Watch", "On"):
+            self.assertIn("<b>%s</b>" % label, sec)
+        for label in ("Refuse", "Ask me"):
             self.assertIn("> %s</label>" % label, sec)
         self.assertIn('<span class="rgtool">mcp__*Gmail*</span>', sec)
         self.assertIn('<span class="rgtool">mcp__*Calendar*</span>', sec)
@@ -286,14 +289,14 @@ class TestReadGuardBlock(SettingsCase):
         self.settings_file(**{"read-guard": "warn"})
         self.log(("Work", "Read", "deny", 5), ("Work", "Grep", "deny", 30), ("Work", "Read", "allow", 2), ("Work", "Read", "deny", 24 * 9))
         sec = self.block()
-        self.assertIn("In the last 7 days it would have stopped 2 reads in Work sessions.", sec)
+        self.assertIn("In the last 7 days it would have stopped 2 files in Work.", sec)
         self.assertIn('id="rg-show"', sec)
         self.assertIn('id="rg-list" hidden', sec)
         lst = re.search(r'id="rg-list" hidden>(.*?)</div></div>', sec, re.S).group(1)
-        self.assertEqual(2, lst.count("<li>"))
+        self.assertEqual(2, lst.count('<li class="rgread">'))
         self.assertIn("Read", lst)
         self.assertIn("Grep", lst)
-        self.assertIn("would be stopped", lst)
+        self.assertIn("not recorded", lst)                                                         # a line 0.78.0 wrote has no file (#674)
         self.assertNotIn("a1b2c3d4e5f6", sec)                                                       # the hash is never shown
 
     def test_no_figure_adds_two_zones(self):
@@ -301,15 +304,15 @@ class TestReadGuardBlock(SettingsCase):
         self.settings_file(**{"read-guard": "warn"})
         self.log(("Work", "Read", "deny", 5), ("Work", "Read", "deny", 6), ("Personal", "Glob", "confirm", 7))
         sec = self.block()
-        self.assertIn("In Work sessions, in the last 7 days it would have stopped 2 reads.", sec)
-        self.assertIn("In Personal sessions, in the last 7 days it would have stopped 1 read.", sec)
-        self.assertNotIn("stopped 3 reads", sec)
+        self.assertIn("In the last 7 days it would have stopped 1 file in Work.", sec)           # two reads of one file fold into one
+        self.assertIn("In the last 7 days it would have stopped 1 file in Personal.", sec)
+        self.assertNotIn("stopped 3 files", sec)
         self.assertEqual(2, sec.count('class="rglistzone"'))
 
     def test_nothing_counted_says_so_and_the_other_modes_say_nothing_of_the_log(self):
         self.assistants(registered=True)
         self.settings_file(**{"read-guard": "warn"})
-        self.assertIn("In the last 7 days it would have stopped no reads.", self.block())
+        self.assertIn("In the last 7 days it would have stopped nothing.", self.block())
         self.assertNotIn('id="rg-show"', self.block())
         self.settings_file(**{"read-guard": "enforce"})
         self.assertNotIn("In the last 7 days", self.block())
@@ -318,12 +321,12 @@ class TestReadGuardBlock(SettingsCase):
         self.assistants(registered=True)
         self.settings_file(**{"read-guard": "warn"})
         self.log(("root", "Read", "allow", 1), ("", "Read", "deny", 2), ("Work", "Read", "deny", 3))
-        self.assertIn("stopped 1 read in Work sessions", self.block())
+        self.assertIn("stopped 1 file in Work", self.block())
 
     def test_when_the_filter_cannot_run_the_row_says_so_in_plain_words(self):
         self.assistants(registered=True)
         (self.root / "System" / "context.md").write_text("# Context\n\n## Zones\n\n| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | yes |\n")
-        for mode, tail in (("warn", "Watch only lets every result through"), ("enforce", "every result from those tools is held back")):
+        for mode, tail in (("warn", "Watch lets every result through"), ("enforce", "every result from those tools is held back")):
             with self.subTest(mode=mode):
                 self.settings_file(**{"read-guard": mode})
                 sec = self.block()
@@ -353,9 +356,9 @@ class TestReadGuardBlock(SettingsCase):
     def test_the_block_texts_are_the_issues_word_for_word(self):
         self.assistants()
         sec = self.block()
-        for key in ("readguard", "rg-mode", "rg-cross", "rg-tools", "rg-skip"):
+        for key in ("readguard", "rg-cross", "rg-tools", "rg-skip"):       # the mode row has no "?" of its own since 0.79.0: the heading's has its text
             self.assertIn('id="help-%s"' % key, sec)
-            self.assertIn(htmllib.escape(ISSUE[key]), sec, key)
+            self.assertIn(htmllib.escape(rgs.HELP_TEXT if key == "readguard" else ISSUE[key]), sec, key)
         for key, text in sg.GUARD_TEXT.items():
             self.assertEqual(ISSUE[key], text)
         for key in ("solo", "server", "roaming"):
@@ -365,7 +368,7 @@ class TestReadGuardBlock(SettingsCase):
 
     def test_the_block_works_in_the_app_only(self):
         self.assistants()
-        self.assertRegex(self.block(), r'<div class="rgblock apponly" id="readguard-settings" hidden')
+        self.assertRegex(self.block(), r'<section class="setsec apponly" id="readguard-settings" hidden')
 
     def test_the_markup_sends_only_the_pages_own_verb_with_the_four_choices(self):
         self.assertIn("{verb:'read-guard'}", sg.JS)
@@ -389,7 +392,7 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
     def test_every_control_sits_in_a_row_that_has_a_question_mark(self):
         bare = []
         for tag, attrs, row in self.parsed.controls:
-            if attrs.get("type") == "hidden" or attrs.get("name") == "role-pick" or attrs.get("class") in ("rgnew",) \
+            if attrs.get("type") == "hidden" or attrs.get("name") in ("role-pick", "rg-mode") or attrs.get("class") in ("rgnew",) \
                     or attrs.get("id") in ("role-name", "role-server"):
                 continue                                          # the dialog's fields: its own text is the explanation
             if row is None or not row["help"]:
@@ -415,10 +418,11 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
         self.assertGreater(len(texts), 60)
         for key, text in texts.items():
             with self.subTest(key=key):
-                self.assertNotRegex(text, r"\.json|\.py|--|#\d", key)
+                if key != "help-preview":                          # names the flags file: the issue asks for it behind the "?" (#675)
+                    self.assertNotRegex(text, r"\.json|\.py|--|#\d", key)
         for key, text in texts.items():
             if key in ("help-walls", "help-menu", "help-launchers", "help-explore", "help-zones", "help-graphcol", "help-notify",
-                       "help-channels", "help-memory", "help-about", "help-preview", "help-view"):
+                       "help-channels", "help-memory", "help-about", "help-preview", "help-view", "help-readguard"):
                 continue                                          # a section's own text is older than this, and says more
             with self.subTest(long=key):
                 self.assertLessEqual(len(text.split()), WORDS_MAX, text)
@@ -433,7 +437,7 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
 
     def test_the_same_choice_has_the_same_name_everywhere(self):
         text = self.markup
-        for word in ("One computer", "Home server", "Laptop copy", "Watch only", "Refuse", "Ask me"):
+        for word in ("One computer", "Home server", "Laptop copy", "Watch", "Refuse", "Ask me"):
             self.assertIn(word, text)
         for old in ("solo", "roaming", "Roaming", "Server", "Enforce", "enforce"):
             visible = re.sub(r'<script.*?</script>|value="[^"]*"|data-[a-z-]+="[^"]*"|id="[^"]*"|class="[^"]*"', "", text, flags=re.S)

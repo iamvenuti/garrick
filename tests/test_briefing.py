@@ -106,6 +106,23 @@ def workspace(root: Path) -> Path:
     return root
 
 
+# Lines that open a dated entry, and lines that do not: briefing.py and history.py read them the same (#684).
+HEADINGS = (
+    ("**23 October 2026.** Woken.", True),
+    ("**23 October 2026.**", True),
+    ("**2026-10-23.** Woken.", True),
+    ("**25 October 2026, afternoon: 0.43.0 released.** Tagged it.", True),
+    ("**25 October 2026: wrapped.**", True),
+    ("**25 October 2026 (diagram redrawn).** Redrew it.", True),
+    ("**2026-10-25: wrapped.** Done.", True),
+    ("**Where it stands, 21 October 2026.** Waiting.", False),
+    ("23 October 2026. Plain text.", False),
+    ("**230 October 2026.** Too many digits.", False),
+    ("**23 October 20261.** Too many digits.", False),
+    ("- **23 October 2026.** A list item.", False),
+)
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class BriefingTest(unittest.TestCase):
     def setUp(self):
@@ -281,6 +298,46 @@ class BriefingTest(unittest.TestCase):
     def test_the_link_line_is_no_part_of_the_last_entry(self):
         text = note(entries=("**21 October 2026.** One.", "**12 October 2026.** Two.")) + "\n*Older entries: [[T history 2026-Q2]].*\n"
         self.assertEqual("**12 October 2026.** Two.", br.entries(text)[-1]["text"])
+
+    # ---- dated entries with words after the date (#684) ----
+
+    def wide_pricing(self, entries):
+        work = self.root / "Zones" / "Work"
+        pricing = work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
+        write(pricing, note(entries=entries))
+        commit(work, "Pricing: wrap", "2026-10-22T09:00:00")
+
+    def test_an_entry_with_words_after_its_date_is_an_entry(self):
+        self.wide_pricing(("**22 October 2026, afternoon: the sheet went out.** Sent it to Dana.",
+                           "**21 October 2026: wrapped.** Agreed tier two.",
+                           "**20 October 2026 (diagram redrawn).** Redrew it.",
+                           "**12 October 2026.** Drafted the price sheet."))
+        e = self.by_name(self.gather(days=7))["Pricing"]["entries"]
+        self.assertEqual(["2026-10-22", "2026-10-21", "2026-10-20"], [x["date"] for x in e])
+        self.assertEqual("**21 October 2026: wrapped.** Agreed tier two.", e[1]["text"])
+
+    def test_an_older_entry_is_not_glued_onto_a_newer_one(self):
+        work = self.root / "Zones" / "Work"
+        pricing = work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
+        write(pricing, note(entries=("**12 October 2026: drafted.** Drafted the price sheet.",)))
+        commit(work, "Pricing: draft", "2026-10-12T11:00:00")
+        self.wide_pricing(("**21 October 2026.** Sent the sheet.", "**12 October 2026: drafted.** Drafted the price sheet."))
+        e = self.by_name(self.gather(days=7))["Pricing"]["entries"]
+        self.assertEqual(["2026-10-21"], [x["date"] for x in e])
+        self.assertEqual("**21 October 2026.** Sent the sheet.", e[0]["text"])
+
+    def test_a_bare_date_still_reads_as_before(self):
+        text = note(entries=("**23 October 2026.** Woken.",))
+        self.assertEqual([{"date": "2026-10-23", "said": "23 October 2026", "text": "**23 October 2026.** Woken."}],
+                         br.entries(text))
+
+    def test_briefing_and_history_agree_on_which_lines_open_an_entry(self):
+        sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
+        import history
+        for line, opens in HEADINGS:
+            with self.subTest(line=line):
+                self.assertEqual(opens, bool(br.DATED.match(line)))
+                self.assertEqual(opens, history._date_of(line) is not None)
 
     def test_a_history_file_is_no_thread(self):
         self.move(self.long_pricing())

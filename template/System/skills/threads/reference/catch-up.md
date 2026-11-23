@@ -87,7 +87,8 @@ ask. "Brief me for X" is the `meetings` skill's.
    ```
    It prints JSON and changes nothing: per thread that changed, newest first,
    its commits, its Resume here block now and as the period began, the dated
-   entries added, a waiting checkpoint, its Todo lines (`added`, `ticked`,
+   entries added (an entry opens with a bold date, whatever follows the date
+   inside the bold, and runs to the next), a waiting checkpoint, its Todo lines (`added`, `ticked`,
    `open`) and the meeting pages its note links. `quiet` names the threads
    that did not change, `parked_left_out` counts the parked ones, `unmatched`
    names what found no thread: say it. `judgment` is what to raise, say in a

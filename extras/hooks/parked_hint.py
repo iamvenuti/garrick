@@ -5,9 +5,10 @@ A parked thread's memory pointer leaves the memory index until the thread is wok
 sees it and cannot notice that a request is about it. This hook gives that back, for the cost of one line.
 
 It runs on UserPromptSubmit and reads the prompt. It matches whole words of the prompt, in any case, against each
-parked thread's name, its `spoken:` form, its hub's `party:` tag and the names of that party's people. A name of
-several words matches as a phrase of whole words; a word of one or two letters, or one on the short list below,
-never matches alone. On a match it adds one line of context:
+parked thread's name and its `spoken:` form (any word of four letters or more that is not on the short list below),
+its hub's `party:` tag and the full names of that party's people (as a phrase). A request about a thread's subject
+rarely repeats its whole name, so one word of the name is enough; a short word or a common one never matches alone.
+At most the best two are named, the most matched words first. On a match it adds one line of context:
 
     This may belong to *Acme, Pricing*, which is parked: say 'wake Acme, Pricing' to pick it up.
 
@@ -42,7 +43,7 @@ import zone_guard as zg  # noqa: E402
 
 CACHE = ("System", "generated", "parked-hints.json")
 CACHE_VERSION = 1
-MOST = 3                      # names in one line
+MOST = 2                      # names in one line
 # A word that never matches alone: too common in a thread's name to say what a request is about.
 STOP = frozenset("""a an and are as at be by do for from have how i in is it me my of on or our so that the this to
 us we with you new old plan note notes draft review work project projects thread threads meeting email update
@@ -65,6 +66,12 @@ def keys_of(*texts):
         if w not in out:
             out.append(w)
     return out
+
+
+def significant(*texts):
+    """The words of a thread's name or spoken form that may match a prompt alone: four letters or more, and not on
+    the STOP list. A request about a thread's subject rarely repeats its whole name."""
+    return {w for text in texts for w in words(str(text or "")) if len(w) >= 4 and w not in STOP}
 
 
 def contains(prompt_words, key):
@@ -191,13 +198,12 @@ def hint(prompt, entries, told):
     pw = words(prompt)
     if not pw:
         return ""
+    seen = set(pw)
     found = []
     for e in entries:
         if e["zone"] not in told:
             continue
-        score = 0
-        if any(contains(pw, k) for k in keys_of(e["name"], e.get("spoken"))):
-            score += 2
+        score = 2 * len(significant(e["name"], e.get("spoken")) & seen)
         if any(contains(pw, k) for k in keys_of(*e.get("party", []))):
             score += 1
         if any(contains(pw, k) for k in keys_of(*[n for n in e.get("people", []) if len(words(n)) > 1])):
@@ -207,7 +213,7 @@ def hint(prompt, entries, told):
     if not found:
         return ""
     found.sort()
-    best = [say for s, say in found if s == found[0][0]][:MOST]
+    best = [say for s, say in found][:MOST]            # most matched words first
     if len(best) == 1:
         return "This may belong to *%s*, which is parked: say 'wake %s' to pick it up." % (best[0], best[0])
     names = ", ".join("*%s*" % s for s in best[:-1]) + " or *%s*" % best[-1]

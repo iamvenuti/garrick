@@ -129,7 +129,7 @@ class Workspace(unittest.TestCase):
 
 class TheHint(Workspace):
     def test_a_session_in_the_zone_is_told_of_its_parked_thread(self):
-        line = self.said("please draft the liveness pricing note", self.where("Zones", "Work"))
+        line = self.said("draft the liveness rate note", self.where("Zones", "Work"))
         self.assertEqual("This may belong to *Cedar OEM, Liveness Pricing*, which is parked: say 'wake Cedar OEM, "
                          "Liveness Pricing' to pick it up.", line)
 
@@ -139,15 +139,16 @@ class TheHint(Workspace):
         self.assertEqual("UserPromptSubmit", out["hookSpecificOutput"]["hookEventName"])
 
     def test_the_same_prompt_in_another_walled_zone_adds_nothing(self):
-        self.assertEqual("", self.fire("please draft the liveness pricing note", self.where("Zones", "Personal")))
+        self.assertEqual("", self.fire("draft the liveness rate note", self.where("Zones", "Personal")))
 
     def test_a_prompt_that_matches_no_parked_thread_adds_nothing(self):
         self.assertEqual("", self.fire("what is the weather", self.where("Zones", "Work")))
         self.assertEqual("", self.fire("send the freight update", self.where("Zones", "Work")))     # Freight is active
 
-    def test_a_word_of_the_name_alone_is_not_a_match_but_the_phrase_is(self):
-        self.assertEqual("", self.fire("draft the liveness rate note", self.where("Zones", "Work")))
-        self.assertNotEqual("", self.fire("draft the Liveness  Pricing note", self.where("Zones", "Work")))
+    def test_one_significant_word_of_the_name_is_a_match_in_any_case(self):
+        self.assertNotEqual("", self.fire("draft the LIVENESS rate note", self.where("Zones", "Work")))
+        self.assertNotEqual("", self.fire("what about pricing?", self.where("Zones", "Work")))
+        self.assertEqual("", self.fire("draft the live rate note", self.where("Zones", "Work")))      # not a whole word
 
     def test_the_spoken_form_the_party_tag_and_the_partys_people_match_too(self):
         self.thread("Work", "Cedar OEM", "Q4 Planning", "parked", party="cedar", spoken="fourth quarter planning")
@@ -161,6 +162,17 @@ class TheHint(Workspace):
         self.thread("Work", "Cedar OEM", "A", "parked", party="cedar")
         self.thread("Work", "Cedar OEM", "Plan", "parked", party="cedar")
         self.assertEqual("", self.fire("a plan for the new thread", self.where("Zones", "Work", "Acme")))
+        self.thread("Work", "Cedar OEM", "Big Plan", "parked", party="cedar")       # "plan" is on the list, "big" is short
+        self.thread("Work", "Cedar OEM", "Q4 Note", "parked", party="cedar")
+        self.assertEqual("", self.fire("the big plan note for q4", self.where("Zones", "Work", "Acme")))
+
+    def test_at_most_the_two_best_are_named_most_matched_words_first(self):
+        self.thread("Work", "Cedar OEM", "Harbour Freight Rates", "parked", party="cedar")
+        self.thread("Work", "Cedar OEM", "Freight Audit", "parked", party="cedar")
+        self.thread("Work", "Cedar OEM", "Rates Review", "parked", party="cedar")
+        line = self.said("harbour freight rates please", self.where("Zones", "Work"))
+        self.assertEqual(2, line.count("*") // 2)
+        self.assertTrue(line.startswith("This may belong to *Cedar OEM, Harbour Freight Rates* or *"), line)
 
     def test_a_parked_project_is_one_entry_and_a_done_thread_none(self):
         self.assertIn("*Acme Archive*", self.said("open acme archive", self.where("Zones", "Work")))
@@ -249,7 +261,7 @@ class TheLimits(Workspace):
             self.thread("Work", "Bulk %d" % (i % 20), "Item %d" % i, "parked" if i % 2 else "active", party="acme")
         self.fire("warm the cache", self.where("Zones", "Work"))
         start = time.time()
-        self.assertIn("Item 101", self.said("open item 101", self.where("Zones", "Work")))
+        self.assertIn("This may belong to", self.said("open item 101", self.where("Zones", "Work")))
         self.assertLess(time.time() - start, 4.0)
         start = time.time()
         self.fire("no such thing anywhere", self.where("Zones", "Work"))

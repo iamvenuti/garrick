@@ -481,6 +481,7 @@ def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
     return [i for i in items if in_scope(i, scopes)]
 
 
+
 def sort_item(ctx: Ctx, item: Item, light: bool = False) -> Item:
     """The item with its kind: the first kind, by rank, to claim it.
     `light` leaves out the part of a fix that reads history, which only
@@ -595,6 +596,11 @@ def claim_mechanical(ctx: Ctx, item: Item) -> bool:
         fix = mechanical_fix(ctx, item)
     except Held as why:
         item.held = str(why)
+        # A history move held for a reason that clears by itself stays this kind, with its reason: the nightly run tries it again
+        # each night and the wrap at each wrap, and the Checks card asks nothing (#661). The three the user settles, and a note
+        # no move can read, are judgment, as before.
+        if is_history_note(item) and history_hold(item.held) == "later":
+            return True
         return False
     if fix is None:
         return False
@@ -652,6 +658,18 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
 # threads skill's Wrap does. Steps 1 and 2 of #502 are mechanical and the nightly run may apply them; the Resume
 # here block over its limit (check "resume") is a rewrite, and stays judgment.
 HISTORY_RE = re.compile(r"^has [\d,]+ words, over the [\d,]+ of `note-max-words`")
+
+
+def is_history_note(item: Item) -> bool:
+    """Whether the finding is a note over `note-max-words`: the one a history move answers."""
+    return item.source == "check" and item.check in ("projects", "threads") and bool(HISTORY_RE.match(item.message))
+
+
+def history_hold(why: str) -> str:
+    """What a held history move is, from history.py's own words for it: "foreign", "heading", "rule" (the user settles
+    these), "shape" (nothing can move) or "later" (clears by itself, tried again tonight)."""
+    import history
+    return history.hold_kind(why)[0]
 
 
 def history_fix(ctx: Ctx, item: Item) -> Optional[dict]:
@@ -2004,9 +2022,69 @@ def waiting(done: dict, items: List[Item]) -> Dict[str, int]:
     fixed_ids = {id(i) for i in done["fixed"]}
     waits: Dict[str, int] = {}
     for i in items:
-        if id(i) not in fixed_ids and not (i.kind in KINDS and KINDS[i.kind].quiet):
+        if id(i) not in fixed_ids and not (i.kind in KINDS and KINDS[i.kind].quiet) and not waits_for_tonight(i):
             waits[i.kind] = waits.get(i.kind, 0) + 1
     return waits
+
+
+def waits_for_tonight(item: Item) -> bool:
+    """A history move held for a reason that clears by itself: nobody is waited on, the next run tries it again (#661)."""
+    return item.kind == "mechanical" and bool(item.held) and not item.said and is_history_note(item) \
+        and history_hold(item.held) == "later"
+
+
+HELD_NIGHTS = 7             # a note held this many nights in a row is named once in the morning line
+
+
+def held_nights(root: Path, today: datetime.date, path: str) -> int:
+    """How many days in a row, today first, the day records of System/generated/nurture/ hold `path` as a history move held
+    for a reason that clears by itself. A day with no record ends the run. Read from the records alone."""
+    n = 0
+    while n < 400:
+        day = today - datetime.timedelta(days=n)
+        try:
+            rec = json.loads(Path(root).joinpath(*REPORTS).joinpath("%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            break
+        stand = rec.get("standing") if isinstance(rec, dict) else None
+        if not any(isinstance(f, dict) and f.get("path") == path and held_history_line(f) for f in stand or []):
+            break
+        n += 1
+    return n
+
+
+def held_history_line(finding: dict) -> bool:
+    """Whether a standing finding of a record is a history move held for a reason that clears by itself."""
+    line = str(finding.get("line") or "")
+    m = HELD_LINE_RE.search(line)
+    return (finding.get("kind") == "mechanical" and finding.get("check") in ("projects", "threads") and bool(m)
+            and "history files" in line and history_hold(m.group(1)) == "later")
+
+
+HELD_LINE_RE = re.compile(r"\(held: (.+)\)\s*$")
+
+
+def hold_line(ctx: Ctx, scopes: Optional[List[str]] = None) -> str:
+    """One morning line for the notes whose older entries could not move for a week: seven nights in a row, then fourteen, and
+    so on, so a note is named once for each run of seven and not every morning after (#661). Names only. "" when none."""
+    rec = {}
+    try:
+        rec = json.loads(ctx.root.joinpath(*REPORTS).joinpath("%s.json" % ctx.today.isoformat()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    names = []
+    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+        if isinstance(f, dict) and held_history_line(f) and in_scope(Item("", "", str(f.get("path") or ""), ""), scopes or []):
+            n = held_nights(ctx.root, ctx.today, str(f["path"]))
+            if n >= HELD_NIGHTS and n % HELD_NIGHTS == 0:
+                name = Path(str(f["path"])).stem
+                if name not in names:
+                    names.append(name)
+    if not names:
+        return ""
+    if len(names) == 1:
+        return "The note %s has waited at least a week for its older entries to move." % names[0]
+    return "These notes have waited at least a week for their older entries to move: %s." % ", ".join(sorted(names))
 
 
 def digest(ctx: Ctx, done: dict, items: List[Item]) -> str:
@@ -2126,7 +2204,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             out.update({"fixed": [item_json(i) for i in done["fixed"]], "held": [item_json(i) for i in done["held"]],
                         "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items),
                         "waiting": sum(waiting(done, items).values()), "fade": fade_line(ctx, items),
-                        "debt_line": owed})
+                        "debt_line": owed, "hold_line": hold_line(ctx, scopes)})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif a.ear:
         print(say_ear(items, scopes) if done is None else " ".join(x for x in (digest(ctx, done, items), owed) if x))

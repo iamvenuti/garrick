@@ -111,6 +111,10 @@ TOUCH_MAP = {
     "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard", "test_settings_actions", "test_settings_ui"],
     "tests/read_guard_case.py": ["test_read_guard", "test_connector_guard", "test_decisions"],
 }
+# nurture-0780 (#661): a held history move retries instead of asking.
+for _key in ("template/System/tools/history.py", "extras/status/finding_queue.py", "template/System/tools/nurture.py",
+             "extras/jobs/nurture_sweep.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_history_hold"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

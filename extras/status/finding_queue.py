@@ -70,7 +70,8 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
 # the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction")
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction",
+               "history-foreign", "history-heading", "history-rule")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -85,6 +86,7 @@ KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
     "attribution": QUESTION, "correction": QUESTION,
+    "history-foreign": QUESTION, "history-heading": QUESTION, "history-rule": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
@@ -130,6 +132,26 @@ ANSWERS: Dict[str, List[dict]] = {
                    A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                    A("later", "Not now", "Ask again in a week.", "later")],
 }
+# A long note whose older entries cannot move for a reason only the user can settle (#661): each cause is one question that names
+# it, and none offers *Move older entries*, which was just refused. A move held for a reason that clears by itself is no question.
+# Visible assistants only: nothing here changes a file by itself.
+ANSWERS.update({
+    "history-foreign": [A("sort-it", "Sort it out with my assistant", "Your assistant asks whether to rename that page or use the next free name, and shows you the change.", "handoff"),
+                        A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                        A("later", "Not now", "Ask again in a week.", "later")],
+    "history-heading": [A("fix-heading", "Fix the heading with my assistant", "Your assistant corrects the heading and shows you the change.", "handoff"),
+                        A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                        A("later", "Not now", "Ask again in a week.", "later")],
+    "history-rule": [A("add-rule", "Add the line with my assistant", "Your assistant adds the dividing line and shows you the change.", "handoff"),
+                     A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                     A("later", "Not now", "Ask again in a week.", "later")],
+})
+# history.py's own sentences for the three (its NOT_HISTORY, HEADING_DIFFERS and NO_RULE), read back from a run's record; a test
+# holds these to history.py's, so a change there fails here.
+HOLD_FOREIGN = re.compile(r"^(.+) exists and is not a history file of this note$")
+HOLD_HEADING = re.compile(r"^(.+) exists and its heading differs from the one this tool writes$")
+HOLD_RULE = "it has no `---` rule under `## State of play`"
+HISTORY_KINDS = ("history-foreign", "history-heading", "history-rule")
 # The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
 OTHER = "other"
 ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
@@ -157,7 +179,7 @@ NO_MOVE = {
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
         "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up", "attribution": "Needs your answer",
-        "correction": "Tidy up"}
+        "correction": "Tidy up", "history-foreign": "Tidy up", "history-heading": "Tidy up", "history-rule": "Tidy up"}
 HELD = re.compile(r"\(held: (.+)\)\s*$")
 # The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
 HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
@@ -237,6 +259,25 @@ def held_reason(item: dict) -> str:
     return m.group(1) if m else ""
 
 
+def history_hold(item: dict) -> str:
+    """The plain kind of a long note whose history move was held for a reason the user settles, from the reason in its line;
+    "" for any other reason: the note is then asked as a long note, as before (#661)."""
+    reason = held_reason(item)
+    if HOLD_FOREIGN.match(reason):
+        return "history-foreign"
+    if HOLD_HEADING.match(reason):
+        return "history-heading"
+    return "history-rule" if reason == HOLD_RULE else ""
+
+
+def history_wait(item: dict) -> bool:
+    """A long note's history move held for a reason that clears by itself: the nightly run and the next wrap try it again, and
+    the card asks nothing (#661)."""
+    text = str(item.get("line") or item.get("message") or "")
+    return (str(item.get("kind") or "") == MECHANICAL and str(item.get("check") or "") in ("projects", "threads")
+            and "history files" in text and bool(held_reason(item)))
+
+
 def plain_kind(item: dict) -> str:
     """The plain kind of a standing finding, from Nurture's kind and the check's name and text; "" for a kind with no
     plain wording, "mechanical" for one the nightly run fixes."""
@@ -250,7 +291,7 @@ def plain_kind(item: dict) -> str:
     if kind != "judgment":
         return ""
     if check in ("projects", "threads") and "`note-max-words`" in line and NOTE_RE.search(line):
-        return "note-long"
+        return history_hold(item) or "note-long"
     if check == "resume" and RESUME_RE.search(line):
         return "resume-long"
     if check == "todo" and TODO_RE.search(line):
@@ -531,7 +572,7 @@ def subject(plain: str, item: dict, ws=None) -> str:
     path = str(item["path"])
     if plain == "meeting-long":
         return meeting_subject(ws, path)[0]
-    if plain in ("note-long", "resume-long"):
+    if plain in ("note-long", "resume-long") + HISTORY_KINDS:
         return note_name(path)[0]
     if plain == "todo-long":
         return "%s to-do list" % place(path)
@@ -625,6 +666,18 @@ def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
         return ("A small fix to “%s” in %s could not be made." % (stem(path), place(path)), "%s %s" % (words, WHY[plain]))
+    if plain in HISTORY_KINDS:
+        name, thread = note_name(path)
+        what = "thread note" if thread else "project page"
+        file = (HOLD_FOREIGN.match(held_reason(item)) or HOLD_HEADING.match(held_reason(item)) or [None, ""])[1]
+        if plain == "history-foreign":
+            return ("The page “%s” is not a history file of the %s %s." % (file, name, what),
+                    "Its older entries cannot move while that page holds the name they need. Rename it, or let Garrick use the next free name.")
+        if plain == "history-heading":
+            return ("The history page “%s” of the %s %s opens with a different heading than Garrick writes." % (file, name, what),
+                    "Garrick adds only to a history page written the way it writes them. Correct the heading, or move its entries to a page of their own.")
+        return ("The %s %s has no dividing line under its state of play." % (name, what),
+                "Older entries move from below a line of three dashes under State of play. Without it Garrick cannot tell where they start.")
     if plain == "hooks-blocked":
         where = place(path)
         return ("%s does not check the walls before a commit." % ("The %s zone" % where if path.startswith("Zones/") else where[:1].upper() + where[1:]),
@@ -682,6 +735,18 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
                 "and show me the change before anything is committed." % path)
+    if plain == "history-foreign":
+        file = (HOLD_FOREIGN.match(held_reason(item)) or [None, "a page"])[1]
+        return ("The page %s in the history folder next to %s is not a history file of that note, so its older entries cannot move. "
+                "Ask me whether to rename the page or let Garrick use the next free name, and show me the change before anything "
+                "is committed." % (file, path))
+    if plain == "history-heading":
+        file = (HOLD_HEADING.match(held_reason(item)) or [None, "a page"])[1]
+        return ("The history page %s next to %s has a heading that differs from the one Garrick writes. Correct the heading so it "
+                "matches the others, and show me the change before anything is committed." % (file, path))
+    if plain == "history-rule":
+        return ("Add a line of three dashes under ## State of play in %s, above its older dated entries, so Garrick can move them to "
+                "history. Show me the change before anything is committed." % path)
     if plain == "meeting-long":
         return ("Shorten the meeting page %s to who was there, the key points and the actions. Leave the transcript as it is. "
                 "Show me the change before anything is committed." % path)
@@ -777,7 +842,9 @@ def free_prefix(plain: str, item: dict) -> str:
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
              "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back",
-             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished"}.get(plain, "a check finding")
+             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished",
+             "history-foreign": "a long note whose history page has the wrong name", "history-heading": "a long note whose history page has another heading",
+             "history-rule": "a long note with no dividing line"}.get(plain, "a check finding")
     if plain == "wall":
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
@@ -927,8 +994,8 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, ke
         plain = plain_kind(item)
         if plain in ("attribution", "correction") and str(item["path"]) in walled:
             continue
-        if plain == MECHANICAL and not held_reason(item):
-            continue                # the nightly run makes it, and the card shows nothing (#550)
+        if plain == MECHANICAL and (not held_reason(item) or history_wait(item)):
+            continue                # the nightly run makes it, and the card shows nothing (#550); a held history move is tried again (#661)
         if plain == MECHANICAL:
             plain = "fix-failed"
         if plain == HOOKS:

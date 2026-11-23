@@ -98,6 +98,32 @@ class Skip(Exception):
     """A note this tool does not touch, and why."""
 
 
+# The three reasons a held move is the user's to settle (#661), written here and read back by hold_kind(); the Nurture page
+# reads the same sentences from a run's record. A file name stands where %s is.
+NOT_HISTORY = "%s exists and is not a history file of this note"
+HEADING_DIFFERS = "%s exists and its heading differs from the one this tool writes"
+NO_RULE = "it has no `---` rule under `## State of play`"
+SHAPE_REASONS = ("it has no `## State of play` section", "the note has carriage returns")   # a note no move can ever read
+_HOLDS = (("foreign", re.compile("^" + re.escape(NOT_HISTORY).replace("%s", "(.+)") + "$")),
+          ("heading", re.compile("^" + re.escape(HEADING_DIFFERS).replace("%s", "(.+)") + "$")),
+          ("rule", re.compile("^" + re.escape(NO_RULE) + "$")))
+
+
+def hold_kind(why: str) -> Tuple[str, str]:
+    """(what a held move is, the file it names) for the reason `compute` gave: "foreign" (a file with the quarter's name that is
+    not this note's history file), "heading" (a history file whose heading differs from the one this tool writes), "rule" (no
+    `---` rule under `## State of play`), "shape" (a note this tool can never read: no State of play section, carriage
+    returns or a date that does not parse), or "later" for every other reason, which clears by itself or is not the user's to
+    settle. The file is "" for the last three."""
+    for code, rx in _HOLDS:
+        m = rx.match(why or "")
+        if m:
+            return code, (m.group(1) if m.groups() else "")
+    if why in SHAPE_REASONS or str(why or "").startswith("an entry's date does not parse"):
+        return "shape", ""
+    return "later", ""
+
+
 # ---------------------------------------------------------------------------
 # Settings
 
@@ -217,7 +243,7 @@ def parse(text: str) -> Parsed:
     end = next((i for i in range(state + 1, len(lines)) if not fenced[i] and H2_RE.match(lines[i])), len(lines))
     rule = next((i for i in range(state + 1, end) if not fenced[i] and RULE_RE.match(lines[i])), None)
     if rule is None:
-        raise Skip("it has no `---` rule under `## State of play`")
+        raise Skip(NO_RULE)
     region = list(range(rule + 1, end))
     had_link_line = False
     keep: List[int] = []
@@ -509,14 +535,14 @@ def read_history(path: Path, note: Path, quarter: str) -> Tuple[List[str], List[
     now, old = 'parent: "%s"' % note_link(note), 'parent: "[[%s]]"' % note.stem
     if (not fm or "type: history" not in fm or (now not in fm and old not in fm)
             or any(l.startswith("status:") for l in fm)):
-        raise Skip("%s exists and is not a history file of this note" % path.name)
+        raise Skip(NOT_HISTORY % path.name)
     if now not in fm:
         lines = [now if (i < shut and l == old) else l for i, l in enumerate(lines)]
         fm = lines[:shut]
     title = "# %s: history, %s" % (note.stem, quarter)
     at = next((i for i in range(shut, len(lines)) if lines[i].strip()), None)
     if at is None or lines[at] != title:
-        raise Skip("%s exists and its heading differs from the one this tool writes" % path.name)
+        raise Skip(HEADING_DIFFERS % path.name)
     entries: List[Entry] = []
     previous_blank, fenced = True, _fenced(lines)
     starts: List[int] = []
@@ -760,16 +786,23 @@ def notes_in(root: Path, scope: Optional[str] = None) -> List[Path]:
 # Command line
 
 
+def over_with_nothing(r: "Result", cap: int) -> bool:
+    """A note over its limit that this tool can read, with nothing in it to move (#661)."""
+    return not (r.plan.moves or r.skipped or r.error) and r.plan.before > cap
+
+
 def say(root: Path, results: List[Result], dry: bool) -> str:
     cap = limits(root)["note-max-words"]
     # A note it cannot read for certain is named only when it is long: a hub with no State of play is no finding.
-    rows = [r for r in results if r.plan.moves or r.error or (r.skipped and r.plan.before > cap)]
+    rows = [r for r in results if r.plan.moves or r.error or (r.skipped and r.plan.before > cap) or over_with_nothing(r, cap)]
     if not rows:
         return "Nothing to move: no note is over its limits.\n"
     out = []
     for r in rows:
         name = r.plan.note.relative_to(root).as_posix()
-        if r.skipped:
+        if over_with_nothing(r, cap):
+            out.append("nothing   %s is over its limit, but none of its dated entries is old enough to move" % name)
+        elif r.skipped:
             out.append("skipped  %s: %s" % (name, r.skipped))
         elif r.error:
             out.append("FAILED   %s: %s" % (name, r.error))

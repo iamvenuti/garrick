@@ -28,6 +28,7 @@
   "test_failure_words": 4.0,
   "test_fetch": 0.8,
   "test_finding_queue": 30.0,
+  "test_history_hold": 90.0,
   "test_inbox_run": 40.0,
   "test_install": 34.6,
   "test_intake": 13.7,

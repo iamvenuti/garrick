@@ -6518,6 +6518,11 @@ FAILURES = (
      "Open Settings and choose Try again."),
     ("guard-save", "The read guard's setting was not saved: the workspace's settings could not be written.", "Try again", "retry",
      "Open Settings and choose Try again."),
+    # Panels that showed a failed reply's own text (#511): Settings' Check for updates and the update it
+    # starts, and the panels after them. A row whose request writes offers Show why, never a second try.
+    ("release-check", "Garrick could not ask GitHub for the newest release. Nothing was changed.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("release-update", "The update did not finish.", "Show why", "why", "Open Settings and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

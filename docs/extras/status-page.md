@@ -592,6 +592,8 @@ Every failure the app can show has one plain sentence and one next step. The too
 | Ask stopped on an unexpected error | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*; no second try is offered, since part of the request may have run |
 | The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
 | The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
+| *Check for updates* could not ask GitHub | Settings, About Garrick | Garrick could not ask GitHub for the newest release. Nothing was changed. | *Try again*, which asks once more |
+| The update *Update now* started did not finish | Settings, About Garrick | The update did not finish. | *Show why*, which opens *Details*; no second try is offered, since part of the update may have run |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 

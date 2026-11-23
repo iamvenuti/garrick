@@ -2258,6 +2258,8 @@ WORK_CSS = r"""
 @keyframes wspin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#work .wspin{animation:none;border-right-color:currentColor;opacity:.6}}
 #work .wx{flex:none;background:none;border:0;color:inherit;font:inherit;font-size:var(--fs-h3);line-height:1;padding:0 2px;cursor:pointer;opacity:.7}#work .wx:hover{opacity:1}
 #work .wdet{margin-top:4px;font-size:var(--fs-meta)}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
+[data-failure] .fsay{color:var(--ink)}[data-failure] .fnext{margin-left:6px}[data-failure] .fdet{margin-top:4px;font-size:var(--fs-meta);color:var(--ink2)}
+[data-failure] .fdet summary{cursor:pointer}[data-failure] .fdet p{margin:4px 0 0;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text}
 """
 
 
@@ -2283,6 +2285,23 @@ def failure_table():
 # says when a zone is still busy, and window.GarrickBusy what it is busy with.
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
+/* A failure in plain words for a panel of its own (#511): window.GarrickFail(el, code, raw, again) draws the row of FW for `code`
+   into `el`: its sentence, its one next step and, under Details, closed, the tool's own text. Show why opens Details; Try again
+   calls `again`, and shows only when the panel gave one, so a button does what it says on every path. The panel's own writer
+   takes the drawing away with GarrickFailClear(el) when it says something else. Defined for a browser too, which has no host. */
+(function(){var FW=@FAILURES@;
+function row(c){for(var i=0;i<FW.length;i++)if(FW[i][0]===c)return FW[i];return FW[FW.length-1]}
+window.GarrickFailClear=function(el){if(el)el.removeAttribute('data-failure')};
+window.GarrickFail=function(el,code,raw,again){if(!el)return null;var r=row(code),d=null;raw=String(raw||'').trim();
+el.textContent='';el.hidden=false;if(/^A wall holds /.test(raw)){el.textContent=raw;el.setAttribute('data-failure','wall');return el}
+el.setAttribute('data-failure',r[0]);
+var s=document.createElement('span');s.className='fsay';s.textContent=r[1];el.appendChild(s);
+if(raw&&raw!==r[1]){d=document.createElement('details');d.className='fdet';var m=document.createElement('summary');m.textContent='Details';d.appendChild(m);
+var p=document.createElement('p');p.textContent=raw;d.appendChild(p)}
+if(r[2]&&(r[3]==='why'&&d||r[3]==='retry'&&typeof again==='function')){var b=document.createElement('button');b.type='button';b.className='act sm fnext';
+b.setAttribute('data-fail-next',r[3]);b.textContent=r[2];b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();
+if(r[3]==='why'){d.open=true;d.querySelector('summary').focus()}else{window.GarrickFailClear(el);again()}});el.appendChild(document.createTextNode(' '));el.appendChild(b)}
+if(d)el.appendChild(d);return el}})();
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,FW=@FAILURES@,SEEN=[],OPS={},
 BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
@@ -6520,7 +6539,9 @@ RELEASE_JS = r"""
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,btn=document.getElementById('rel-check'),
 line=document.getElementById('rel-line'),box=document.getElementById('rel-detail'),on=document.getElementById('rel-on'),every=document.getElementById('rel-every'),
 changed=false,busy=false;
-function put(t){line.textContent=t}
+function put(t){line.textContent=t;if(window.GarrickFailClear)GarrickFailClear(box)}
+/* a failed reply (#511): the plain sentence and its next step in the box, the reply's own text under Details */
+function failed(code,raw,again,fallback){if(!window.GarrickFail){put(raw||fallback);return}put('');GarrickFail(box,code,raw,again)}
 function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
 function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
 function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
@@ -6550,10 +6571,10 @@ btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can as
 host.postMessage({act:{verb:'release-check'}})};
 sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put((out&&out.say)||'Could not ask GitHub. Nothing was changed.');done();return}
+if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){failed('release-check',out&&out.say,function(){btn.click()},'Could not ask GitHub. Nothing was changed.');done();return}
 if(r.state==='newer'){offer(r);return}
 put(r.line+at(r));done();return}
-if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
+if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){if(out&&out.say)failed('release-update',out.say,null,out.say);else put('The update could not start. Nothing was changed.');done();return}
 put(u.line);show(u);done();return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={update:function(){if(!busy)go()},changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};

@@ -77,6 +77,7 @@
   "test_shard": 1.4,
   "test_skills": 25.0,
   "test_split": 38.5,
+  "test_start_small": 0.1,
   "test_status": 68.0,
   "test_status_find": 4.4,
   "test_status_look": 8.0,

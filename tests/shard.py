@@ -133,7 +133,12 @@ for _key in ("template/System/tools/check.py", "template/System/tools/nurture.py
 for _key, _mods in (("extras/status/settings_guard.py", ["test_guard_hooks", "test_hook_path"]),
                     ("extras/hooks/read_guard.py", ["test_guard_hooks", "test_hook_path"]),
                     ("extras/status/page_action.py", ["test_guard_hooks"]),
-                    ("update.py", ["test_guard_update", "test_hook_path"])):
+                    ("update.py", ["test_guard_update", "test_hook_path"]),
+                    ("docs/context.md", ["test_start_small"]),
+                    ("README.md", ["test_start_small", "test_docs", "test_docs_limits"]),
+                    ("template/System/tools/check.py", ["test_start_small"]),
+                    ("template/System/tools/garrick_lib.py", ["test_start_small"]),
+                    ("template/System/tools/history.py", ["test_start_small"])):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {

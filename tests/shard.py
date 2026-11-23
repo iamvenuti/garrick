@@ -142,6 +142,19 @@ for _key, _mods in (("extras/status/settings_guard.py", ["test_guard_hooks", "te
                     ("template/System/tools/garrick_lib.py", ["test_start_small"]),
                     ("template/System/tools/history.py", ["test_start_small"])):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+# settings-0790 (#650): Settings' data has a reader in the core.
+for _key, _mods in (("template/System/tools/view_settings.py", ["test_view_settings", "test_view_model", "test_status", "test_settings_ui"]),
+                    ("tests/test_view_settings.py", ["test_view_settings"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+for _key in ("template/System/tools/view.py", "extras/status/status.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_view_settings"]
+# settings-0790 (#673, #674, #675): Settings as one grid, the read guard's list, plain words.
+for _key in ("extras/status/status.py", "extras/status/settings_help.py", "extras/status/settings_guard.py", "extras/status/settings_readguard.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_settings_layout", "test_read_guard_list"]
+for _key in ("extras/hooks/read_guard.py", "tests/read_guard_case.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_read_guard_list"]
+TOUCH_MAP["tests/test_settings_layout.py"] = ["test_settings_layout"]
+TOUCH_MAP["tests/test_read_guard_list.py"] = ["test_read_guard_list"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

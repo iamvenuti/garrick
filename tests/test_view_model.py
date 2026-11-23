@@ -537,8 +537,9 @@ class TestWhatThePageStillReads(unittest.TestCase):
             self.assertNotIn(name, found, name)
 
     def test_the_view_model_names_what_is_left_for_it(self):
-        for name in ("waiting sessions", "settings", "operations journal"):
+        for name in ("waiting sessions", "operations journal"):
             self.assertIn(name, view.LEFT)
+        self.assertNotIn("settings", view.LEFT)           # Settings' data is view_settings.py's since 0.79.0 (#650)
 
 
 class TestShadowSystem(Case):

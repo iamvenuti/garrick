@@ -1974,6 +1974,29 @@ def guard_version_differs() -> bool:
         return False
 
 
+def guard_named() -> list:
+    """Each Garrick hook path the assistants' settings name, with the reason Settings gave it, as [{"path", "reason"}]: the
+    path as the settings write it, the home folder as `~`, the reason one of four fixed phrases (#672). Fails closed: anything
+    unreadable is an empty list."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        return [{"path": path, "reason": reason} for path, reason in found.named_hooks()]
+    except Exception:
+        return []
+
+
+def guard_refusal(code: str, text: str):
+    """`fails(code, text)` with what Settings found added to Show why, one path with its reason each, and the same list in the
+    reply as `hooks`, for a page that draws it. Without a hook path in the settings, Show why says so."""
+    named = guard_named()
+    said = "; ".join("%s (%s)" % (h["path"], h["reason"]) for h in named) or "no Garrick hook file"
+    e = fails(code, "%s. The assistants' settings name: %s" % (text, said))
+    e.reply["hooks"] = named
+    return e
+
+
 def clean_patterns(value, what: str, needs_one: bool = False) -> list:
     """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
     path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
@@ -2016,8 +2039,8 @@ def set_read_guard(ws: Path, req: dict) -> dict:
         guard, src = guard_hooks()
         if guard is None:
             if guard_version_differs():
-                raise fails("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
-            raise fails("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
+                raise guard_refusal("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
+            raise guard_refusal("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
         home = str(Path.home())
         try:
             guard.register(str(src), home, install=mode != "off")

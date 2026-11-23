@@ -207,6 +207,52 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
     return [f for f in named_folders(home) if (f / "read_guard.py").is_file() and trusted_hook_folder(f)]
 
 
+REASONS = ("not a full path", "no read_guard.py beside it", "another version's hook files", "used")
+
+
+def shown_path(word: str, home: Optional[str] = None) -> str:
+    """A hook path as the settings file writes it, with the home folder as `~` (#672): `$HOME/x` and `${HOME}/x` show as `~/x`,
+    a path under the home folder shows with `~`, and any other word shows as written, a variable by its name and never its
+    value."""
+    for var in ("$HOME", "${HOME}"):
+        if word == var or word.startswith(var + "/"):
+            return "~" + word[len(var):]
+    home = home or str(Path.home())
+    if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
+        return "~" + word[len(home):]
+    return word
+
+
+def named_hooks(home: Optional[str] = None) -> List[Tuple[str, str]]:
+    """What Settings found: each Garrick hook path the assistants' settings name, once, as [(path as written, reason)]. The
+    reason is one of `REASONS`: "not a full path" (it stays relative or names an unset variable), "no read_guard.py beside it",
+    "another version's hook files" (both files are there but are not this release's) or "used". Nothing else from the
+    settings is returned, and no variable's value."""
+    home = home or str(Path.home())
+    used = hook_folders(home)
+    out: List[Tuple[str, str]] = []
+    for rel in (".claude/settings.json", ".codex/hooks.json"):
+        try:
+            text = (Path(home) / rel).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for word in hook_scripts(text):
+            shown = shown_path(word, home)
+            if any(shown == s for s, _ in out):
+                continue
+            full = hook_path(word)
+            if full is None:
+                reason = REASONS[0]
+            elif not (Path(full).parent / "read_guard.py").is_file():
+                reason = REASONS[1]
+            elif Path(full).parent in used:
+                reason = REASONS[3]
+            else:
+                reason = REASONS[2]
+            out.append(("".join(c for c in shown if c.isprintable())[:200], reason))
+    return out
+
+
 def other_version(home: Optional[str] = None) -> bool:
     """Whether a folder the settings name holds both hook files but they are not this release's: the Garrick download the
     user keeps is another version. Reads the files; never imports them."""

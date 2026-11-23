@@ -160,5 +160,77 @@ class TestTheWorkspaceHooksFolderIsNeverTrusted(HooksCase):
             self.assertEqual([good], sg.hook_folders(str(self.home)))
 
 
+class TestShowWhyNamesWhatWasFound(HooksCase):
+    """#672: when no hook folder can be used, Show why lists each path the assistants' settings name, with one fixed reason."""
+
+    def refuse(self):
+        self.assistants()
+        with self.installed_page():
+            out = self.go({"verb": "read-guard", "mode": "warn"})
+        self.assertFalse(out["ok"], out)
+        return out
+
+    def test_a_folder_with_no_read_guard_is_named_with_its_reason(self):
+        folder = self.kept(files=("zone_guard.py",))
+        self.name('python3 "$HOME/kept/extras/hooks/zone_guard.py"')
+        out = self.refuse()
+        self.failed(out, "guard-file")
+        self.assertIn("~/kept/extras/hooks/zone_guard.py (no read_guard.py beside it)", out["say"])
+        self.assertEqual([{"path": "~/kept/extras/hooks/zone_guard.py", "reason": "no read_guard.py beside it"}], out["hooks"])
+        self.assertFalse((folder / "read_guard.py").exists())
+
+    def test_a_path_that_stays_relative_is_named_as_not_a_full_path(self):
+        self.name("python3 kept/extras/hooks/zone_guard.py", 'python3 "$UNSET_VAR/zone_guard.py"')
+        out = self.refuse()
+        self.failed(out, "guard-file")
+        self.assertIn("kept/extras/hooks/zone_guard.py (not a full path)", out["say"])
+        self.assertIn("$UNSET_VAR/zone_guard.py (not a full path)", out["say"])
+
+    def test_a_download_of_another_release_is_named_as_another_versions_hook_files(self):
+        self.kept(release=False)
+        self.name("python3 ~/kept/extras/hooks/zone_guard.py")
+        out = self.refuse()
+        self.failed(out, "guard-version")
+        self.assertEqual([{"path": "~/kept/extras/hooks/zone_guard.py", "reason": "another version's hook files"}], out["hooks"])
+
+    def test_a_folder_that_is_used_is_named_used(self):
+        self.kept()
+        self.name("python3 ~/kept/extras/hooks/zone_guard.py", "python3 ~/old/extras/hooks/zone_guard.py")
+        with self.installed_page():
+            named = self.sg().named_hooks(str(self.home))
+        self.assertEqual([("~/kept/extras/hooks/zone_guard.py", "used"), ("~/old/extras/hooks/zone_guard.py", "no read_guard.py beside it")],
+                         named)
+
+    def test_no_value_of_an_environment_variable_reaches_show_why_or_the_reply(self):
+        with mock.patch.dict(os.environ, {"GARRICK_KEEP": str(self.home / "kept"), "GARRICK_SECRET": MARKER}):
+            self.name('python3 "$GARRICK_KEEP/extras/hooks/zone_guard.py"', 'python3 "$GARRICK_SECRET/zone_guard.py"')
+            out = self.refuse()
+        text = json.dumps(out)
+        self.assertNotIn(MARKER, text)
+        self.assertNotIn(str(self.home), text)
+        self.assertIn("$GARRICK_KEEP/extras/hooks/zone_guard.py", out["say"])
+        self.assertIn("$GARRICK_SECRET/zone_guard.py (not a full path)", out["say"])
+
+    def test_only_four_reasons_are_ever_shown_and_nothing_else_from_the_settings(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "settings.json").write_text(json.dumps({"apiKeyHelper": "secret-helper", "env": {"TOKEN": MARKER},
+            "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "python3 /opt/x/zone_guard.py --token " + MARKER}]}]}}))
+        out = self.refuse()
+        self.assertNotIn(MARKER, json.dumps(out))
+        self.assertNotIn("secret-helper", json.dumps(out))
+        for h in out["hooks"]:
+            self.assertIn(h["reason"], self.sg().REASONS)
+
+    def test_with_no_hook_path_in_the_settings_show_why_says_so(self):
+        out = self.refuse()
+        self.failed(out, "guard-file")
+        self.assertIn("no Garrick hook file", out["say"])
+        self.assertEqual([], out["hooks"])
+
+    def test_the_failure_table_is_unchanged_for_the_two_guard_rows(self):
+        rows = {r[0]: r for r in pa.FAILURES}
+        self.assertEqual("The read guard was not changed: Garrick could not find its hook file on this computer.", rows["guard-file"][1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1546,6 +1546,106 @@ def outside_found(root):
     return found
 
 
+# The hook files Garrick ships in extras/hooks/, by name. The refresh of a kept download (#672) copies these and nothing else.
+HOOK_FILES = ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
+NO_PROMPT = False       # --json: nobody is asked in the middle of the report
+
+
+def hook_words(root):
+    """Each Garrick hook path the assistants' settings name, as the settings write it: [(word, full path or None)], once each.
+    Reads the two settings files for those words only."""
+    out, seen = [], set()
+    for settings in (Path.home() / ".claude" / "settings.json", Path.home() / ".codex" / "hooks.json"):
+        try:
+            text = settings.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for word in re.findall(r"[^\s\"']*(?:zone_guard|read_guard|parked_hint|waiting_hook)\.py", text):
+            if word not in seen:
+                seen.add(word)
+                out.append((word, hook_path(word)))
+    return out
+
+
+def hook_refresh(folder, root):
+    """The names of Garrick's own hook files in `folder`, a Garrick download's `extras/hooks/` that the settings name, that
+    differ from this Garrick's or are missing there: the files a refresh would copy (#672). None when no refresh is offered: the
+    folder is not an `extras/hooks/` outside the workspace and the running Garrick, it is in a git clone or is, or is under, a
+    link, it lies outside the home folder, a file in it is a link, or nothing differs. Reads files only. A folder inside the
+    workspace is never written."""
+    folder = Path(os.path.abspath(str(folder)))
+    ours = REPO / "extras" / "hooks"
+    if folder.name != "hooks" or folder.parent.name != "extras" or same_place(folder, ours) or not ours.is_dir():
+        return None
+    if inside(folder, root) or inside(root, folder):
+        return None
+    home = Path(os.path.abspath(str(Path.home())))
+    if home not in folder.parents:
+        return None                      # a download outside the home folder is named, never written
+    here = folder
+    while True:
+        if here.is_symlink() or (here / ".git").exists():
+            return None                  # a link, or a clone: git updates it, not this step
+        if here == home:
+            break
+        here = here.parent
+    names = []
+    for name in HOOK_FILES:
+        source = ours / name
+        if not source.is_file():
+            continue
+        dest = folder / name
+        if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+            return None
+        if read(dest) != read(source):
+            names.append(name)
+    return names or None
+
+
+def refresh_hooks(root, folder, shown=None, tty=None):
+    """On a yes at a terminal, copy this Garrick's own hook files over the ones in `folder` that differ (`hook_refresh` says
+    which, checked again here), and say what was copied. With nobody to ask, or a no, nothing is copied. A file that cannot be
+    written is put back as it was, and so is every file already copied. Writes no other file and never a settings file."""
+    names = hook_refresh(folder, root)
+    shown = shown or shown_path(str(folder))        # as the settings write it: a variable by its name, never its value
+    if not names:
+        return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
+    if tty is None:
+        try:
+            tty = bool(sys.stdin.isatty() and sys.stdout.isatty()) and not NO_PROMPT
+        except (AttributeError, ValueError):
+            tty = False
+    question = "Copy %s from this Garrick over the kept hooks at %s?" % (", ".join(names), shown)
+    try:
+        yes = ask(question, False, tty)
+    except EOFError:
+        yes = False
+    if not yes:
+        return ("Nothing was copied to the kept hooks at %s%s. The step offered: copy %s from this Garrick, on your yes at a "
+                "terminal. Your settings are not changed." % (shown, "" if tty else ": nobody could be asked", ", ".join(names)))
+    folder = Path(os.path.abspath(str(folder)))
+    ours = REPO / "extras" / "hooks"
+    before, wrote = {}, []
+    try:
+        for name in names:
+            dest = folder / name
+            before[name] = read(dest)
+            dest.write_bytes((ours / name).read_bytes())
+            wrote.append(name)
+    except OSError as exc:
+        for name in before:
+            try:
+                if before[name] is None:
+                    (folder / name).unlink()
+                else:
+                    (folder / name).write_bytes(before[name])
+            except OSError:
+                pass
+        return ("The kept hooks at %s were not refreshed: %s. Each file was put back as it was. Copy extras/hooks/ from this "
+                "Garrick over them by hand." % (shown, exc))
+    return "Kept hooks: %s now holds this Garrick's %s. Your settings are not changed." % (shown, ", ".join(wrote))
+
+
 BAND_PATH = ("extras", "mods", "garrick-band")
 BAND_BY_HAND = ("Get a newer Garrick: for a download, unpack the release from "
                 "https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip and point CLAUDE_CODE_PLUGIN_DIRS "
@@ -1736,7 +1836,25 @@ def next_steps(root, p, done=None):
     steps.extend(ask_steps(root))
     steps.extend(before_quit_steps(root))
 
+    kept = {}
+    for word, full in hook_words(root):
+        if full and Path(full).parent not in kept:
+            names = hook_refresh(Path(full).parent, root)
+            if names:
+                kept[Path(full).parent] = (shown_path(word).rsplit("/", 1)[0], names)
+    said = set()
     for what, path, shown in outside_found(root):
+        folder = Path(path).parent
+        if what != "the Garrick band" and folder in kept:
+            shown_folder, names = kept[folder]
+            if folder not in said:
+                said.add(folder)
+                lines = " ".join("%s runs from %s, which differs from this Garrick's, in another version's hook files." % (
+                    w[0].upper() + w[1:], s) for w, p2, s in outside_found(root) if Path(p2).parent == folder and w != "the Garrick band")
+                steps.append(("%s Refresh the kept hooks at %s: on your yes at a terminal, copy %s from this Garrick over "
+                              "them. Your settings are not changed" % (lines, shown_folder, ", ".join(names)),
+                              lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
+            continue
         again = band_refresh(path, root) if what == "the Garrick band" else None
         if again:
             top, old, new = again
@@ -1750,6 +1868,12 @@ def next_steps(root, p, done=None):
         if what == "the Garrick band":
             line += ". " + BAND_BY_HAND % Path(path).parent.parent.parent
         steps.append((line, None))
+    for folder, (shown_folder, names) in kept.items():
+        if folder not in said:           # both guards match, another hook file of the folder does not
+            steps.append(("The kept hooks at %s differ from this Garrick's in %s. Refresh them: on your yes at a terminal, copy "
+                          "%s from this Garrick over them. Your settings are not changed" % (
+                              shown_folder, ", ".join(names), ", ".join(names)),
+                          lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
     return steps
 
 
@@ -3011,6 +3135,8 @@ def main(argv=None):
             return 0
         if not args.workspace:
             ap.error("name the workspace to update, such as ~/Garrick")
+        global NO_PROMPT
+        NO_PROMPT = bool(args.json)
         install.check_git()
         root = find_workspace(args.workspace)
         p = plan(root)

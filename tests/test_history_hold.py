@@ -182,6 +182,61 @@ class TestAHoldTheUserSettles(Held):
         self.assertEqual("split", q["answers"][0]["id"])
 
 
+class TestSameDayRuns(Held):
+    def run_day(self, day, *args, busy=False):
+        import io, contextlib
+        with mock.patch.object(nurture, "busy", return_value=busy), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return nurture.main(list(args) + ["--root", str(self.root), "--json", "--today", day.isoformat()])
+
+    def test_a_list_run_the_same_day_does_not_end_the_seven_nights(self):
+        first = datetime.date(2026, 10, 11)
+        for n in range(7):
+            day = first + datetime.timedelta(days=n)
+            self.run_day(day, "nightly", busy=True)
+            self.run_day(day, "list")                       # tries nothing: it must not forget the hold
+        last = nurture.Ctx(self.root, today=first + datetime.timedelta(days=6))
+        self.assertEqual("The note Freight has waited at least a week for its older entries to move.", nurture.hold_line(last))
+
+
+class TestReasonsThatNeverClear(Held):
+    def test_only_transient_reasons_are_later(self):
+        for why in ("Freight history 2026-Q3.md cannot be read (OSError)", "it cannot be read (OSError)", "Freight history 2026-Q3.md has carriage returns",
+                    "Freight history 2026-Q3.md holds text that is not an entry", "Freight history 2026-Q3.md holds an entry whose date does not parse",
+                    history.UNCONFIRMED + " from the note is in no history file", "its history folder is a link or leads outside the note's folder"):
+            self.assertEqual("shape", history.hold_kind(why)[0], why)
+        for why in ("a session is mid-turn there", "its repository is mid-merge or could not be read", "the note changed while it was being read; run it again",
+                    "Freight.md has changes not committed, or is not committed at all"):
+            self.assertEqual("later", history.hold_kind(why)[0], why)
+
+    def test_a_history_page_that_cannot_be_read_keeps_the_old_question(self):
+        name = "Freight history %s.md" % sorted(history.plan(self.root, self.freight, TODAY).quarters)[0]
+        write(self.freight.parent / "history" / name, '---\ntype: history\nparent: "%s"\ncreated: 2026-10-01\n---\n\n# Freight: history, 2026-Q3\n\nstray text\n'
+              % history.note_link(self.freight))
+        self.commit(self.work, "2026-10-02T10:00:00")
+        self.run_tool("nightly")
+        self.assertEqual("judgment", self.item()["kind"])
+        self.assertEqual(["note-long"], [q["id"] for q in self.questions()])
+
+
+class TestOneLinePerZone(unittest.TestCase):
+    def test_notes_of_two_zones_never_share_a_line(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for n in range(7):
+            d = datetime.date(2026, 10, 17) - datetime.timedelta(days=n)
+            standing = [{"kind": "mechanical", "check": "threads", "path": "Zones/%s/Acme/Threads/%s/%s.md" % (z, t, t),
+                         "line": "x: has 9000 words, over the 4000 of `note-max-words`; move its older dated entries to history files (held: a session is mid-turn there)"}
+                        for z, t in (("Work", "Freight"), ("Home", "Garden"))]
+            write(root / "System" / "generated" / "nurture" / ("%s.json" % d.isoformat()), json.dumps({"standing": standing}))
+        line = nurture.hold_line(nurture.Ctx(root, today=datetime.date(2026, 10, 17)))
+        rows = line.split("\n")
+        self.assertEqual(2, len(rows))
+        for row in rows:
+            self.assertEqual(1, int("Freight" in row) + int("Garden" in row))
+
+
 class TestNothingToMove(Held):
     def test_a_note_over_its_limit_with_no_entries_to_move_says_so_and_asks_split_first(self):
         text = self.freight.read_text(encoding="utf-8")

@@ -128,12 +128,30 @@ class TestTheHint(Case):
         self.assertEqual(100, len([1 for p, m in before if "repeats wording" in m]))
 
 
+class TestTheMatch(Case):
+    def test_a_finding_whose_project_the_hint_does_not_count_stays_on_its_own(self):
+        ctx = nurture.Ctx(self.root, today=TODAY)
+        mk = lambda name: nurture.Item("check", "walls", NOTES[0], "repeats wording from Zones/Home/%s/%s.md, in project %s of the Home zone; "
+                                       "that zone is walled and this file is in the Work zone" % (name, name, name), severity="error")
+        counted = [mk("Maple%d" % i) for i in range(4)]
+        stray = mk("Birch")
+        hint = {NOTES[0]: [{"zone": "Home", "projects": 4, "notes": 10, "names": ["Maple0", "Maple1", "Maple2", "Maple3"]}]}
+        with mock.patch.object(check, "template_hints", return_value=hint):
+            got = nurture.group_templates(ctx, counted + [stray])
+        self.assertIn(stray, got)
+        self.assertEqual(2, len(got))
+        grouped = [i for i in got if i is not stray][0]
+        self.assertEqual({"zone": "Home", "projects": 4, "notes": 10}, grouped.hint)    # no project name in the item
+        with mock.patch.object(check, "template_hints", return_value=hint):             # a counted project with no finding: the counts disagree
+            self.assertEqual(5, len(nurture.group_templates(ctx, counted[:3] + [stray] * 1 + [mk("Birch2")])))
+
+
 class TestTheCounts(Case):
     def hints(self, path=NOTES[0]):
         return check.template_hints(self.root, [path]).get(path)
 
     def test_the_counts_name_a_zone_and_two_numbers(self):
-        self.assertEqual([{"zone": "Home", "projects": 10, "notes": 10}], self.hints())
+        self.assertEqual([{"zone": "Home", "projects": 10, "notes": 10, "names": ["Maple%d" % i for i in range(10)]}], self.hints())
 
     def test_fewer_than_four_projects_give_no_hint(self):
         import shutil
@@ -187,7 +205,9 @@ class TestTheQuestion(Case):
         first, second = q["answers"]
         self.assertIn("templates folder", first["does"])
         self.assertIn("System/templates.local/", first["phrase"])
-        self.assertIn("take the template text out of the notes", first["phrase"])
+        self.assertIn("notes of this zone that hold it, and never open a note of Home", first["phrase"])
+        self.assertIn("Check the text with me before you write it", first["phrase"])
+        self.assertIn("take it out of the notes", first["phrase"])
         self.assertIn("one by one", second["phrase"])
         for text in (first["phrase"], second["phrase"], q["free"]):
             self.assertNotIn("Maple", text)

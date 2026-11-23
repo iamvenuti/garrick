@@ -71,7 +71,7 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 # The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
 # the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
 PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction",
-               "history-foreign", "history-heading", "history-rule", "wall-template")
+               "history-foreign", "history-heading", "history-rule", "wall-template", "parked-pointer")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -86,7 +86,7 @@ KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
     "attribution": QUESTION, "correction": QUESTION,
-    "history-foreign": QUESTION, "history-heading": QUESTION, "history-rule": QUESTION, "wall-template": QUESTION,
+    "history-foreign": QUESTION, "history-heading": QUESTION, "history-rule": QUESTION, "wall-template": QUESTION, "parked-pointer": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
@@ -152,6 +152,11 @@ ANSWERS.update({
 ANSWERS["wall-template"] = [
     A("template", "It is an old template", "Your assistant puts a copy of that template in your own templates folder, or takes the template text out of the notes, and shows you the change first.", "handoff"),
     A("one-by-one", "Show me the findings one by one", "Your assistant lists the findings of this note, each by file and zone. Nothing changes.", "handoff")]
+# A parked thread whose memory pointer is still in the memory index (Nurture's kind of that name, #664): wording only, keyed on the kind's
+# name. The one fix goes to the assistant, who shows the change; the page's own fix route takes a note of a zone, and this file is not one.
+ANSWERS["parked-pointer"] = [
+    A("tidy", "Tidy it with my assistant", "Your assistant makes the one fix and shows you the change.", "handoff"),
+    A("later", "Not now", "Ask again in a week.", "later")]
 # What Nurture's line for the grouped finding says: counts and a zone's name (nurture.py's say_wall).
 TEMPLATE_HINT = re.compile(r"repeats wording from (\d+) projects of the (.+?) zone; that zone is walled\. The same wording is in (\d+) notes of this zone, so it may be text from an old note template")
 # history.py's own sentences for the three (its NOT_HISTORY, HEADING_DIFFERS and NO_RULE), read back from a run's record; a test
@@ -188,7 +193,7 @@ NO_MOVE = {
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
         "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up", "attribution": "Needs your answer",
         "correction": "Tidy up", "history-foreign": "Tidy up", "history-heading": "Tidy up", "history-rule": "Tidy up",
-        "wall-template": "Private material"}
+        "wall-template": "Private material", "parked-pointer": "Tidy up"}
 HELD = re.compile(r"\(held: (.+)\)\s*$")
 # The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
 HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
@@ -295,7 +300,7 @@ def plain_kind(item: dict) -> str:
         return "wall-template" if TEMPLATE_HINT.search(str(item.get("line") or "")) else "wall"
     if kind == MECHANICAL:
         return MECHANICAL
-    if kind in ("attribution", "correction"):
+    if kind in ("attribution", "correction", "parked-pointer"):
         return kind
     if kind != "judgment":
         return ""
@@ -675,6 +680,9 @@ def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
         return ("A small fix to “%s” in %s could not be made." % (stem(path), place(path)), "%s %s" % (words, WHY[plain]))
+    if plain == "parked-pointer":
+        return ("A parked thread's memory pointer is still in the memory index: “%s”." % stem(path),
+                "A parked thread's pointer belongs in the parked folder, so the index stays short for every session.")
     if plain == "wall-template":
         m = TEMPLATE_HINT.search(str(item.get("line") or ""))
         return ("“%s” in %s repeats wording from %s projects of %s." % (stem(path), place(path), m.group(1), m.group(2)),
@@ -748,14 +756,18 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
                 "and show me the change before anything is committed." % path)
+    if plain == "parked-pointer":
+        return ("Make the fix Nurture holds for the parked thread's memory pointer %s, and show me the change before anything is "
+                "committed." % path)
     if plain == "wall-template":
         other = wall_other(item) or "another zone"
         if answer == "one-by-one":
             return ("List the wall findings of %s one by one, each by the file it names and its zone, and never the repeated words. "
                     "Change nothing." % path)
         return ("The wording of %s that the wall check holds against projects of %s may be the text of an old note template of mine. "
-                "Help me put a copy of that template in System/templates.local/, or take the template text out of the notes. "
-                "Show me the change before anything is committed." % (path, other))
+                "Take the template text from the notes of this zone that hold it, and never open a note of %s. Check the text with me "
+                "before you write it into System/templates.local/, or help me take it out of the notes. "
+                "Show me the change before anything is committed." % (path, other, other))
     if plain == "history-foreign":
         file = (HOLD_FOREIGN.match(held_reason(item)) or [None, "a page"])[1]
         return ("The page %s in the history folder next to %s is not a history file of that note, so its older entries cannot move. "
@@ -865,7 +877,8 @@ def free_prefix(plain: str, item: dict) -> str:
              "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back",
              "attribution": "a question about where a page belongs", "correction": "a correction that is not finished",
              "history-foreign": "a long note whose history page has the wrong name", "history-heading": "a long note whose history page has another heading",
-             "history-rule": "a long note with no dividing line", "wall-template": "a private-material finding that may be an old template"}.get(plain, "a check finding")
+             "history-rule": "a long note with no dividing line", "wall-template": "a private-material finding that may be an old template",
+             "parked-pointer": "a parked thread's memory pointer"}.get(plain, "a check finding")
     if plain in ("wall", "wall-template"):
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)

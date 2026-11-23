@@ -5413,7 +5413,7 @@ def template_hints(root: Path, paths: List[str]) -> Dict[str, List[dict]]:
     note template (#662): `[{"zone", "projects", "notes"}]`. A zone is listed when the file's shared runs, the ones
     wording_findings reports across the wall, are held by files of TEMPLATE_HINT_PROJECTS projects or more of that zone, and every
     one of those runs is also held by TEMPLATE_HINT_NOTES files or more of the file's own zone, itself among them. `projects` is how many
-    projects of that zone, `notes` the fewest files of the own zone that hold one of the runs. Counts and a zone's name, nothing the
+    projects of that zone (`names` their folder names, for matching findings and never shown), `notes` the fewest files of the own zone that hold one of the runs. Counts and a zone's name, nothing the
     runs say. It reads the index wording_findings reads and decides nothing about a finding: the wall check is not changed, and a file
     this cannot place has no entry. Read only."""
     _BLOBS.clear()
@@ -5465,7 +5465,8 @@ def template_hints(root: Path, paths: List[str]) -> Dict[str, List[dict]]:
                     got = zones.setdefault(there, {"projects": set(), "notes": own})
                     got["projects"].add(index.project[o])
                     got["notes"] = min(got["notes"], own)
-            hints = [{"zone": zone, "projects": len(got["projects"]), "notes": got["notes"]}
+            hints = [{"zone": zone, "projects": len(got["projects"]), "notes": got["notes"],
+                      "names": sorted(pr.name for pr in got["projects"])}
                      for zone, got in sorted(zones.items())
                      if len(got["projects"]) >= TEMPLATE_HINT_PROJECTS and got["notes"] >= TEMPLATE_HINT_NOTES]
             if hints:

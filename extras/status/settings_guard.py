@@ -101,7 +101,7 @@ HOOK_NAME = re.compile(r".*(?:zone_guard|read_guard|waiting_hook)\.py", re.S)
 # `tests/test_settings_actions.py` fails when a release changes a hook file and leaves its digest here behind.
 RELEASE_HOOKS = {
     "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
-    "read_guard.py": "da3bb1e310c57bbdc98578b35f4cb4522dd6375c15981ef4da6e216ee140734c",
+    "read_guard.py": "4704d7897e86f657dbe8951c0c1a7ed241797c5f708ed32acdeb2be739d0e45b",
 }
 
 
@@ -132,6 +132,14 @@ def trusted_hook_folder(folder: Path) -> bool:
         elif hashlib.sha256(have).hexdigest() != digest:
             return False
     return True
+
+
+def hook_path(word: str) -> Optional[str]:
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and read_guard.py (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable
+    the same way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
 
 
 def hook_scripts(text: str) -> List[str]:
@@ -172,9 +180,9 @@ def named_folders(home: Optional[str] = None) -> List[Path]:
         except OSError:
             continue
         for found in hook_scripts(text):
-            there = Path(os.path.expanduser(found))
-            if there.is_absolute():
-                folders.append(there.parent)
+            there = hook_path(found)
+            if there:
+                folders.append(Path(there).parent)
     out: List[Path] = []
     for f in folders:
         if f not in out:

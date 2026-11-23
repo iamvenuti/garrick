@@ -949,6 +949,14 @@ def main():
 # ------------------------------------------------------------------ --check
 
 
+def hook_path(word):
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and here (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable the same
+    way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
+
+
 def registered(path, wants):
     """Problems with the read guard's hooks in the settings file at `path`. `wants` is [(event, [tools])]."""
     shown = path.replace(os.path.expanduser("~"), "~", 1)
@@ -972,7 +980,7 @@ def registered(path, wants):
                     words = shlex.split(command)
                 except ValueError:
                     words = command.split()
-                scripts = [os.path.expanduser(os.path.expandvars(w)) for w in words if w.endswith("read_guard.py")]
+                scripts = [hook_path(w) or "" for w in words if w.endswith("read_guard.py")]
                 if scripts and all(os.path.isfile(s) for s in scripts):
                     covered |= {t for t in tools if zg.matches(str(entry.get("matcher") or ""), t)}
         missed = [t for t in tools if t not in covered]

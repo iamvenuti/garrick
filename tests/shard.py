@@ -129,6 +129,12 @@ for _key in ("template/System/tools/history.py", "extras/status/finding_queue.py
 # nurture-0780 (#662): wall findings that look like an old note template.
 for _key in ("template/System/tools/check.py", "template/System/tools/nurture.py", "extras/status/finding_queue.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_template_hint"]
+# guard-0790 (#670, #671, #672): the guard hooks, found as the assistants name them.
+for _key, _mods in (("extras/status/settings_guard.py", ["test_guard_hooks", "test_hook_path"]),
+                    ("extras/hooks/read_guard.py", ["test_guard_hooks", "test_hook_path"]),
+                    ("extras/status/page_action.py", ["test_guard_hooks"]),
+                    ("update.py", ["test_guard_update", "test_hook_path"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

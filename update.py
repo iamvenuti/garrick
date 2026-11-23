@@ -1469,11 +1469,36 @@ def desk_links():
     return out
 
 
+def hook_path(word):
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and here (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable the same
+    way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
+
+
+def shown_path(word):
+    """A hook path as the settings write it, with the home folder as `~` and a variable as its name, never its value (#670):
+    `$HOME/x` and `${HOME}/x` show as `~/x`; a path under the home folder shows with `~`; any other word shows as written."""
+    for var in ("$HOME", "${HOME}"):
+        if word == var or word.startswith(var + "/"):
+            return "~" + word[len(var):]
+    home = str(Path.home())
+    if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
+        return "~" + word[len(home):]
+    return word
+
+
 def outside_copies(root):
     """The extras that run from a Garrick kept outside the workspace, the zone
     guard and the Garrick band, where the assistants' settings point at a copy
     that differs from this Garrick's: [(what, path)]. Reads the settings for
     those paths only."""
+    return [(what, path) for what, path, _ in outside_found(root)]
+
+
+def outside_found(root):
+    """`outside_copies` with the path as the settings write it, shown as `shown_path` says: [(what, path, shown)]."""
     found = []
     guard = REPO / "extras" / "hooks" / "zone_guard.py"
     band = REPO / "extras" / "mods" / "garrick-band"
@@ -1487,17 +1512,19 @@ def outside_copies(root):
     for text in texts:
         paths |= set(re.findall(r"[^\s\"']*zone_guard\.py", text))
     for path in sorted(paths):
-        there = Path(os.path.expanduser(path))
-        if there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
-            found.append(("the zone guard", str(there)))
+        full = hook_path(path)
+        there = Path(full) if full else None
+        if there and there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
+            found.append(("the zone guard", str(there), shown_path(path)))
     reader = REPO / "extras" / "hooks" / "read_guard.py"
     paths = set()
     for text in texts:
         paths |= set(re.findall(r"[^\s\"']*read_guard\.py", text))
     for path in sorted(paths):
-        there = Path(os.path.expanduser(path))
-        if there.is_file() and reader.is_file() and read(there) != read(reader) and not same_place(there, reader):
-            found.append(("the read guard", str(there)))
+        full = hook_path(path)
+        there = Path(full) if full else None
+        if there and there.is_file() and reader.is_file() and read(there) != read(reader) and not same_place(there, reader):
+            found.append(("the read guard", str(there), shown_path(path)))
     dirs = set()
     for text in texts:
         try:
@@ -1515,7 +1542,7 @@ def outside_copies(root):
         # release is refreshed even when every band file matches (#515): the update and the band decide alike.
         if any(read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()) \
                 or band_refresh(there, root) is not None:
-            found.append(("the Garrick band", str(there)))
+            found.append(("the Garrick band", str(there), str(there)))
     return found
 
 
@@ -1709,7 +1736,7 @@ def next_steps(root, p, done=None):
     steps.extend(ask_steps(root))
     steps.extend(before_quit_steps(root))
 
-    for what, path in outside_copies(root):
+    for what, path, shown in outside_found(root):
         again = band_refresh(path, root) if what == "the Garrick band" else None
         if again:
             top, old, new = again
@@ -1719,7 +1746,7 @@ def next_steps(root, p, done=None):
                           lambda top=top, old=old, new=new: refresh_band(root, top, old, new)))
             continue
         line = ("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
-                "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path))
+                "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], shown))
         if what == "the Garrick band":
             line += ". " + BAND_BY_HAND % Path(path).parent.parent.parent
         steps.append((line, None))

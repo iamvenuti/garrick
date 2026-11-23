@@ -251,6 +251,33 @@ class Light(unittest.TestCase):
             self.assertTrue((folder / "rates.md").is_file())
             self.assertFalse((folder / "parked").exists())
 
+    def test_a_memory_folder_that_is_a_link_holds_every_move(self):
+        link = self.base / "memlink"
+        os.symlink(str(self.mem), str(link))
+        self.settings(str(link))
+        self.assertIn("not moved", lib.park_memory_pointer(self.root, self.rates))
+        self.assertTrue((self.mem / "rates.md").is_file())
+
+    def test_after_an_undo_park_again_then_wake_brings_the_pointer_back(self):
+        before = self.index.read_text()
+        self.assertIn("set aside", lib.park_memory_pointer(self.root, self.rates))
+        # the page's undo puts the note back to active and leaves the pointer in parked/: park again moves nothing more
+        self.assertEqual("", lib.park_memory_pointer(self.root, self.rates))
+        self.assertTrue((self.mem / "parked" / "rates.md").is_file())
+        self.assertIn("back in the memory index", lib.park_memory_pointer(self.root, self.rates, wake=True))
+        self.assertEqual(before, self.index.read_text())
+
+    def test_a_zone_folder_that_is_a_link_to_another_zone_is_skipped_whole(self):
+        import shutil
+        (self.root / "Zones/Personal/Home/Threads/Roof").mkdir(parents=True)
+        (self.root / "Zones/Personal/Home/Threads/Roof/Roof.md").write_text("---\nstatus: parked\n---\n")
+        (self.root / "Zones" / "Personal" / "Home" / "Home.md").write_text("---\nstatus: active\n---\n")
+        shutil.rmtree(self.root / "Zones/Work")
+        os.symlink("Personal", str(self.root / "Zones/Work"))
+        notes = lib.work_notes(self.root)
+        self.assertEqual([], [n for n in notes if n.startswith("Zones/Work/")])
+        self.assertIn("Zones/Personal/Home/Threads/Roof/Roof.md", notes)
+
     def test_a_kept_line_with_a_line_break_is_not_put_back(self):
         self.assertIn("set aside", lib.park_memory_pointer(self.root, self.rates))
         side = self.mem / "parked" / "rates.md.index-line"

@@ -7084,7 +7084,11 @@ if(e.target===dlg&&down===dlg)shut()});
 /* Escape is the preview's alone, and never reaches the card underneath, whose own Escape closes it */
 dlg.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();shut()}});
 dlg.addEventListener('cancel',function(e){e.preventDefault();shut()})}
-function said(s,bad){var p=el('.nv-said');p.textContent=s||'';p.classList.toggle('bad',!!bad)}
+function said(s,bad){var p=el('.nv-said');p.textContent=s||'';p.classList.toggle('bad',!!bad);if(window.GarrickFailClear)GarrickFailClear(p)}
+/* a failed reply (#511): the row's sentence and its one next step, the reply's own text under Details; a note that is not there
+   has nothing to try again */
+function failed(code,out,fallback,again){if(!window.GarrickFail){said((out&&out.say)||fallback,true);return}
+var p=el('.nv-said');p.classList.add('bad');GarrickFail(p,code,out&&out.say,out&&out.missing?null:again)}
 /* the note asked for, named and placed at once, its body once the host has read it */
 function read(path,title,btn){if(!dlg)make();cur={path:path};back=btn||null;
 el('#nview-h').textContent=title||path.split('/').pop().replace(/\.md$/,'');el('.nv-path').textContent=path;
@@ -7096,9 +7100,9 @@ function shut(){if(!dlg||!dlg.open)return;dlg.close();cur=null;down=null;
 var b=back&&document.contains(back)?back:document.querySelector('#gpop button[data-note]');back=null;if(b)b.focus({preventScroll:true})}
 /* a reply for a note no longer shown is dropped. A note that is not there has nothing to open, so Open in default app goes */
 function heard(q,out){if(!cur||!dlg.open||q.path!==cur.path)return;if(out&&out.missing)el('[data-nv="open"]').hidden=true;
-if(q.verb==='note-open'){if(out&&out.ok)shut();else said((out&&out.say)||'That did not open.',true);return}
+if(q.verb==='note-open'){if(out&&out.ok)shut();else failed('note-open',out,'That did not open.',function(){openIn(cur&&cur.path)});return}
 if(out&&out.ok&&typeof out.html==='string'){said('');el('.nv-body').innerHTML=out.html;el('.nv-body').scrollTop=0}
-else said((out&&out.say)||'That note could not be read.',true)}
+else{var t=el('#nview-h').textContent,b=back;failed('note-read',out,'That note could not be read.',function(){read(cur.path,t,b)})}}
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}
 if(prev)return prev(q,out)};
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-note]');if(!b||!able())return;e.preventDefault();read(b.dataset.note,b.dataset.title,b)});

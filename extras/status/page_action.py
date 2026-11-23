@@ -6525,6 +6525,8 @@ FAILURES = (
     ("release-update", "The update did not finish.", "Show why", "why", "Open Settings and choose Show why."),
     ("count", "Garrick could not count what these changes would do. They are not saved yet.", "Try again", "retry",
      "Open Settings and choose Try again."),
+    ("note-read", "This note could not be shown.", "Try again", "retry", "Open the preview and choose Try again."),
+    ("note-open", "The note did not open in its app.", "Try again", "retry", "Open the preview and choose Try again."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

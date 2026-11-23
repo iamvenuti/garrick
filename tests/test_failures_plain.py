@@ -70,11 +70,13 @@ LIST = {
     "release-update": ("Settings, the update Check for updates starts: status.py RELEASE_JS, page_action.py release-update",
                        "TestThePanels"),
     "count": ("Settings, Memory: what the changes would do, status.py MEMORY_JS, page_action.py memory-preview", "TestThePanels"),
+    "note-read": ("Explore's Preview could not read the note: status.py NOTE_JS, page_action.py note-read", "TestThePanels"),
+    "note-open": ("Open in default app did not open the note: status.py NOTE_JS, page_action.py note-open", "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
-PANELS = ("release-check", "release-update", "count")
+PANELS = ("release-check", "release-update", "count", "note-read", "note-open")
 
 # Failures drawn outside the table: where the sentence and the next step are written, and the test that holds them.
 OUTSIDE = {
@@ -298,6 +300,14 @@ class TestThePanels(unittest.TestCase):
         self.assertIn("GarrickFailClear(said)", js)
         self.assertIn("else if(window.GarrickFail)GarrickFail(said,'count'", js)       # the reply's text only without the helper
         self.assertIn("verb:'memory-preview'", js.split("function ask()", 1)[1].split("\n", 2)[0] + js.split("function ask()", 1)[1].split("\n", 3)[1])   # Try again only counts
+
+    def test_the_note_preview_draws_its_rows_and_a_missing_note_offers_no_second_try(self):
+        js = block("NOTE_JS")
+        self.assertIn("failed('note-open',out,'That did not open.',function(){openIn(cur&&cur.path)})", js)
+        self.assertIn("failed('note-read',out,'That note could not be read.',function(){read(cur.path,t,b)})", js)
+        self.assertIn("GarrickFail(p,code,out&&out.say,out&&out.missing?null:again)", js)
+        self.assertIn("GarrickFailClear(p)", js)
+        self.assertNotIn("said((out&&out.say)||'That did not open.',true);return}", js)
 
     def test_the_wall_sentence_is_shown_as_it_stands(self):
         fn = block("WORK_JS").split("window.GarrickFail=function", 1)[1]

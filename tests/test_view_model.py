@@ -762,6 +762,13 @@ class TestShadowRepos(Case):
         self.assertEqual(["Work"], [r["name"] for r in scoped])
         self.assertNotIn("new.md", json.dumps(scoped))
 
+    def test_a_record_has_the_fields_the_docs_example_names(self):
+        import re
+        text = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        doc = json.loads(re.search(r"```json\n(.*?)\n```", text[text.index("#### The view model"):], re.S).group(1))
+        record = view.build(self.root, only=("repos",))["repos"][0]
+        self.assertEqual(set(doc["repos"][0]), set(record))
+
     def test_building_the_whole_view_writes_nothing_even_to_a_repository(self):
         before = snapshot(self.root)
         json.dumps(view.build(self.root))
@@ -993,6 +1000,37 @@ class TestWalls(Case):
     def test_no_count_adds_two_places(self):
         places = [q["place"] for q in self.model["queues"]["inbox"]]
         self.assertEqual(len(places), len(set(places)))
+
+
+class TestDocumentedShape(Case):
+    """The acceptance line of #650: the view model's JSON shape is documented in docs/architecture.md, with one example. The
+    example names every field the view model builds, at each level, so a field added without the docs fails here."""
+
+    def example(self):
+        import re
+        text = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        start = text.index("#### The view model")
+        return json.loads(re.search(r"```json\n(.*?)\n```", text[start:], re.S).group(1))
+
+    def test_the_example_names_every_top_level_field(self):
+        self.assertEqual(set(self.model), set(self.example()))
+
+    def test_the_example_names_every_field_of_a_zone_and_of_what_it_holds(self):
+        doc, zone = self.example()["zones"][0], self.zone("Home")
+        self.assertEqual(set(zone), set(doc))
+        self.assertEqual(set(zone["todo"]), set(doc["todo"]))
+        self.assertEqual(set(zone["todo"]["tasks"][0]), set(doc["todo"]["tasks"][0]))
+        self.assertEqual(set(zone["questions"][0]), set(doc["questions"][0]))
+        self.assertEqual(set(zone["work"][0]), set(doc["work"][0]))
+
+    def test_the_example_names_every_field_of_the_other_parts(self):
+        doc = self.example()
+        self.assertEqual(set(self.model["wikis"][0]), set(doc["wikis"][0]))
+        self.assertEqual(set(self.model["graph"]), set(doc["graph"]))
+        self.assertEqual(set(self.model["graph"]["notes"][0]), set(doc["graph"]["notes"][0]))
+        self.assertEqual(set(self.model["graph"]["places"][0]), set(doc["graph"]["places"][0]))
+        self.assertEqual(set(self.model["system"][0]), set(doc["system"][0]))
+        self.assertEqual(set(self.model["queues"]["inbox"][0]), set(doc["queues"]["inbox"][0]))
 
 
 class TestShape(Case):

@@ -6530,6 +6530,9 @@ FAILURES = (
     ("finding", "This answer was not taken.", "Show why", "why", "Open the question and choose Show why."),
     ("walls-look", "Garrick could not look at this file.", "Try again", "retry", "Open the question and choose Try again."),
     ("walls-allow", "The words were not marked as yours.", "Show why", "why", "Open the question and choose Show why."),
+    ("commit-files", "These files were not committed.", "Show why", "why", "Open the page and choose Show why."),
+    ("commit-undo", "The commit was not undone.", "Show why", "why", "Open the page and choose Show why."),
+    ("chase", "The follow-up was not prepared, and nothing was sent.", "Show why", "why", "Open the page and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

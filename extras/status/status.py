@@ -8107,6 +8107,9 @@ COMMIT_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 function mk(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e}
 function rowOf(zone){var r=null;[].forEach.call(document.querySelectorAll('#wneeds [data-commit]'),function(b){if(b.dataset.commit===zone)r=b.closest('.wneed')});return r}
+/* a refused commit or undo (#511): the row's sentence and Show why, the reply's own text under Details */
+function failed(row,code,raw){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote','');row.appendChild(n);
+if(window.GarrickFail)GarrickFail(n,code,raw);else n.textContent=raw}
 function line(row,text,undo,repo){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote',text);
 if(undo){var u=mk('button','act','Undo');u.type='button';u.dataset.undoCommit=undo;u.dataset.repo=repo;n.appendChild(u)}
 var go=row.querySelector('.wacts .alt');if(go){var s=go.cloneNode(true);s.textContent='Show me';n.appendChild(document.createTextNode(' '));n.appendChild(s)}
@@ -8121,10 +8124,10 @@ var u=e.target.closest&&e.target.closest('[data-undo-commit]');
 if(u){e.preventDefault();u.disabled=true;host.postMessage({act:{verb:'commit-files',undo:u.dataset.undoCommit,repo:u.dataset.repo}})}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='commit-files'){var b=out&&out.bounded,say=(out&&out.say)||(out&&out.ok?'Done.':'Nothing was committed.');
-if(q.undo){var rr=document.querySelector('#wneeds .wnote button[data-undo-commit="'+q.undo+'"]'),n=rr&&rr.closest('.wneed');if(n)line(n,say);return}
+if(q.undo){var rr=document.querySelector('#wneeds .wnote button[data-undo-commit="'+q.undo+'"]'),n=rr&&rr.closest('.wneed');if(n){if(out&&out.ok)line(n,say);else failed(n,'commit-undo',say)}return}
 var row=rowOf(q.zone);if(!row)return;
 if(out&&out.ok&&b){line(row,say,b.commit,b.repo);var m=row.querySelector('[data-commit]');if(m)m.hidden=true}
-else{line(row,say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
+else{if(out&&out.ok)line(row,say);else failed(row,'commit-files',say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
 """
@@ -8164,7 +8167,9 @@ if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q})}
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('#wneeds [data-fu]');if(!b)return;e.preventDefault();go(b.closest('.wfu'),b)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='chase'){var row=rowOf(q);if(row){var again=row.querySelector('[data-fu="chase"]');
-note(row,(out&&out.say)||(out&&out.ok?'Done.':'Nothing was sent.'),out&&out.draft);if(again)again.disabled=false}return}
+if(out&&out.ok)note(row,out.say||'Done.',out.draft);
+else{note(row,'');var n=row.querySelector('.wnote');if(window.GarrickFail)GarrickFail(n,'chase',(out&&out.say)||'Nothing was sent.');else n.textContent=(out&&out.say)||'Nothing was sent.'}
+if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
 """

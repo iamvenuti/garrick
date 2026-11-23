@@ -600,6 +600,9 @@ Every failure the app can show has one plain sentence and one next step. The too
 | An answer in the Context queue was refused | The Context queue, after a button or an answer you typed | This answer was not taken. | *Show why*, which opens *Details*; the answer stays open, and *Skip for now* shows |
 | A wall question could not look at its file | The Context queue's wall question | Garrick could not look at this file. | *Try again*, which looks once more and writes nothing |
 | *The words are mine* was refused | The Context queue's wall question | The words were not marked as yours. | *Show why* |
+| *Commit these* was refused | Waiting on you now, a zone with files not committed | These files were not committed. | *Show why*; the button is ready again |
+| *Undo* after a commit did not undo it | Waiting on you now | The commit was not undone. | *Show why* |
+| A follow-up could not be prepared | Waiting on you now, Follow-ups | The follow-up was not prepared, and nothing was sent. | *Show why*; the button is ready again |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 

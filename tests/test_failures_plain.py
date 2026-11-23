@@ -77,11 +77,15 @@ LIST = {
     "walls-look": ("the wall question could not look at its file: finding_queue.py QUEUE_JS looked(), nothing()", "TestThePanels"),
     "walls-allow": ("The words are mine was refused: finding_queue.py QUEUE_JS allowed(), page_action.py walls-allow",
                     "TestThePanels"),
+    "commit-files": ("Waiting on you now, Commit these: status.py COMMIT_JS, page_action.py commit-files", "TestThePanels"),
+    "commit-undo": ("Waiting on you now, Undo after a commit: status.py COMMIT_JS, page_action.py commit-files", "TestThePanels"),
+    "chase": ("Waiting on you now, Follow-ups: status.py FOLLOWUP_JS, page_action.py chase", "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
-PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow")
+PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow", "commit-files",
+          "commit-undo", "chase")
 
 # Failures drawn outside the table: where the sentence and the next step are written, and the test that holds them.
 OUTSIDE = {
@@ -324,12 +328,20 @@ class TestThePanels(unittest.TestCase):
         self.assertNotIn("out(el,(res&&res.say)||'That could not be shown.',true)", js)
         self.assertNotIn("function refuse(q,f){out(q,f.say,true)", js)
 
+    def test_the_waiting_cards_commit_and_follow_up_draw_their_rows(self):
+        commit, follow = block("COMMIT_JS"), block("FOLLOWUP_JS")
+        self.assertIn("failed(row,'commit-files',say)", commit)
+        self.assertIn("failed(n,'commit-undo',say)", commit)
+        self.assertIn("GarrickFail(n,code,raw)", commit)
+        self.assertIn("GarrickFail(n,'chase',(out&&out.say)||'Nothing was sent.')", follow)
+        self.assertNotIn("note(row,(out&&out.say)||(out&&out.ok?'Done.':'Nothing was sent.')", follow)
+
     def test_the_wall_sentence_is_shown_as_it_stands(self):
         fn = block("WORK_JS").split("window.GarrickFail=function", 1)[1]
         self.assertIn("if(/^A wall holds /.test(raw)){el.textContent=raw;el.setAttribute('data-failure','wall');return el}", fn)
 
     def test_a_row_that_writes_never_offers_a_second_try(self):
-        for code in ("release-update", "finding", "walls-allow"):
+        for code in ("release-update", "finding", "walls-allow", "commit-files", "commit-undo", "chase"):
             self.assertNotEqual("retry", next(r for r in pa.FAILURES if r[0] == code)[3], code)
 
 

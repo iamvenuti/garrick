@@ -34,7 +34,7 @@ ISSUE = {
     "server": "This computer is always on and holds the real workspace. The nightly jobs run here, and it applies the ticks your laptop sends.",
     "roaming": "This computer keeps a copy that only receives. You can read everything, even with no network. A tick on a Todo list waits until the home server applies it. Nightly jobs do not run here.",
     "readguard": "Walls already stop your assistant from writing one zone's material into another. The read guard does the same for reading. In a session for one project, it stops the assistant from opening notes, meetings and mail that sit behind another wall.",
-    "rg-mode": "Watch only lets every read through and keeps a list of what it would have stopped. Start with it for a week and look at the list. When the list holds nothing you needed, choose On, and those reads are stopped.",
+    "rg-mode": "Watch lets every read through and keeps a list of what it would have stopped. Start with it for a week and look at the list. When the list holds nothing you needed, choose On, and those reads are stopped.",
     "rg-cross": "Refuse stops every read across a wall, with no question. Ask me asks you each time, so you can allow one read for one session.",
     "rg-tools": "A mail or calendar search can return messages from every part of your life in one list. Before your assistant sees the list, Garrick removes what belongs behind another wall. These are the tools it checks. Add one when you connect a new mail or calendar service.",
     "rg-skip": "Tools that return nothing tied to a person or a company, such as a weather service. Garrick does not check them and does not warn you about them.",

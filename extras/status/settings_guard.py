@@ -59,7 +59,7 @@ GUARD_TEXT = {
     "readguard": "Walls already stop your assistant from writing one zone's material into another. The read guard does the "
                  "same for reading. In a session for one project, it stops the assistant from opening notes, meetings and "
                  "mail that sit behind another wall.",
-    "rg-mode": "Watch only lets every read through and keeps a list of what it would have stopped. Start with it for a week "
+    "rg-mode": "Watch lets every read through and keeps a list of what it would have stopped. Start with it for a week "
                "and look at the list. When the list holds nothing you needed, choose On, and those reads are stopped.",
     "rg-cross": "Refuse stops every read across a wall, with no question. Ask me asks you each time, so you can allow one "
                 "read for one session.",
@@ -290,7 +290,7 @@ def guard_module():
 
 def log_lines(folder: Path, now: dt.datetime, days: int = WINDOW_DAYS) -> List[dict]:
     """What the read guard's log holds from the last `days`: its lines as the hook wrote them, a time, a tool, a decision, the
-    scope's zone and a hash. Never a path, a party, a title or a count: the log has none to show."""
+    scope's zone and a hash. Never a file's or a message's content: a line holds the workspace-relative path of a file in the workspace, its project and zone, and a hash of the session."""
     cutoff = now - dt.timedelta(days=days)
     out = []
     for name in ("read-guard.log.1", "read-guard.log"):

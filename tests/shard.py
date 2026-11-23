@@ -90,6 +90,11 @@ TOUCH_MAP = {
                                 "test_status_more", "test_status_work", "test_waiting_card", "test_needs_you_rows", "test_threads_card", "test_todo_solo",
                                 "test_overview_work", "test_status_look", "test_settings_ui",
                                 "test_new_session", "test_view_model", "test_usage_counts"],
+    "template/System/tools/view.py": ["test_view_model", "test_status", "test_status_more", "test_status_work", "test_overview_work",
+                                      "test_todo_solo", "test_todo_skips", "test_outbox", "test_context_card", "test_threads_card", "test_needs_you_rows",
+                                      "test_inbox_run", "test_knowledge_skill", "test_status_graph_ignored", "test_status_graph_flat", "test_status_look"],
+    "template/System/tools/view_todo.py": ["test_view_model", "test_todo_skips", "test_status", "test_overview_work"],
+    "tests/old_status_reads_0770.py": ["test_view_model"],
     "template/System/tools/usage.py": ["test_usage_report"],
     "extras/status/usage_counts.py": ["test_usage_counts"],
     "extras/status/settings_guard.py": ["test_settings_ui", "test_settings_actions"],
@@ -106,11 +111,24 @@ TOUCH_MAP = {
     "tests/concept_gate.py": ["test_concept_gate"],
     "names_move.py": ["test_names"],
     "tests/test_names.py": ["test_names"],
+    # The memory index and the parked pointers (#664).
+    "extras/hooks/parked_hint.py": ["test_parked_hint"],
+    "tests/test_parked_hint.py": ["test_parked_hint"],
+    "tests/test_memory_pointer.py": ["test_memory_pointer", "test_memory_budget"],
+    "tests/test_memory_budget.py": ["test_memory_budget"],
+    "template/System/skills/threads/reference/lifecycle.md": ["test_memory_pointer"],
     "docs/concepts.md": ["test_concept_gate"],
     "docs/decisions/": ["test_concept_gate"],
     "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard", "test_settings_actions", "test_settings_ui"],
     "tests/read_guard_case.py": ["test_read_guard", "test_connector_guard", "test_decisions"],
 }
+# nurture-0780 (#661): a held history move retries instead of asking.
+for _key in ("template/System/tools/history.py", "extras/status/finding_queue.py", "template/System/tools/nurture.py",
+             "extras/jobs/nurture_sweep.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_history_hold"]
+# nurture-0780 (#662): wall findings that look like an old note template.
+for _key in ("template/System/tools/check.py", "template/System/tools/nurture.py", "extras/status/finding_queue.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_template_hint"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

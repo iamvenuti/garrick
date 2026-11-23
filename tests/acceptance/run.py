@@ -24,7 +24,9 @@ and says so, when that one failed:
     correct   "that's wrong, it's Y": every live copy changes, the record does not
     update    install the previous tag, update it to the candidate
     names     a workspace of v0.76.0 with a grown context.md, updated and then given the yes (--names): People and
-              Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653)
+              Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653). The
+              tables have a Learned column that the older rows do not fill, so those rows are one cell short:
+              each is padded in names.md to the header's cells (#663)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
 
@@ -545,7 +547,22 @@ class Run:
             j = len(txt) if j < 0 else j
             return txt[:j].rstrip("\n") + "\n" + "\n".join(rows) + "\n" + txt[j:]
         text = grow(grow(text, "People", people), "Aliases", aliases)
+        # A workspace from before the Learned column: the header has it, the older rows are one cell short, and the
+        # rows added since carry it (#663).
+        for old_head, new_head, rule in (("| Name | Party | Role |\n|---|---|---|", "| Name | Party | Role | Learned |\n|---|---|---|---|", None),
+                                         ("| Heard | Means |\n|---|---|", "| Heard | Means | Learned |\n|---|---|---|", None)):
+            if old_head not in text:
+                raise Fail("%s has no table header %r in its context.md" % (self.NAMES_FROM, old_head.split("\n")[0]))
+            text = text.replace(old_head, new_head, 1)
+        text = text.replace("| Theo Marsh | `birch` | Managing partner |", "| Theo Marsh | `birch` | Managing partner | 2026-11-01, user |", 1)
+        text = text.replace("| dana whitlaw | Dana Whitlock |", "| dana whitlaw | Dana Whitlock | 2026-11-01, user |", 1)
         ctx.write_text(text, encoding="utf-8")
+        def norm(row):
+            """A row as its cells, the empty ones at the end off: a short row and its padded form read the same."""
+            cs = [c.strip() for c in row.strip().strip("|").split("|")]
+            while cs and not cs[-1]:
+                cs.pop()
+            return "|".join(cs)
         def rows_of(txt):
             out, on = [], False
             for line in txt.split("\n"):
@@ -554,7 +571,9 @@ class Run:
                 elif on and line.startswith("|") and not re.match(r"^\|[-| ]+\|\s*$", line) and line.split("|")[1].strip() not in ("Name", "Heard"):
                     out.append(line.rstrip())
             return out
-        before = rows_of(text)
+        before = [norm(r) for r in rows_of(text)]
+        if not any(r.count("|") == 4 for r in rows_of(text)) or not any(r.count("|") == 3 for r in rows_of(text)):
+            raise Fail("the grown context.md has no short People or Aliases row to pad")
         if len(before) < 90 or len(text) < 8000:
             raise Fail("the grown context.md is not grown enough: %d rows, %d characters" % (len(before), len(text)))
         sh(["git", "-C", target, "add", "-A"], env=self.env, check=False)
@@ -566,7 +585,14 @@ class Run:
         names = target / "System" / "names.md"
         if not names.is_file():
             raise Fail("System/names.md does not exist after --names --apply")
-        in_names = rows_of(names.read_text(encoding="utf-8"))
+        raw_names = rows_of(names.read_text(encoding="utf-8"))
+        wide = {"People": 4, "Aliases": 3}
+        for table, count in wide.items():
+            body = re.search(r"(?ms)^## %s\n(.*?)(?=^## |\Z)" % table, names.read_text(encoding="utf-8"))
+            lines = [l for l in (body.group(1) if body else "").split("\n") if l.startswith("|")]
+            if not lines or any(len(l.strip().strip("|").split("|")) != count for l in lines):
+                raise Fail("a row of the %s table in names.md does not have the header's %d cells" % (table, count))
+        in_names = [norm(r) for r in raw_names]
         in_context = rows_of(ctx.read_text(encoding="utf-8"))
         every = {}
         for row in in_names + in_context:

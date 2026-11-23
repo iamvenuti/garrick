@@ -19,6 +19,7 @@ functions below keep their signatures:
     learned_cell(date, sources) -> str / parse_learned(cell) -> (date, [source]) or None
     learned_row(lines, rows, cells, learned) -> str
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
+    park_memory_pointer(root, note, wake=False) -> sentence / memory_index_report(root, folder) -> dict   (#664)
     zone_of(root, path) -> zone name, UNZONED or None / walled(context, zone) -> bool / may_flow(context, src, dst) -> bool
     decide(scope, labels, action, context) -> permit | deny | confirm
     workspace_root(start=None) -> Path
@@ -116,6 +117,16 @@ __all__ = [
     "learned_row",
     "memory_folders",
     "memory_entries",
+    "memory_index_file",
+    "work_notes",
+    "memory_pointers",
+    "park_memory_pointer",
+    "memory_index_report",
+    "memory_move_out",
+    "memory_move_back",
+    "MEMORY_PARKED",
+    "MEMORY_INDEX_MAX",
+    "MEMORY_LINE_MAX",
     "knowledge_schema",
     "decide",
     "always_asked",
@@ -1270,6 +1281,340 @@ def memory_entries(folders: Iterable[PathLike]) -> List[Path]:
             if path not in out:
                 out.append(path)
     return out
+
+
+# The memory index, and the pointers a parked thread leaves it for (#664). The index is the file a harness loads
+# whole in every session, so it stays short: a parked thread's pointer is moved out of it to `parked/`, in the same
+# memory folder, and back when the thread wakes. A pointer is the entry file that the index links, and that names
+# exactly one hub or thread note by its path from the workspace's top. An entry that names none, or two, is not a
+# pointer for any thread, and nothing moves it. Nothing here deletes a file, and nothing here is committed: the
+# memory folder is outside every repository of the workspace.
+MEMORY_PARKED = "parked"
+MEMORY_INDEX_MAX = 8000                  # characters, as for System/rules.md
+MEMORY_LINE_MAX = 160                    # characters in one index line
+_INDEX_LINK = re.compile(r"\]\(\s*<?([^)>\s]+)>?\s*\)")
+
+
+def memory_index_file(folder: PathLike) -> Optional[Path]:
+    """The index of a memory folder, MEMORY.md in whatever case, or None."""
+    folder = Path(folder)
+    try:
+        names = sorted(p for p in folder.iterdir() if p.is_file() and p.name.lower() == "memory.md")
+    except OSError:
+        return None
+    exact = [p for p in names if p.name == "MEMORY.md"]
+    return (exact or names or [None])[0]
+
+
+def work_notes(root: PathLike) -> Dict[str, dict]:
+    """Every hub and thread note of the workspace, by its path from the top:
+    {path: {"zone", "project", "thread" (None for a hub), "status", "spoken"}}. Frontmatter only is read."""
+    root = Path(root)
+    out: Dict[str, dict] = {}
+    zones = root / "Zones"
+    root_real = os.path.realpath(str(root))
+
+    def kept(folder: Path, zone_real: str) -> bool:
+        """A folder whose real place is inside its own zone's, or outside the workspace altogether. A link into
+        another zone would give that zone's work under this zone's name."""
+        real = os.path.realpath(str(folder))
+        inside = lambda base, p: p == base or p.startswith(base + os.sep)
+        return inside(zone_real, real) or not inside(root_real, real)
+
+    try:
+        zone_dirs = sorted(z for z in zones.iterdir() if z.is_dir() and not z.name.startswith((".", "_")))
+    except OSError:
+        return out
+    for zone in zone_dirs:
+        zone_real = os.path.realpath(str(zone))
+        if (zone_real == root_real or zone_real.startswith(root_real + os.sep)) \
+                and zone_real != os.path.join(root_real, "Zones", zone.name):
+            continue                    # a zone folder that is a link to another place in the workspace
+        try:
+            projects = sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))
+                              and p.name not in ("Inbox", "archive") and kept(p, zone_real))
+        except OSError:
+            continue
+        for project in projects:
+            hub = project / (project.name + ".md")
+            if hub.is_file():
+                fm = parse_frontmatter(hub)
+                out[hub.relative_to(root).as_posix()] = {
+                    "zone": zone.name, "project": project.name, "thread": None,
+                    "status": str(fm.get("status") or "").lower(), "spoken": str(fm.get("spoken") or ""),
+                    "party": fm.get("party")}
+            threads = project / "Threads"
+            try:
+                found = sorted(d for d in threads.iterdir() if d.is_dir() and kept(d, zone_real)) if threads.is_dir() and kept(threads, zone_real) else []
+            except OSError:
+                found = []
+            for d in found:
+                note = d / (d.name + ".md")
+                if note.is_file():
+                    fm = parse_frontmatter(note)
+                    out[note.relative_to(root).as_posix()] = {
+                        "zone": zone.name, "project": project.name, "thread": d.name,
+                        "status": str(fm.get("status") or "").lower(), "spoken": str(fm.get("spoken") or ""),
+                        "party": fm.get("party")}
+    return out
+
+
+def memory_refs(text: str, notes: Iterable[str]) -> List[str]:
+    """The notes, by path from the workspace's top, that `text` names: the path whole, not as the end of a longer
+    one, written as it is or with its spaces as %20."""
+    out = []
+    for path in notes:
+        for form in {path, path.replace(" ", "%20")}:
+            if form in text and re.search(r"(?<![\w/.%-])" + re.escape(form) + r"(?![\w/])", text):
+                out.append(path)
+                break
+    return sorted(out)
+
+
+def memory_index_links(index_text: str) -> Dict[str, List[int]]:
+    """{file name: the lines (from 0) of the index that link it}, for a link to a file in the folder itself."""
+    out: Dict[str, List[int]] = {}
+    for i, line in enumerate(index_text.split("\n")):
+        for m in _INDEX_LINK.finditer(line):
+            target = urllib.parse.unquote(m.group(1)).split("#")[0]
+            if target.startswith("./"):
+                target = target[2:]
+            if target and "/" not in target and target.lower().endswith(".md"):
+                out.setdefault(target, []).append(i)
+    return out
+
+
+def memory_pointers(root: PathLike, folder: PathLike, parked: bool = False, notes: Optional[Iterable[str]] = None) -> List[dict]:
+    """The pointers in a memory folder: [{"file", "path", "line" (of the index, or None when parked), "refs"}] for
+    each entry that names exactly one hub or thread note. `parked` reads `parked/` instead, where an entry need not
+    be linked. An entry linked from two lines is left out: its line cannot be told."""
+    folder = Path(folder)
+    notes = list(work_notes(root)) if notes is None else list(notes)
+    index = memory_index_file(folder)
+    links: Dict[str, List[int]] = {}
+    if not parked:
+        if index is None:
+            return []
+        try:
+            links = memory_index_links(index.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return []
+    where = folder / MEMORY_PARKED if parked else folder
+    try:
+        files = sorted(p for p in where.iterdir() if p.is_file() and p.suffix.lower() == ".md"
+                       and p.name.lower() not in MEMORY_INDEX)
+    except OSError:
+        return []
+    out = []
+    for path in files:
+        if not parked and len(links.get(path.name, [])) != 1:
+            continue
+        try:
+            refs = memory_refs(path.read_text(encoding="utf-8", errors="replace"), notes)
+        except OSError:
+            continue
+        if len(refs) == 1:
+            out.append({"file": path.name, "path": path, "line": None if parked else links[path.name][0], "refs": refs})
+    return out
+
+
+def _memory_write(path: Path, text: str) -> None:
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".garrick-", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _memory_sidecar(parked_dir: Path, name: str) -> Path:
+    return parked_dir / (name + ".index-line")
+
+
+def memory_folder_ok(root: PathLike, folder: PathLike) -> bool:
+    """Whether a memory folder may be moved in: not the workspace itself and not inside its Zones/, Wikis/ or System/.
+    A memory folder there would put a move inside what the walls and the repositories guard."""
+    real, base = os.path.realpath(str(folder)), os.path.realpath(str(root))
+    if real == base:
+        return False
+    return not any(real == os.path.join(base, d) or real.startswith(os.path.join(base, d) + os.sep)
+                   for d in ("Zones", "Wikis", "System"))
+
+
+def _memory_unsafe(folder: Path, index: Optional[Path]) -> bool:
+    """A link where a file or folder of the move should be: the index, or `parked/`."""
+    return index is None or index.is_symlink() or os.path.islink(str(folder / MEMORY_PARKED)) \
+        or os.path.islink(str(folder))
+
+
+def memory_move_out(folder: PathLike, pointer: dict) -> str:
+    """Move one pointer to `parked/` and its line out of the index. The line goes beside the file, in
+    `parked/<file>.index-line` (JSON: the line, its heading and the line before it), so waking puts back exactly
+    what was taken out. Returns "" when done, or why it was held: a file of that name is already set aside."""
+    folder = Path(folder)
+    index = memory_index_file(folder)
+    parked = folder / MEMORY_PARKED
+    target = parked / pointer["file"]
+    side = _memory_sidecar(parked, pointer["file"])
+    if _memory_unsafe(folder, index):
+        return "unsafe"
+    if os.path.lexists(str(target)) or os.path.lexists(str(side)):
+        return "held"
+    text = index.read_text(encoding="utf-8", errors="replace")
+    lines = text.split("\n")
+    n = pointer["line"]
+    if n is None or n >= len(lines) or pointer["file"] not in lines[n]:
+        return "held"
+    at_heading = next((i for i in range(n - 1, -1, -1) if lines[i].lstrip().startswith("#")), None)
+    heading = lines[at_heading] if at_heading is not None else ""
+    after = lines[n - 1] if n > 0 else ""
+    parked.mkdir(exist_ok=True)
+    _memory_write(side, json.dumps({"line": lines[n], "heading": heading, "after": after,
+                                    "offset": n - at_heading if at_heading is not None else 0}, ensure_ascii=False))
+    try:
+        os.rename(str(pointer["path"]), str(target))
+    except OSError:
+        side.unlink()
+        raise
+    try:
+        _memory_write(index, "\n".join(lines[:n] + lines[n + 1:]))
+    except BaseException:
+        os.rename(str(target), str(pointer["path"]))
+        side.unlink()
+        raise
+    return ""
+
+
+def memory_move_back(folder: PathLike, pointer: dict) -> str:
+    """Move one pointer out of `parked/` and its index line back, exactly as it was taken out: after the line it
+    followed, else at the end of its heading's section, else at the end of the index. Returns "" or "held"."""
+    folder = Path(folder)
+    index = memory_index_file(folder)
+    parked = folder / MEMORY_PARKED
+    target = folder / pointer["file"]
+    side = _memory_sidecar(parked, pointer["file"])
+    if _memory_unsafe(folder, index):
+        return "unsafe"
+    if os.path.lexists(str(target)):
+        return "held"
+    text = index.read_text(encoding="utf-8", errors="replace")
+    lines = text.split("\n")
+    record = {}
+    try:
+        record = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    if isinstance(record, dict) and isinstance(record.get("line"), str) and re.search(r"[\r\n]", record["line"]):
+        return "unsafe"                               # a line kept beside the file that would write two lines
+    if not isinstance(record, dict) or not isinstance(record.get("line"), str):
+        record = {"line": "- [%s](%s)" % (pointer["file"][:-3], pointer["file"]), "heading": "", "after": ""}
+    already = pointer["file"] in memory_index_links(text)
+    os.rename(str(pointer["path"]), str(target))
+    if not already:
+        heading = record.get("heading") or ""
+        at = None
+        start = next((i for i, l in enumerate(lines) if heading and l == heading), None)
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("#")), len(lines)) \
+            if start is not None else len(lines)
+        if start is not None:
+            span = range(start, end)
+            after = record.get("after")
+            offset = record.get("offset")
+            if isinstance(offset, int) and 0 < offset <= end - start and lines[start + offset - 1] == after:
+                at = start + offset                      # the place it was taken from
+            else:
+                at = next((i + 1 for i in span if lines[i] == after and after), None)
+            if at is None:
+                last = max((i for i in span if lines[i].strip()), default=start)
+                at = last + 1
+        else:
+            at = len(lines) - 1 if lines and lines[-1] == "" else len(lines)     # before the file's last newline
+        lines.insert(at, record["line"])
+        try:
+            _memory_write(index, "\n".join(lines))
+        except BaseException:
+            os.rename(str(target), str(pointer["path"]))
+            raise
+    try:
+        side.unlink()
+    except OSError:
+        pass
+    return ""
+
+
+def park_memory_pointer(root: PathLike, note: str, wake: bool = False) -> str:
+    """The threads skill's step for the memory pointer, for one hub or thread note (`note`, from the workspace's
+    top): park moves it out of the index to `parked/`, wake moves it back. One sentence for the person, empty when
+    there is nothing to say: no memory folder, no pointer, or nothing to do.
+
+    A pointer that is held is said, never forced: two entries name the note, a file of that name is already in
+    `parked/`, or the index cannot be read. A project's hub with a thread of its own still live keeps its pointer
+    on a park, since the project's threads are live."""
+    root = Path(root)
+    folders = [f for f in memory_folders(root) if f.is_dir()]
+    if not folders:
+        return ""
+    if not all(memory_folder_ok(root, f) for f in folders):
+        return "Its memory pointer was not moved: the memory folder is inside the workspace."
+    notes = work_notes(root)
+    info = notes.get(note)
+    if info is None:
+        return ""
+    if not wake and info["thread"] is None:
+        live = [n for n, i in notes.items() if i["project"] == info["project"] and i["zone"] == info["zone"]
+                and i["thread"] is not None and i["status"] not in ("parked", "done")]
+        if live:
+            return ""
+    said = []
+    for folder in folders:
+        try:
+            have = [p for p in memory_pointers(root, folder, wake, list(notes)) if p["refs"] == [note]]
+            if not have:
+                continue
+            if len(have) > 1:
+                said.append("Its memory pointer was not moved: more than one memory entry names it.")
+                continue
+            result = (memory_move_back if wake else memory_move_out)(folder, have[0])
+            if result == "unsafe":
+                said.append("Its memory pointer was not moved: the memory folder holds a link, or a line that cannot be put back.")
+            elif result:
+                said.append("Its memory pointer was not moved: %s." % (
+                    "the same file is already in the memory index" if wake else "one of the same name is already set aside"))
+            else:
+                said.append("Its memory pointer is back in the memory index." if wake
+                            else "Its memory pointer is set aside until it wakes.")
+        except (OSError, ValueError):
+            said.append("Its memory pointer was not moved: the memory folder could not be changed.")
+    return " ".join(said)
+
+
+def memory_index_report(root: PathLike, folder: PathLike) -> dict:
+    """What the budget check says of one memory folder's index: {"file", "chars", "long": [(line number from 1,
+    length)] longest first, "over": bool, "leaving": [pointer file names of a parked or done thread still in the
+    index]}. {} when the folder has no index."""
+    index = memory_index_file(folder)
+    if index is None:
+        return {}
+    try:
+        text = index.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    lines = text.split("\n")
+    long = sorted(((i + 1, len(l)) for i, l in enumerate(lines) if len(l) > MEMORY_LINE_MAX), key=lambda x: (-x[1], x[0]))
+    notes = work_notes(root)
+    leaving = []
+    for p in memory_pointers(root, folder, False, list(notes)):
+        info = notes.get(p["refs"][0], {})
+        if info.get("status") in ("parked", "done"):       # the note's own status: a live thread of a parked project stays
+            leaving.append((p["file"], info.get("status")))
+    over = len(text) > MEMORY_INDEX_MAX
+    return {"file": index.name, "chars": len(text), "long": long, "over": over, "leaving": sorted(leaving)}
 
 
 # How a Knowledge wiki keeps its raw files and source pages, its index and its

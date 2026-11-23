@@ -582,7 +582,7 @@ class TestVaultGraph(StatusCase):
         names = {n["n"] for n in graph_data(self.page())["nodes"]}
         self.assertNotIn("Market Sizing", names)
         self.assertIn("Pricing", names)
-        self.assertEqual([], status.vault_filters(None))
+        self.assertEqual([], status.view_reader(self.root)._todo().ignore_filters(None))
 
     def test_each_wiki_has_its_own_kinds_core_and_label(self):
         k = self.root / "Wikis" / "Knowledge" / "wiki"

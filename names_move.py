@@ -10,9 +10,10 @@ People and Aliases tables, and a session needs only the rows for the names its p
 System/names.md, with the same columns, and a pointer line takes their place.
 
 The move happens once, and only when both tables are found whole: each is a section under its own heading, with
-one Markdown table in it, and every row has as many cells as the header. Anything else stays where it is, and the
+one Markdown table in it, and no row has more cells than the header. A row with fewer cells is shown by Markdown with
+its last cells empty, and the move writes it that way, padded to the header's count. Anything else stays where it is, and the
 report says so in one sentence. Every line of both sections is carried over as it was, byte for byte, the prose
-above a table included; a row the move did not parse is never lost, since it is not moved. Before anything is
+above a table included, but for a row with fewer cells than its header, which is padded with empty cells; a row the move did not parse is never lost, since it is not moved. Before anything is
 written the move checks that every row of the two tables is in names.md once, and none is left in context.md.
 Both files go into one commit of the workspace's own repository. A second run finds nothing to move.
 
@@ -52,6 +53,20 @@ def cells(line):
     if inner.endswith("|") and not inner.endswith("\\|"):
         inner = inner[:-1]
     return [c.strip() for c in re.split(r"(?<!\\)\|", inner)]
+
+
+def pad(line, count):
+    """A row with fewer cells than `count`, closed and given empty cells up to it, as Markdown shows it. A row with
+    enough cells is returned as it was. A carriage return at the end of the line stays at the end."""
+    have = 0 if not line.replace("|", "").strip() else len(cells(line))      # a row of bars alone has no cells
+    if have >= count:
+        return line
+    tail = "\r" if line.endswith("\r") else ""
+    body = line[:-1] if tail else line
+    body = body.rstrip() if have else "|"
+    if not body.endswith("|") or body.endswith("\\|"):
+        body += " |"
+    return body + " |" * (count - have) + tail
 
 
 def sections(lines):
@@ -97,9 +112,23 @@ def whole(lines, start, end):
     if len(sep) != len(header) or not all(SEPARATOR.match(c) for c in sep) or not any(header):
         return None
     rows = bars[2:]
-    if any(len(cells(lines[i])) != len(header) for i in rows):
+    if any(len(cells(lines[i])) > len(header) for i in rows):
         return None
-    return [lines[i] for i in rows]
+    return [pad(lines[i], len(header)) for i in rows]
+
+
+def refusal(table, lines, start, end):
+    """The sentence for a table with a row of more cells than its header, or "" when that is not why it is refused.
+    It gives the table, the line number (from 1) and the two counts, and never the text of the row."""
+    bars = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+    if len(bars) < 2:
+        return ""
+    count = len(cells(lines[bars[0]]))
+    for i in bars[2:]:
+        if len(cells(lines[i])) > count:
+            return ("The %s table in System/context.md could not be read: line %d has %d cells and the header has %d."
+                    % (table, i + 1, len(cells(lines[i])), count))
+    return ""
 
 
 def tools_read_names(root):
@@ -135,6 +164,9 @@ def study(root, tools_follow=False):
     rows = {h: whole(lines, *span) for h, span in found.items()}
     bad = [h for h in HEADINGS if rows[h] is None]
     if bad:
+        why = refusal(bad[0], lines, *found[bad[0]])
+        if why:
+            return {"state": "unreadable", "people": 0, "aliases": 0, "said": why + " People and Aliases stay where they are."}
         return {"state": "unreadable", "people": 0, "aliases": 0,
                 "said": "The %s table in System/context.md could not be read as one whole table, so People and "
                         "Aliases stay where they are." % bad[0]}
@@ -164,7 +196,10 @@ def moved_text(text):
         return None
     body = {}
     for h, (s, e) in found.items():
-        part = lines[s:e]
+        part = list(lines[s:e])
+        bars = [i for i in range(len(part)) if part[i].lstrip().startswith("|")]
+        for i in bars[2:]:
+            part[i] = pad(part[i], len(cells(part[bars[0]])))   # every row of names.md has the header's cells
         while part and not part[-1].strip():
             part.pop()
         body[h] = part

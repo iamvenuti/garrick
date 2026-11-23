@@ -323,9 +323,89 @@ class TheMove(Legacy):
         self.assertEqual("unreadable", self.plan()["names"]["state"])
         r = self.run_update("--names", "--apply")
         self.assertEqual(0, r.returncode, r.stderr + r.stdout)
-        self.assertIn("could not be read as one whole table", r.stdout)
+        self.assertIn("could not be read: line", r.stdout)
+        self.assertIn("has 4 cells and the header has 2", r.stdout)
         self.assertEqual(bad, (self.root / CONTEXT).read_text())
         self.assertFalse((self.root / NAMES).exists())
+
+    def test_a_people_table_with_short_rows_moves_whole_and_every_row_has_the_headers_cells(self):
+        text = (self.root / CONTEXT).read_text()
+        lines = text.split("\n")
+        found = names_move.named(lines)
+        self.assertEqual(2, len(found))
+        short = ("## People\n\n| Name | Party | Role | Learned |\n|---|---|---|---|\n"
+                 "| Ada Cedar | `acme` | Buyer |\n| Theo Marsh | `birch` | Partner | 2026-11-01, user |\n"
+                 "| Jo Maple | | Lead\n\n")
+        alias = "## Aliases\n\n| Heard | Means | Learned |\n|---|---|---|\n| ada cedar | Ada Cedar |\n| theo | Theo Marsh | 2026-11-01, user |\n\n"
+        text = re.sub(r"(?ms)^## People\n.*?(?=^## |\Z)", lambda m: short, text)
+        text = re.sub(r"(?ms)^## Aliases\n.*?(?=^## |\Z)", lambda m: alias, text)
+        (self.root / CONTEXT).write_text(text)
+        self.commit(self.root, "older rows without the Learned cell")
+        self.assertEqual("waiting", self.plan()["names"]["state"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        names = (self.root / NAMES).read_text()
+        for table in ("People", "Aliases"):
+            rows = [l for l in section(names, table).split("\n") if l.startswith("|")]
+            self.assertGreaterEqual(len(rows), 4)
+            for row in rows:
+                self.assertEqual(len(names_move.cells(rows[0])), len(names_move.cells(row)), row)
+        self.assertEqual(1, names.count("Ada Cedar | `acme` | Buyer | |"))
+        self.assertEqual(1, names.count("| Jo Maple | | Lead | |"))
+        self.assertEqual(1, names.count("| ada cedar | Ada Cedar | |"))
+        self.assertEqual(1, names.count("| Theo Marsh | `birch` | Partner | 2026-11-01, user |"))
+        self.assertEqual(1, len([l for l in names.split("\n") if "Ada Cedar" in l and l.startswith("| Ada")]))
+        context = (self.root / CONTEXT).read_text()
+        self.assertNotIn("Ada Cedar", context)
+        self.assertNotRegex(context, r"(?m)^## (People|Aliases)\s*$")
+        ctx = lib.load_context(self.root)
+        self.assertIn("Ada Cedar", [p["name"] for p in ctx["people"]])
+
+    def test_an_aliases_table_with_two_cell_rows_under_a_three_cell_header_moves_the_same_way(self):
+        lines = ["## Aliases", "", "| Heard | Means | Learned |", "|---|---|---|", "| hermo | Hermometer |",
+                 "| cedar | Cedar Co | 2026-11-08, user |", ""]
+        rows = names_move.whole(lines, 0, len(lines))
+        self.assertEqual(["| hermo | Hermometer | |", "| cedar | Cedar Co | 2026-11-08, user |"], rows)
+        self.assertEqual(3, len(names_move.cells(rows[0])))
+
+    def test_a_row_without_its_closing_bar_is_padded_and_closed(self):
+        self.assertEqual("| a | b | | |", names_move.pad("| a | b", 4))
+        self.assertEqual("| a | b | |\r", names_move.pad("| a | b\r", 3))
+        self.assertEqual("| a | b |", names_move.pad("| a | b |", 2))
+
+    def test_a_row_of_bars_alone_has_no_cells_and_is_padded_to_the_headers(self):
+        self.assertEqual("| | | |", names_move.pad("|", 3))
+        self.assertEqual(3, len(names_move.cells(names_move.pad("||", 3))))
+        self.assertEqual(3, len(names_move.cells(names_move.pad("|", 3))))
+
+    def test_a_row_with_one_cell_more_than_the_header_refuses_and_names_its_line_and_both_counts(self):
+        text = (self.root / CONTEXT).read_text()
+        bad = text.replace("| dana whitlaw | Dana Whitlock |", "| dana whitlaw | Dana | Whitlock |")
+        self.assertNotEqual(text, bad)
+        (self.root / CONTEXT).write_text(bad)
+        self.commit(self.root, "a row with a cell too many")
+        line = 1 + bad.split("\n").index("| dana whitlaw | Dana | Whitlock |")
+        state = names_move.study(self.root)
+        self.assertEqual("unreadable", state["state"])
+        self.assertTrue(state["said"].startswith("The Aliases table in System/context.md could not be read: line %d has 3 "
+                                                 "cells and the header has 2." % line), state["said"])
+        self.assertNotIn("Whitlock", state["said"])
+        self.assertNotIn("dana whitlaw", state["said"])
+        r = self.run_update("--names", "--apply")
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+        self.assertIn("line %d has 3 cells and the header has 2" % line, r.stdout)
+        self.assertNotIn("Whitlock", r.stdout)
+        self.assertEqual(bad, (self.root / CONTEXT).read_text())
+        self.assertFalse((self.root / NAMES).exists())
+
+    def test_a_short_rows_text_is_never_in_a_refusal_and_every_row_is_in_names_md_once(self):
+        lines = ["## People", "", "| Name | Party | Role |", "|---|---|---|", "| Alex Birch | `birch` |",
+                 "| Cedar Quill | a | b | c |"]
+        self.assertIsNone(names_move.whole(lines, 0, len(lines)))
+        why = names_move.refusal("People", lines, 0, len(lines))
+        self.assertEqual("The People table in System/context.md could not be read: line 6 has 4 cells and the header has 3.", why)
+        self.assertNotIn("Cedar", why)
+        self.assertNotIn("Alex", why)
 
     def test_a_section_with_two_tables_or_prose_instead_of_a_table_stays(self):
         text = (self.root / CONTEXT).read_text()

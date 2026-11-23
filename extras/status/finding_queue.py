@@ -70,7 +70,8 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
 # the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction")
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction",
+               "history-foreign", "history-heading", "history-rule", "wall-template", "parked-pointer")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -85,6 +86,7 @@ KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
     "attribution": QUESTION, "correction": QUESTION,
+    "history-foreign": QUESTION, "history-heading": QUESTION, "history-rule": QUESTION, "wall-template": QUESTION, "parked-pointer": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
@@ -130,6 +132,39 @@ ANSWERS: Dict[str, List[dict]] = {
                    A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                    A("later", "Not now", "Ask again in a week.", "later")],
 }
+# A long note whose older entries cannot move for a reason only the user can settle (#661): each cause is one question that names
+# it, and none offers *Move older entries*, which was just refused. A move held for a reason that clears by itself is no question.
+# Visible assistants only: nothing here changes a file by itself.
+ANSWERS.update({
+    "history-foreign": [A("sort-it", "Sort it out with my assistant", "Your assistant asks whether to rename that page or use the next free name, and shows you the change.", "handoff"),
+                        A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                        A("later", "Not now", "Ask again in a week.", "later")],
+    "history-heading": [A("fix-heading", "Fix the heading with my assistant", "Your assistant corrects the heading and shows you the change.", "handoff"),
+                        A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                        A("later", "Not now", "Ask again in a week.", "later")],
+    "history-rule": [A("add-rule", "Add the line with my assistant", "Your assistant adds the dividing line and shows you the change.", "handoff"),
+                     A("open", "Let me open it", "Opens the note in your notes app. Nothing changes.", "open"),
+                     A("later", "Not now", "Ask again in a week.", "later")],
+})
+# A note that repeats wording from many projects of one other walled zone, held by many notes of its own zone: it may be the text of
+# an old note template (#662). One question for the note, from counts alone; neither answer changes a file, and, as for a wall,
+# nothing here can be put off, since the findings stay until the wording is common or gone. No answer is recommended.
+ANSWERS["wall-template"] = [
+    A("template", "It is an old template", "Your assistant puts a copy of that template in your own templates folder, or takes the template text out of the notes, and shows you the change first.", "handoff"),
+    A("one-by-one", "Show me the findings one by one", "Your assistant lists the findings of this note, each by file and zone. Nothing changes.", "handoff")]
+# A parked thread whose memory pointer is still in the memory index (Nurture's kind of that name, #664): wording only, keyed on the kind's
+# name. The one fix goes to the assistant, who shows the change; the page's own fix route takes a note of a zone, and this file is not one.
+ANSWERS["parked-pointer"] = [
+    A("tidy", "Tidy it with my assistant", "Your assistant makes the one fix and shows you the change.", "handoff"),
+    A("later", "Not now", "Ask again in a week.", "later")]
+# What Nurture's line for the grouped finding says: counts and a zone's name (nurture.py's say_wall).
+TEMPLATE_HINT = re.compile(r"repeats wording from (\d+) projects of the (.+?) zone; that zone is walled\. The same wording is in (\d+) notes of this zone, so it may be text from an old note template")
+# history.py's own sentences for the three (its NOT_HISTORY, HEADING_DIFFERS and NO_RULE), read back from a run's record; a test
+# holds these to history.py's, so a change there fails here.
+HOLD_FOREIGN = re.compile(r"^(.+) exists and is not a history file of this note$")
+HOLD_HEADING = re.compile(r"^(.+) exists and its heading differs from the one this tool writes$")
+HOLD_RULE = "it has no `---` rule under `## State of play`"
+HISTORY_KINDS = ("history-foreign", "history-heading", "history-rule")
 # The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
 OTHER = "other"
 ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
@@ -157,7 +192,8 @@ NO_MOVE = {
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
         "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up", "attribution": "Needs your answer",
-        "correction": "Tidy up"}
+        "correction": "Tidy up", "history-foreign": "Tidy up", "history-heading": "Tidy up", "history-rule": "Tidy up",
+        "wall-template": "Private material", "parked-pointer": "Tidy up"}
 HELD = re.compile(r"\(held: (.+)\)\s*$")
 # The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
 HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
@@ -173,7 +209,7 @@ WHY = {"attribution": "Garrick cannot tell which of two ways is right, and a wro
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
        "hooks-blocked": "Garrick installs this check on its own, but a hook of yours is in the way and Garrick never replaces one of yours. "
                         "Without the check, a commit can carry private material across a wall and nothing warns you."}
-NEVER_LATER = ("wall", "hooks-blocked")     # no Not now: hiding either leaves the walls unchecked
+NEVER_LATER = ("wall", "hooks-blocked", "wall-template")     # no Not now: hiding either leaves the walls unchecked
 ACTIONS = ("handoff", "run", "preview", "open", "later", "keep", "words", "day", "reveal", "look", "allow")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later", "keep")) for kind, answers in ANSWERS.items()}
@@ -237,20 +273,39 @@ def held_reason(item: dict) -> str:
     return m.group(1) if m else ""
 
 
+def history_hold(item: dict) -> str:
+    """The plain kind of a long note whose history move was held for a reason the user settles, from the reason in its line;
+    "" for any other reason: the note is then asked as a long note, as before (#661)."""
+    reason = held_reason(item)
+    if HOLD_FOREIGN.match(reason):
+        return "history-foreign"
+    if HOLD_HEADING.match(reason):
+        return "history-heading"
+    return "history-rule" if reason == HOLD_RULE else ""
+
+
+def history_wait(item: dict) -> bool:
+    """A long note's history move held for a reason that clears by itself: the nightly run and the next wrap try it again, and
+    the card asks nothing (#661)."""
+    text = str(item.get("line") or item.get("message") or "")
+    return (str(item.get("kind") or "") == MECHANICAL and str(item.get("check") or "") in ("projects", "threads")
+            and "history files" in text and bool(held_reason(item)))
+
+
 def plain_kind(item: dict) -> str:
     """The plain kind of a standing finding, from Nurture's kind and the check's name and text; "" for a kind with no
     plain wording, "mechanical" for one the nightly run fixes."""
     kind, check, line = str(item.get("kind") or ""), str(item.get("check") or ""), str(item.get("message") or item.get("line") or "")
     if kind == "wall":
-        return "wall"
+        return "wall-template" if TEMPLATE_HINT.search(str(item.get("line") or "")) else "wall"
     if kind == MECHANICAL:
         return MECHANICAL
-    if kind in ("attribution", "correction"):
+    if kind in ("attribution", "correction", "parked-pointer"):
         return kind
     if kind != "judgment":
         return ""
     if check in ("projects", "threads") and "`note-max-words`" in line and NOTE_RE.search(line):
-        return "note-long"
+        return history_hold(item) or "note-long"
     if check == "resume" and RESUME_RE.search(line):
         return "resume-long"
     if check == "todo" and TODO_RE.search(line):
@@ -531,7 +586,7 @@ def subject(plain: str, item: dict, ws=None) -> str:
     path = str(item["path"])
     if plain == "meeting-long":
         return meeting_subject(ws, path)[0]
-    if plain in ("note-long", "resume-long"):
+    if plain in ("note-long", "resume-long") + HISTORY_KINDS:
         return note_name(path)[0]
     if plain == "todo-long":
         return "%s to-do list" % place(path)
@@ -625,6 +680,25 @@ def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
         return ("A small fix to “%s” in %s could not be made." % (stem(path), place(path)), "%s %s" % (words, WHY[plain]))
+    if plain == "parked-pointer":
+        return ("A parked thread's memory pointer is still in the memory index: “%s”." % stem(path),
+                "A parked thread's pointer belongs in the parked folder, so the index stays short for every session.")
+    if plain == "wall-template":
+        m = TEMPLATE_HINT.search(str(item.get("line") or ""))
+        return ("“%s” in %s repeats wording from %s projects of %s." % (stem(path), place(path), m.group(1), m.group(2)),
+                "The same wording is in %s notes of this zone, so it may be text from an old note template." % m.group(3))
+    if plain in HISTORY_KINDS:
+        name, thread = note_name(path)
+        what = "thread note" if thread else "project page"
+        file = (HOLD_FOREIGN.match(held_reason(item)) or HOLD_HEADING.match(held_reason(item)) or [None, ""])[1]
+        if plain == "history-foreign":
+            return ("The page “%s” is not a history file of the %s %s." % (file, name, what),
+                    "Its older entries cannot move while that page holds the name they need. Rename it, or let Garrick use the next free name.")
+        if plain == "history-heading":
+            return ("The history page “%s” of the %s %s opens with a different heading than Garrick writes." % (file, name, what),
+                    "Garrick adds only to a history page written the way it writes them. Correct the heading, or move its entries to a page of their own.")
+        return ("The %s %s has no dividing line under its state of play." % (name, what),
+                "Older entries move from below a line of three dashes under State of play. Without it Garrick cannot tell where they start.")
     if plain == "hooks-blocked":
         where = place(path)
         return ("%s does not check the walls before a commit." % ("The %s zone" % where if path.startswith("Zones/") else where[:1].upper() + where[1:]),
@@ -682,6 +756,30 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
                 "and show me the change before anything is committed." % path)
+    if plain == "parked-pointer":
+        return ("Make the fix Nurture holds for the parked thread's memory pointer %s, and show me the change before anything is "
+                "committed." % path)
+    if plain == "wall-template":
+        other = wall_other(item) or "another zone"
+        if answer == "one-by-one":
+            return ("List the wall findings of %s one by one, each by the file it names and its zone, and never the repeated words. "
+                    "Change nothing." % path)
+        return ("The wording of %s that the wall check holds against projects of %s may be the text of an old note template of mine. "
+                "Take the template text from the notes of this zone that hold it, and never open a note of %s. Check the text with me "
+                "before you write it into System/templates.local/, or help me take it out of the notes. "
+                "Show me the change before anything is committed." % (path, other, other))
+    if plain == "history-foreign":
+        file = (HOLD_FOREIGN.match(held_reason(item)) or [None, "a page"])[1]
+        return ("The page %s in the history folder next to %s is not a history file of that note, so its older entries cannot move. "
+                "Ask me whether to rename the page or let Garrick use the next free name, and show me the change before anything "
+                "is committed." % (file, path))
+    if plain == "history-heading":
+        file = (HOLD_HEADING.match(held_reason(item)) or [None, "a page"])[1]
+        return ("The history page %s next to %s has a heading that differs from the one Garrick writes. Correct the heading so it "
+                "matches the others, and show me the change before anything is committed." % (file, path))
+    if plain == "history-rule":
+        return ("Add a line of three dashes under ## State of play in %s, above its older dated entries, so Garrick can move them to "
+                "history. Show me the change before anything is committed." % path)
     if plain == "meeting-long":
         return ("Shorten the meeting page %s to who was there, the key points and the actions. Leave the transcript as it is. "
                 "Show me the change before anything is committed." % path)
@@ -777,8 +875,11 @@ def free_prefix(plain: str, item: dict) -> str:
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
              "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back",
-             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished"}.get(plain, "a check finding")
-    if plain == "wall":
+             "attribution": "a question about where a page belongs", "correction": "a correction that is not finished",
+             "history-foreign": "a long note whose history page has the wrong name", "history-heading": "a long note whose history page has another heading",
+             "history-rule": "a long note with no dividing line", "wall-template": "a private-material finding that may be an old template",
+             "parked-pointer": "a parked thread's memory pointer"}.get(plain, "a check finding")
+    if plain in ("wall", "wall-template"):
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
 
@@ -807,9 +908,12 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
     details = str(item.get("message") or item.get("line") or "")
     if plain == "wall" and not item.get("listed"):
         return unlisted_wall(item, scope)
+    if plain == "wall-template":
+        item = dict(item, message=str(item.get("line") or ""))      # the quick check's text names a project of the other zone: only Nurture's line, counts alone, is read
+        details = item["message"]
     which = which_other(item) if plain not in PLAIN_KINDS else ""
     q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path, which), "details": details,
-         "recommended": "", "other": wall_other(item) if plain == "wall" else "",
+         "recommended": "", "other": wall_other(item) if plain in ("wall", "wall-template") else "",
          "subject": subject(plain, item, ws) if plain else (file_place(path)[0] or place(path)), "fh": file_hash(ws, path)}
     if plain not in PLAIN_KINDS:
         answers = []
@@ -876,7 +980,7 @@ def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> di
             if fb in BOUNDED.get(plain, ()) and keepable_path(path):
                 f["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": fb}
             a["fallback"] = f
-    q.update(tag=TAGS[plain], sentence=sentence, why=why, answers=answers, free=free_prefix(plain, item), recommended="" if plain == "wall" else answers[0]["id"])
+    q.update(tag=TAGS[plain], sentence=sentence, why=why, answers=answers, free=free_prefix(plain, item), recommended="" if plain in ("wall", "wall-template") else answers[0]["id"])
     if plain == "wall":
         q["wallfile"] = path
     return q
@@ -922,13 +1026,13 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None, ke
     if planner is None and ws is not None:
         planner = Planner(ws)
     kept = kept or {}
-    walled = {str(i["path"]) for i in items if plain_kind(i) == "wall"}       # a page with a wall finding has no question of its own
+    walled = {str(i["path"]) for i in items if plain_kind(i) in ("wall", "wall-template")}       # a page with a wall finding has no question of its own
     for item in items:
         plain = plain_kind(item)
         if plain in ("attribution", "correction") and str(item["path"]) in walled:
             continue
-        if plain == MECHANICAL and not held_reason(item):
-            continue                # the nightly run makes it, and the card shows nothing (#550)
+        if plain == MECHANICAL and (not held_reason(item) or history_wait(item)):
+            continue                # the nightly run makes it, and the card shows nothing (#550); a held history move is tried again (#661)
         if plain == MECHANICAL:
             plain = "fix-failed"
         if plain == HOOKS:
@@ -968,7 +1072,7 @@ def settle(out: Dict[str, List[dict]]) -> None:
     Nurture run) follows, by kind and path. Two questions with one kind and path stay two."""
     rank = {k: i for i, k in enumerate(PLAIN_KINDS)}
     for qs in out.values():
-        qs.sort(key=lambda q: (q["id"] != "wall", 0 if q.get("age") else 1, q.get("age") or "", rank.get(q["id"], len(rank)), q["path"]))
+        qs.sort(key=lambda q: (q["id"] not in ("wall", "wall-template"), 0 if q.get("age") else 1, q.get("age") or "", rank.get(q["id"], len(rank)), q["path"]))
         taken: Dict[str, int] = {}
         for q in qs:
             base = q["key"] + ("-" + hashlib.sha1(q["other"].encode("utf-8", "surrogatepass")).hexdigest()[:6] if q.get("other") else "")
@@ -1186,7 +1290,7 @@ def question_html(q: dict) -> str:
             '<div class="opts">%s</div><div class="qtexts" hidden></div>%s<p class="hint qsay" role="status"></p>'
             '<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>'
             '<details class="qdet"><summary>%s</summary><code>%s</code><pre class="qout" hidden></pre></details></div>'
-            % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), where, " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
+            % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), where, " private" if q["id"] in ("wall", "wall-template") else "", E(q["tag"]), E(q["sentence"]),
                '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q.get("details_label") or "Details"), E(q["details"])))
 
 

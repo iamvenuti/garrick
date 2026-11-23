@@ -40,6 +40,8 @@ MEETING_LINE = ("%(p)s: its body is 612 words, over the 450 of `meeting-max-word
                 "`## Key points` and `## Actions`, about 350 words")
 HOOKS_LINE = "%(p)s: no pre-commit wall check; run `python3 System/tools/check.py --install-hooks`"
 WALL_LINE = ("%(p)s: links [[Garden Notes]], a note of the Personal zone; that zone is walled and this file is in the Work zone")
+TEMPLATE_LINE = ("%(p)s: repeats wording from 10 projects of the Home zone; that zone is walled. The same wording is in 12 notes of this zone, "
+                 "so it may be text from an old note template. Fix: put a copy of that template in System/templates.local/, or take the template text out of the notes.")
 REPEATED = "secret sauce recipe for the entire autumn plan"
 
 HUB = "Zones/Work/Acme Review/Acme Review.md"
@@ -113,7 +115,8 @@ class TestKindTable(unittest.TestCase):
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
-        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction"),
+        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction",
+                          "history-foreign", "history-heading", "history-rule", "wall-template", "parked-pointer"),
                          fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
@@ -218,7 +221,8 @@ class TestPlainWording(unittest.TestCase):
                           "meeting-long": ("keep", "later", "unkeep", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
                           "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep", "fix-now", "undo-bounded"),
-                          "attribution": ("later",), "correction": ("later", "finish", "undo-bounded")}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "attribution": ("later",), "correction": ("later", "finish", "undo-bounded"),
+                          "history-foreign": ("later",), "history-heading": ("later",), "history-rule": ("later",), "wall-template": (), "parked-pointer": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -1646,13 +1650,22 @@ class TestEveryQuestionNamesItsSubject(unittest.TestCase):
             "fix-failed": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: fixed (held: refused by the wall check)"),
             "attribution": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", "%(p)s: unfinished: no zone"),
             "correction": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: holds the value being corrected"),
+            "history-foreign": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md",
+                                NOTE_LINE + " (held: Hist.md exists and is not a history file of this note)"),
+            "history-heading": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md",
+                                NOTE_LINE + " (held: Hist.md exists and its heading differs from the one this tool writes)"),
+            "history-rule": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md",
+                             NOTE_LINE + " (held: it has no `---` rule under `## State of play`)"),
+            "wall-template": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", TEMPLATE_LINE),
+            "parked-pointer": ("System/memory/acme-one.md", "System/memory/acme-two.md", "%(p)s: a parked thread's pointer is in the index"),
         }
         self.assertEqual(set(fq.PLAIN_KINDS), set(pairs), "a kind with plain wording needs a pair here")
         for plain, (one, two, line) in pairs.items():
-            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "attribution": "attribution",
+            kind = {"wall": "wall", "wall-template": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "parked-pointer": "parked-pointer", "attribution": "attribution",
                     "correction": "correction"}.get(plain, "judgment")
             check = {"note-long": "projects", "resume-long": "resume", "todo-long": "todo", "meeting-long": "meetings",
-                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x", "attribution": "meetings", "correction": ""}[plain]
+                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x", "attribution": "meetings", "correction": "",
+                     "history-foreign": "threads", "history-heading": "threads", "history-rule": "threads", "wall-template": "", "parked-pointer": "memory"}[plain]
             sentences = []
             for path in (one, two):
                 it = item(kind, check, path, line, **({"listed": True, "message": "%s: repeats eight or more words from Personal: '%s'" % (path, REPEATED)} if plain == "wall" else {}))

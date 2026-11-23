@@ -124,7 +124,6 @@ EXIT = {0: "ok", 3: "answer incomplete", 4: "could not sign in", 6: "missing con
 OK_EXITS = (0, 75)
 # job.py's end-of-run line; a quiet exit ends with "  quiet" before the rule.
 LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)(  quiet)?|skipped)")
-TODO_ITEM = re.compile(r"^\s*-\s\[ \]\s")
 # Where Garrick lives, for Settings › About Garrick. The page loads nothing from
 # it: each link opens in your browser, and a report goes only when you submit
 # it there yourself.
@@ -604,11 +603,15 @@ def piece_row(ws: Path, p: dict) -> dict:
     return row
 
 
-def view_model(ws: Path) -> Optional[dict]:
-    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet."""
+def view_model(ws: Path, only=None, today: Optional[dt.date] = None) -> Optional[dict]:
+    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet.
+    `only` names the parts to build (view.PARTS), for a caller that needs one; `today` is the day it counts as ticked."""
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
-        return view_reader(ws).build(ws)
+        mod = view_reader(ws)
+        if not hasattr(mod, "PARTS"):    # a view.py from before 0.78.0, kept by an update that stopped half way
+            raise FileNotFoundError("System/tools/view.py")
+        return mod.build(ws, only=only, today=today)
     except FileNotFoundError:
         return None
 
@@ -624,7 +627,7 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
     `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
-    model = model or view_model(ws)
+    model = model or view_model(ws, ("work",))
     if model is None:
         # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
@@ -640,22 +643,6 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
                                        for name, v in z["projects"].items()},
                           "open_links": [list(x) for x in z["open_links"]],
                           "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
-    return out
-
-
-def todo(ws: Path) -> Dict[str, dict]:
-    out = {}
-    for zone in visible_dirs(ws / "Zones"):
-        f = zone / "Todo.md"
-        if not f.is_file():
-            continue
-        counts, section = {}, None
-        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("## "):
-                section = line[3:].strip()
-            elif section and section.lower() != "done" and TODO_ITEM.match(line) and "<action>" not in line:
-                counts[section] = counts.get(section, 0) + 1
-        out[zone.name] = {"counts": counts, "file": f, "when": dt.datetime.fromtimestamp(f.stat().st_mtime)}
     return out
 
 
@@ -703,37 +690,6 @@ def todo_lines():
         _TL = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_TL)
     return _TL
-
-
-def system_notes(ws: Path) -> Dict[str, Path]:
-    """The hub and thread notes of every project kept in System/, by name and
-    by path from the workspace, lower-cased. Such a project has no Todo.md of
-    its own: its actions live in a zone's, opening with its thread's link."""
-    out: Dict[str, Path] = {}
-    for project in visible_dirs(ws / "System"):
-        hub = project / (project.name + ".md")
-        if not hub.is_file() or as_text(frontmatter(hub, ws).get("type")).strip().lower() != "project":
-            continue
-        for note in [hub] + [t / (t.name + ".md") for t in visible_dirs(project / "Threads")]:
-            if note.is_file():
-                out.setdefault(note.relative_to(ws).with_suffix("").as_posix().lower(), note)
-                out.setdefault(note.stem.lower(), note)
-    return out
-
-
-def line_place(note: Path, zone: Path) -> Tuple[str, str]:
-    """The project and the thread a line belongs to, from the note it points at or sits in (#596): a thread's note,
-    or any file in its folder, gives both; a project's hub, or a file in the project and not in a thread, gives the
-    project alone. A note outside the zone's projects, or not placed, gives neither."""
-    try:
-        parts = Path(os.path.abspath(str(note))).relative_to(Path(os.path.abspath(str(zone)))).parts
-    except ValueError:
-        return "", ""
-    if len(parts) >= 4 and parts[1] == "Threads":
-        return parts[0], parts[2]
-    if len(parts) >= 2 and parts[0] not in ("Inbox", "archive") and not parts[0].startswith("."):
-        return parts[0], ""
-    return "", ""
 
 
 _OUTBOX = None
@@ -804,28 +760,23 @@ def held_block(held: List[dict]) -> str:
     return '<div class="tq">%s</div>' % out if out else ""
 
 
-def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
-    """Preview: each zone's open actions, read from the notes, never written.
-    Per zone: the lines of Todo.md grouped under its `## ` headings in their
-    order, then the lines that sit in thread notes ("In thread notes"), then
-    what was ticked today, with counts of the open, the late and the
-    undated. An empty section is left out, but an empty Inbox is said. A
-    label names a note in the zone or, failing that, a project in System/."""
-    tl = todo_lines()
+def todo_list(ws: Path, link: "Links", today: dt.date, model: Optional[dict] = None) -> List[dict]:
+    """Preview: each zone's open actions, never written. Per zone: the lines of Todo.md grouped under its `## `
+    headings in their order, then the lines that sit in thread notes ("In thread notes"), then what was ticked today,
+    with counts of the open, the late and the undated. An empty section is left out, but an empty Inbox is said. A
+    label names a note in the zone or, failing that, a project in System/. The view model reads the notes
+    (view.zone_todo) and decides which note each line names; this decides what late means and how a row is sorted."""
+    model = model or view_model(ws, ("todo",), today)
     out = []
-    system = system_notes(ws)
     role = machine_role(ws)
-    for zone in visible_dirs(ws / "Zones"):
-        todo_md = zone / "Todo.md"
-        waits = outbox_mod().pending_marks(ws, zone.name) if role == "roaming" else {}
-        held = [dict(h, role=role) for h in outbox_mod().held_requests(ws, zone.name)] if role in ("server", "roaming") else []
-        notes = {}
-        for n in tl.notes(str(zone)):
-            rel = Path(n).relative_to(zone).with_suffix("").as_posix()
-            notes.setdefault(rel.lower(), Path(n))
-            notes.setdefault(Path(n).stem.lower(), Path(n))
-        for name, n in system.items():
-            notes.setdefault(name, n)
+    for z in (model or {}).get("zones", []):
+        if "todo" not in z:
+            continue
+        data = z["todo"]
+        zname = z["name"]
+        todo_md = ws / data["file"] if data["file"] else None
+        waits = outbox_mod().pending_marks(ws, zname) if role == "roaming" else {}
+        held = [dict(h, role=role) for h in outbox_mod().held_requests(ws, zname)] if role in ("server", "roaming") else []
 
         def row(t, done=False):
             field = t["scheduled"] if t["waiting"] else t["due"]
@@ -834,39 +785,33 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
             except ValueError:
                 when = None
             late = bool(when and (when <= today if t["waiting"] else when < today)) and not done
-            if t["file"] != "Todo.md":
-                thread, note = Path(t["file"]).stem, zone / t["file"]
-            elif t["target"]:
-                thread, note = t["thread"], notes.get(t["target"].lower()) or notes.get(t["target"].rsplit("/", 1)[-1].lower())
-            else:
-                thread, note = None, None
-            project, tname = line_place(note, zone) if note and not t["unsure"] else ("", "")
-            return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread, waits=waits.get(t["key"], ""),
-                        project=project, tname=tname,
-                        link=link.attrs(note) if note else "", zone=zone.name,
-                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
+            note = ws / t["note"] if t["note"] else None
+            thread = t["label"]
+            plain = {k: v for k, v in t.items() if k != "note"}
+            plain["also"] = [tuple(a) for a in t["also"]]
+            return dict(plain, when=when, late=late, done=done, field=field if when else "", label=thread, waits=waits.get(t["key"], ""),
+                        project=t["project"], tname=t["tname"],
+                        link=link.attrs(note) if note else "", zone=zname,
+                        alpha=("%s\u0001%s" % (thread or ("￿" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
 
-        rows = [row(t) for t in tl.tasks(str(zone)) if t["text"] and "<action>" not in t["text"]]
-        if not rows and not todo_md.is_file():
+        rows = [row(t) for t in data["tasks"]]
+        if not rows and not todo_md:
             continue
-        order: List[str] = []
-        if todo_md.is_file():
-            order = [l[3:].strip() for l in todo_md.read_text(encoding="utf-8", errors="replace").splitlines() if l.startswith("## ")]
         groups = []
-        for name in order:
+        for name in data["order"]:
             if name in (g for g, _ in groups):
                 continue
             items = [r for r in rows if r["file"] == "Todo.md" and r["section"] == name]
             if items or name == "Inbox":
                 groups.append((name, sorted(items, key=lambda r: r["alpha"])))
-        loose = [r for r in rows if r["file"] == "Todo.md" and r["section"] not in order]
+        loose = [r for r in rows if r["file"] == "Todo.md" and r["section"] not in data["order"]]
         if loose:
             groups.append(("Not under a heading", sorted(loose, key=lambda r: r["alpha"])))
         elsewhere = [r for r in rows if r["file"] != "Todo.md"]
         if elsewhere:
             groups.append(("In thread notes", sorted(elsewhere, key=lambda r: (r["file"].lower(), r["alpha"]))))
-        done = [row(t, done=True) for t in tl.done_on(str(zone), today) if t["text"] and "<action>" not in t["text"]]
-        out.append(dict({"zone": zone.name, "file": todo_md if todo_md.is_file() else None, "groups": groups,
+        done = [row(t, done=True) for t in data["done"]]
+        out.append(dict({"zone": zname, "file": todo_md, "groups": groups,
                          "done": sorted(done, key=lambda r: r["alpha"]), "open": len(rows),
                          "late": sum(1 for r in rows if r["late"]), "undated": sum(1 for r in rows if r["when"] is None)},
                         **({"held": held} if held else {})))
@@ -2809,7 +2754,7 @@ var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function()
 def inboxes(ws: Path, model: Optional[dict] = None) -> List[Tuple[str, Path, int]]:
     """Files waiting to be filed: each zone's Inbox and the Meetings inbox, as the view model counts them (#650): one
     zone or one wiki per row, and none for a zone that is a link or an Inbox that leads out of its zone."""
-    model = model or view_model(ws)
+    model = model or view_model(ws, ("inbox",))
     if model is None:
         return []                 # a half-finished update: the Threads card says so
     return [(q["place"], ws / q["folder"], q["count"]) for q in model["queues"]["inbox"]]
@@ -2954,81 +2899,29 @@ def check(ws: Path, store: Optional[Path] = None, reuse: Optional[float] = None,
     return data
 
 
-def repos(ws: Path) -> List[dict]:
-    """The root, each zone, and the wikis: the installer makes one repository
-    at Wikis/ for both. A wiki with a repository of its own is listed too.
-    When git fails or runs out of time, the repository is `unread`, never
-    clean: an empty answer is not a count of nothing."""
-    places = [("Workspace", ws)] + [(z.name, z) for z in visible_dirs(ws / "Zones")] + \
-             [("Wikis", ws / "Wikis")] + [(w.name, w) for w in visible_dirs(ws / "Wikis")]
-    out = []
-    for name, folder in places:
-        if not (folder / ".git").exists():
-            continue
-        # --no-optional-locks: the page only reads, so git status never takes
-        # index.lock to refresh the index, and a commit a session makes in the
-        # same moment never finds it held.
-        def git(*args):
-            try:
-                proc = subprocess.run(["git", "--no-optional-locks", "-C", str(folder), *args], capture_output=True,
-                                      text=True, timeout=30)
-            except (OSError, subprocess.TimeoutExpired):
-                return None
-            return proc.stdout if proc.returncode == 0 else None
-        porcelain = git("status", "--porcelain", "-z", "--untracked-files=all")
-        changes = changed_files(porcelain or "")
-        ct = (git("log", "-1", "--format=%ct") or "").strip()
-        out.append({"name": name, "folder": folder, "dirty": len(changes), "changes": changes,
-                    "unread": porcelain is None, "since": oldest_change(folder, changes),
-                    "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
-    return out
-
-
-def oldest_change(folder: Path, changes) -> Optional[dt.datetime]:
-    """When the longest-waiting uncommitted change was made: the oldest
-    modification time among the changed files still on disk. A deleted file
-    has none and is passed over."""
-    times = []
-    for path, _ in changes:
-        try:
-            times.append((folder / path).stat().st_mtime)
-        except OSError:
-            continue
-    return dt.datetime.fromtimestamp(min(times)) if times else None
+def repos(ws: Path, model: Optional[dict] = None) -> List[dict]:
+    """The root, each zone, and the wikis: the installer makes one repository at Wikis/ for both. A wiki with a repository
+    of its own is listed too. When git fails or runs out of time, the repository is `unread`, never clean: an empty answer
+    is not a count of nothing. The view model asks git (view.repo_records); this gives each a folder and its times."""
+    model = model or view_model(ws, ("repos",))
+    day = lambda x: dt.datetime.fromisoformat(x) if x else None  # noqa: E731
+    return [{"name": r["name"], "folder": ws / r["folder"], "dirty": r["dirty"],
+             "changes": [(p, tuple(k)) for p, k in r["changes"]], "unread": r["unread"], "since": day(r["since"]),
+             "last": day(r["last"])} for r in (model or {}).get("repos", [])]
 
 
 STALE_CHANGES = dt.timedelta(hours=24)   # uncommitted for longer than this is raised
 
 
-# How `git status --porcelain` marks a file, as the Repositories card says it.
-# A file staged and then edited again is both staged and not staged.
-UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+# How `git status --porcelain` marks a file, as the Repositories card says it. A file staged and then edited again is
+# both staged and not staged.
 CHANGE_KINDS = (("conflicted", "conflicted"), ("staged", "staged"), ("unstaged", "not staged"), ("untracked", "untracked"))
 
 
 def changed_files(porcelain: str) -> List[Tuple[str, Tuple[str, ...]]]:
-    """(path, kinds) for every file `git status --porcelain -z` lists: one entry
-    per file, a rename under its new name. A count of these is a count of
-    files, never of commits."""
-    out, items = [], porcelain.split("\0")
-    i = 0
-    while i < len(items):
-        item = items[i]
-        i += 1
-        if len(item) < 4:
-            continue
-        xy, path = item[:2], item[3:]
-        if "R" in xy or "C" in xy:
-            i += 1                              # the name it had before
-        if xy == "??":
-            kinds = ("untracked",)
-        elif xy in UNMERGED:
-            kinds = ("conflicted",)
-        else:
-            kinds = tuple(k for k, mark in (("staged", xy[0]), ("unstaged", xy[1])) if mark not in " ?!")
-        if kinds:
-            out.append((path, kinds))
-    return out
+    """(path, kinds) for every file `git status --porcelain -z` lists (view.changed_files, which the view model counts
+    them with)."""
+    return view_reader().changed_files(porcelain)
 
 
 def say_files(n: int) -> str:
@@ -3042,109 +2935,37 @@ def say_kinds(changes) -> str:
 
 
 # One line per ingest in each wiki's log: `- 2026-09-24: [[wiki/sources/slug|Title]] (…)`.
-LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
-# A dated line with no link first, as the knowledge skill wrote its log before
-# 0.51.0: its title is its text up to the first parenthesis or semicolon. And
-# a dated `## ` heading, as a wiki whose schema.json says `"log": "section"`
-# keeps it: its title is the rest of the heading, or the first line under it (#322).
-LOG_DATED = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+(.*)$")
-LOG_SECTION = re.compile(r"^##\s+(\d{4}-\d\d-\d\d)\b[\s:·,—–-]*(.*)$")
 LOG_NOT_READ = "log not read"
 
 
 def log_entries(text: str) -> Tuple[List[Tuple[dt.date, int, str, str]], bool]:
-    """(date, -line, title, page target or "") for every entry a wiki's log
-    holds, in the three forms (#322); and whether it holds lines that look
-    like entries, a list item or a `## ` section, so a log that reads as none
-    of them says so rather than "nothing logged yet"."""
-    lines = text.splitlines()
-    entries, tried = [], False
-    for n, line in enumerate(lines):
-        m = LOG_ENTRY.match(line)
-        if m:
-            when = as_date(m.group(1))
-            if when:
-                target = m.group(2).strip()
-                entries.append((when, -n, (m.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
-                continue
-        m = LOG_DATED.match(line) or LOG_SECTION.match(line)
-        if m and as_date(m.group(1)):
-            rest = m.group(2).strip()
-            if not rest and line.startswith("##"):          # the section's first line says what it holds
-                rest = next((l.strip().lstrip("-* ").strip() for l in lines[n + 1:n + 6] if l.strip() and not l.startswith("#")), "")
-                k = LOG_ENTRY.match("- %s: %s" % (m.group(1), rest))
-                if k:
-                    target = k.group(2).strip()
-                    entries.append((as_date(m.group(1)), -n, (k.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
-                    continue
-            title = plain_text(re.split(r"[(;]", rest, 1)[0]).strip(" .,:") or "an entry"
-            entries.append((as_date(m.group(1)), -n, title, ""))
-            continue
-        tried = tried or line.lstrip().startswith(("- ", "* ")) or line.startswith("## ")
-    return entries, tried
+    """(date, -line, title, page target or "") for every entry a wiki's log holds, in the three forms (#322), and whether
+    it holds lines that look like entries (view.log_entries, which the view model reads the logs with). A title the log
+    wrote as Markdown is read as plain words here."""
+    entries, tried = view_reader().log_entries(text)
+    return [(when, n, plain_title(title) if markdown else title, target) for when, n, title, target, markdown in entries], tried
 
 
-def wikis(ws: Path) -> List[dict]:
-    """Per wiki: its log, how many entries it holds, and the newest entry's
-    date and title. Nothing else from the line: not its zone, not its parties.
-    An entry with a link opens its page; a log whose entries it cannot read
-    at all says so (`unread`)."""
+def plain_title(title: str) -> str:
+    """A log line's title as plain words, or "an entry" where it has none."""
+    return plain_text(title).strip(" .,:") or "an entry"
+
+
+def wikis(ws: Path, model: Optional[dict] = None) -> List[dict]:
+    """Per wiki: its log, how many entries it holds, and the newest entry's date and title. Nothing else from the line: not
+    its zone, not its parties. An entry with a link opens its page; a log whose entries it cannot read at all says so
+    (`unread`). The view model reads the logs (view.wiki_records); this shortens a title and names a page."""
+    model = model or view_model(ws, ("wikis",))
     out = []
-    for w in visible_dirs(ws / "Wikis"):
-        log = w / "wiki" / "log.md"
-        if not log.is_file():
-            continue
-        entries, tried = log_entries(log.read_text(encoding="utf-8", errors="replace"))
-        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None,
-               "unread": tried and not entries}
-        if entries:
-            when, _, title, target = max(entries)   # the newest; on a tie, the line nearer the top
-            page = None
-            if target:
-                page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
-                if not (str(page).startswith(str(w.resolve()) + os.sep) and page.is_file()):
-                    page = None
-            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""), page=page)
+    for w in (model or {}).get("wikis", []):
+        row = {"name": w["name"], "log": ws / w["log"], "count": w["count"], "when": None, "title": "", "page": None,
+               "unread": w["unread"]}
+        if w["when"]:
+            title = plain_title(w["title"]) if w["markdown"] else w["title"]
+            page = (ws / w["folder"] / w["page"]).resolve() if w["page"] else None
+            row.update(when=as_date(w["when"]), title=title[:100] + ("…" if len(title) > 100 else ""), page=page)
         out.append(row)
     return out
-
-
-WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
-# Folders that hold no notes of their own: an inbox, raw records, superseded
-# versions, generated pages. Compared without regard to case.
-SKIP_DIRS = {"inbox", "raw", "archive", "generated"}
-
-
-def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
-    """Whether the graph reads the folder `name` inside `folder`. A zone's own
-    Inbox is left out. A project or a thread is read whatever it is called, so
-    one named Archive or raw stays on the graph; anywhere else a folder named
-    for an inbox, raw records, old versions or generated pages is left out."""
-    if name.startswith((".", "_")):
-        return False
-    depth = Path(folder).relative_to(root).parts
-    if in_zone and not depth:
-        return name != "Inbox"                                # every other folder here is a project
-    if in_zone and len(depth) == 2 and depth[1] == "Threads":
-        return True                                           # a thread
-    return name.casefold() not in SKIP_DIRS
-def git_ignored(root: Path) -> set:
-    """The folders (paths relative to the zone `root`) that the zone's own git
-    ignores, from one `git ls-files` over the zone (#399), asked for before the
-    walk so that an ignored folder is never entered. A path git cannot encode
-    as text (a name that is not valid UTF-8) is read back as the walk reads it,
-    with surrogateescape. A zone that is not a repository of its own, or a Mac
-    with no git, ignores nothing."""
-    if not (root / ".git").exists():
-        return set()
-    try:
-        done = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-                              capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    if done.returncode != 0:
-        return set()
-    return {os.fsdecode(x).rstrip("/") for x in done.stdout.split(b"\0") if x.endswith(b"/")}
 
 
 # What a note is, in the order the legend shows them. Colours are fixed so a
@@ -3240,27 +3061,9 @@ def short_label(title: str, limit: int = WIKI_LABEL) -> str:
     return (cut or title[:limit]) + "…"
 
 
-def vault_of(ws: Path, folder: Path) -> Optional[Path]:
-    """The Obsidian vault a folder's notes belong to: the nearest folder at or
-    above it, up to the workspace root, that holds a .obsidian folder."""
-    return todo_lines().vault_of(ws, folder)
-
-
-def vault_filters(vault: Optional[Path]) -> List[object]:
-    """A vault's ignore filters (.obsidian/app.json, userIgnoreFilters), a path
-    prefix or a /regex/ each, read as the Todo card reads them: what Obsidian
-    leaves off its graph, Explore leaves off too. Nothing else of the vault's
-    is read, so the graph looks the same with Obsidian or without it (#292).
-    Empty outside a vault, or when the file is missing or does not read."""
-    return todo_lines().ignore_filters(vault) if vault is not None else []
-
-
-def ignored(rel: str, filters: List[object]) -> bool:
-    return todo_lines().ignored(rel, filters)
-
-
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False,
-          desk: Optional[Dict[str, str]] = None, drive: bool = False, urgent: Optional[set] = None) -> dict:
+          desk: Optional[Dict[str, str]] = None, drive: bool = False, urgent: Optional[set] = None,
+          model: Optional[dict] = None) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
@@ -3279,42 +3082,18 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     graph has: age alone never marks a note. Every note carries its path from
     its place's folder, without `.md` (`m`), and `pr` maps each place to that
     folder from the workspace's, so Preview can name the note it reads (#206)."""
-    places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
-    places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
+    # The notes and the links between them are the view model's (view.graph_records); this draws a node for each.
+    model = model or view_model(ws, ("graph",))
+    found_g = (model or {}).get("graph") or {"places": [], "notes": [], "edges": []}
+    places = [(p["name"], ws / p["folder"]) for p in found_g["places"]]
+    roots = dict(places)
+    notes = [(n["place"], roots[n["place"]], ws / n["path"], n) for n in found_g["notes"]]
     names = short_names(T)
     held = {(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
     hubs_parked = {zone: set(data.get("held", ())) for zone, data in T.items()}
     awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
     asleep = {(zone, project) for zone, project, _ in held} - awake
-    vaults: Dict[Path, List[object]] = {}             # vault -> its ignore filters
-    notes = []
-    for place, root in places:
-        in_zone = root.parent.name == "Zones"
-        vault = vault_of(ws, root)
-        if vault is not None and vault not in vaults:
-            vaults[vault] = vault_filters(vault)
-        filters = vaults[vault] if vault is not None else []
-        found_in = []                                 # (folder, files), in walk order
-        # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
-        left_out = git_ignored(root) if in_zone else set()
-        for folder, dirs, files in os.walk(root):
-            # A folder that tops a repository of its own (a `.git` folder, or the file a worktree has) is not walked.
-            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists()
-                             and Path(folder, d).relative_to(root).as_posix() not in left_out)
-            found_in.append((folder, files))
-        for folder, files in found_in:
-            for f in sorted(files):
-                if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
-                    continue
-                if folder == str(root) and (f in ("index.md", "log.md") and root.name == "wiki"
-                                            or f == "Todo.md" and root.parent.name == "Zones"):
-                    continue
-                if filters and ignored((Path(folder) / f).relative_to(vault).as_posix(), filters):
-                    continue
-                notes.append((place, root, Path(folder) / f))
-    rel = {path: path.relative_to(ws).with_suffix("").as_posix() for _, _, path in notes}
-    by_rel = {r: p for p, r in rel.items()}
-    nodes, index = [], {}
+    nodes = []
     kinds = [k for k, _, _ in KINDS]
     found: Dict[str, Dict[str, int]] = {}             # wiki -> type no model kind takes -> its pages (#250)
     typed_at: List[Tuple[int, str, str]] = []
@@ -3324,13 +3103,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             source_type = lib.knowledge_schema(ws)[0]["source"]["type"]     # a wiki that names its sources otherwise
     except Exception:
         pass
-    projects = [(place, path.parent.name) for place, root, path in notes
+    projects = [(place, path.parent.name) for place, root, path, _ in notes
                 if root.parent.name == "Zones" and path.parent.parent == root and path.stem == path.parent.name]
     threads_said = {t.casefold() for z in T.values() for r in z["rows"] + z["parked"] for t in [r["thread"]]}
-    for place, root, path in notes:
-        fm = frontmatter(path, ws)
+    for place, root, path, rec in notes:
         parts = path.relative_to(root).parts
-        kind = as_text(fm.get("type")).strip().lower()
+        kind = rec["type"]
         kind = "mail" if kind in ("email", "mail") else kind
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
@@ -3343,11 +3121,11 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         elif kind not in ("project", "thread"):
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
-        state = as_text(fm.get("status")).strip().lower()
+        state = rec["status"]
         moving = kind == "thread" and state != "done"
-        updated = as_date(fm.get("updated"))
+        updated = as_date(rec["updated"])
         days = (now.date() - updated).days if moving and updated else None
-        party = tags(fm.get("party") or fm.get("parties"))
+        party = list(rec["party"])
         folder_thread = parts[2] if in_zone and len(parts) > 3 and parts[1] == "Threads" else ""
         parked = (place, project) in asleep or (place, project, folder_thread) in held
         say = names.get((place, project, thread), "") if thread else ""
@@ -3359,8 +3137,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         # i, adj, deg, lp and tw to each node in the browser, so none of those is used here.
         # tw holds a name's widths; it was lw, which a note in a project carries for what an app
         # resumes, so such a note was never named once zoomed in (#252).
-        index[path] = len(nodes)
-        title = as_text(fm.get("title")).strip() or path.stem
+        title = rec["title"] or path.stem
         hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
         typed = found_kind(typed) if wiki and kind == "note" else ""
         if typed and typed not in kinds:
@@ -3405,35 +3182,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     for i, wiki, typed in typed_at:
         if found[wiki][typed] >= KIND_FROM_PAGES:
             nodes[i]["k"] = keys.index(typed)
-    # A link that is not a whole path resolves to the shortest path that ends
-    # in it after a slash, and else to the shortest note of its name; among
-    # paths as long, the first walked. Each note goes in once under every such
-    # ending, so a link is a lookup, not a pass over every note (#260).
-    by_base: Dict[str, Path] = {}
-    by_tail: Dict[str, Path] = {}
-    for p in sorted(rel, key=lambda q: len(rel[q])):
-        by_base.setdefault(p.stem.lower(), p)
-        parts = rel[p].split("/")
-        for i in range(1, len(parts)):
-            by_tail.setdefault("/".join(parts[i:]), p)
-    edges = set()
-    for _, _, path in notes:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for target in WIKILINK.findall(text):
-            # In a Markdown table the alias's pipe is escaped, [[x\|alias]]: drop the backslash.
-            target = target.strip().rstrip("\\").strip().rstrip("/")
-            target = target[:-3] if target.endswith(".md") else target
-            hit = by_rel.get(target)
-            if hit is None:
-                hit = by_tail.get(target)
-            if hit is None:
-                hit = by_base.get(target.split("/")[-1].lower())
-            if hit is not None and hit != path:
-                a, b = index[path], index[hit]
-                edges.add((min(a, b), max(a, b)))
+    edges = {tuple(e) for e in found_g["edges"]}
     used = sorted({n["k"] for n in nodes})        # each kind the legend offers as a filter (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
     # people in the same meeting, a person and the entity met in it (#320),
@@ -3441,7 +3190,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     # pages do. A page that joins is any not of the kinds the place opens on
     # (OPENS), or not a hub where it names none: so in Meetings an entity's
     # page still joins two people, as before entities were hubs.
-    wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    wikis = {place for place, root, _, _ in notes if root.parent.name != "Zones"}
     opens = {place: {keys.index(k) for k in OPENS[place] if k in keys} for place in wikis if place in OPENS}
     neighbours: Dict[int, set] = {}
     for a, b in edges:
@@ -5780,10 +5529,6 @@ var x=document.getElementById('thought-close');if(x)x.onclick=function(){drop();
 """
 
 
-# The example's manifest in its zone, as garrick_lib.EXAMPLE_MANIFEST names it:
-# a zone is the example only with one that names it, as System/tools/example.py
-# reads it (present()), never by its name alone.
-EXAMPLE_MANIFEST = ".example.json"
 NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
 _HO = None
 
@@ -5962,21 +5707,12 @@ def work_name_for(r: dict) -> str:
     return "%s, %s" % (r["project"], r["thread"])
 
 
-def example_zone(ws: Path) -> Optional[str]:
-    """The zone the worked example is in, or None: the first zone whose
-    .example.json names it, read as System/tools/example.py's present() does."""
-    zones = ws / "Zones"
-    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
-        manifest = zone / EXAMPLE_MANIFEST
-        if not (zone.is_dir() and manifest.is_file()):
-            continue
-        try:
-            data = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict) and data.get("zone") == zone.name:
-            return zone.name
-    return None
+def example_zone(ws: Path, model: Optional[dict] = None) -> Optional[str]:
+    """The zone the worked example is in, or None: the first zone whose .example.json names it. The view model reads the
+    markers (view.example_zone)."""
+    if model is None or "example" not in model:
+        model = view_model(ws, ("example",))
+    return (model or {}).get("example")
 
 
 def work_id(name: str, key: str) -> str:
@@ -5985,13 +5721,13 @@ def work_id(name: str, key: str) -> str:
     return "pw-%s-%s" % (slug, hashlib.sha1(key.encode("utf-8")).hexdigest()[:6])
 
 
-def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
+def works(ws: Path, T: Dict[str, dict], today: dt.date, model: Optional[dict] = None) -> List[dict]:
     """Every live piece of work, most recent first, for the Overview's Your work list.
     Read from what Garrick keeps already: the thread note's Resume here block
     (Next action, Waiting on), its `updated:` date and an unwrapped
     checkpoint's (`touched`), and the zone's Todo.md lines that open with its
     link (thread_actions(), run first)."""
-    example = example_zone(ws)
+    example = example_zone(ws, model)
     try:
         me = ask_scope_mod().user_name(ws)
     except Exception:
@@ -8022,44 +7758,7 @@ def need_groups(needs: List[dict], view: Optional[str] = None, zones: Tuple[str,
 # A question Garrick asked is a file in the `Needs you` folder of the work it blocks. It is a row of Waiting on you now in
 # its own zone, with a button for each answer and *Not now*; both go through page_action.py's `answer` and `later`. Each
 # row is one zone's, and nothing here adds one zone to another.
-QUESTION_BOX = "Needs you"
-QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
 QUESTION_ASK = 200
-
-
-def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
-    """The open questions in one piece of work's `Needs you` folder, oldest first, and the ones put off whose day has
-    come. One put off to a later day, an answered one and a file with no bold line to ask are left out."""
-    out: List[dict] = []
-    box = folder / QUESTION_BOX
-    if not box.is_dir():
-        return out
-    for f in sorted(box.glob("*.md")):
-        if f.name.startswith((".", "_")):
-            continue
-        fm = frontmatter(f)
-        if folder == zone and not as_text(fm.get("intake")).strip():
-            continue                    # the zone's own box holds only what an inbox run asked (#634)
-        state = as_text(fm.get("status")).strip().lower() or "open"
-        later = as_date(fm.get("later"))
-        if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
-            continue
-        try:
-            body = re.sub(r"\A---\n.*?\n---\n", "", f.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)
-        except OSError:
-            continue
-        ask, opts = "", []
-        for line in body.splitlines():
-            m = QUESTION_OPTION.match(line)
-            if m:
-                opts.append(m.group(1).strip())
-            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
-                ask = line.strip().strip("*").strip()
-        if ask:
-            out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
-                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name,
-                        "intake": bool(as_text(fm.get("intake")).strip()) and folder == zone})
-    return out
 
 
 def question_need(q: dict, today: dt.date) -> dict:
@@ -8085,20 +7784,13 @@ def question_need(q: dict, today: dt.date) -> dict:
             "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
 
 
-def question_needs(ws: Path, today: dt.date) -> List[dict]:
-    """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
+def question_needs(ws: Path, today: dt.date, model: Optional[dict] = None) -> List[dict]:
+    """Every zone's open questions as rows, oldest first within the zone, zones in their order. The view model finds
+    the questions (view.zone_questions); this draws each as a row."""
+    model = model or view_model(ws, ("questions",), today)
     out: List[dict] = []
-    for zone in visible_dirs(ws / "Zones"):
-        found: List[dict] = questions_in(zone, zone, today)      # the zone's own: what an inbox run asked (#634)
-        for project in visible_dirs(zone):
-            hub = project / (project.name + ".md")
-            if hub.is_file():
-                found += questions_in(project, zone, today)
-            for thread in visible_dirs(project / "Threads"):
-                if (thread / (thread.name + ".md")).is_file():
-                    found += questions_in(thread, zone, today)
-        found.sort(key=lambda q: (q["asked"] or dt.date.max, q["file"]))
-        out += [question_need(q, today) for q in found]
+    for z in (model or {}).get("zones", []):
+        out += [question_need(dict(q, asked=as_date(q["asked"])), today) for q in z.get("questions", [])]
     return out
 
 
@@ -8544,9 +8236,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws)
-    model = view_model(ws)                                 # the one document of the workspace this page draws from (#650)
+    model = view_model(ws, today=now.date())              # the one document of the workspace this page draws from (#650)
     T, IB, C, R, W = (threads(ws, model), inboxes(ws, model), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
-                           repos(ws), wikis(ws))
+                           repos(ws, model), wikis(ws, model))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
@@ -8656,7 +8348,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
     flags_on = preview_flags(ws)
     acting = True       # the buttons that act; only a host that carries them out (the app) shows them
-    lists = todo_list(ws, link, now.date())
+    lists = todo_list(ws, link, now.date(), model)
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
     GS = graph_styles(ws)       # each kind's colour, from Settings › Graph colours (#291)
     GK: List[Tuple[str, str, str]] = []
@@ -8667,7 +8359,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     urgent = {(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"])
               for z in T.values() for r in z["rows"] if r.get("late")}      # Explore's ring: a late next action (#233)
     # Your work, the Overview's opening list (#503): the pieces of work, from what Garrick keeps already.
-    HW = works(ws, T, now.date())
+    HW = works(ws, T, now.date(), model)
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
@@ -9004,7 +8696,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # does for every other fold.
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
+        GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent, model)
         GK = [(k, plural(k), c) for k, c in zip(GR["keys"], GR["colors"])]    # each kind as shipped, for Settings (#291)
         GR["colors"] = graph_colours(GR["keys"], GR["colors"], GS)
         core = sum(1 for n in GR["nodes"] if n["c"])
@@ -9061,7 +8753,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
+    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date(), model)  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     zones_here = tuple(T)                                                          # the zones the picker can put in view; Work first, as the graph does
     view_zone = ("Work" if "Work" in zones_here else zones_here[0]) if zones_here else None
     lead = waiting_card(waiting_now or [], now, needs, view_zone, zones_here) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(

@@ -105,6 +105,9 @@ from garrick_lib import (  # noqa: E402
     is_origin,
     memory_entries,
     memory_folders,
+    memory_index_report,
+    MEMORY_INDEX_MAX,
+    MEMORY_LINE_MAX,
     memory_origin,
     origin_problems,
     parse_learned,
@@ -1509,6 +1512,33 @@ INBOUND_FIX = ("its only source is inbound, and nothing that came in from outsid
                "confirms it: ask, then add `user` to its source, or delete it")
 
 
+def check_memory_index(ws: Workspace) -> List[Finding]:
+    """The memory index is loaded whole by every session, so it has a budget, as System/rules.md has (#664): a warning,
+    never an error, when it is over 8,000 characters or a line is over 160. One warning for each index, naming the
+    longest lines by number and length, and the pointers of parked or done threads still in it. Without the `memory`
+    setting, or with no index in the folder, nothing is said."""
+    out = []
+    for folder in memory_folders(ws.root, ws.settings.get("memory") or []):
+        report = memory_index_report(ws.root, folder) if folder.is_dir() else {}
+        if not report or not (report["over"] or report["long"]):
+            continue
+        said = []
+        if report["over"]:
+            said.append("it is %s characters, and the most is %s" % (format(report["chars"], ","), format(MEMORY_INDEX_MAX, ",")))
+        if report["long"]:
+            said.append("%d line%s over %d characters; the longest: %s" % (
+                len(report["long"]), "" if len(report["long"]) == 1 else "s", MEMORY_LINE_MAX,
+                ", ".join("line %d (%d characters)" % (n, size) for n, size in report["long"][:5])))
+        if report["leaving"]:
+            said.append("%d pointer%s of a thread that is parked or done %s still in it: %s. Parking a thread moves its "
+                        "pointer to parked/; `nurture` moves the rest" % (
+                            len(report["leaving"]), "" if len(report["leaving"]) == 1 else "s",
+                            "is" if len(report["leaving"]) == 1 else "are", ", ".join(f for f, _ in report["leaving"][:8])))
+        out.append(Finding(WARNING, "memory", str(folder / report["file"]), "the memory index " + "; ".join(said),
+                           "The memory index is past its budget"))
+    return out
+
+
 def check_memory(ws: Workspace) -> List[Finding]:
     """Every learned entry says where it came from. A memory entry, in the
     folders `memory` names in the check settings, carries `source:` and
@@ -1516,7 +1546,7 @@ def check_memory(ws: Workspace) -> List[Finding]:
     reads. Either whose only source is inbound is reported too. Without the
     setting no memory is read: where a harness keeps one is not Garrick's to
     guess. A row typed by hand has no Learned cell, and nothing is said."""
-    out = []
+    out = check_memory_index(ws)
     for path in memory_entries(memory_folders(ws.root, ws.settings.get("memory") or [])):
         origin = memory_origin(read_text(path) or "")
         r = rel(ws, path)
@@ -5371,6 +5401,78 @@ def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
         except (OSError, ValueError):
             found = False
         out.append(found)
+    return out
+
+
+TEMPLATE_HINT_PROJECTS = 4   # projects of one other walled zone that hold a file's shared wording (#662)
+TEMPLATE_HINT_NOTES = 4      # files of the file's own zone that hold every one of those shared runs
+
+
+def template_hints(root: Path, paths: List[str]) -> Dict[str, List[dict]]:
+    """For each file of `paths` (root-relative), the other walled zones whose wording it repeats in a way that looks like an old
+    note template (#662): `[{"zone", "projects", "notes"}]`. A zone is listed when the file's shared runs, the ones
+    wording_findings reports across the wall, are held by files of TEMPLATE_HINT_PROJECTS projects or more of that zone, and every
+    one of those runs is also held by TEMPLATE_HINT_NOTES files or more of the file's own zone, itself among them. `projects` is how many
+    projects of that zone (`names` their folder names, for matching findings and never shown), `notes` the fewest files of the own zone that hold one of the runs. Counts and a zone's name, nothing the
+    runs say. It reads the index wording_findings reads and decides nothing about a finding: the wall check is not changed, and a file
+    this cannot place has no entry. Read only."""
+    _BLOBS.clear()
+    ws = discover(Path(root).resolve(), None)
+    index = quote_index(ws)
+    out: Dict[str, List[dict]] = {}
+    for rel_path in paths:
+        path = ws.root / rel_path
+        try:
+            text = read_text(path)
+            project = project_of(ws, path)
+            dest = zone_of(ws.root, path)
+            if not text or project is None or dest in (None, UNZONED):
+                continue
+            project, sent = project[0], _in_sources(project[0], path)
+            if sent:
+                continue
+            zones: Dict[str, dict] = {}
+            for h in runs(transcript_text(path, text), shared_link(ws, path), template_structure(ws)):
+                owners = index.owners.get(h)
+                if not owners or h in index.common or h in index.widespread:
+                    continue
+                pages, files, clear = False, [], False
+                for o in owners:
+                    if o == path:
+                        continue
+                    mfm = ws.meetings.get(o)
+                    if mfm is not None:
+                        if not may_flow(ws.context, zone_from_frontmatter(ws.root, mfm), dest):
+                            pages = True
+                        elif o in ws.meeting_questions:
+                            continue
+                        else:
+                            clear = True
+                            break
+                    elif index.project.get(o) == project and not _in_sources(project, o) \
+                            and not any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ())):
+                        continue
+                    elif any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ())):
+                        files.append(o)
+                    else:
+                        clear = True
+                        break
+                if clear or pages or not files:
+                    continue
+                own = sum(1 for o in owners if o not in ws.meetings and zone_of(ws.root, o) == dest)
+                for o in files:
+                    there = zone_of(ws.root, o)
+                    got = zones.setdefault(there, {"projects": set(), "notes": own})
+                    got["projects"].add(index.project[o])
+                    got["notes"] = min(got["notes"], own)
+            hints = [{"zone": zone, "projects": len(got["projects"]), "notes": got["notes"],
+                      "names": sorted(pr.name for pr in got["projects"])}
+                     for zone, got in sorted(zones.items())
+                     if len(got["projects"]) >= TEMPLATE_HINT_PROJECTS and got["notes"] >= TEMPLATE_HINT_NOTES]
+            if hints:
+                out[rel_path] = hints
+        except (OSError, ValueError):
+            continue
     return out
 
 

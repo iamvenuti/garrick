@@ -150,3 +150,23 @@ Add it to the `hooks` block of `~/.claude/settings.json`, beside any others, for
 ```
 
 Its tests: `python3 -m unittest discover -s tests -p test_waiting_hook.py`.
+
+## The parked-thread hint
+
+`parked_hint.py` is a third, separate hook, for Claude Code only (#664). Parking a thread moves its memory pointer out of the memory index until the thread wakes, so the session no longer sees a line about it and cannot notice that a request is about it. The hook gives that back. It runs on `UserPromptSubmit`, reads the prompt, and matches its whole words, in any case, against each parked thread's name, its `spoken:` form, its hub's `party:` tag and the names of that party's people. One word of a name or spoken form is enough when it has four letters or more and is not a common one such as "plan" or "note"; a party tag or a person's full name matches as a phrase. At most the best two threads are named, the most matched words first. On a match it adds one line to the session's context: *This may belong to Acme, Pricing, which is parked: say 'wake Acme, Pricing' to pick it up.* With no match it adds nothing.
+
+- **It does nothing without the `memory` setting** in `System/garrick-checks.json`, since without it no pointer ever left an index. It does nothing outside a workspace, and nothing on any error.
+- **Walls.** A session in a zone, or in a project of it, is told of that zone's parked threads and of an open zone's. A session at the workspace root or in `System/`, which the zone guard treats as belonging to no zone, is told of any zone's. A session in a wiki, or anywhere else, is told of open zones only. A parked thread of another walled zone is never named, and nothing says that one exists, not even a count.
+- **Cost.** It lists the hub and thread notes by name and reads their frontmatter, never the notes' bodies, and only when a note's modification time has changed. What it reads is kept in `System/generated/parked-hints.json`, which git leaves out: names, zones, statuses, spoken forms, party tags and the names of those parties' people. It writes nothing of the prompt anywhere, in the cache, in a log or in an error. It ends in well under the 5 seconds the registration allows.
+
+Add it to the `hooks` block of `~/.claude/settings.json`, beside any others:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/parked_hint.py", "timeout": 5 }] }]
+  }
+}
+```
+
+The installer does not write this line: like the waiting hook's, it lives in your home folder, outside the workspace, and you choose to add it. Its tests: `python3 -m unittest discover -s tests -p test_parked_hint.py`.

@@ -1312,14 +1312,24 @@ def work_notes(root: PathLike) -> Dict[str, dict]:
     root = Path(root)
     out: Dict[str, dict] = {}
     zones = root / "Zones"
+    root_real = os.path.realpath(str(root))
+
+    def kept(folder: Path, zone_real: str) -> bool:
+        """A folder whose real place is inside its own zone's, or outside the workspace altogether. A link into
+        another zone would give that zone's work under this zone's name."""
+        real = os.path.realpath(str(folder))
+        inside = lambda base, p: p == base or p.startswith(base + os.sep)
+        return inside(zone_real, real) or not inside(root_real, real)
+
     try:
         zone_dirs = sorted(z for z in zones.iterdir() if z.is_dir() and not z.name.startswith((".", "_")))
     except OSError:
         return out
     for zone in zone_dirs:
+        zone_real = os.path.realpath(str(zone))
         try:
             projects = sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))
-                              and p.name not in ("Inbox", "archive"))
+                              and p.name not in ("Inbox", "archive") and kept(p, zone_real))
         except OSError:
             continue
         for project in projects:
@@ -1332,7 +1342,7 @@ def work_notes(root: PathLike) -> Dict[str, dict]:
                     "party": fm.get("party")}
             threads = project / "Threads"
             try:
-                found = sorted(d for d in threads.iterdir() if d.is_dir()) if threads.is_dir() else []
+                found = sorted(d for d in threads.iterdir() if d.is_dir() and kept(d, zone_real)) if threads.is_dir() and kept(threads, zone_real) else []
             except OSError:
                 found = []
             for d in found:
@@ -1424,6 +1434,22 @@ def _memory_sidecar(parked_dir: Path, name: str) -> Path:
     return parked_dir / (name + ".index-line")
 
 
+def memory_folder_ok(root: PathLike, folder: PathLike) -> bool:
+    """Whether a memory folder may be moved in: not the workspace itself and not inside its Zones/, Wikis/ or System/.
+    A memory folder there would put a move inside what the walls and the repositories guard."""
+    real, base = os.path.realpath(str(folder)), os.path.realpath(str(root))
+    if real == base:
+        return False
+    return not any(real == os.path.join(base, d) or real.startswith(os.path.join(base, d) + os.sep)
+                   for d in ("Zones", "Wikis", "System"))
+
+
+def _memory_unsafe(folder: Path, index: Optional[Path]) -> bool:
+    """A link where a file or folder of the move should be: the index, or `parked/`."""
+    return index is None or index.is_symlink() or os.path.islink(str(folder / MEMORY_PARKED)) \
+        or os.path.islink(str(folder))
+
+
 def memory_move_out(folder: PathLike, pointer: dict) -> str:
     """Move one pointer to `parked/` and its line out of the index. The line goes beside the file, in
     `parked/<file>.index-line` (JSON: the line, its heading and the line before it), so waking puts back exactly
@@ -1433,7 +1459,9 @@ def memory_move_out(folder: PathLike, pointer: dict) -> str:
     parked = folder / MEMORY_PARKED
     target = parked / pointer["file"]
     side = _memory_sidecar(parked, pointer["file"])
-    if index is None or os.path.lexists(str(target)) or os.path.lexists(str(side)):
+    if _memory_unsafe(folder, index):
+        return "unsafe"
+    if os.path.lexists(str(target)) or os.path.lexists(str(side)):
         return "held"
     text = index.read_text(encoding="utf-8", errors="replace")
     lines = text.split("\n")
@@ -1468,7 +1496,9 @@ def memory_move_back(folder: PathLike, pointer: dict) -> str:
     parked = folder / MEMORY_PARKED
     target = folder / pointer["file"]
     side = _memory_sidecar(parked, pointer["file"])
-    if index is None or os.path.lexists(str(target)):
+    if _memory_unsafe(folder, index):
+        return "unsafe"
+    if os.path.lexists(str(target)):
         return "held"
     text = index.read_text(encoding="utf-8", errors="replace")
     lines = text.split("\n")
@@ -1477,6 +1507,8 @@ def memory_move_back(folder: PathLike, pointer: dict) -> str:
         record = json.loads(side.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
+    if isinstance(record, dict) and isinstance(record.get("line"), str) and re.search(r"[\r\n]", record["line"]):
+        return "unsafe"                               # a line kept beside the file that would write two lines
     if not isinstance(record, dict) or not isinstance(record.get("line"), str):
         record = {"line": "- [%s](%s)" % (pointer["file"][:-3], pointer["file"]), "heading": "", "after": ""}
     already = pointer["file"] in memory_index_links(text)
@@ -1525,6 +1557,8 @@ def park_memory_pointer(root: PathLike, note: str, wake: bool = False) -> str:
     folders = [f for f in memory_folders(root) if f.is_dir()]
     if not folders:
         return ""
+    if not all(memory_folder_ok(root, f) for f in folders):
+        return "Its memory pointer was not moved: the memory folder is inside the workspace."
     notes = work_notes(root)
     info = notes.get(note)
     if info is None:
@@ -1543,7 +1577,10 @@ def park_memory_pointer(root: PathLike, note: str, wake: bool = False) -> str:
             if len(have) > 1:
                 said.append("Its memory pointer was not moved: more than one memory entry names it.")
                 continue
-            if (memory_move_back if wake else memory_move_out)(folder, have[0]):
+            result = (memory_move_back if wake else memory_move_out)(folder, have[0])
+            if result == "unsafe":
+                said.append("Its memory pointer was not moved: the memory folder holds a link, or a line that cannot be put back.")
+            elif result:
                 said.append("Its memory pointer was not moved: %s." % (
                     "the same file is already in the memory index" if wake else "one of the same name is already set aside"))
             else:
@@ -1571,9 +1608,8 @@ def memory_index_report(root: PathLike, folder: PathLike) -> dict:
     leaving = []
     for p in memory_pointers(root, folder, False, list(notes)):
         info = notes.get(p["refs"][0], {})
-        hub = notes.get("Zones/%s/%s/%s.md" % (info.get("zone"), info.get("project"), info.get("project")), {})
-        if info.get("status") in ("parked", "done") or (info.get("thread") and hub.get("status") == "parked"):
-            leaving.append((p["file"], info.get("status") if info.get("status") in ("parked", "done") else "parked"))
+        if info.get("status") in ("parked", "done"):       # the note's own status: a live thread of a parked project stays
+            leaving.append((p["file"], info.get("status")))
     over = len(text) > MEMORY_INDEX_MAX
     return {"file": index.name, "chars": len(text), "long": long, "over": over, "leaving": sorted(leaving)}
 

@@ -1512,8 +1512,9 @@ register(Kind("fade", "Fading", 1200, lambda ctx, item: False, gather=gather_fad
 def gather_parked_pointers(ctx: Ctx) -> List[Item]:
     from garrick_lib import memory_folders, memory_index_report, memory_pointers
     out = []
+    from garrick_lib import memory_folder_ok
     for folder in memory_folders(ctx.root):
-        report = memory_index_report(ctx.root, folder) if folder.is_dir() else {}
+        report = memory_index_report(ctx.root, folder) if folder.is_dir() and memory_folder_ok(ctx.root, folder) else {}
         by_name = {p["file"]: p for p in memory_pointers(ctx.root, folder)} if report else {}
         for file, status in (report or {}).get("leaving", []):
             if file in by_name:
@@ -1531,7 +1532,10 @@ def apply_parked_pointer(ctx: Ctx, item: Item, journal: "Journal") -> str:
     found = [p for p in memory_pointers(ctx.root, folder) if p["file"] == item.fix["file"]]
     if len(found) != 1:
         raise Held("the pointer is not in the index as one line any more")
-    if memory_move_out(folder, found[0]):
+    why = memory_move_out(folder, found[0])
+    if why == "unsafe":
+        raise Held("the memory index or parked/ is a link, so nothing was moved")
+    if why:
         raise Held("a file of that name is already in parked/")
     return "its pointer is in parked/ and its line is out of the memory index"
 

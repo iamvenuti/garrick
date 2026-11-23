@@ -308,7 +308,8 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
    dated entry "Renamed from <old>.", all in one commit in the zone. It adds
    the old name as a heard alias in `System/names.md`: the executor commits
    that; run by hand, commit it in the workspace root's repository.
-4. **The memory pointer**, if you keep one: point it at the new note.
+4. **The memory pointer**, if you keep one: point it at the new note, whether it is in the memory
+   folder or in its `parked/`.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
 
 Moving a thread to another zone is not a rename: zones never mix. Say so,
@@ -357,7 +358,7 @@ python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" -
    goes through the zone's wall check, never around it; `undo` reverts it
    while it is the zone's last commit.
 4. **The memory pointer**, if you keep one, and a desk tab open on the thread:
-   point them at the new path. The report says so.
+   point them at the new path, a pointer in `parked/` too. The report says so.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
 
 Spoken: "Pricing is in Birch now, and its links follow."
@@ -390,7 +391,7 @@ python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--t
    the name said again; a plain "yes" is not enough.
 3. **Run the second form.** One commit in the zone; the reply gives the
    commit to revert. Meetings pages stay.
-4. **The memory pointer**, if you keep one: delete it.
+4. **The memory pointer**, if you keep one: delete it, in the memory folder or in its `parked/`.
 
 Spoken: "Deleted the test thread and its one open action. Say undo to bring
 it back." On undo, `python3 System/status/page_action.py undo --zone <Zone>

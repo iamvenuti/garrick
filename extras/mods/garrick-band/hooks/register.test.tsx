@@ -637,7 +637,7 @@ describe('Finder and Obsidian', () => {
   })
 })
 
-describe('Settings › Opening a thread', () => {
+describe('Settings › Opening work', () => {
   const VAULT = [`/usr/bin/open`, `/Applications/Obsidian.app`, `${ROOT}/Zones/Work/.obsidian`]
   const ALL = { note: true, finder: true, cmux: true, codex: true, claude: true }
 
@@ -662,7 +662,7 @@ describe('Settings › Opening a thread', () => {
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await band.find({ key: 'obsidian' })).toBeUndefined()
     expect(await band.find({ key: 'finder' })).toBeDefined()
-    expect((await $.command.run({ command: 'garrick', args: 'obsidian' } as any)).text).toBe('Obsidian is switched off in Settings › Opening a thread.')
+    expect((await $.command.run({ command: 'garrick', args: 'obsidian' } as any)).text).toBe('Obsidian is switched off in Settings › Opening work.')
     expect(ran.filter(r => r[0] === '/usr/bin/open')).toEqual([])
     const pane = await $.ui.mount({ plugin: 'garrick-band', surface: 'terminal', component: 'Pane', requestId: 'garrick-resume', props: {} } as any)
     expect(await pane.find({ key: 'pane-obsidian' })).toBeUndefined()

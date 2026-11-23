@@ -73,6 +73,33 @@ def read(ws: Path) -> dict:
         return {}
 
 
+# 0.79.0 kept two rows for each assistant app, Open in Claude and New session in Claude, and the same for Codex; 0.80.0
+# keeps one row for each, under the app's own key, which opens a new session (#682). A settings file 0.79.0 wrote is read
+# as one row: on when either old key is on, a Default of either old key the row's. Only a file that holds an old key is
+# read this way, so a file 0.80.0 saved, which has none, keeps what it says. The old keys are dropped on the next save,
+# when page_action.py writes the launchers it knows, and never before.
+MERGED = (("claude", "claude-new"), ("codex", "codex-new"))
+
+
+def launchers_merged(on, default=None):
+    """(the launchers as saved, in the same form, a dict of {name: on} or a list of the names on, with each app's two
+    0.79.0 rows read as one, and the default with an old key read as its app's)."""
+    if isinstance(on, dict):
+        on = dict(on)
+        for key, old in MERGED:
+            if old in on:
+                was = on.pop(old)
+                on[key] = on.get(key, True) is not False or was is not False
+    elif isinstance(on, list):
+        names = [k for k in on if k not in dict((o, k) for k, o in MERGED)]
+        for key, old in MERGED:
+            if old in on and key not in names:
+                names.append(key)
+        on = names
+    default = dict((o, k) for k, o in MERGED).get(default, default) if isinstance(default, str) else default
+    return on, default
+
+
 def save(ws: Path, chosen: dict) -> dict:
     """Keep these choices, leaving the rest of the file as it is."""
     found = lib(ws)

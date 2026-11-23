@@ -297,7 +297,7 @@ The list the Garrick App's Overview opens on: every live piece of work, most rec
 
 ### Continue
 
-*Open in Claude* on a thread, and on a piece of work in Your work when Claude is the way you chose to open things. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
+The request that asks Claude where a piece of work stands and opens Claude's desktop app on that session; since 0.80.0 no button sends it, and *Claude* opens a new session instead. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
 
 ### The Guide
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""settings_readguard.py: Settings > Read guard and Settings > This machine, as the grid draws them (#673, #674).
+"""settings_readguard.py: Settings > Walls > Read guard and Settings > About > This computer, as the grid draws them (#673, #674, #682).
 
 settings_guard.py keeps what the read guard is and what its log holds: the hook folders it trusts, the log's lines, `read_state()`.
-This file only draws, from what those give: one section for the read guard with one heading and one "?", the three choices each with
-what it does, a list that names each file and its zone, *Across a wall* only under On, the connected services by name under a closed
-fold of their own under Watch and On (#683), and the machine's row in the page's grid. No pattern and no tool name is drawn. It reads and writes nothing. Every function takes the settings_guard module as `sg`, for its words.
+This file only draws, from what those give: one part of Walls for the read guard with one sub-heading and one "?", the three choices
+each with what it does, a list that names each file and its zone, *Across a wall* only under On, the connected services by name under a
+closed fold of their own under Watch and On (#683), and the machine's row in the page's grid. No pattern and no tool name is drawn. It
+reads and writes nothing. Every function takes the settings_guard module as `sg`, for its words.
 Standard library only.
 """
 
@@ -19,11 +20,14 @@ MODES = (("off", "Off"), ("warn", "Watch"), ("enforce", "On"))
 MODE_SAID = {"off": "Nothing is checked when the assistant reads.",
              "warn": "Nothing is stopped. For a week, you see what would have been.",
              "enforce": "Reads behind another wall are stopped."}
-PROTECTS = "In a session for one project, the assistant does not open notes, meetings or mail that sit behind another zone's wall."
-HELP_TEXT = ("Walls already stop your assistant from writing one zone's material into another. The read guard does the same for "
-             "reading. In a session for one project, it stops the assistant from opening notes, meetings and mail that sit behind "
-             "another wall. Watch and On add the read guard to your assistant's settings on this computer. Off takes it out. Start "
-             "with Watch for a week and look at the list. When the list holds nothing you needed, choose On.")
+PROTECTS = "The assistant does not read what sits behind the wall of another zone."
+# The texts of #681: one short "?" for the read guard, one for the connected tools, one for this computer.
+HELP_TEXT = ("Walls stop your assistant from writing across zones. The read guard stops it from reading across zones. Start with "
+             "Watch for a week, then choose On.")
+TOOLS_TEXT = ("A mail or calendar search can return messages from every zone. Garrick takes out what sits behind another wall "
+              "before your assistant sees it.")
+MACHINE_TEXT = "Change this only if a second computer keeps a copy of your workspace."
+CODEX_TRUST = "Codex runs the read guard only after you trust it in Codex's own settings, and again after each change you make here."
 # Across a wall shows under On only, and each choice says what it does (#683).
 CROSS_SAID = {"deny": "Every read across a wall is stopped.", "ask": "You decide each time, for one session."}
 SERVICES = "Connected services"
@@ -73,7 +77,7 @@ def services_fold(sg, services: List[dict], help_button: Callable, help_text: Ca
             'maxlength="60" autocomplete="off" placeholder="The name of the service">'
             '<button class="act sm" type="button" id="rg-add" data-rg-service-add="1">Add</button></span></details>%s'
             % (undecided, sg.esc(title), help_button(SERVICES, "rg-services"), lines, sg.esc(ADD_SERVICE),
-               help_text("rg-services", sg.esc(sg.GUARD_TEXT["rg-services"]))))
+               help_text("rg-services", sg.esc(TOOLS_TEXT))))
 
 
 def as_time(value) -> dt.datetime:
@@ -176,16 +180,17 @@ def would_lines(sg, would: Dict[str, List[dict]]) -> List[str]:
 
 
 def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: Callable, role: str = "solo", shown: Optional[dict] = None) -> str:
-    """Settings › Read guard (#674): its own section, in the app only. One heading with one "?", one sentence on what it protects, the
+    """Settings › Walls › Read guard (#674, #682): a part of Walls, after the zones, in the app only. One sub-heading with one "?",
+    one sentence on what it protects, the
     three choices each with what it does, and under Watch what the log holds, as a list that names each file and its zone. Across a wall
     is on the page under On only, and the connected services under Watch and On only, in a closed fold of their own (#683). Under Off
     neither is drawn: the page is built again once the mode is saved. The services give way to one line for Codex, which cannot have a
     result replaced. On a laptop copy the rows give way to one line: the read guard's settings are the workspace's, and this computer
     only receives it. `shown` says what the page may name, as `{"scope": None for the whole workspace or the zones, "walled": {zone:
     whether walled}}`."""
-    head = '<h3>Read guard%s</h3>' % help_button("Read guard", "readguard")
+    head = '<h4 class="setsubh">Read guard%s</h4>' % help_button("Read guard", "readguard")
     if role == "roaming":
-        return ('<section class="setsec apponly" id="readguard-settings" hidden data-roaming="1">%s<p class="hint rgroaming" id="rg-roaming">%s</p></section>'
+        return ('<div class="setpart apponly" id="readguard-settings" hidden data-roaming="1">%s<p class="hint rgroaming" id="rg-roaming">%s</p></div>'
                 % (head, sg.esc(sg.ROAMING_LINE)))
     mode = state["mode"]
     problem = state.get("problem") or ""
@@ -209,19 +214,21 @@ def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: 
     lists = ""
     if codex:
         lists = ('<p class="hint rgcodex" id="rg-codex">%s</p><p class="hint rgtrust" id="rg-trust">%s</p>'
-                 % (sg.esc(sg.CODEX_LINE), sg.esc(sg.CODEX_TRUST)))
+                 % (sg.esc(sg.CODEX_LINE), sg.esc(CODEX_TRUST)))
     elif mode != "off" and state.get("services") is not None:
         lists = services_fold(sg, state["services"], help_button, help_text)
-    return ('<section class="setsec apponly" id="readguard-settings" hidden>%s<p class="setlede">%s</p>%s%s%s%s%s'
-            '<p class="hint rgsaid" id="rg-said" role="status" hidden></p></section>'
+    return ('<div class="setpart apponly" id="readguard-settings" hidden>%s<p class="setlede">%s</p>%s%s%s%s%s'
+            '<p class="hint rgsaid" id="rg-said" role="status" hidden></p></div>'
             % (head, sg.esc(PROTECTS), help_text("readguard", sg.esc(HELP_TEXT)), mode_row, seen + cannot, cross_row, lists))
 
 
 
 
 def machine_section(sg, role: str, name: str, server: str, help_button: Callable, help_text: Callable) -> str:
-    """Settings › This machine. The role in words and, for a laptop copy, the home server's name; *Change…* in the app only;
-    in a browser, the line that says it is changed in Garrick.app. The dialog holds the three choices."""
+    """Settings › About › This computer (#682): one row, its label, the role in words (for a laptop copy with the home
+    server's name) and *Change…* in the app only; in a browser, the line that says it is changed in Garrick.app. The
+    sentence for the role is said once, in the window that Change opens, and as the role's tooltip (#681): a small line has
+    ten words at most. The window holds the three choices, as before."""
     words = dict(sg.ROLE_WORDS)
     role = role if role in words else "solo"
     shown = words[role] + (" of %s" % server if role == "roaming" and server else "")
@@ -229,12 +236,13 @@ def machine_section(sg, role: str, name: str, server: str, help_button: Callable
         '<label class="rolechoice"><input type="radio" name="role-pick" value="%s"%s> <span><b>%s</b><small>%s</small></span></label>'
         % (k, " checked" if k == role else "", sg.esc(v), sg.esc(sg.ROLE_TEXT[k])) for k, v in sg.ROLE_WORDS)
     row = ('<div class="launcher-row srow mrole" id="machine-role" data-role="%s" data-name="%s" data-server="%s">'
-           '<div class="slab"><span class="launcher-choice"><span id="machine-role-said">%s<small>%s</small></span></span></div>'
-           '<div class="sctl"><button class="act sm apponly" type="button" id="role-change" data-rolechange="1">Change…</button></div>%s</div>%s'
-           % (sg.esc(role), sg.esc(name), sg.esc(server), sg.esc(shown), sg.esc(sg.ROLE_TEXT[role]), help_button("This computer's role", "machine-role"),
-              help_text("machine-role", sg.esc(sg.ROLE_TEXT[role]))))
+           '<div class="slab"><span class="launcher-choice"><span>This computer</span></span></div>'
+           '<div class="sctl"><span class="mrolesaid" id="machine-role-said" title="%s">%s</span>'
+           '<button class="act sm apponly" type="button" id="role-change" data-rolechange="1">Change…</button></div>%s</div>%s'
+           % (sg.esc(role), sg.esc(name), sg.esc(server), sg.esc(sg.ROLE_TEXT[role]), sg.esc(shown), help_button("This computer", "machine"),
+              help_text("machine", sg.esc(MACHINE_TEXT))))
     dialog = ('<div id="role-dialog" class="rolebox" role="dialog" aria-modal="true" aria-labelledby="role-title" hidden><div class="rolepanel" id="role-form">'
-              '<h3 id="role-title" tabindex="-1">This machine</h3><fieldset class="rolepick"><legend>This computer is</legend>%s</fieldset>'
+              '<h3 id="role-title" tabindex="-1">This computer</h3><fieldset class="rolepick"><legend>This computer is</legend>%s</fieldset>'
               '<div class="rolefields"><label id="role-name-row">This computer\'s name (optional)'
               '<input type="text" id="role-name" maxlength="40" autocomplete="off" placeholder="laptop"></label>'
               '<label id="role-server-row" hidden>The home server\'s name'
@@ -245,16 +253,14 @@ def machine_section(sg, role: str, name: str, server: str, help_button: Callable
               '<button class="act lg" type="button" id="role-no">Cancel</button></div></div>'
               '<script type="application/json" id="role-changes">%s</script></div>'
               % (choices, sg.esc(sg.ROLE_FOOT), json.dumps(sg.ROLE_CHANGES).replace("<", "\\u003c")))
-    return ('<section class="setsec" id="machine-settings"><h3>This machine%s</h3><p class="setlede">%s</p>%s%s'
-            '<p class="hint nohost-only">The role is changed in Garrick.app.</p>%s</section>'
-            % (help_button("This machine", "machine"), sg.esc("Whether this computer works alone, holds the workspace, or keeps a copy of it."),
-               help_text("machine", sg.esc(sg.MACHINE_TEXT)), row, dialog))
+    return ('<div class="setpart" id="machine-settings">%s<p class="hint nohost-only">The role is changed in Garrick.app.</p>%s</div>'
+            % (row, dialog))
 
 
 CSS = r"""
 /* Settings › This machine and Settings › Read guard (#621, #674): rows are the page's grid; what is here is the guard's own */
 .nohost-only{display:none}.nohost .nohost-only{display:block}
-#machine-settings .mrole{align-items:center}
+#machine-settings .mrole{align-items:center}.mrolesaid{font-size:var(--fs-meta);color:var(--ink2)}
 .rolebox{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.35)}.rolebox[hidden]{display:none}
 .rolepanel{max-width:min(520px,100%);width:100%;max-height:100%;overflow:auto;box-sizing:border-box;padding:18px 20px;border:1px solid var(--line);border-radius:12px;color:var(--ink);background:var(--surface)}
 .rolebox h3{margin:0 0 10px}.rolepick{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}.rolepick legend{font-size:var(--fs-meta);color:var(--muted);padding:0;margin-bottom:6px}

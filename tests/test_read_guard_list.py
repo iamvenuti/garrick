@@ -291,8 +291,7 @@ class TestTheSection(unittest.TestCase):
         self.assertEqual(1, len(visible_buttons))
 
     def test_one_sentence_says_what_it_protects(self):
-        self.assertIn("In a session for one project, the assistant does not open notes, meetings or mail that sit behind another zone's wall.",
-                      visible_text(block([])).replace("&#39;", "'"))
+        self.assertIn("The assistant does not read what sits behind the wall of another zone.", visible_text(block([])))      # #681
 
     def test_three_choices_each_with_its_consequence(self):
         markup = block([], mode="off")
@@ -307,8 +306,8 @@ class TestTheSection(unittest.TestCase):
 
     def test_how_it_is_installed_is_behind_the_question_mark(self):
         markup = block([])
-        self.assertIn("add the read guard to your assistant", re.search(r'id="help-readguard".*?</p>', markup, re.S).group(0).replace("&#x27;", "'"))
-        self.assertNotIn("add the read guard to your assistant", visible_text(markup).replace("&#x27;", "'"))
+        self.assertIn(rgs.HELP_TEXT, re.search(r'id="help-readguard".*?</p>', markup, re.S).group(0))        # #681's text, behind the "?"
+        self.assertNotIn(rgs.HELP_TEXT, visible_text(markup))
 
     def test_across_a_wall_is_on_the_page_only_under_on_with_a_line_for_each_choice(self):
         for mode, shown in (("off", False), ("warn", False), ("enforce", True)):

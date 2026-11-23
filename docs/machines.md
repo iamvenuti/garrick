@@ -8,7 +8,7 @@ This page is for one other setup: a computer at home that stays on and holds the
 
 ## The three roles
 
-Each computer has a role. You set it in Settings, under *This machine*. The role belongs to the computer, not to the workspace, so a sync never copies it to the other computer. A role's name in the file that holds it is in brackets.
+Each computer has a role. You set it in Settings, under *About*, on the row *This computer*. The role belongs to the computer, not to the workspace, so a sync never copies it to the other computer. A role's name in the file that holds it is in brackets.
 
 | Role | What it is |
 |---|---|
@@ -49,14 +49,14 @@ If you tick a line by hand and then reopen it by hand before the server applies 
 
 ## Set it up
 
-1. On the home server, open Garrick.app, then Settings, then *This machine*, and choose *Change…*. Choose **Home server**, give the computer a name if you like, and say yes.
+1. On the home server, open Garrick.app, then Settings, then *About*, and choose *Change…* on the row *This computer*. Choose **Home server**, give the computer a name if you like, and say yes.
 2. On the laptop, do the same and choose **Laptop copy**. It asks for the home server's name.
 3. Set up the sync, which Garrick does not ship. It needs two rules from the tool you pick.
    - **The main folder syncs one way, from the home server to the laptop.** With Syncthing, make the folder Send Only on the server and Receive Only on the laptop. Do not use iCloud Drive or Dropbox for the workspace: they remove local copies and write conflict copies inside `.git`.
    - **The drop folders sync in both directions.** They are the only way back from the laptop: notes to yourself and mail saved offline, results of `drift.py`, and the outbox. Intake on the server files them on its next run.
 4. Keep the workspace at the same absolute path on both computers.
 
-The role is kept in one small file outside the workspace, `~/.config/garrick/machine.json`, which Settings writes for you. In a browser, *This machine* shows the role and says it is changed in Garrick.app.
+The role is kept in one small file outside the workspace, `~/.config/garrick/machine.json`, which Settings writes for you. In a browser, the row *This computer* shows the role and says it is changed in Garrick.app.
 
 The `setup` skill asks for a role only when you tell it the workspace is on more than one computer, and then points you here.
 

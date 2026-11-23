@@ -1247,7 +1247,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func openNewSession(_ request: [String: Any], _ said: [String: Any]) {
 		menuActed = true
 		guard said["ok"] as? Bool == true else {
-			return toast(said["say"] as? String ?? "That did not work.")
+			let line = bandLine(said)            // the plain sentence, the tool's own words as its detail (#511)
+			return toast(line.sentence, detail: line.detail)
 		}
 		let apps = ["claude": (claudeBundle, "Claude"), "codex": (codexBundle, "Codex")]
 		guard let key = request["key"] as? String, let (bundle, app) = apps[key],

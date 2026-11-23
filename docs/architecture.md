@@ -50,6 +50,16 @@ The shape, with one piece of work and one inbox:
                                   "hub": "Zones/Work/Acme/Acme.md", "party": ["acme"],
                                   "files": 4, "layout": ["split"]}},
             "open_links": [["Pricing"]],
+            "todo": {"file": "Zones/Work/Todo.md", "order": ["Inbox", "Soon"],
+                     "tasks": [{"file": "Todo.md", "section": "Soon", "key": "0f3a9c21d4b7e855", "text": "Send the memo",
+                                "thread": "Pricing", "target": "Pricing", "unsure": false, "due": "2026-11-25",
+                                "scheduled": null, "priority": null, "tags": [], "waiting": false, "also": [], "src": null,
+                                "line": "- [ ] [[Pricing]]: Send the memo 📅 2026-11-25",
+                                "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md", "label": "Pricing",
+                                "project": "Acme", "tname": "Pricing"}],
+                     "done": []},
+            "questions": [{"file": "Acme/Needs you/fence.md", "zone": "Work", "ask": "Which fence?", "options": ["Cedar", "Pine"],
+                           "asked": "2026-11-20", "own": "", "work": "Acme", "intake": false}],
             "work": [{"id": "Work/Acme/Pricing", "zone": "Work", "project": "Acme", "thread": "Pricing",
                       "shown": "row", "state": "active", "held": false,
                       "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md", "rel": "Acme/Threads/Pricing/Pricing.md",
@@ -58,11 +68,23 @@ The shape, with one piece of work and one inbox:
                       "touched": "2026-11-02",
                       "read": {"block": true, "date": "2026-11-02", "where": "Drafting.", "rows": {}, "entry": null, "about": ""},
                       "actions": ["park", "rename", "move", "delete", "continue", "open", "close"]}]}],
+ "today": "2026-11-22",
  "queues": {"inbox": [{"place": "Work", "kind": "zone", "folder": "Zones/Work/Inbox", "count": 2}]},
+ "wikis": [{"name": "Meetings", "folder": "Wikis/Meetings", "log": "Wikis/Meetings/wiki/log.md", "count": 12,
+            "when": "2026-11-20", "title": "Weekly review", "markdown": false, "page": "wiki/sources/review.md",
+            "unread": false}],
+ "repos": [{"name": "Work", "folder": "Zones/Work", "dirty": 1, "changes": [["Acme/Acme.md", ["unstaged"]]],
+            "unread": false, "since": "2026-11-21T09:12:00", "last": "2026-11-20T17:30:00"}],
+ "graph": {"places": [{"name": "Work", "folder": "Zones/Work", "zone": true}],
+           "notes": [{"place": "Work", "zone": true, "path": "Zones/Work/Acme/Acme.md", "rel": "Acme/Acme.md", "type": "project",
+                      "status": "active", "updated": "2026-11-02", "party": ["acme"], "title": "Acme"}],
+           "edges": []},
+ "example": null,
+ "system": [{"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}],
  "left": ["jobs folder state", "operations journal", "..."]}
 ```
 
-`files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
+`files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. `todo` is the zone's open actions, as the Todo tab draws them: every open line of the zone's notes with the note it names (`note`) and the project and thread of that note, the `## ` headings of its `Todo.md` in order, and the lines ticked on `today`, the day the build counts from. The view model decides which note a line names; the page decides what late means and how a row sorts. A zone folder that is a link has no `todo`, and a note that is a link into another zone or a wiki gives that zone none of the lines it leads to. `questions` is what Garrick asked and waits on, the open files in the `Needs you` folders of the zone, its projects and its threads, oldest first; one put off to a day that has not come is left out, and a project, thread or file that is a link into another zone or a wiki is not read. `wikis` is each wiki's log: how many entries it holds and the newest one, with the page it names, taken from the wiki's own folder; a log that is a link into another zone or a wiki is not read, and a wiki belongs to no zone, so a build limited to some zones holds none. `repos` is what each repository has uncommitted: the root, each zone, the wikis, and a wiki with one of its own; a repository git could not read is `unread`, never clean, a zone folder that is a link has none here, and a build limited to some zones holds those zones' repositories alone. `graph` is what Explore draws: every note of the zones and of the wikis with its place, kind, status, date, parties and title, and the links between notes as pairs of indexes, each pair once. Notes in an `Inbox`, in an archive or raw folder, hidden notes, instructions and what the vault excludes are left out, and so are a zone folder that is a link and a note that is a link into another zone or a wiki; a build limited to some zones holds those zones' notes and no wiki. `example` names the zone the worked example is in, by the `.example.json` marker that zone holds, or is null. `system` lists the projects kept in `System/`, which belong to no zone: the hub note and each thread note, by path, so the page can match a Todo line's link to one; a build limited to some zones holds none of it. The field names are stable: the page, the tests and any later reader build on them.
 
 #### What the App counts
 

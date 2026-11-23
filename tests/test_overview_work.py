@@ -114,7 +114,7 @@ class OverviewWork(unittest.TestCase):
         self.assertIn("@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}", css)
 
     def test_the_examples_tag_stays_on_the_bold_line(self):
-        with mock.patch.object(status, "example_zone", lambda ws: "Work"):
+        with mock.patch.object(status, "example_zone", lambda ws, model=None: "Work"):
             card = self.card(self.page())
         self.assertEqual(3, len(re.findall(r'<span class="yline"><b>[^<]*</b><span class="ytag">Example</span></span>', card)))
 

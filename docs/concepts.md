@@ -171,6 +171,10 @@ The judgment about what to keep that the months in the settings can't hold, in p
 
 What a Nurture run leaves, weighed by kind: a wall finding 10, an attribution question or a correction 5, a judgment finding or a mechanical fix not yet made 1. A run of the whole workspace measures it, and a scoped run updates only its own scope's part. Each day's figure is kept in `System/generated/nurture/`, and the Garrick App's Context card shows the figure of the last run. Before the first run there is no figure at all. See [Context debt](commands.md#context-debt).
 
+### The template hint
+
+A wall finding that says a note may repeat the text of an old note template, from counts alone ([#662](https://github.com/iamvenuti/garrick/issues/662)). When one note repeats wording from four or more projects of one other walled zone, and every shared run is also held by four or more files of the note's own zone, Nurture shows one finding for the note, not one for each project. It names the other zone and two numbers, never the words or a project. It answers with what to do: put a copy of the template in `System/templates.local/`, or take the template text out of the notes. The wall check does not change: the findings stand until the wording is common or gone. See [A template from before Garrick](enforced.md#a-template-from-before-garrick).
+
 ## What comes in
 
 ### Ways in

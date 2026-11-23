@@ -5374,6 +5374,77 @@ def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
     return out
 
 
+TEMPLATE_HINT_PROJECTS = 4   # projects of one other walled zone that hold a file's shared wording (#662)
+TEMPLATE_HINT_NOTES = 4      # files of the file's own zone that hold every one of those shared runs
+
+
+def template_hints(root: Path, paths: List[str]) -> Dict[str, List[dict]]:
+    """For each file of `paths` (root-relative), the other walled zones whose wording it repeats in a way that looks like an old
+    note template (#662): `[{"zone", "projects", "notes"}]`. A zone is listed when the file's shared runs, the ones
+    wording_findings reports across the wall, are held by files of TEMPLATE_HINT_PROJECTS projects or more of that zone, and every
+    one of those runs is also held by TEMPLATE_HINT_NOTES files or more of the file's own zone, itself among them. `projects` is how many
+    projects of that zone, `notes` the fewest files of the own zone that hold one of the runs. Counts and a zone's name, nothing the
+    runs say. It reads the index wording_findings reads and decides nothing about a finding: the wall check is not changed, and a file
+    this cannot place has no entry. Read only."""
+    _BLOBS.clear()
+    ws = discover(Path(root).resolve(), None)
+    index = quote_index(ws)
+    out: Dict[str, List[dict]] = {}
+    for rel_path in paths:
+        path = ws.root / rel_path
+        try:
+            text = read_text(path)
+            project = project_of(ws, path)
+            dest = zone_of(ws.root, path)
+            if not text or project is None or dest in (None, UNZONED):
+                continue
+            project, sent = project[0], _in_sources(project[0], path)
+            if sent:
+                continue
+            zones: Dict[str, dict] = {}
+            for h in runs(transcript_text(path, text), shared_link(ws, path), template_structure(ws)):
+                owners = index.owners.get(h)
+                if not owners or h in index.common or h in index.widespread:
+                    continue
+                pages, files, clear = False, [], False
+                for o in owners:
+                    if o == path:
+                        continue
+                    mfm = ws.meetings.get(o)
+                    if mfm is not None:
+                        if not may_flow(ws.context, zone_from_frontmatter(ws.root, mfm), dest):
+                            pages = True
+                        elif o in ws.meeting_questions:
+                            continue
+                        else:
+                            clear = True
+                            break
+                    elif index.project.get(o) == project and not _in_sources(project, o) \
+                            and not any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ())):
+                        continue
+                    elif any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ())):
+                        files.append(o)
+                    else:
+                        clear = True
+                        break
+                if clear or pages or not files:
+                    continue
+                own = sum(1 for o in owners if o not in ws.meetings and zone_of(ws.root, o) == dest)
+                for o in files:
+                    there = zone_of(ws.root, o)
+                    got = zones.setdefault(there, {"projects": set(), "notes": own})
+                    got["projects"].add(index.project[o])
+                    got["notes"] = min(got["notes"], own)
+            hints = [{"zone": zone, "projects": len(got["projects"]), "notes": got["notes"]}
+                     for zone, got in sorted(zones.items())
+                     if len(got["projects"]) >= TEMPLATE_HINT_PROJECTS and got["notes"] >= TEMPLATE_HINT_NOTES]
+            if hints:
+                out[rel_path] = hints
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 def _in_sources(project: Path, path: Path) -> bool:
     try:
         parts = path.relative_to(project).parts

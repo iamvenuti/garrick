@@ -29,7 +29,10 @@ wiki. Say "nurture the meetings"." Pages that would fade add a line too,
 once a wiki's count reaches the setting's minimum ("41 meeting pages would go
 dormant and 9 to the archive. Say "fade the meetings"."), and either line
 alone is worth sending. Nothing fades overnight: a fade waits for a yes on
-its written proposal.
+its written proposal. A long note whose older entries could not move for seven
+nights in a row, because a session was working there or its folder had changes
+not committed, is named once in one more line, by its name alone; the move is
+tried again each night, and no question is asked about it (#661).
 
 No assistant is called. It is the first step of the nightly job,
 nightly.py (`gr-nightly`), which job.py runs, so it has a log, a lock and a
@@ -99,12 +102,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     for f in out.get("failed", []):
         print("did not run: %s" % f, file=sys.stderr)
     owed = out.get("debt_line") or ""                              # a nurture.py older than the debt has none
+    long_held = out.get("hold_line") or ""                         # a nurture.py older than #661 has none
     print(said)
     if owed:
         print(owed)
+    if long_held:
+        print(long_held)
     waits = out.get("waiting", len(out.get("items") or []))      # a nurture.py older than `waiting` counts every item
-    if args.digest and (out.get("fixed") or waits or out.get("refused") or out.get("fade") or owed):
-        send_digest("\n".join(x for x in (said, owed) if x))
+    if args.digest and (out.get("fixed") or waits or out.get("refused") or out.get("fade") or owed or long_held):
+        send_digest("\n".join(x for x in (said, owed, long_held) if x))
     return out["code"]
 
 

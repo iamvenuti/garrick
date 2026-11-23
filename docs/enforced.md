@@ -125,6 +125,14 @@ A wall finding in the Context queue is asked in plain words, and no answer is re
 
 A browser has no bridge to the app, so it shows neither the look nor the button, and *Take it out* stays as it was: your assistant removes the material and shows you the change. The ask box and a session are refused for both the look and the allowance, and the command line has no verb for either. No skill, document or Ask tool names them. The page is a second writer because you pressed the button after seeing both texts. A command line that says `--via page` is taken for the page only when Garrick.app started it ([the page's own route](#the-pages-own-route)); the guard is against honest mistakes, as the rest of the wall check is.
 
+## A template from before Garrick
+
+A workspace that had its own note template before Garrick can have hubs and notes in two walled zones that share its text: a preamble, a table of folders, a sentence about where content lives. The wall check reads each shared run of words as a quote, so one note can get a finding for every project of the other zone that was made from the same template. It cannot say the words, because they are walled material, and it does not decide that they are a template: that is yours to say.
+
+Nurture reads the counts the wall check already has. When one note repeats wording from four or more projects of one other walled zone, and every shared run is also held by four or more files of the note's own zone, the Checks card asks one question for the note, in place of one for each project: *“Cedar” in Work repeats wording from 10 projects of Home. The same wording is in 10 notes of this zone, so it may be text from an old note template.* It names no words and no project. *It is an old template* hands your assistant the job: put a copy of that template in `System/templates.local/`, where its wording is common to every zone and the findings clear, or take the template text out of the notes. *Show me the findings one by one* has your assistant list the findings, each by file and zone. Neither answer changes a file by itself. One sentence lifted from one hub of another zone gets no hint, and stays a wall finding of its own, because a template is held by many files of both sides.
+
+The wall check itself does not change. The findings stay until the wording is common or gone, and no commit passes that did not pass before. A finding for a quote also says what fits a quote: take the repeated wording out, or move the file into that zone; there is no link to take out.
+
 ## The wall check's known gaps
 
 The check is for an honest writer's mistakes, as [the threat model](principles.md#the-threat-model) says. It does not catch everything. These are the gaps an honest writer could hit, by kind, and one line each.

@@ -189,6 +189,7 @@ class Item:
     held: str = ""                  # why a fix was not applied
     said: str = ""                  # what a fix did, once applied
     key: str = ""                   # opaque and stable: the review record's Id for this finding
+    hint: Optional[dict] = None     # wall: {"zone", "projects", "notes"}, the counts of the template hint (#662), never a word
 
     def __post_init__(self) -> None:
         # Made when the finding is, before a kind blanks what a wall matched,
@@ -476,9 +477,43 @@ def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
             for i in kind.gather(ctx):
                 i.kind = i.kind or kind.name
                 items.append(i)
+    items = group_templates(ctx, items)
     for item in items:
         sort_item(ctx, item)
     return [i for i in items if in_scope(i, scopes)]
+
+
+def group_templates(ctx: Ctx, items: List[Item]) -> List[Item]:
+    """The template hint (#662). A note that repeats wording from four or more projects of one other walled zone, when check.py
+    says that every shared run is also held by four or more files of the note's own zone, is one wall finding in place of one for
+    each project: the same wording is in many notes of its own zone, so it may be the text of an old note template. The finding
+    keeps the wall's kind and carries counts and the other zone's name, never a word or a project. Anything check.py cannot say
+    leaves the findings as they are. The wall check itself is not changed: the findings stand until the wording is common or gone."""
+    found: Dict[str, Dict[str, List[Item]]] = {}
+    for i in items:
+        m = PROJECT_WORDING_RE.match(i.message) if i.source == "check" and i.check == "walls" else None
+        if m:
+            found.setdefault(i.path, {}).setdefault(m.group(2), []).append(i)
+    paths = sorted(p for p, zones in found.items() if any(len(v) >= HINT_FINDINGS for v in zones.values()))
+    if not paths:
+        return items
+    try:
+        import check
+        hints = check.template_hints(ctx.root, paths)
+    except Exception as exc:      # noqa: BLE001 -- the findings stay as the wall check made them
+        ctx.failed.append("template hint: %s" % type(exc).__name__)
+        return items
+    drop: set = set()
+    grouped: List[Item] = []
+    for path, hs in sorted(hints.items()):
+        for h in hs:
+            mine = found.get(path, {}).get(h["zone"], [])
+            if len(mine) != h["projects"]:
+                continue                      # the two counts disagree: leave them one by one
+            drop.update(id(i) for i in mine)
+            grouped.append(Item("check", "walls", path, "repeats wording from %d projects of the %s zone" % (h["projects"], h["zone"]),
+                                "A note repeats wording from %d projects of %s" % (h["projects"], h["zone"]), "error", hint=dict(h)))
+    return [i for i in items if id(i) not in drop] + grouped
 
 
 def sort_item(ctx: Ctx, item: Item, light: bool = False) -> Item:
@@ -519,7 +554,13 @@ REFERENCE_FIX = {
     "copy": "rewrite it in your own words, or move this file into that zone",
     "path": "take the path out, or move this file into that zone",
     "link": "take the link out, or move this file into that zone",
+    "wording": "take the repeated wording out, or move this file into that zone",     # a quote has no link to take out (#662)
 }
+TEMPLATE_FIX = "put a copy of that template in System/templates.local/, or take the template text out of the notes"
+# One of the wall check's findings for a note that repeats wording from a file of another walled zone's project, as check.py says it;
+# page_action.py reads the same sentences (WALL_OTHER_RE), so the text is not changed.
+PROJECT_WORDING_RE = re.compile(r"^repeats wording from .+?, in project (.+?) of the (.+?) zone; that zone is walled and this file is in ")
+HINT_FINDINGS = 4          # fewer findings on one note are never grouped, so check.py is not asked
 
 
 def reference_kind(message: str) -> str:
@@ -527,6 +568,8 @@ def reference_kind(message: str) -> str:
     low = message.lower()
     if "embed" in low or "![[" in low:
         return "embed"
+    if low.startswith("repeats wording"):
+        return "wording"
     if "eight or more words" in low or "copied" in low or "copy" in low:
         return "copy"
     if "path" in low:
@@ -542,6 +585,9 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
         if zone:
             item.wall = "the %s zone" % next(g for g in zone.groups() if g)
         item.proposal = REFERENCE_FIX[reference_kind(item.message)]
+        if item.hint:
+            item.wall = "the %s zone" % item.hint["zone"]
+            item.proposal = TEMPLATE_FIX
         item.message = ""          # never repeat the material, nor what matched it
         return True
     return False
@@ -549,6 +595,10 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
 
 def say_wall(item: Item) -> str:
     fix = " Fix: %s." % item.proposal if item.proposal else ""
+    if item.hint:
+        h = item.hint
+        return ("%s: repeats wording from %d projects of the %s zone; that zone is walled. The same wording is in %d notes of this zone, "
+                "so it may be text from an old note template.%s" % (item.path, h["projects"], h["zone"], h["notes"], fix))
     if item.wall.startswith("the "):
         return "%s: points into %s, a walled zone.%s" % (item.path, item.wall, fix)
     return "%s: %s%s" % (item.path, item.ear or "points across a wall", fix)
@@ -595,6 +645,11 @@ def claim_mechanical(ctx: Ctx, item: Item) -> bool:
         fix = mechanical_fix(ctx, item)
     except Held as why:
         item.held = str(why)
+        # A history move held for a reason that clears by itself stays this kind, with its reason: the nightly run tries it again
+        # each night and the wrap at each wrap, and the Checks card asks nothing (#661). The three the user settles, and a note
+        # no move can read, are judgment, as before.
+        if is_history_note(item) and history_hold(item.held) == "later":
+            return True
         return False
     if fix is None:
         return False
@@ -652,6 +707,18 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
 # threads skill's Wrap does. Steps 1 and 2 of #502 are mechanical and the nightly run may apply them; the Resume
 # here block over its limit (check "resume") is a rewrite, and stays judgment.
 HISTORY_RE = re.compile(r"^has [\d,]+ words, over the [\d,]+ of `note-max-words`")
+
+
+def is_history_note(item: Item) -> bool:
+    """Whether the finding is a note over `note-max-words`: the one a history move answers."""
+    return item.source == "check" and item.check in ("projects", "threads") and bool(HISTORY_RE.match(item.message))
+
+
+def history_hold(why: str) -> str:
+    """What a held history move is, from history.py's own words for it: "foreign", "heading", "rule" (the user settles
+    these), "shape" (nothing can move) or "later" (clears by itself, tried again tonight)."""
+    import history
+    return history.hold_kind(why)[0]
 
 
 def history_fix(ctx: Ctx, item: Item) -> Optional[dict]:
@@ -2004,9 +2071,69 @@ def waiting(done: dict, items: List[Item]) -> Dict[str, int]:
     fixed_ids = {id(i) for i in done["fixed"]}
     waits: Dict[str, int] = {}
     for i in items:
-        if id(i) not in fixed_ids and not (i.kind in KINDS and KINDS[i.kind].quiet):
+        if id(i) not in fixed_ids and not (i.kind in KINDS and KINDS[i.kind].quiet) and not waits_for_tonight(i):
             waits[i.kind] = waits.get(i.kind, 0) + 1
     return waits
+
+
+def waits_for_tonight(item: Item) -> bool:
+    """A history move held for a reason that clears by itself: nobody is waited on, the next run tries it again (#661)."""
+    return item.kind == "mechanical" and bool(item.held) and not item.said and is_history_note(item) \
+        and history_hold(item.held) == "later"
+
+
+HELD_NIGHTS = 7             # a note held this many nights in a row is named once in the morning line
+
+
+def held_nights(root: Path, today: datetime.date, path: str) -> int:
+    """How many days in a row, today first, the day records of System/generated/nurture/ hold `path` as a history move held
+    for a reason that clears by itself. A day with no record ends the run. Read from the records alone."""
+    n = 0
+    while n < 400:
+        day = today - datetime.timedelta(days=n)
+        try:
+            rec = json.loads(Path(root).joinpath(*REPORTS).joinpath("%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            break
+        stand = rec.get("standing") if isinstance(rec, dict) else None
+        if not any(isinstance(f, dict) and f.get("path") == path and held_history_line(f) for f in stand or []):
+            break
+        n += 1
+    return n
+
+
+def held_history_line(finding: dict) -> bool:
+    """Whether a standing finding of a record is a history move held for a reason that clears by itself."""
+    line = str(finding.get("line") or "")
+    m = HELD_LINE_RE.search(line)
+    return (finding.get("kind") == "mechanical" and finding.get("check") in ("projects", "threads") and bool(m)
+            and "history files" in line and history_hold(m.group(1)) == "later")
+
+
+HELD_LINE_RE = re.compile(r"\(held: (.+)\)\s*$")
+
+
+def hold_line(ctx: Ctx, scopes: Optional[List[str]] = None) -> str:
+    """One morning line for the notes whose older entries could not move for a week: seven nights in a row, then fourteen, and
+    so on, so a note is named once for each run of seven and not every morning after (#661). Names only. "" when none."""
+    rec = {}
+    try:
+        rec = json.loads(ctx.root.joinpath(*REPORTS).joinpath("%s.json" % ctx.today.isoformat()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    names = []
+    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+        if isinstance(f, dict) and held_history_line(f) and in_scope(Item("", "", str(f.get("path") or ""), ""), scopes or []):
+            n = held_nights(ctx.root, ctx.today, str(f["path"]))
+            if n >= HELD_NIGHTS and n % HELD_NIGHTS == 0:
+                name = Path(str(f["path"])).stem
+                if name not in names:
+                    names.append(name)
+    if not names:
+        return ""
+    if len(names) == 1:
+        return "The note %s has waited at least a week for its older entries to move." % names[0]
+    return "These notes have waited at least a week for their older entries to move: %s." % ", ".join(sorted(names))
 
 
 def digest(ctx: Ctx, done: dict, items: List[Item]) -> str:
@@ -2126,7 +2253,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             out.update({"fixed": [item_json(i) for i in done["fixed"]], "held": [item_json(i) for i in done["held"]],
                         "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items),
                         "waiting": sum(waiting(done, items).values()), "fade": fade_line(ctx, items),
-                        "debt_line": owed})
+                        "debt_line": owed, "hold_line": hold_line(ctx, scopes)})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif a.ear:
         print(say_ear(items, scopes) if done is None else " ".join(x for x in (digest(ctx, done, items), owed) if x))

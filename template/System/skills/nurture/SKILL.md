@@ -83,14 +83,34 @@ thread whose name another note shares.
    It applies them all, one commit per repository, naming only the files it
    changed, each only after the walls check passes on what it staged, hook
    or no hook (a refusal puts the change back). Relay the commits, and any
-   fix it held with the reason. A no leaves them for the report.
+   fix it held with the reason. A no leaves them for the report. A note
+   over `note-max-words` whose move is held for a reason that clears by
+   itself (a session working there, changes not committed) is not asked
+   about: the nightly run and the next wrap try it again, and a user who
+   wants it now says yes to the move in this run. Three holds are the
+   user's to settle, and each is one question that names its cause: a file
+   in `history/` with the quarter's name that is not a history file of the
+   note, a history page whose heading differs from the one the tool writes,
+   and no `---` line under `## State of play`. Never offer the move for
+   these three; say what to do with the file or the note, and change
+   nothing without a yes. A note over its limit with nothing old enough to
+   move is judgment: offer to split its long sections.
 4. **Walls.** A wall finding is a reference into a walled zone. For each,
    say the file and the zone it points into ("the Pricing notes, a link into
    Personal") and nothing of what matched: not quoted, not paraphrased, not
    summarised. Offer its fix: take the link, embed, path or copy out, or
    move the file into that zone. On a yes, edit that file alone, and commit
    it in its repository through the hook. Never move material into another
-   zone, and never decide alone.
+   zone, and never decide alone. A finding for repeated wording says so
+   in its fix: take the repeated wording out, or move the file into that
+   zone; there is no link to take out. When one note repeats wording from
+   four or more projects of one other walled zone, and the same wording
+   is in four or more files of its own zone, the finding is one for the
+   note and says it may be text from an old note template, with the two
+   counts and no words. Offer what it says to do: put a copy of that
+   template in `System/templates.local/`, or take the template text out of
+   the notes, each on a yes. The wall check does not change, and the
+   findings stay until the wording is common or gone.
 5. **Attribution**, one at a time. Each finding carries its question, and a
    proposal when the context file settles one. An answer that says a value
    written down is wrong is a correction: see *A correction* below. Add your
@@ -280,7 +300,7 @@ findings, and corrections, never change headless. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file
 another session has changes in, since another session may have uncommitted
 work in the same repository. Its line in the morning digest says what was fixed first, then
-what waits. Pages that would fade add a line of their own, once a wiki's
+what waits. A long note whose older entries could not move for seven nights in a row is named once in a line of its own, by its name alone. Pages that would fade add a line of their own, once a wiki's
 count reaches the setting's minimum: "41 meeting pages would go dormant and
 9 to the archive. Say "fade the meetings"." Nothing fades overnight. When
 the user asks what changed overnight, read the day's report.

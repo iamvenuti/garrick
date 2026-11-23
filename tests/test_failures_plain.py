@@ -72,11 +72,16 @@ LIST = {
     "count": ("Settings, Memory: what the changes would do, status.py MEMORY_JS, page_action.py memory-preview", "TestThePanels"),
     "note-read": ("Explore's Preview could not read the note: status.py NOTE_JS, page_action.py note-read", "TestThePanels"),
     "note-open": ("Open in default app did not open the note: status.py NOTE_JS, page_action.py note-open", "TestThePanels"),
+    "finding": ("an answer in the Context queue was refused: finding_queue.py QUEUE_JS refuse(), page_action.py finding",
+                "TestThePanels"),
+    "walls-look": ("the wall question could not look at its file: finding_queue.py QUEUE_JS looked(), nothing()", "TestThePanels"),
+    "walls-allow": ("The words are mine was refused: finding_queue.py QUEUE_JS allowed(), page_action.py walls-allow",
+                    "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
-PANELS = ("release-check", "release-update", "count", "note-read", "note-open")
+PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow")
 
 # Failures drawn outside the table: where the sentence and the next step are written, and the test that holds them.
 OUTSIDE = {
@@ -309,12 +314,22 @@ class TestThePanels(unittest.TestCase):
         self.assertIn("GarrickFailClear(p)", js)
         self.assertNotIn("said((out&&out.say)||'That did not open.',true);return}", js)
 
+    def test_the_context_queue_draws_its_rows(self):
+        js = (STATUS / "finding_queue.py").read_text(encoding="utf-8").split('QUEUE_JS = r"""', 1)[1].split('\n"""', 1)[0]
+        self.assertIn("function refuse(q,f){failed(q,'finding',f.say);", js)
+        self.assertIn("failed(el,'walls-look',(res&&res.say)||'That could not be shown.',function(){out(el,'Checking the file", js)
+        self.assertIn("failed(el,'walls-allow',(res&&res.say)||'That did not work.')}", js)
+        self.assertIn("GarrickFail(s,code,raw,again)", js)
+        self.assertIn("GarrickFailClear(s)", js)
+        self.assertNotIn("out(el,(res&&res.say)||'That could not be shown.',true)", js)
+        self.assertNotIn("function refuse(q,f){out(q,f.say,true)", js)
+
     def test_the_wall_sentence_is_shown_as_it_stands(self):
         fn = block("WORK_JS").split("window.GarrickFail=function", 1)[1]
         self.assertIn("if(/^A wall holds /.test(raw)){el.textContent=raw;el.setAttribute('data-failure','wall');return el}", fn)
 
     def test_a_row_that_writes_never_offers_a_second_try(self):
-        for code in ("release-update",):
+        for code in ("release-update", "finding", "walls-allow"):
             self.assertNotEqual("retry", next(r for r in pa.FAILURES if r[0] == code)[3], code)
 
 
@@ -382,6 +397,14 @@ class TestTheDrawingRuns(unittest.TestCase):
                 else:
                     self.assertEqual(1, got["tried"])
                     self.assertIsNone(got["failureAfter"])
+
+    def test_a_refusal_across_a_wall_says_the_rules_sentence_alone(self):
+        wall = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+        got = self.draw("walls-allow", wall, True)
+        self.assertEqual("wall", got["failure"])
+        self.assertIsNone(got["button"])
+        self.assertIsNone(got["details"])
+        self.assertEqual(wall, got["firstText"])
 
     def test_no_button_where_it_could_not_do_what_it_says(self):
         for code in PANELS:

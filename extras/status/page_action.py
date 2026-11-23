@@ -6527,6 +6527,9 @@ FAILURES = (
      "Open Settings and choose Try again."),
     ("note-read", "This note could not be shown.", "Try again", "retry", "Open the preview and choose Try again."),
     ("note-open", "The note did not open in its app.", "Try again", "retry", "Open the preview and choose Try again."),
+    ("finding", "This answer was not taken.", "Show why", "why", "Open the question and choose Show why."),
+    ("walls-look", "Garrick could not look at this file.", "Try again", "retry", "Open the question and choose Try again."),
+    ("walls-allow", "The words were not marked as yours.", "Show why", "why", "Open the question and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

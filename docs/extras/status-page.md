@@ -597,6 +597,9 @@ Every failure the app can show has one plain sentence and one next step. The too
 | Settings could not count what a change to Memory would do | Settings, Memory | Garrick could not count what these changes would do. They are not saved yet. | *Try again*, which counts once more and saves nothing |
 | A note's Preview could not show the note | Explore's Preview | This note could not be shown. | *Try again*, which reads it once more; none for a note that is no longer there |
 | *Open in default app* did not open the note | Explore's Preview | The note did not open in its app. | *Try again* |
+| An answer in the Context queue was refused | The Context queue, after a button or an answer you typed | This answer was not taken. | *Show why*, which opens *Details*; the answer stays open, and *Skip for now* shows |
+| A wall question could not look at its file | The Context queue's wall question | Garrick could not look at this file. | *Try again*, which looks once more and writes nothing |
+| *The words are mine* was refused | The Context queue's wall question | The words were not marked as yours. | *Show why* |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 

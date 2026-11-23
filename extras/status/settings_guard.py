@@ -112,12 +112,20 @@ def _bytes(path: Path) -> Optional[bytes]:
         return None
 
 
+def clone_hooks() -> Optional[Path]:
+    """`extras/hooks/` beside the page when the page runs from `extras/status/` of a Garrick clone (#671), else None. An
+    installed page runs from `System/status/`, where `hooks/` is no folder Garrick makes: nothing there is trusted or
+    listed, whatever it holds."""
+    return HERE.parent / "hooks" if HERE.parent.name == "extras" else None
+
+
 def trusted_hook_folder(folder: Path) -> bool:
-    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. The folder
-    beside the page passes; any other passes only on the same bytes. Reads the files; never imports them."""
-    beside = HERE.parent / "hooks"
+    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. In a clone the
+    folder beside the page passes; any other passes only on the same bytes as the clone's, or, where the page has no clone
+    beside it (an installed page), the same as `RELEASE_HOOKS`. Reads the files; never imports them."""
+    beside = clone_hooks()
     try:
-        if folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
+        if beside is not None and folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
             return True
     except OSError:
         return False
@@ -125,7 +133,7 @@ def trusted_hook_folder(folder: Path) -> bool:
         have = _bytes(folder / name)
         if have is None:
             return False
-        ours = _bytes(beside / name)
+        ours = _bytes(beside / name) if beside is not None else None
         if ours is not None:
             if have != ours:
                 return False
@@ -171,9 +179,10 @@ def hook_scripts(text: str) -> List[str]:
 
 
 def named_folders(home: Optional[str] = None) -> List[Path]:
-    """The folders of the Garrick hooks the assistants' settings name, and the one beside this page, trusted or not."""
+    """The folders of the Garrick hooks the assistants' settings name, and, in a clone, the one beside the page, trusted or
+    not. An installed page lists no folder of its own (#671)."""
     home = home or str(Path.home())
-    folders = [HERE.parent / "hooks"]
+    folders = [clone_hooks()] if clone_hooks() is not None else []
     for rel in (".claude/settings.json", ".codex/hooks.json"):
         try:
             text = (Path(home) / rel).read_text(encoding="utf-8")

@@ -89,5 +89,76 @@ class TestAPathWrittenWithAVariable(HooksCase):
         self.assertNotIn(Path("kept/extras/hooks"), self.sg().named_folders(str(self.home)))
 
 
+class TestTheWorkspaceHooksFolderIsNeverTrusted(HooksCase):
+    """#671: an installed page never trusts, or lists, `System/hooks/`; only a clone's own `extras/hooks/` skips the digests."""
+
+    def workspace_page(self, planted_bytes):
+        """An installed page under `ws/System/status/`, with a `ws/System/hooks/` holding the given `read_guard.py`."""
+        import contextlib
+        ws = Path(self._tmp.name).resolve() / "ws"
+        status, hooks = ws / "System" / "status", ws / "System" / "hooks"
+        status.mkdir(parents=True)
+        hooks.mkdir(parents=True)
+        (status / "settings_guard.py").write_bytes((REPO / "extras" / "status" / "settings_guard.py").read_bytes())
+        (hooks / "read_guard.py").write_bytes(planted_bytes)
+        (hooks / "zone_guard.py").write_bytes((REPO / "extras" / "hooks" / "zone_guard.py").read_bytes())
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(pa, "HERE", status))
+        stack.enter_context(mock.patch.object(pa, "_OUTBOX", pa._OUTBOX))
+        return stack, hooks, status
+
+    def load_installed(self, status):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sg_installed", str(status / "settings_guard.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_read_guard_that_differs_is_not_returned_and_settings_refuses_as_when_none_is_found(self):
+        stack, hooks, status = self.workspace_page(b"print('planted')\n")
+        self.assistants()
+        with stack:
+            sg = self.load_installed(status)
+            self.assertNotIn(hooks, sg.named_folders(str(self.home)))
+            self.assertNotIn(hooks, sg.hook_folders(str(self.home)))
+            out = self.go({"verb": "read-guard", "mode": "warn"})
+        self.failed(out, "guard-file")
+        self.assertEqual({}, self.saved())
+
+    def test_the_releases_exact_bytes_there_are_not_returned_either(self):
+        stack, hooks, status = self.workspace_page((REPO / "extras" / "hooks" / "read_guard.py").read_bytes())
+        self.assistants()
+        with stack:
+            sg = self.load_installed(status)
+            self.assertNotIn(hooks, sg.hook_folders(str(self.home)))
+            self.assertEqual([], sg.hook_folders(str(self.home)))
+            out = self.go({"verb": "read-guard", "mode": "warn"})
+        self.failed(out, "guard-file")
+
+    def test_a_planted_pair_is_not_trusted_by_matching_itself(self):
+        """Both files planted, so each reads the same as 'the copy beside the page': the digests still decide."""
+        stack, hooks, status = self.workspace_page(b"print('planted')\n")
+        (hooks / "zone_guard.py").write_bytes(b"print('planted zone')\n")
+        with stack:
+            self.assertFalse(self.load_installed(status).trusted_hook_folder(hooks))
+
+    def test_a_clone_trusts_its_own_extras_hooks_as_now(self):
+        sg = self.sg()
+        self.assertEqual(REPO / "extras" / "hooks", sg.clone_hooks())
+        self.assertTrue(sg.trusted_hook_folder(REPO / "extras" / "hooks"))
+        self.assertIn(REPO / "extras" / "hooks", sg.hook_folders(str(self.home)))
+
+    def test_a_kept_download_with_this_releases_files_passes_and_another_releases_fails(self):
+        stack, hooks, status = self.workspace_page(b"x")
+        good = self.kept("good")
+        bad = self.kept("bad", release=False)
+        with stack:
+            sg = self.load_installed(status)
+            self.assertTrue(sg.trusted_hook_folder(good))
+            self.assertFalse(sg.trusted_hook_folder(bad))
+            self.name('python3 "$HOME/good/extras/hooks/zone_guard.py"')
+            self.assertEqual([good], sg.hook_folders(str(self.home)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -243,6 +243,10 @@ The `setup` skill, the first run: "set up Garrick". It finds out what your Mac h
 
 How the assistant answers when you are listening: when you say so, or the request came in by voice. The answer comes first, in three sentences at most, with no tables, code, file paths or links read out, and numbers rounded. The detail is offered rather than given. See [Voice](../template/System/rules.md#voice) in the rules.
 
+### The parked pointer folder
+
+The `parked/` folder inside your assistant's memory folder, where a parked thread's memory pointer waits until the thread is woken ([#664](https://github.com/iamvenuti/garrick/issues/664)). Parking moves the pointer there and takes its line out of the memory index, which every session loads whole; waking moves both back; finishing deletes it. See [The memory index](context.md#the-memory-index).
+
 ## Checks and guards
 
 ### The check
@@ -260,6 +264,10 @@ The folder the tools write their pages into, such as the Garrick App's page, Nur
 ### The zone guard
 
 An optional hook for Claude Code and Codex. Before the assistant edits a file outside the project the session was opened in, it stops once so the assistant asks you. It is a reminder, not a gate, and a shell command that writes a file is not covered. See [the zone guard](../extras/hooks/README.md).
+
+### The parked-thread hint
+
+An optional hook for Claude Code that adds one line to a session when your request may belong to a parked thread, since a parked thread's pointer is no longer in the memory index ([#664](https://github.com/iamvenuti/garrick/issues/664)). It names only threads the session may see: its own zone's, an open zone's, and any zone's from the workspace root. See [the parked-thread hint](../extras/hooks/README.md#the-parked-thread-hint).
 
 ## Extras
 

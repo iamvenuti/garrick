@@ -135,6 +135,7 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
     CALLER_BUILDS_PAGE,
+    park_memory_pointer,
     CHECKPOINT_KINDS,
     CHECKPOINT_LABELS,
     CHECKPOINT_ONE,
@@ -1150,7 +1151,14 @@ def cmd_park(root, args, today):
     body = dated_entry(text[m.end():], "Parked." if status == "parked" else "Woken.", when.isoformat(),
                        append=False)                           # as the page's own copy left such a note
     note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
-    return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
+    said = "%s is %s" % (name, "parked" if status == "parked" else "awake again")
+    if not os.environ.get(CALLER_BUILDS_PAGE):      # the status page's executor moves the pointer after its commit (#664)
+        try:
+            pointer = park_memory_pointer(root, note.resolve().relative_to(Path(root).resolve()).as_posix(), status != "parked")
+        except Exception:
+            pointer = ""
+        said = "%s. %s" % (said, pointer) if pointer else said
+    return said
 
 
 def rename_history(zone_dir, moved, old, new):

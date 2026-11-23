@@ -88,8 +88,10 @@ Closes a thread for good.
    on the line. Never add a line for work that is already done.
 8. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
-9. **Delete the memory pointer**, if there is one. A pointer that outlives its
-   thread keeps announcing work that no longer exists.
+9. **Delete the memory pointer**, if there is one, in the memory folder or in
+   its `parked/`. A pointer that outlives its thread keeps announcing work
+   that no longer exists. This step is by hand: finishing is the one case in
+   which a pointer is deleted rather than moved.
 10. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
    recorded".
 
@@ -138,11 +140,34 @@ stay exactly where they are.
    "Acme, Pricing: reason for parking".
 4. **Commit** in the zone's repository: "Acme, Pricing: parked". Only without
    the status page; the executor has committed.
-5. **Keep the memory pointer**, if there is one. A parked thread is not
-   finished. **A checkpoint is kept too**, exactly as it is: parking sets work
+5. **Move the memory pointer out of the index**, if there is one. The
+   executor and the script do it, after the note is saved: the pointer file
+   goes to `parked/` in the same memory folder, and its line leaves
+   `MEMORY.md`, which every session loads whole. Nothing is deleted: the line
+   is kept beside the file, so waking puts it back exactly. A pointer is the
+   entry file the index links that names one hub or thread note by its path.
+   The move holds, and says so, when two entries name the note, when a file
+   of that name is already in `parked/`, or when the index cannot be read.
+   With no `memory` setting nothing moves. **Check the note first**: whatever
+   the pointer says that the thread note does not (the boundary that is easy
+   to get wrong, a trap) goes into the note's Resume here block before the
+   pointer leaves the index, since a parked pointer is no longer loaded.
+   **A checkpoint is kept too**, exactly as it is: parking sets work
    aside, and what the last session recorded is part of where it stood. The
    check says nothing about it while the thread is parked, and waking the
    thread brings it back to be read and wrapped.
+
+   **Wake** puts the pointer back: the file returns from `parked/` and its
+   line to where it was, the same text. A project parked as a whole keeps the
+   pointers of its threads in the index, since a thread of it may still be
+   live: only the hub's own pointer moves, and only when no thread of the
+   project is live. A pointer that is parked and whose thread is then
+   finished is deleted from `parked/`, as in *Finish*.
+
+**Naming a parked thread to the user** (*Resolving a name*, step 6) follows the
+wall: one of the session's own zone or of an open zone, or any zone's from the
+workspace root or `System/`. A parked thread of another walled zone is never
+named, and nothing says that one exists.
 
 **When X is a whole project** ("park Acme", where Acme has threads), leave
 `--thread` out: the executor (or the script) parks the hub note, with the dated entry under its

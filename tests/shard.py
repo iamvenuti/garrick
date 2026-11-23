@@ -106,6 +106,12 @@ TOUCH_MAP = {
     "tests/concept_gate.py": ["test_concept_gate"],
     "names_move.py": ["test_names"],
     "tests/test_names.py": ["test_names"],
+    # The memory index and the parked pointers (#664).
+    "extras/hooks/parked_hint.py": ["test_parked_hint"],
+    "tests/test_parked_hint.py": ["test_parked_hint"],
+    "tests/test_memory_pointer.py": ["test_memory_pointer", "test_memory_budget"],
+    "tests/test_memory_budget.py": ["test_memory_budget"],
+    "template/System/skills/threads/reference/lifecycle.md": ["test_memory_pointer"],
     "docs/concepts.md": ["test_concept_gate"],
     "docs/decisions/": ["test_concept_gate"],
     "extras/hooks/read_guard.py": ["test_read_guard", "test_connector_guard", "test_decisions", "test_zone_guard", "test_settings_actions", "test_settings_ui"],

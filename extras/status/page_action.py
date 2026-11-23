@@ -1173,7 +1173,22 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
                         *(["--thread", parts[2]] if is_thread else []))
         commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"), wall=wall_refusal(ws))
-        return said
+        pointer = memory_pointer(ws, note, req["verb"] == "wake")
+        return "%s. %s" % (said, pointer) if pointer else said
+
+
+def memory_pointer(ws: Path, note: Path, wake: bool) -> str:
+    """The memory pointer of a note that was just parked or woken, set aside or put back by garrick_lib's
+    park_memory_pointer (#664), after the commit: the memory folder is outside the workspace and nothing in a zone
+    changes because of it. One sentence, or "" where there is no memory folder, no pointer, or a workspace whose
+    garrick_lib does not have the function. It never fails a park or a wake."""
+    fn = getattr(prefs().lib(ws), "park_memory_pointer", None)
+    if not callable(fn):
+        return ""
+    try:
+        return fn(ws, note.resolve().relative_to(ws.resolve()).as_posix(), wake) or ""
+    except Exception:
+        return ""
 
 
 def note_status(note: Path) -> str:

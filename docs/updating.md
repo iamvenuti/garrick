@@ -31,7 +31,7 @@ A workspace from before `release.py` has to take that way once.
 
 ## Being told a newer Garrick is out
 
-Off until you switch it on, because it is the only call Garrick makes on its own. The easiest way is *Settings* in the [Garrick App](extras/status-page.md#settings): under *About Garrick*, tick *Check for a newer Garrick* and choose *Daily* or *Weekly*. That writes two keys to `System/garrick-settings.json`; you can write them yourself and commit the file:
+Off until you switch it on, because it is the only call Garrick makes on its own. The easiest way is *Settings* in the [Garrick App](extras/status-page.md#settings): under *About*, set *Check for updates* to *Daily* or *Weekly*. That writes two keys to `System/garrick-settings.json`; you can write them yourself and commit the file:
 
 ```json
 {"release-notice": true, "release-notice-every": 7}
@@ -45,7 +45,7 @@ Then the check runs when it is due, from two places. Each time the [Garrick App]
 
 ### Check for updates
 
-*Settings*, *About Garrick*, has a *Check for updates* button beside the release number. A click is your consent for one request: it asks GitHub now (`release.py latest --now`), whether or not the notice is on.
+*Settings*, *About*, has a *Check for updates* button beside the release number. A click is your consent for one request: it asks GitHub now (`release.py latest --now`), whether or not the notice is on.
 
 - **Nothing newer.** The line under the button says "Garrick 0.58.0 is the newest release, and this workspace runs 0.58.0", and when it asked. Nothing is changed.
 - **A newer release.** Nothing is applied yet: the click was your consent to ask, not to update. The line says "Garrick 0.59.0 is out; this workspace runs 0.58.0", with a link to the release notes and two buttons. *Update now* runs the update (`release.py update --apply`), with a progress line while it runs. *Not now* changes nothing and stores nothing; the next check, or a reload, offers the same choice again. After *Update now* the section shows the result in the words of the update report: "Updated to 0.59.0 from 0.58.0" with a link to that release's notes, how many files were replaced and added, each file written as `.new` and each instruction file under *Split* with "Say 'merge the update' to your assistant", each file skipped because it has changes not committed, and the pieces the update does not change because they run from a copy outside the workspace.

@@ -353,7 +353,7 @@ class RegistryTest(Base):
         doc = nurture.__doc__
         for word in ("register()", "unattended", "claim(ctx, item)", "gather(ctx)", "apply(ctx, item,"):
             self.assertIn(word, doc)
-        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment", "behind", "fade"],
+        self.assertEqual(["wall", "mechanical", "parked-pointer", "correction", "attribution", "judgment", "behind", "fade"],
                          [k.name for k in nurture.ranked()])
         self.assertEqual(["mechanical"], [k.name for k in nurture.ranked() if k.unattended])
 

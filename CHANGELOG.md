@@ -4,6 +4,40 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-11-23
+
+This release fixes how Garrick finds the guard hooks you keep outside the workspace. It now reads their paths the way your assistants do and trusts only its own files. When it cannot use them, it tells you which path is wrong. Settings, the App's failure messages and the context docs are also rewritten, so you can act on them without knowing how Garrick is built.
+
+**Upgrading.**
+- Settings finds the guard hooks however your assistants' settings name them, `$HOME` included, and trusts only Garrick's own files.
+- When Settings cannot use the hooks, *Show why* says which path it found and why.
+- An update offers to refresh the hooks you keep outside the workspace, on your yes.
+- Settings lines up in one layout, and its side list names every section.
+- The read guard says what it protects, and names each read it would have stopped.
+- Settings uses plain words.
+- A failure in the App says what failed and gives one next step.
+- The context docs say what every session loads.
+
+### Added
+
+- **The kept hooks are refreshed** (#672). The guard hooks run from a Garrick download you keep outside the workspace. When its hook files differ from the new release's, the update offers one step that copies Garrick's own hook files over them, on your yes: `zone_guard.py`, `read_guard.py`, `parked_hint.py`, `waiting_hook.py` and `README.md`. It writes only in a folder in your home folder. It never writes inside the workspace, into a git clone or through a link, and it never touches your assistants' settings. With no one to answer, it copies nothing and says what it would copy.
+- **The read guard names what it would have stopped** (#674). Each line of the list in Settings gives when, the session's project, the file or the mail or calendar source, and its zone, and reads of one file in one session fold into one line with a count. A file behind another zone's wall is named only as that, with no file, zone or project. The list never shows what a file or message holds. Lines written by 0.78.0 still show, with "not recorded" for what they lack.
+- **Start small** (#667). A new section in *How Garrick keeps context* lists what a session loads, when, its limit, and what happens when it is over. A test holds each limit to the code.
+
+### Changed
+
+- **Settings is one grid** (#673). Every row has a label, a control and a `?`, in three columns that line up across sections. There is one checkbox and radio size, one look for each kind of action, and one text size for status lines. The side list names every section, Ask, Telegram and the read guard among them, and follows the scroll. A notice that a job sends is no longer in the list of switches. *Open at login* says nothing until the app answers.
+- **The read guard, for a business user** (#674). It has one heading and one sentence on what it protects. The three choices are *Off*, *Watch* and *On*, each with what it means; *Watch only* is now *Watch*, and the stored values do not change. *Across a wall* shows only under *On*. The tool patterns are under a closed *Advanced* fold.
+- **Plain words** (#675). Channels says what *Read*, *Act* and *Full* each let the assistant do, and what model size and effort cost and give. *Manage older material* says what you see, not grades. *Preview features* says where the switches are kept, *Opening a thread* has a header over its choices, and *Reset view* says what it resets.
+- **A failure says what failed** (#511, in part). Claude hand-offs and Ask each have one plain sentence and one next step, with the tool's own words under *Details*. Where a request may already have gone through, no second try is offered. A page that did not rebuild no longer shows a path. Some panels still show the tool's own text for a failed reply. That is left for a later release.
+- Settings' data is read in the core, and the page only draws it. Before the redesign it looked the same, byte for byte (#650, in part).
+
+### Fixed
+
+- A hook command written with `$HOME` or `${HOME}` was not found by Settings or the update, so a stale guard went unreported. Settings, the update and the read guard now read a hook path the same way. A path is shown as your settings write it, with your home folder as `~`, never with a variable's value (#670).
+- An installed workspace trusted a `read_guard.py` in its own `System/hooks/` without comparing it with Garrick's. Now only a Garrick clone uses its own `extras/hooks/` without that check, and an installed page never looks in `System/hooks/` (#671).
+- When Settings could not use the guard hooks, it said only that it could not find its hook file. *Show why* now lists each hook path your settings name, with one of four reasons: not a full path, no `read_guard.py` beside it, another version's hook files, or used (#672).
+
 ## [0.78.0] - 2026-11-23
 
 This release gives you less to answer and gives every session less to load. Nurture stops asking about moves it can try again on its own. The memory index stops growing. The names move works on older workspaces. And the App draws more of its cards from the core's view of the workspace.

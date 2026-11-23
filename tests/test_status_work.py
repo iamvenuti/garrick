@@ -815,6 +815,11 @@ class TestFailuresInPlainWords(NodeCase):
 
     RAW = re.compile(r"(?i)(/\w|\.py\b|\bgit\b|traceback|\bexit \d|--\w|wall check)")
 
+    # The rows a panel of its own draws with GarrickFail (#511's rest): their replies do not reach the box, so the test names
+    # the row as a reply that carries it would; test_failures_plain draws each in its panel.
+    PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow",
+              "commit-files", "commit-undo", "chase")
+
     def test_every_row_of_the_table_shows_its_sentence_and_its_button(self):
         """#511: one test per row of page_action's FAILURES, read by the page as FW. The sentence and the button show; the
         tool's text, command and path do not, until Details is opened; and Details is closed."""
@@ -827,8 +832,9 @@ class TestFailuresInPlainWords(NodeCase):
                 reply = {"ok": False, "say": tool}
                 if code in ("refused", "crashed", "unknown", "lost"):
                     reply["outcome"] = code
-                elif code.startswith(("role-", "guard-", "handoff-", "ask-")):
-                    reply["plain"] = {"code": code}                          # a refusal that names its own row: Settings (#621), a hand-off, Ask
+                elif code.startswith(("role-", "guard-", "handoff-", "ask-")) or code in self.PANELS:
+                    reply["plain"] = {"code": code}                          # a refusal that names its own row: Settings (#621), a hand-off, Ask,
+                                                                             # or a panel's row (#511), drawn the same if it reaches the box
                 elif code not in ("handoff", "noreply"):
                     reply["outcome"] = "never-heard-of"                      # a row the page does not name: the fallback
                 box = self.run_js(("act", 0, q, "Working…"), ("reply", 3, q, reply))[1]["box"]

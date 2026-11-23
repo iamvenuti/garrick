@@ -344,11 +344,12 @@ class SkillsTest(unittest.TestCase):
         self.assertNotIn("does not rely on you", threads)
 
     def test_rules_own_the_memory_pointer_and_the_generated_folder(self):
-        """"Close X" means wrap, and a parked thread keeps its pointer; the rule for
+        """"Close X" means wrap, and a parked thread's pointer waits in parked/; the rule for
         System/generated/ lives in the rules, and the root AGENTS.md points to it."""
         rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
         threads = flat(threads_rules())
-        self.assertIn("one entry per live or parked thread", threads)
+        self.assertIn("one entry per live thread", threads)
+        self.assertIn("A parked thread's entry is moved to `parked/`", threads)
         self.assertIn("Delete the entry when the thread is finished.", threads)
         self.assertNotIn("when the thread closes", threads)
         files = flat(section(rules, "## Files"))

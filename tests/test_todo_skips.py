@@ -110,11 +110,14 @@ class TodoCardSkipsTest(unittest.TestCase):
         self.assertNotIn("an idea Obsidian hides", texts)                       # the vault's filters hold regardless
 
     def test_the_graph_reads_the_same_filters(self):
-        filters = status.vault_filters(self.zone)
-        self.assertTrue(status.ignored("Acme Review/Scratch/Ideas.md", filters))
-        self.assertTrue(status.ignored("Acme Review/Threads/Pricing/Drafts/Draft.md", filters))
-        self.assertFalse(status.ignored("Acme Review/Threads/Pricing/Notes.md", filters))
-        self.assertEqual(self.zone, status.vault_of(self.root, self.zone / "Acme Review"))
+        vt = status.view_reader(self.root)._todo()       # the graph is the view model's (#650): it reads the filters as the card does
+        filters = vt.ignore_filters(self.zone)
+        self.assertTrue(vt.ignored("Acme Review/Scratch/Ideas.md", filters))
+        self.assertTrue(vt.ignored("Acme Review/Threads/Pricing/Drafts/Draft.md", filters))
+        self.assertFalse(vt.ignored("Acme Review/Threads/Pricing/Notes.md", filters))
+        self.assertEqual(self.zone, vt.vault_of(self.root, self.zone / "Acme Review"))
+        tl = status.todo_lines()
+        self.assertEqual([getattr(f, "pattern", f) for f in tl.ignore_filters(self.zone)], [getattr(f, "pattern", f) for f in filters])
 
 
 if __name__ == "__main__":

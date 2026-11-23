@@ -92,7 +92,7 @@ TOUCH_MAP = {
                                 "test_new_session", "test_view_model", "test_usage_counts"],
     "template/System/tools/view.py": ["test_view_model", "test_status", "test_status_more", "test_status_work", "test_overview_work",
                                       "test_todo_solo", "test_todo_skips", "test_outbox", "test_context_card", "test_threads_card", "test_needs_you_rows",
-                                      "test_inbox_run", "test_knowledge_skill"],
+                                      "test_inbox_run", "test_knowledge_skill", "test_status_graph_ignored", "test_status_graph_flat", "test_status_look"],
     "template/System/tools/view_todo.py": ["test_view_model", "test_todo_skips", "test_status", "test_overview_work"],
     "tests/old_status_reads_0770.py": ["test_view_model"],
     "template/System/tools/usage.py": ["test_usage_report"],

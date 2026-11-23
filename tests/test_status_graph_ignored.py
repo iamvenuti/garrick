@@ -97,7 +97,7 @@ class TestGraphIgnored(StatusCase):
                 best = min(best or 1e9, time.perf_counter() - start)
             return best
 
-        old = timed(mock.patch.object(status, "git_ignored", return_value=set()))      # the walk as it was
+        old = timed(mock.patch.object(status.view_reader(self.root), "git_ignored", return_value=set()))      # the walk as it was
         with mock.patch.object(status.subprocess, "run", counting):
             new = timed(contextlib.nullcontext())
         asked = [c for c in calls if "--ignored" in c]
@@ -111,13 +111,13 @@ class TestGraphIgnored(StatusCase):
         self.copy_in(project / "Repo" / "deep" / "er", "Deep Copy")
         (self.work / ".gitignore").write_text("Repo/\n")
         entered = []
-        real = status.walked
+        real = status.view_reader(self.root).walked
 
         def watching(root, folder, name, in_zone):
             entered.append(Path(folder).relative_to(root).as_posix())
             return real(root, folder, name, in_zone)
 
-        with mock.patch.object(status, "walked", watching):
+        with mock.patch.object(status.view_reader(self.root), "walked", watching):
             names = self.names()
         self.assertNotIn("Deep Copy", names)
         self.assertEqual([], [f for f in entered if f.startswith("Acme Review/Repo")])   # never listed, let alone entered
@@ -126,7 +126,7 @@ class TestGraphIgnored(StatusCase):
         raw = b"Acme Review/Bad\xff name/\0Acme Review/Repo/\0Acme Review/x.log\0"
         done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
         with mock.patch.object(status.subprocess, "run", return_value=done):
-            got = status.git_ignored(self.work)
+            got = status.view_reader(self.root).git_ignored(self.work)
         self.assertEqual({"Acme Review/Bad\udcff name", "Acme Review/Repo"}, got)
         self.assertIn(os.fsdecode(b"Acme Review/Bad\xff name"), got)        # as os.walk names it
         try:

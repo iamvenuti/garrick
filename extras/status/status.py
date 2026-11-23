@@ -2965,44 +2965,6 @@ def wikis(ws: Path, model: Optional[dict] = None) -> List[dict]:
     return out
 
 
-WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
-# Folders that hold no notes of their own: an inbox, raw records, superseded
-# versions, generated pages. Compared without regard to case.
-SKIP_DIRS = {"inbox", "raw", "archive", "generated"}
-
-
-def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
-    """Whether the graph reads the folder `name` inside `folder`. A zone's own
-    Inbox is left out. A project or a thread is read whatever it is called, so
-    one named Archive or raw stays on the graph; anywhere else a folder named
-    for an inbox, raw records, old versions or generated pages is left out."""
-    if name.startswith((".", "_")):
-        return False
-    depth = Path(folder).relative_to(root).parts
-    if in_zone and not depth:
-        return name != "Inbox"                                # every other folder here is a project
-    if in_zone and len(depth) == 2 and depth[1] == "Threads":
-        return True                                           # a thread
-    return name.casefold() not in SKIP_DIRS
-def git_ignored(root: Path) -> set:
-    """The folders (paths relative to the zone `root`) that the zone's own git
-    ignores, from one `git ls-files` over the zone (#399), asked for before the
-    walk so that an ignored folder is never entered. A path git cannot encode
-    as text (a name that is not valid UTF-8) is read back as the walk reads it,
-    with surrogateescape. A zone that is not a repository of its own, or a Mac
-    with no git, ignores nothing."""
-    if not (root / ".git").exists():
-        return set()
-    try:
-        done = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-                              capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    if done.returncode != 0:
-        return set()
-    return {os.fsdecode(x).rstrip("/") for x in done.stdout.split(b"\0") if x.endswith(b"/")}
-
-
 # What a note is, in the order the legend shows them. Colours are fixed so a
 # kind looks the same in every workspace; none is amber or red, which the
 # rings use for threads gone quiet. Threads take the brand blue, the light
@@ -3096,27 +3058,9 @@ def short_label(title: str, limit: int = WIKI_LABEL) -> str:
     return (cut or title[:limit]) + "…"
 
 
-def vault_of(ws: Path, folder: Path) -> Optional[Path]:
-    """The Obsidian vault a folder's notes belong to: the nearest folder at or
-    above it, up to the workspace root, that holds a .obsidian folder."""
-    return todo_lines().vault_of(ws, folder)
-
-
-def vault_filters(vault: Optional[Path]) -> List[object]:
-    """A vault's ignore filters (.obsidian/app.json, userIgnoreFilters), a path
-    prefix or a /regex/ each, read as the Todo card reads them: what Obsidian
-    leaves off its graph, Explore leaves off too. Nothing else of the vault's
-    is read, so the graph looks the same with Obsidian or without it (#292).
-    Empty outside a vault, or when the file is missing or does not read."""
-    return todo_lines().ignore_filters(vault) if vault is not None else []
-
-
-def ignored(rel: str, filters: List[object]) -> bool:
-    return todo_lines().ignored(rel, filters)
-
-
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False,
-          desk: Optional[Dict[str, str]] = None, drive: bool = False, urgent: Optional[set] = None) -> dict:
+          desk: Optional[Dict[str, str]] = None, drive: bool = False, urgent: Optional[set] = None,
+          model: Optional[dict] = None) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
@@ -3135,42 +3079,18 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     graph has: age alone never marks a note. Every note carries its path from
     its place's folder, without `.md` (`m`), and `pr` maps each place to that
     folder from the workspace's, so Preview can name the note it reads (#206)."""
-    places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
-    places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
+    # The notes and the links between them are the view model's (view.graph_records); this draws a node for each.
+    model = model or view_model(ws, ("graph",))
+    found_g = (model or {}).get("graph") or {"places": [], "notes": [], "edges": []}
+    places = [(p["name"], ws / p["folder"]) for p in found_g["places"]]
+    roots = dict(places)
+    notes = [(n["place"], roots[n["place"]], ws / n["path"], n) for n in found_g["notes"]]
     names = short_names(T)
     held = {(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
     hubs_parked = {zone: set(data.get("held", ())) for zone, data in T.items()}
     awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
     asleep = {(zone, project) for zone, project, _ in held} - awake
-    vaults: Dict[Path, List[object]] = {}             # vault -> its ignore filters
-    notes = []
-    for place, root in places:
-        in_zone = root.parent.name == "Zones"
-        vault = vault_of(ws, root)
-        if vault is not None and vault not in vaults:
-            vaults[vault] = vault_filters(vault)
-        filters = vaults[vault] if vault is not None else []
-        found_in = []                                 # (folder, files), in walk order
-        # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
-        left_out = git_ignored(root) if in_zone else set()
-        for folder, dirs, files in os.walk(root):
-            # A folder that tops a repository of its own (a `.git` folder, or the file a worktree has) is not walked.
-            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists()
-                             and Path(folder, d).relative_to(root).as_posix() not in left_out)
-            found_in.append((folder, files))
-        for folder, files in found_in:
-            for f in sorted(files):
-                if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
-                    continue
-                if folder == str(root) and (f in ("index.md", "log.md") and root.name == "wiki"
-                                            or f == "Todo.md" and root.parent.name == "Zones"):
-                    continue
-                if filters and ignored((Path(folder) / f).relative_to(vault).as_posix(), filters):
-                    continue
-                notes.append((place, root, Path(folder) / f))
-    rel = {path: path.relative_to(ws).with_suffix("").as_posix() for _, _, path in notes}
-    by_rel = {r: p for p, r in rel.items()}
-    nodes, index = [], {}
+    nodes = []
     kinds = [k for k, _, _ in KINDS]
     found: Dict[str, Dict[str, int]] = {}             # wiki -> type no model kind takes -> its pages (#250)
     typed_at: List[Tuple[int, str, str]] = []
@@ -3180,13 +3100,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             source_type = lib.knowledge_schema(ws)[0]["source"]["type"]     # a wiki that names its sources otherwise
     except Exception:
         pass
-    projects = [(place, path.parent.name) for place, root, path in notes
+    projects = [(place, path.parent.name) for place, root, path, _ in notes
                 if root.parent.name == "Zones" and path.parent.parent == root and path.stem == path.parent.name]
     threads_said = {t.casefold() for z in T.values() for r in z["rows"] + z["parked"] for t in [r["thread"]]}
-    for place, root, path in notes:
-        fm = frontmatter(path, ws)
+    for place, root, path, rec in notes:
         parts = path.relative_to(root).parts
-        kind = as_text(fm.get("type")).strip().lower()
+        kind = rec["type"]
         kind = "mail" if kind in ("email", "mail") else kind
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
@@ -3199,11 +3118,11 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         elif kind not in ("project", "thread"):
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
-        state = as_text(fm.get("status")).strip().lower()
+        state = rec["status"]
         moving = kind == "thread" and state != "done"
-        updated = as_date(fm.get("updated"))
+        updated = as_date(rec["updated"])
         days = (now.date() - updated).days if moving and updated else None
-        party = tags(fm.get("party") or fm.get("parties"))
+        party = list(rec["party"])
         folder_thread = parts[2] if in_zone and len(parts) > 3 and parts[1] == "Threads" else ""
         parked = (place, project) in asleep or (place, project, folder_thread) in held
         say = names.get((place, project, thread), "") if thread else ""
@@ -3215,8 +3134,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         # i, adj, deg, lp and tw to each node in the browser, so none of those is used here.
         # tw holds a name's widths; it was lw, which a note in a project carries for what an app
         # resumes, so such a note was never named once zoomed in (#252).
-        index[path] = len(nodes)
-        title = as_text(fm.get("title")).strip() or path.stem
+        title = rec["title"] or path.stem
         hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
         typed = found_kind(typed) if wiki and kind == "note" else ""
         if typed and typed not in kinds:
@@ -3261,35 +3179,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     for i, wiki, typed in typed_at:
         if found[wiki][typed] >= KIND_FROM_PAGES:
             nodes[i]["k"] = keys.index(typed)
-    # A link that is not a whole path resolves to the shortest path that ends
-    # in it after a slash, and else to the shortest note of its name; among
-    # paths as long, the first walked. Each note goes in once under every such
-    # ending, so a link is a lookup, not a pass over every note (#260).
-    by_base: Dict[str, Path] = {}
-    by_tail: Dict[str, Path] = {}
-    for p in sorted(rel, key=lambda q: len(rel[q])):
-        by_base.setdefault(p.stem.lower(), p)
-        parts = rel[p].split("/")
-        for i in range(1, len(parts)):
-            by_tail.setdefault("/".join(parts[i:]), p)
-    edges = set()
-    for _, _, path in notes:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for target in WIKILINK.findall(text):
-            # In a Markdown table the alias's pipe is escaped, [[x\|alias]]: drop the backslash.
-            target = target.strip().rstrip("\\").strip().rstrip("/")
-            target = target[:-3] if target.endswith(".md") else target
-            hit = by_rel.get(target)
-            if hit is None:
-                hit = by_tail.get(target)
-            if hit is None:
-                hit = by_base.get(target.split("/")[-1].lower())
-            if hit is not None and hit != path:
-                a, b = index[path], index[hit]
-                edges.add((min(a, b), max(a, b)))
+    edges = {tuple(e) for e in found_g["edges"]}
     used = sorted({n["k"] for n in nodes})        # each kind the legend offers as a filter (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
     # people in the same meeting, a person and the entity met in it (#320),
@@ -3297,7 +3187,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     # pages do. A page that joins is any not of the kinds the place opens on
     # (OPENS), or not a hub where it names none: so in Meetings an entity's
     # page still joins two people, as before entities were hubs.
-    wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    wikis = {place for place, root, _, _ in notes if root.parent.name != "Zones"}
     opens = {place: {keys.index(k) for k in OPENS[place] if k in keys} for place in wikis if place in OPENS}
     neighbours: Dict[int, set] = {}
     for a, b in edges:
@@ -8801,7 +8691,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # does for every other fold.
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
+        GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent, model)
         GK = [(k, plural(k), c) for k, c in zip(GR["keys"], GR["colors"])]    # each kind as shipped, for Settings (#291)
         GR["colors"] = graph_colours(GR["keys"], GR["colors"], GS)
         core = sum(1 for n in GR["nodes"] if n["c"])

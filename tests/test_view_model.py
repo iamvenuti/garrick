@@ -138,6 +138,32 @@ def add_wikis(root: Path) -> None:
     (wikis / "Leaky" / "wiki" / "log.md").symlink_to(root / "Zones" / "Home" / "Todo.md")
 
 
+def add_graph(root: Path) -> None:
+    """Notes and links for the graph shadow test: links by name, by path, with an escaped alias pipe and across places; a
+    folder the graph skips (Inbox, archive), an instructions file, a hidden note, a note the vault excludes, three pages
+    of a type no model kind takes, wiki pages of the model's kinds; and, in Garden, a note that is a link to one of Home's."""
+    home = root / "Zones" / "Home"
+    write(home / "Cedar" / "Cedar.md", (home / "Cedar" / "Cedar.md").read_text(encoding="utf-8") + "\nSee [[Fence]] and [[Cedar/Threads/Gate/Gate]] and [[Loose]].\n")
+    write(home / "Loose.md", "- [ ] A line in a note beside the projects\n\nBack to [[Cedar]], [[Cedar\\|alias]], [[wiki/sources/paper]] and [[nowhere]].\n")
+    write(home / "Inbox" / "in.md", "---\ntitle: Inbox note\n---\n")
+    write(home / "Cedar" / "archive" / "old.md", "---\ntitle: Archived note\n---\n")
+    write(home / "AGENTS.md", "# Agents\n")
+    write(home / "_hidden.md", "---\ntitle: Hidden note\n---\n")
+    write(home / "Cedar" / "Scratch" / "idea.md", "---\ntitle: An idea\n---\n\n# Idea\n")
+    write(home / ".obsidian" / "app.json", json.dumps({"userIgnoreFilters": ["Cedar/Scratch/"]}))
+    for n in range(3):
+        write(root / "Wikis" / "Knowledge" / "wiki" / "domains" / ("d%d.md" % n), "---\ntype: domain\ntitle: Domain %d\n---\n\nSee [[paper]].\n" % n)
+    write(root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "lane.md", "---\ntype: concept\n---\n# Lane\n\nFrom [[paper]].\n")
+    write(root / "Wikis" / "Meetings" / "wiki" / "people" / "jo.md", "---\ntype: person\ntitle: Jo\n---\n\nIn [[call-1]] and [[acme-corp]].\n")
+    write(root / "Wikis" / "Meetings" / "wiki" / "people" / "theo.md", "---\ntype: person\ntitle: Theo\n---\n\nIn [[call-1]] and [[acme-corp]].\n")
+    write(root / "Wikis" / "Meetings" / "wiki" / "meetings" / "call-1.md", "---\ntype: meeting\nparties: [acme, birch]\n---\n# Call\n")
+    write(root / "Wikis" / "Meetings" / "wiki" / "entities" / "acme-corp.md", "---\ntype: entity\n---\n# Acme Corp\n")
+    write(root / "Wikis" / "Meetings" / "wiki" / "mail" / "m1.md", "---\ntype: email\n---\n# Mail\n")
+    plot = root / "Zones" / "Garden" / "Plot"
+    plot.mkdir(parents=True, exist_ok=True)
+    (plot / "Peek.md").symlink_to(home / "Cedar" / "Cedar.md")
+
+
 def make_workspace(root: Path, tools: bool = True) -> Path:
     """Invented workspaces in one: the standard two zones, the reader's shapes in Work, and a third zone, Home, with
     parked work, a checkpoint, a done thread, a spoken name, a party list and an inbox; a zone that is a link; an Inbox that
@@ -178,6 +204,7 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     add_todo(root)
     add_questions(root)
     add_wikis(root)
+    add_graph(root)
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
     write(root / "System" / "Sys" / "Threads" / "Job" / "Job.md", thread_note("Sys", "Job", "sys"))
     write(root / "System" / "Sys" / "Threads" / "Bare" / "notes.md", "# no thread note\n")          # a thread folder with no note
@@ -431,7 +458,6 @@ class TestShadowManageData(Case):
 # is the list of what is left (#650 is `Part of`). A function that reads anew fails the test below, and one that stops
 # reading must leave the table, so the list never goes stale.
 LEFT = {
-    "graph": "Explore: the notes of one zone or one wiki, for the graph",
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
     "jobs": "the jobs folder's logs",
     "launchd_jobs": "this Mac's launchd agents",
@@ -485,12 +511,12 @@ class TestWhatThePageStillReads(unittest.TestCase):
 
     def test_the_sections_that_moved_read_no_folder(self):
         found = self.readers()
-        for name in ("todo_list", "question_needs", "questions_in", "wikis", "repos", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
+        for name in ("graph", "example_zone", "todo_list", "question_needs", "questions_in", "wikis", "repos", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
                      "mixed_papers", "files_in", "open_naming", "threads_card", "build"):
             self.assertNotIn(name, found, name)
 
     def test_the_view_model_names_what_is_left_for_it(self):
-        for name in ("waiting sessions", "settings", "operations journal", "the Explore graph"):
+        for name in ("waiting sessions", "settings", "operations journal"):
             self.assertIn(name, view.LEFT)
 
 
@@ -715,6 +741,11 @@ class TestShadowRepos(Case):
         self.assertEqual(["Work"], [r["name"] for r in scoped])
         self.assertNotIn("new.md", json.dumps(scoped))
 
+    def test_building_the_whole_view_writes_nothing_even_to_a_repository(self):
+        before = snapshot(self.root)
+        json.dumps(view.build(self.root))
+        self.assertEqual(before, snapshot(self.root))
+
     def test_a_git_that_fails_is_never_clean(self):
         run = subprocess.run
 
@@ -767,6 +798,88 @@ class TestShadowExample(Case):
         self.mark("Home")
         self.assertIsNone(view.build(self.root, scope=["Work"], only=("example",))["example"])
         self.assertEqual("Home", view.build(self.root, scope=["Home"], only=("example",))["example"])
+
+
+class TestShadowGraph(Case):
+    """Explore's graph (#650, 0.78.0): the view model lists the notes and the links between them; the page draws a node for
+    each. Held to v0.77.0's own `graph`, frozen, on the workspace with every link taken out; the links are tested apart."""
+
+    def setUp(self):
+        super().setUp()
+        self.old_g = old_reads_0770(status, "GRAPH")["graph"]
+
+    def clean(self):
+        """The workspace with no link in Zones/ or Wikis/, where the old read and the new agree."""
+        for p in list(self.root.rglob("*")):
+            if p.is_symlink() and p != self.root / "System" / "tools":
+                p.unlink()
+
+    def both(self, **kw):
+        link = status.Links(self.root)
+        T = status.threads(self.root)
+        args = (self.root, T, link, dt.datetime(2026, 11, 22, 12, 0))
+        return self.old_g(*args, **kw), status.graph(*args, **kw)
+
+    def test_the_graph_is_the_old_graph(self):
+        self.clean()
+        old, new = self.both()
+        self.assertEqual(old, new)
+        self.assertGreater(len(new["nodes"]), 20)
+        self.assertGreater(len(new["edges"]), 5)
+
+    def test_the_graph_is_the_old_graph_with_every_button_and_a_desk_and_a_late_ring(self):
+        self.clean()
+        desk = {str(self.root / "Zones" / "Home" / "Cedar"): "cmux"}
+        old, new = self.both(cmux=True, actions=True, desk=desk, drive=True, urgent={("Home", "Cedar", "Fence")})
+        self.assertEqual(old, new)
+        self.assertTrue(any("lt" in n for n in new["nodes"]))
+
+    def test_the_fixture_covers_what_the_graph_reads(self):
+        self.clean()
+        _, new = self.both()
+        names = {n["n"] for n in new["nodes"]}
+        self.assertIn("Fence", names)
+        self.assertNotIn("An idea", names)                                        # the vault excludes it
+        self.assertFalse({"Inbox note", "Archived note", "Agents", "Hidden note"} & names)               # Inbox, archive, instructions, hidden
+        self.assertTrue(any(k == "domain" for _, k in new["kinds"]))              # a kind found from three pages
+        self.assertTrue(new["ce"])                                                # two people who share a meeting
+
+    def test_a_note_that_is_a_link_out_of_its_zone_and_a_zone_that_is_a_link_add_none_of_their_notes(self):
+        model = view.build(self.root, only=("graph",))["graph"]
+        places = {p["name"] for p in model["places"]}
+        self.assertNotIn("Linked", places)
+        self.assertNotIn("Zones/Garden/Plot/Peek.md", [n["path"] for n in model["notes"]])
+        old, new = self.both()
+        self.assertIn("Linked", {n["z"] for n in old["nodes"]})                    # the old graph drew the link's notes twice
+        self.assertNotIn("Linked", {n["z"] for n in new["nodes"]})
+        self.assertTrue(any(n["z"] == "Garden" and n["m"] == "Plot/Peek" for n in old["nodes"]))
+        self.assertFalse(any(n["z"] == "Garden" and n["m"] == "Plot/Peek" for n in new["nodes"]))
+
+    def test_a_scoped_build_holds_the_notes_of_its_zones_and_no_wiki(self):
+        scoped = view.build(self.root, scope=["Home"], only=("graph",))["graph"]
+        self.assertEqual(["Home"], [p["name"] for p in scoped["places"]])
+        self.assertTrue(all(n["place"] == "Home" for n in scoped["notes"]))
+        for a, b in scoped["edges"]:
+            self.assertEqual("Home", scoped["notes"][a]["place"])
+            self.assertEqual("Home", scoped["notes"][b]["place"])
+        self.assertNotIn("paper", json.dumps(scoped["notes"]))
+
+    def test_a_link_names_a_note_by_path_or_by_name_and_never_itself(self):
+        model = view.build(self.root, only=("graph",))["graph"]
+        paths = [n["path"] for n in model["notes"]]
+        pairs = {(paths[a], paths[b]) for a, b in model["edges"]}
+        pairs = {frozenset(p) for p in pairs}
+        self.assertIn(frozenset(("Zones/Home/Cedar/Cedar.md", "Zones/Home/Loose.md")), pairs)
+        self.assertIn(frozenset(("Zones/Home/Cedar/Cedar.md", "Zones/Home/Cedar/Threads/Gate/Gate.md")), pairs)   # by path
+        self.assertTrue(all(a < b for a, b in model["edges"]))
+
+    def test_the_page_draws_the_graph_from_one_build_of_the_view(self):
+        self.clean()
+        model = view.build(self.root, only=("graph",))
+        link, T = status.Links(self.root), status.threads(self.root)
+        with mock.patch.object(status, "view_model", side_effect=AssertionError("built again")):
+            drawn = status.graph(self.root, T, link, dt.datetime(2026, 11, 22, 12, 0), model=model)
+        self.assertEqual(self.both()[1], drawn)
 
 
 class TestShadowInbox(Case):

@@ -18,6 +18,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
      "today": "2026-11-22",                    # the day the Todo part counts as ticked today
      "wikis": [WIKI, ...],                     # each wiki's log: how many entries, and the newest (none in a scoped build)
      "repos": [REPO, ...],                     # the root, each zone, the wikis: what each has uncommitted
+     "graph": GRAPH,                           # Explore's notes and the links between them
      "example": "Example" | null,              # the zone the worked example is in, by its marker
      "system": [SYSTEM, ...],                  # the projects kept in System/, outside any zone
      "left": [...]}                            # what the page still reads for itself, by name
@@ -67,6 +68,11 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md" | null,   # the note the line names or sits in
             "label": "Pricing" | null, "project": "Acme", "tname": "Pricing"}
 
+    GRAPH  {"places": [{"name": "Work", "folder": "Zones/Work", "zone": true}],   # a zone, or a wiki's `wiki/` folder (zone: false)
+            "notes": [{"place": "Work", "zone": true, "path": "Zones/Work/Acme/Acme.md", "rel": "Acme/Acme.md",
+                       "type": "project", "status": "active", "updated": "2026-11-02" | null, "party": ["acme"], "title": "Acme"}],
+            "edges": [[0, 1]]}                                                    # indexes into `notes`, smaller first, once
+
     WIKI   {"name": "Meetings", "folder": "Wikis/Meetings", "log": "Wikis/Meetings/wiki/log.md", "count": 12,
             "when": "2026-11-20" | null, "title": "Weekly review", "markdown": false,  # the newest entry; `markdown`: the page reads the title as plain words
             "page": "wiki/sources/review.md" | null,                                   # from the wiki's real folder
@@ -84,7 +90,7 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, the waiting sessions, the settings and the Explore graph.
+check's kept result, the waiting sessions, and the settings.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
 """
@@ -108,11 +114,10 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions", "settings",
-        "the Explore graph")
+        "the check's kept result", "waiting sessions", "settings")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
-PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example")
+PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example", "graph")
 
 _MODS: dict = {}
 
@@ -778,6 +783,132 @@ def example_zone(root: Path, scope: Optional[set] = None) -> Optional[str]:
     return None
 
 
+# ---- the graph Explore draws: every note in the zones and the wikis, and the [[links]] between them.
+WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
+# Folders that hold no notes of their own: an inbox, raw records, superseded versions, generated pages. Compared without
+# regard to case.
+GRAPH_SKIP_DIRS = {"inbox", "raw", "archive", "generated"}
+
+
+def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
+    """Whether the graph reads the folder `name` inside `folder`. A zone's own Inbox is left out. A project or a thread is
+    read whatever it is called, so one named Archive or raw stays on the graph; anywhere else a folder named for an inbox,
+    raw records, old versions or generated pages is left out."""
+    if name.startswith((".", "_")):
+        return False
+    depth = Path(folder).relative_to(root).parts
+    if in_zone and not depth:
+        return name != "Inbox"                                # every other folder here is a project
+    if in_zone and len(depth) == 2 and depth[1] == "Threads":
+        return True                                           # a thread
+    return name.casefold() not in GRAPH_SKIP_DIRS
+
+
+def git_ignored(root: Path) -> set:
+    """The folders (paths relative to the zone `root`) that the zone's own git ignores, from one `git ls-files` over the
+    zone (#399), asked for before the walk so that an ignored folder is never entered. A path git cannot encode as text (a
+    name that is not valid UTF-8) is read back as the walk reads it, with surrogateescape. A zone that is not a repository
+    of its own, or a Mac with no git, ignores nothing."""
+    if not (root / ".git").exists():
+        return set()
+    try:
+        done = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if done.returncode != 0:
+        return set()
+    return {os.fsdecode(x).rstrip("/") for x in done.stdout.split(b"\0") if x.endswith(b"/")}
+
+
+def graph_records(root: Path, scope: Optional[set] = None) -> dict:
+    """Every note in the zones and the wikis, and the [[links]] between them. From a note it keeps its place, its path,
+    its `type`, `status`, `updated`, party tags and title; from its body only the targets of its links, resolved to the
+    notes they name. Instructions (AGENTS.md) are not notes, and each zone's Todo.md has the Todo card, so neither is
+    listed. A vault's ignore filters (.obsidian/app.json) leave notes out, as Obsidian's graph does. A link to a note is
+    `[a, b]`, the indexes of two notes, once.
+
+    Walls. A zone folder that is a link is no zone, and a note that is a link whose real path is outside the place it sits
+    in is not listed, so a link never brings another place's notes onto the graph. A scope holds its zones' notes alone,
+    and no wiki: a link names only a note the scope holds."""
+    root = Path(root)
+    vt = _todo()
+    real = {z.name for z in _work().zones(root)}
+    lib = _lib()
+    within = _work()._within
+    places: List[Tuple[str, Path, bool]] = [(z.name, z, True) for z in _visible_dirs(root / "Zones")
+                                            if z.name in real and (scope is None or z.name in scope)]
+    if scope is None:
+        places += [(w.name, w / "wiki", False) for w in _visible_dirs(root / "Wikis") if (w / "wiki").is_dir()]
+    vaults: Dict[Path, list] = {}                     # vault -> its ignore filters
+    notes: List[Tuple[str, Path, Path, bool]] = []
+    for place, folder, in_zone in places:
+        vault = vt.vault_of(root, folder)
+        if vault is not None and vault not in vaults:
+            vaults[vault] = vt.ignore_filters(vault) if vault is not None else []
+        filters = vaults[vault] if vault is not None else []
+        inside = folder.resolve()
+        found_in = []                                 # (folder, files), in walk order
+        # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
+        left_out = git_ignored(folder) if in_zone else set()
+        for here, dirs, files in os.walk(folder):
+            # A folder that tops a repository of its own (a `.git` folder, or the file a worktree has) is not walked.
+            dirs[:] = sorted(d for d in dirs if walked(folder, here, d, in_zone) and not (Path(here) / d / ".git").exists()
+                             and Path(here, d).relative_to(folder).as_posix() not in left_out)
+            found_in.append((here, files))
+        for here, files in found_in:
+            for f in sorted(files):
+                if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
+                    continue
+                if here == str(folder) and (f in ("index.md", "log.md") and folder.name == "wiki"
+                                            or f == "Todo.md" and folder.parent.name == "Zones"):
+                    continue
+                path = Path(here) / f
+                if path.is_symlink() and not within(path, inside):
+                    continue
+                if filters and vt.ignored(path.relative_to(vault).as_posix(), filters):
+                    continue
+                notes.append((place, folder, path, in_zone))
+    rel = {path: path.relative_to(root).with_suffix("").as_posix() for _, _, path, _ in notes}
+    by_rel = {r: p for p, r in rel.items()}
+    # A link that is not a whole path resolves to the shortest path that ends in it after a slash, and else to the shortest
+    # note of its name; among paths as long, the first walked. Each note goes in once under every such ending, so a link is
+    # a lookup, not a pass over every note (#260).
+    by_base: Dict[str, Path] = {}
+    by_tail: Dict[str, Path] = {}
+    for p in sorted(rel, key=lambda q: len(rel[q])):
+        by_base.setdefault(p.stem.lower(), p)
+        parts = rel[p].split("/")
+        for i in range(1, len(parts)):
+            by_tail.setdefault("/".join(parts[i:]), p)
+    index = {path: i for i, (_, _, path, _) in enumerate(notes)}
+    records, edges = [], set()
+    for place, folder, path, in_zone in notes:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        fm = lib.parse_frontmatter_text(text) if text else {}
+        records.append({"place": place, "zone": in_zone, "path": _rel(path, root), "rel": path.relative_to(folder).as_posix(),
+                        "type": as_text(fm.get("type")).strip().lower(), "status": as_text(fm.get("status")).strip().lower(),
+                        "updated": _iso(as_date(fm.get("updated"))), "party": tags(fm.get("party") or fm.get("parties")),
+                        "title": as_text(fm.get("title")).strip()})
+        for target in WIKILINK.findall(text):
+            # In a Markdown table the alias's pipe is escaped, [[x\|alias]]: drop the backslash.
+            target = target.strip().rstrip("\\").strip().rstrip("/")
+            target = target[:-3] if target.endswith(".md") else target
+            hit = by_rel.get(target)
+            if hit is None:
+                hit = by_tail.get(target)
+            if hit is None:
+                hit = by_base.get(target.split("/")[-1].lower())
+            if hit is not None and hit != path:
+                a, b = index[path], index[hit]
+                edges.add((min(a, b), max(a, b)))
+    return {"places": [{"name": place, "folder": _rel(folder, root), "zone": in_zone} for place, folder, in_zone in places],
+            "notes": records, "edges": [list(e) for e in sorted(edges)]}
+
+
 def system_lookup(projects: List[dict]) -> Dict[str, str]:
     """The notes of the projects kept in System/ by the names a Todo line's link may use: the path from the workspace
     without its suffix, and the note's own name, both lower-cased; the first note to claim a name keeps it."""
@@ -838,6 +969,8 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
         out["repos"] = repo_records(root, wanted)
     if "example" in parts:
         out["example"] = example_zone(root, wanted)
+    if "graph" in parts:
+        out["graph"] = graph_records(root, wanted)
     out["left"] = list(LEFT)
     return out
 

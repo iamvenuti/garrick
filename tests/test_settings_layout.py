@@ -109,13 +109,6 @@ class TestOneGrid(LayoutCase):
             if first is not None:
                 self.assertIn(first["tag"], ("input", "select", "button", "span", "label", "a", "textarea"), first)
 
-    def test_every_setting_row_has_its_question_mark_unless_it_is_the_head_of_a_column(self):
-        dom, _ = self.dom()
-        bare = [dom.text_of(n)[:50] for n in dom.walk() if "srow" in classes(n) and "launcher-row" in classes(n)
-                and not any("qhelp" in classes(k) for k in n["kids"])]
-        # a row the help table does not know is a row without one: the table names them, and these are all that is left
-        self.assertEqual([], [b for b in bare if not re.match(r"(Out of everyday|Kept only|Never archive|Page domains|Look for|Reset view|Close the Ask|Without being asked)", b)], bare)
-
     def test_the_grid_has_one_control_column_and_one_help_column(self):
         css = status.SETTINGS_CSS
         self.assertRegex(css, r"dialog\.settings \.srow\{display:grid;grid-template-columns:minmax\(0,1fr\) var\(--sctl\) var\(--sq\)")
@@ -206,7 +199,7 @@ class TestTheListOfSections(LayoutCase):
         self.assertNotIn('id="channels-held"', markup)                    # nothing waits in the fixture
         ask = self.section(markup, "ask-settings")
         self.assertLess(ask.index('id="askbox-settings"'), ask.index('id="channels-ask"'))     # the Ask box rows first
-        self.assertIn('<h4 class="setsubh">Telegram</h4>', ask)
+        self.assertIn('<h4 class="setsubh">Telegram<button class="qhelp"', ask)
         self.assertNotIn("<h3>Telegram", markup)
 
     def test_the_highlight_follows_the_heading_nearest_the_top(self):
@@ -344,8 +337,7 @@ class TestNotifications(LayoutCase):
         self.assertNotIn("nsown", markup.split('id="notify-settings"')[1].split("</section>")[0].replace('class="chnote nsown"', ""))
         self.assertEqual(1, len(list(dom.find("p", id="n-own"))))
         said = dom.text_of(next(dom.find("p", id="n-own")))
-        self.assertIn("The morning Todo summary is ready", said)
-        self.assertIn("Sent by the todo sweep to the command you set", said)
+        self.assertEqual("The morning summaries are set by your assistant. Ask it to change them.", said)     # #681
         self.assertEqual("todo-summary", next(dom.find("input", data_nt="todo-summary"))["a"]["data-nt"])      # kept, out of sight
         self.assertIn("hidden", next(dom.find("input", data_nt="todo-summary"))["a"])
 
@@ -369,7 +361,7 @@ class TestOpenAtLogin(unittest.TestCase):
         self.assertIn("a.said&&a.said.login", js)                           # the reason, only when the app gives one
 
     def test_before_an_answer_the_row_holds_its_own_line(self):
-        self.assertIn("Starts the app when you log in", status.MENU_LOGIN)
+        self.assertEqual("With the window as you left it.", status.MENU_LOGIN)      # #681
         self.assertIn(status.MENU_LOGIN, status.menu_settings())
 
 
@@ -386,27 +378,27 @@ class TestPlainWords(LayoutCase):
         self.assertIn("Read", said_tg)
         self.assertIn("Act", said_tg)
         self.assertNotIn("Full", said_tg)                                   # Telegram never offers it
-        helps = {k: t for _, k, _, t in sh.ROWS}
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-ask-autonomy")
-        for part in ("answers from your workspace and changes nothing", "asks before anything is sent, shared or deleted", "without asking you first"):
-            self.assertIn(part, text)
+        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-autonomy")
+        self.assertEqual("Start with Read. Choose Act when you trust the answers.", text)     # the choices carry their lines (#681)
 
     def test_model_size_and_effort_have_one_line_between_them(self):
         _, markup = self.dom()
         ask = markup.split('id="channels-ask"')[1].split("</section>")[0]
         self.assertEqual(1, ask.count('data-for="ask-size"'))
-        self.assertIn("A larger size and more effort give fuller answers, and take longer and cost more", ask)
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k in ("ch-ask-tier", "ch-ask-effort"))
-        self.assertIn("take longer and cost more", text)
+        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", ask)       # #681
+        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-tier")
+        self.assertIn("deep:", text)
 
     def test_older_material_says_what_the_user_sees(self):
         _, markup = self.dom()
         sec = markup.split('id="memory-settings"')[1].split("</section>")[0]
-        for phrase in ("Out of everyday answers after", "Kept only in the archive after", "Never archive", "page would move", "Review them"):
+        for phrase in ("Dormant after", "Archived after", "Never archive", "page would move", "Review them", "let old pages become dormant",
+                       "You pinned it", "Suggest bringing a page back when new work links to it"):     # #681's words
             self.assertIn(phrase, sec)
         self.assertNotIn("would change grade", sec)
-        self.assertNotIn("dormant after", sec)
-        self.assertNotIn("archived after", sec)
+        seen = htmllib.unescape(re.sub(r"<[^>]+>", " ", sec.replace("<ROOT>", "ROOT")))   # the words shown
+        for old in ("Out of everyday answers after", "Kept only in the archive after", "fade", "pinned: true", "digest"):
+            self.assertNotIn(old, seen)
         self.assertNotIn("never archived</label>", sec)
 
     def test_the_count_line_in_the_page_and_in_the_script_say_it_the_same_way(self):
@@ -439,45 +431,21 @@ class TestPlainWords(LayoutCase):
     def test_opening_a_thread_has_a_head_over_the_radio_column_and_reset_view_says_what_it_resets(self):
         _, markup = self.dom()
         sec = self.section(markup, "launcher-settings")
-        self.assertIn('<span class="shcol">Click a name to</span>', sec)
+        self.assertIn('<span class="shcol">Default</span>', sec)
         look = self.section(markup, "look-settings")
-        self.assertIn("Show every card again, in its first place", look.split('id="view-settings"')[1])
+        self.assertIn("Shows every card again, in its first place.", look.split('id="view-settings"')[1])
         tail = look.split('id="view-settings"')[1]                          # Reset view is the last row of Look
         self.assertNotRegex(tail, r'class="(setpart|setfold|launcher-row srow (?!>))')
         self.assertEqual(1, tail.count("launcher-row srow"))
 
-    def test_a_word_of_the_tools_stands_in_a_label_only_with_a_line_that_explains_it(self):
-        """dormant, grade, effort and How far it may go: in a label only where the row, or the section's own line, explains it."""
-        banned = ("dormant", "grade", "effort", "how far it may go")
-        for name in ("rich", "bare"):
-            markup = getattr(self, name)()
-            dom = Dom(markup)
-            for section in dom.find("section", cls="setsec"):
-                lede = " ".join(dom.text_of(p) for p in section["kids"] if "setlede" in classes(p)).lower()
-                stack = list(section["kids"])
-                while stack:
-                    n = stack.pop()
-                    stack.extend(n["kids"])
-                    if "sethelp" in classes(n) or n["tag"] in ("script", "style", "option", "textarea"):
-                        continue
-                    labels = []
-                    if n["tag"] in ("label", "h3", "h4", "button", "legend", "summary") or "slab" in classes(n):
-                        labels.append(dom.text_of(n))
-                    for text in labels:
-                        for word in banned:
-                            if word in text.lower() and "explains" not in text.lower():
-                                row = n
-                                while row is not None and "srow" not in classes(row):
-                                    row = row["up"]
-                                row_text = dom.text_of(row).lower() if row is not None else ""
-                                after = ""
-                                if row is not None and row["up"] is not None:
-                                    sib = row["up"]["kids"]
-                                    at = sib.index(row)
-                                    nxt = [dom.text_of(s).lower() for s in sib[at + 1:at + 5] if "sethelp" not in classes(s) and (classes(s) or [""])[0] in ("schint", "chlevels")]
-                                    after = " ".join(nxt[:2])
-                                explained = (lede and word in lede) or len(row_text) > len(text) + 12 or (after and len(after) > 20)
-                                self.assertTrue(explained, "%s: %r has no line that explains it (%s)" % (name, text, section["a"].get("id")))
+
+    def test_a_word_that_needs_a_meaning_gets_it_behind_a_question_mark(self):
+        """#681 in place of #675's rule: dormant, effort and How far it may go are given their meaning behind a "?" or by the
+        choices' own lines, not by a line under every label."""
+        _, markup = self.dom()
+        self.assertIn("A dormant page is used only when a search reaches back.", markup)
+        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", markup)
+        self.assertIn('class="chlevels"', markup)
 
 
 if __name__ == "__main__":

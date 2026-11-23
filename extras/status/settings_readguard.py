@@ -19,13 +19,15 @@ MODES = (("off", "Off"), ("warn", "Watch"), ("enforce", "On"))
 MODE_SAID = {"off": "Nothing is checked when the assistant reads.",
              "warn": "Nothing is stopped. For a week, you see what would have been.",
              "enforce": "Reads behind another wall are stopped."}
-PROTECTS = "In a session for one project, the assistant does not open notes, meetings or mail that sit behind another zone's wall."
-HELP_TEXT = ("Walls already stop your assistant from writing one zone's material into another. The read guard does the same for "
-             "reading. In a session for one project, it stops the assistant from opening notes, meetings and mail that sit behind "
-             "another wall. Watch and On add the read guard to your assistant's settings on this computer. Off takes it out. Start "
-             "with Watch for a week and look at the list. When the list holds nothing you needed, choose On.")
-WATCH_NEXT = ("Under Watch, Across a wall does nothing yet. Once you choose On, Refuse stops a read across a wall, and Ask me asks "
-              "you each time.")
+PROTECTS = "The assistant does not read what sits behind the wall of another zone."
+# The texts of #681: one short "?" for the read guard, one for the connected tools, one for this computer.
+HELP_TEXT = ("Walls stop your assistant from writing across zones. The read guard stops it from reading across zones. Start with "
+             "Watch for a week, then choose On.")
+TOOLS_TEXT = ("A mail or calendar search can return messages from every zone. Garrick takes out what sits behind another wall "
+              "before your assistant sees it.")
+MACHINE_TEXT = "Change this only if a second computer keeps a copy of your workspace."
+WATCH_NEXT = "This starts when you choose On."
+CODEX_TRUST = "Codex runs the read guard only after you trust it in Codex's own settings, and again after each change you make here."
 BEHIND = "a file behind another zone's wall"
 NOT_RECORDED = "not recorded"
 WATCH_ONLY_NEXT = " Watch lets every result through, and notes that it could not decide."
@@ -178,17 +180,18 @@ def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: 
         cannot = '<p class="hint rgcannot" id="rg-cannot" role="status">%s%s</p>' % (sg.esc(sg.CANNOT.get(problem, sg.CANNOT["parties"])), sg.esc(CANNOT_NEXT.get(mode, "")))
     watch = '<p class="hint rgwatch" id="rg-cross-watch" data-for="warn"%s>%s</p>' % ("" if mode == "warn" else " hidden", sg.esc(WATCH_NEXT))
     cross_row = ('<div class="launcher-row srow rgrow" data-rg="cross" data-was="%s" data-for="enforce"%s><div class="slab"><span class="launcher-choice"><span>Across a wall</span></span></div>'
-                 '<div class="sctl">%s</div>%s</div>%s'
-                 % (sg.esc(state["cross"]), "" if mode == "enforce" else " hidden", sg.radios("rg-cross", "cross", sg.CROSS, state["cross"], "Across a wall"),
-                    help_button("Across a wall: Refuse, Ask me", "rg-cross"), help_text("rg-cross", sg.esc(sg.GUARD_TEXT["rg-cross"]))))
+                 '<div class="sctl">%s</div></div>'
+                 % (sg.esc(state["cross"]), "" if mode == "enforce" else " hidden", sg.radios("rg-cross", "cross", sg.CROSS, state["cross"], "Across a wall")))
     if codex:
         lists = ('<p class="hint rgcodex" id="rg-codex">%s</p><p class="hint rgtrust" id="rg-trust">%s</p>'
-                 % (sg.esc(sg.CODEX_LINE), sg.esc(sg.CODEX_TRUST)))
+                 % (sg.esc(sg.CODEX_LINE), sg.esc(CODEX_TRUST)))
     else:
         def list_row(key: str, name: str, label: str, text_key: str) -> str:
+            helped = text_key == "rg-tools"           # the two lists share one "?" (#681)
             return ('<div class="launcher-row srow rgrow rglist-row" data-rg="%s"><div class="slab"><span class="launcher-choice"><span>%s</span></span></div>'
                     '<div class="sctl rgbody">%s</div>%s</div>%s'
-                    % (key, sg.esc(name), item_list(sg, key, state[key], label), help_button(name, text_key), help_text(text_key, sg.esc(sg.GUARD_TEXT[text_key]))))
+                    % (key, sg.esc(name), item_list(sg, key, state[key], label), help_button(name, text_key) if helped else "",
+                       help_text(text_key, sg.esc(TOOLS_TEXT)) if helped else ""))
         lists = ('<details class="rgadv"><summary>Advanced</summary><p class="rgsub"><b>Which connected tools are checked</b></p>%s%s</details>'
                  % (list_row("tools", "Mail and calendar tools", "A mail or calendar tool to check", "rg-tools"),
                     list_row("skip", "Tools with nothing to check", "A tool with nothing to check", "rg-skip")))
@@ -203,7 +206,8 @@ def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: 
 def machine_section(sg, role: str, name: str, server: str, help_button: Callable, help_text: Callable) -> str:
     """Settings › About › This computer (#682): one row, its label, the role in words (for a laptop copy with the home
     server's name) and *Change…* in the app only; in a browser, the line that says it is changed in Garrick.app. The
-    sentence for the role is said once, under the label. The window that Change opens holds the three choices, as before."""
+    sentence for the role is said once, in the window that Change opens, and as the role's tooltip (#681): a small line has
+    ten words at most. The window holds the three choices, as before."""
     words = dict(sg.ROLE_WORDS)
     role = role if role in words else "solo"
     shown = words[role] + (" of %s" % server if role == "roaming" and server else "")
@@ -211,13 +215,13 @@ def machine_section(sg, role: str, name: str, server: str, help_button: Callable
         '<label class="rolechoice"><input type="radio" name="role-pick" value="%s"%s> <span><b>%s</b><small>%s</small></span></label>'
         % (k, " checked" if k == role else "", sg.esc(v), sg.esc(sg.ROLE_TEXT[k])) for k, v in sg.ROLE_WORDS)
     row = ('<div class="launcher-row srow mrole" id="machine-role" data-role="%s" data-name="%s" data-server="%s">'
-           '<div class="slab"><span class="launcher-choice"><span>This computer<small id="machine-role-line">%s</small></span></span></div>'
-           '<div class="sctl"><span class="mrolesaid" id="machine-role-said">%s</span>'
+           '<div class="slab"><span class="launcher-choice"><span>This computer</span></span></div>'
+           '<div class="sctl"><span class="mrolesaid" id="machine-role-said" title="%s">%s</span>'
            '<button class="act sm apponly" type="button" id="role-change" data-rolechange="1">Change…</button></div>%s</div>%s'
            % (sg.esc(role), sg.esc(name), sg.esc(server), sg.esc(sg.ROLE_TEXT[role]), sg.esc(shown), help_button("This computer", "machine"),
-              help_text("machine", sg.esc(sg.MACHINE_TEXT))))
+              help_text("machine", sg.esc(MACHINE_TEXT))))
     dialog = ('<div id="role-dialog" class="rolebox" role="dialog" aria-modal="true" aria-labelledby="role-title" hidden><div class="rolepanel" id="role-form">'
-              '<h3 id="role-title" tabindex="-1">This machine</h3><fieldset class="rolepick"><legend>This computer is</legend>%s</fieldset>'
+              '<h3 id="role-title" tabindex="-1">This computer</h3><fieldset class="rolepick"><legend>This computer is</legend>%s</fieldset>'
               '<div class="rolefields"><label id="role-name-row">This computer\'s name (optional)'
               '<input type="text" id="role-name" maxlength="40" autocomplete="off" placeholder="laptop"></label>'
               '<label id="role-server-row" hidden>The home server\'s name'

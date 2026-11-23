@@ -1298,9 +1298,8 @@ class TestASendIsHeld(EngineCase):
         self.assertEqual([held["id"]], [r["id"] for r in self.hold.pending()])
 
     def test_settings_and_the_docs_say_full_sends_without_asking_you_first(self):
-        sh = load("settings_help")
-        [row] = [r for r in sh.ROWS if r[1] == "ch-ask-autonomy"]
-        self.assertIn("also sends what you asked for without asking you first.", row[3])
+        status = load("status")
+        self.assertIn("also sends what you asked for without asking you first", status.LEVEL_SAID["full"])     # the choice's own line (#681)
         docs = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
         self.assertIn("Full sends without asking you first", docs)
 

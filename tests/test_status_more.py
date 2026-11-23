@@ -1290,7 +1290,7 @@ class TestZoneColours(StatusCase):
         html = self.page()
         start = html.index('id="zone-settings"')
         section = html[start:html.index("</section>", start)]
-        self.assertIn('<section class="setsec apponly" id="zone-settings">', html)           # the app saves it; a browser cannot
+        self.assertIn('<div class="setpart apponly" id="zone-settings">', html)              # a part of Look (#682); the app saves it
         self.assertEqual(2, section.count('launcher-row srow zrow"'))
         self.assertIn('<div class="launcher-row srow zrow" data-zone="Work"><div class="slab"><span class="zprev zc zc-teal">', section)
         self.assertIn('<option value="Teal" selected>Teal</option>', section)
@@ -1341,7 +1341,7 @@ class TestGraphColours(StatusCase):
         self.save({"project": "Teal"})
         html = self.page()
         section = self.section(html)
-        self.assertIn('<section class="setsec apponly" id="graph-colour-settings"><h3>Graph colours', html)   # the app saves it
+        self.assertIn('<details class="setfold apponly" id="graph-colour-settings"><summary>Graph colours</summary>', html)   # a closed fold of Look (#682)
         data = graph_data(html)
         rows = re.findall(r'<div class="launcher-row srow gkrow" data-kind="([^"]+)" data-def="([^"]+)">', section)
         shipped = dict((k, c) for k, _, c in status.KINDS)
@@ -2071,8 +2071,8 @@ class TestHotkeyFields(unittest.TestCase):
                           ("menu-askkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}),
                           ("menu-hotkey", "keydown", {"key": "a", "code": "KeyA", "ctrlKey": True, "altKey": True}))
         self.assertEqual([], out["posted"])
-        self.assertEqual("⌘G is already the menu's hotkey. Clear it there, or pick another.", out["notes"]["askhotkey"])
-        self.assertEqual("⌃⌥A is already the Ask hotkey. Clear it there, or pick another.", out["notes"]["hotkey"])
+        self.assertEqual("⌘G is already the menu's shortcut. Clear it there, or pick another.", out["notes"]["askhotkey"])
+        self.assertEqual("⌃⌥A is already the Ask box shortcut. Clear it there, or pick another.", out["notes"]["hotkey"])
 
     def test_what_macos_refuses_is_said_before_asking(self):
         out = self.run_js({"hotkey": "", "askhotkey": ""},
@@ -2088,7 +2088,7 @@ class TestHotkeyFields(unittest.TestCase):
     def test_an_app_without_the_setting_hides_its_row(self):
         out = self.run_js({"hotkey": "⌥Space"})
         self.assertEqual("none", out["askRow"])
-        self.assertEqual("Opens the menu or the panel from any app", out["notes"]["hotkey"])
+        self.assertEqual("Opens the menu from any app.", out["notes"]["hotkey"])
         self.assertEqual(("none", "none"), (out["dictRow"], out["dictKeyRow"]))   # nor the dictation rows, from an app before #35
 
     def test_the_ask_box_starts_dictation_as_chosen(self):
@@ -2096,7 +2096,7 @@ class TestHotkeyFields(unittest.TestCase):
                           ("menu-dictation", "change", {"value": "fn"}))
         self.assertEqual([{"app": {"dictation": "fn"}}], out["posted"])
         self.assertEqual(("", "none"), (out["dictRow"], out["dictKeyRow"]))   # the shortcut field only for a shortcut
-        self.assertEqual("Once the Ask box opens, start dictation in it too", out["notes"]["dictation"])
+        self.assertEqual("Starts when the Ask box opens.", out["notes"]["dictation"])
         out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "dictation": "fn2", "dictationkey": ""})
         self.assertIn("Needs the Accessibility permission", out["notes"]["dictation"])
         out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "dictation": "macos", "dictationkey": "",
@@ -2114,7 +2114,7 @@ class TestHotkeyFields(unittest.TestCase):
         self.assertEqual([], out["posted"])                                       # neither hotkey, and not a bare letter
         self.assertEqual("Use ⌘, ⌃ or ⌥ with the key.", out["notes"]["dictationkey"])
         out = self.run_js(app, ("menu-dictkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}))
-        self.assertEqual("⌘G is already a hotkey of Garrick's. Pick your dictation tool's key.", out["notes"]["dictationkey"])
+        self.assertEqual("⌘G is already one of Garrick's shortcuts. Pick your dictation app's key.", out["notes"]["dictationkey"])
 
     def test_the_last_ticked_way_to_close_the_ask_box_stays_ticked(self):
         out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askclose": "escape"})
@@ -2781,8 +2781,8 @@ class TestExploreFollowsTheZoneInView(StatusCase):
 
     def test_on_by_default_and_only_with_the_graph(self):
         html = self.page()
-        self.assertIn('<section class="setsec" id="follow-settings"><h3>Explore', html)
-        self.assertIn('<label class="launcher-choice" for="graph-follow"><span>Follow the zone in view', html)
+        self.assertIn('<div class="setpart" id="follow-settings">', html)               # one row of Look (#682)
+        self.assertIn('<label class="launcher-choice" for="graph-follow"><span>The graph follows the zone you read', html)
         self.assertIn(status.FOLLOW_JS, html)
         bare = self.page(show_graph=False)
         self.assertNotIn("graph-follow", bare)

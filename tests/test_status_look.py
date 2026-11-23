@@ -914,7 +914,7 @@ class ChannelsCard(unittest.TestCase):
         html = self.card(held=[row])
         self.assertIn('<div class="setpart" id="channels-held"><h4 class="setsubh">Waiting for your yes</h4><div id="held-actions">', html)
         self.assertIn("Send Dana the price sheet", html)
-        self.assertLess(html.index('<h4 class="setsubh">Telegram</h4>'), html.index("Waiting for your yes"))
+        self.assertLess(html.index('<h4 class="setsubh">Telegram'), html.index("Waiting for your yes"))
         self.assertGreater(html.index("Waiting for your yes"), html.rindex('data-key="autonomy"'))
 
     def test_no_path_and_no_model_code_name_in_the_visible_text(self):
@@ -926,7 +926,7 @@ class ChannelsCard(unittest.TestCase):
         self.assertEqual(2, len(tiers))
         for t in tiers:
             self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
-        self.assertIn("changes that can be undone", status.CHANNELS_HELP)       # the Ask section's "?" (#682)
+        self.assertIn("Telegram keeps your messages and the answers on its servers.", status.TELEGRAM_HELP)   # Telegram's "?" (#681)
 
 
 def two_zones_one_late_each(root):

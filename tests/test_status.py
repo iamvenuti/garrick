@@ -1728,10 +1728,11 @@ class TestSettings(StatusCase):
 
     def test_each_explanation_is_behind_a_question_mark(self):
         dialog = self.dialog()
-        for key, name in (("launchers", "Opening work"), ("zones", "Look"), ("about", "About")):
+        for key, name in (("launchers", "Opening work"), ("zones", "Look")):
             self.assertIn('<h3>%s<button class="qhelp" type="button" aria-expanded="false" aria-controls="help-%s" '
                           'aria-label="Explain %s"' % (name, key, name), dialog)      # a button, so the keyboard reaches it
-        for key in ("launchers", "zones", "about", "view"):
+        self.assertIn('<h3>About</h3>', dialog)                                       # About has none of its own: the links do (#681)
+        for key in ("launchers", "zones", "about"):
             self.assertEqual(1, dialog.count('<p class="hint sethelp" id="help-%s" hidden>' % key), key)   # hidden until asked for
         self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
@@ -1742,9 +1743,9 @@ class TestSettings(StatusCase):
 
     def test_explanations_keep_their_words(self):
         dialog = htmllib.unescape(self.dialog())
-        for words in ("Tick what project and thread cards offer; Default is what clicking a thread's name does.",
-                      "A colour and an icon for each zone, shown wherever the page names it.",
-                      "These open GitHub in your browser. Nothing is sent until you submit it there.",
+        for words in ("Tick the apps you want on each card. Default is the app that opens when you click a name.",       # #681's texts
+                      "With cmux, the tab of a zone takes the same colour.",
+                      "These links open GitHub in your browser. Use made-up names there, never the name of a real client.",
                       "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."):
             self.assertIn(words, dialog)
 
@@ -1769,7 +1770,7 @@ class TestSettings(StatusCase):
         self.assertIsNotNone(button)
         self.assertTrue(htmllib.unescape(button.group(1)).startswith(
             "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."))
-        self.assertIn('aria-controls="help-view" aria-label="Explain Reset view"', foot)
+        self.assertNotIn('aria-controls="help-view"', foot)                            # its line says it: no "?" (#681)
         self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', foot)
 
     def test_the_app_opens_it(self):
@@ -3928,8 +3929,7 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<div class="mlists" data-mkl="meetings"><p class="mkname">Meetings</p>', advanced)
         self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
-        self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
-                      'work links again">', advanced)
+        self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Suggest bringing a page back when new work links to it">', advanced)
         self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
@@ -3992,7 +3992,7 @@ class TestMemorySettings(StatusCase):
 
     def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        self.assertIn('<p class="setlede">Old meetings and reading move out of everyday answers after the months set here: %s.</p>' % status.GRADES_SAID, sec)
+        self.assertIn('<p class="setlede">Old pages leave everyday answers when you approve it. Nothing is deleted.</p>', sec)   # #681
         shown = sec[:sec.index('<details class="madv">')]
         for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
                      "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
@@ -4000,17 +4000,17 @@ class TestMemorySettings(StatusCase):
             self.assertNotIn(gone, shown)                                       # in the docs, or under Advanced
         self.assertEqual(1, sec.count('<details class="madv">'))                # one Advanced, closed
         self.assertNotIn('<details class="madv" open', sec)
-        order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', 'Meetings: ', 'data-mwikion="Knowledge"',
+        order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', '<p class="mcount">', 'data-mwikion="Knowledge"',
                                         '<details class="madv">', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
         self.assertEqual(sorted(order), order)
 
     def test_one_word_for_each_grade_said_once_and_no_other_words_for_them(self):
         sec = htmllib.unescape(self.section())
         visible = re.sub(r"<[^>]+>", " ", sec[:sec.index('id="help-memory"')] + sec[sec.index("</p>", sec.index('id="help-memory"')):])
-        self.assertEqual(1, visible.count("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; nothing is deleted"))
+        self.assertEqual(1, visible.count("Old pages leave everyday answers when you approve it. Nothing is deleted."))   # #681
         for old in ("leave the index", "next pass moves", "nothing to move", "Put aside"):
             self.assertNotIn(old, sec)
-        self.assertIn("Let old Meetings pages fade", sec)
+        self.assertIn("Meetings: let old pages become dormant", sec)
 
     def test_a_count_with_something_to_move_has_a_review_button_and_one_without_has_none(self):
         sec = self.section()
@@ -4050,10 +4050,11 @@ class TestMemorySettings(StatusCase):
         import view_settings
         fade = view_settings.fade_lib(self.root)
         sec = self.section()
-        self.assertIn(status.said_html(fade.AGE_SAID), sec[sec.index('id="help-memory"'):])     # fade.py's words, behind the "?"
-        advanced = sec[sec.index('<details class="madv">'):]
-        self.assertIn('<p class="hint msaid">%s</p>' % status.said_html(fade.WAKE_SAID), advanced)
-        self.assertIn("<code>pinned: true</code>", status.said_html(fade.WAKE_SAID))
+        self.assertNotIn(status.said_html(fade.AGE_SAID), sec)                                  # fade.py's words are on the docs page (#681)
+        self.assertNotIn("msaid", sec)
+        docs = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
+        self.assertIn("How age is counted", docs)
+        self.assertIn("This is how waking works", docs)
         self.assertNotIn("Full list", sec)
         self.assertFalse((self.root / "System" / "generated").exists())             # building the page writes nothing
         fade.propose(self.root, "Meetings")

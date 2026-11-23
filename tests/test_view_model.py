@@ -151,7 +151,7 @@ def add_graph(root: Path) -> None:
     home = root / "Zones" / "Home"
     write(home / "Cedar" / "Cedar.md", (home / "Cedar" / "Cedar.md").read_text(encoding="utf-8") + "\nSee [[Fence]] and [[Cedar/Threads/Gate/Gate]] and [[Loose]].\n")
     write(home / "Loose.md", "- [ ] A line in a note beside the projects\n\nBack to [[Cedar]], [[Cedar\\|alias]], [[wiki/sources/paper]] and [[nowhere]].\n")
-    write(home / "Inbox" / "in.md", "---\ntitle: Inbox note\n---\n")
+    write(root / "Zones" / "Personal" / "Inbox" / "in.md", "---\ntitle: Inbox note\n---\n")
     write(home / "Cedar" / "archive" / "old.md", "---\ntitle: Archived note\n---\n")
     write(home / "AGENTS.md", "# Agents\n")
     write(home / "_hidden.md", "---\ntitle: Hidden note\n---\n")

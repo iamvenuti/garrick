@@ -4586,13 +4586,27 @@ def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
 LEVEL_SAID = {"read": "answers from your workspace, changes nothing",
               "act": "may also make changes you would make by hand, and asks before anything is sent, shared or deleted",
               "full": "as Act, and also sends what you asked for without asking you first"}
-# What a larger model and more effort do (#675), from what the engine passes on: the model's size and the assistant's effort setting,
-# and, for one message that starts with deep:, the large size at high effort.
-SIZE_SAID = "Larger and more effort: fuller answers, slower, and they cost more."
+# Answers (#683): one choice in place of the model's size and effort, each with its line; Custom only for another stored pair.
+ANSWER_CHOICES = (("faster", "Faster", "Short answers, soonest."), ("balanced", "Balanced", "Right for most questions."),
+                  ("fuller", "Fuller", "More thought. Slower, and it costs more."))
+ANSWER_CUSTOM = ("custom", "Custom", "Set by your assistant.")
+
+
+def channel_answers(channel: str, cfg: dict, off: bool = False) -> str:
+    """Settings › Ask and Telegram › Answers (#683): Faster, Balanced or Fuller, from the stored tier and effort, and Custom,
+    selected, when the stored pair is none of the three. A pick saves through `channel-answers`; Custom is never sent."""
+    now = channels_mod().answers_of(cfg[channel].get("tier"), cfg[channel].get("effort"))
+    choices = ANSWER_CHOICES + ((ANSWER_CUSTOM,) if now == "custom" else ())
+    body = "".join('<label class="rgchoice chanswer"%s><input type="radio" name="ch-%s-answers" value="%s"%s%s> <span><b>%s</b><small>%s</small></span></label>'
+                   % (' data-custom="1"' if k == "custom" else "", channel, k, " checked" if k == now else "",
+                      ' disabled title="%s"' % E(NOT_SET_UP) if off else "", E(v), E(said)) for k, v, said in choices)
+    return set_row(row_label("Answers", "", ""),
+                   '<span class="rgmode chanswers" id="ch-%s-answers" data-answers="%s" data-was="%s" role="radiogroup" aria-label="Answers">%s</span>'
+                   % (channel, channel, now, body))
 
 
 def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
-    """Settings › Ask's channel parts (#571, #682): Ask's model size, effort and how far it may go, then a part headed
+    """Settings › Ask's channel parts (#571, #682, #683): Ask's Answers and how far it may go, then a part headed
     Telegram with its own, then what waits for your yes when something does. In the app only, as the sections that save
     are. Empty where the channels cannot be read. ask_settings() puts them in one part, after the Ask box rows."""
     ch = _data(ws, data, "channels").get("channels")
@@ -4612,9 +4626,7 @@ def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
         if channel == "telegram":
             line, off = telegram_service_row(ws, {"channels": ch})
             body += line
-        body += select(channel, "tier", ch["tiers"], TIER_NAMES, "Model size", off)
-        body += select(channel, "effort", ch["efforts"], {}, "Effort", off)
-        body += '<p class="chnote schint" data-for="%s-size">%s</p>' % (channel, SIZE_SAID)
+        body += channel_answers(channel, cfg, off)
         body += select(channel, "autonomy", ch["levels"][channel], LEVEL_NAMES, "How far it may go", off)
         body += '<ul class="chlevels" data-for="%s-levels">%s</ul>' % (
             channel, "".join("<li><b>%s</b> %s</li>" % (E(LEVEL_NAMES[v]), E(LEVEL_SAID[v])) for v in ch["levels"][channel]))
@@ -4645,7 +4657,7 @@ TELEGRAM_HELP = ("Telegram keeps your messages and the answers on its servers. R
 
 def ask_settings(ws: Path, data: Optional[dict] = None) -> str:
     """Settings › Ask (#682): one section for the Ask box and Telegram. The Ask box rows first (askbox_settings()), then
-    the channels' parts (channels_settings()): Ask's model size, effort and how far it may go, then a sub-heading
+    the channels' parts (channels_settings()): Ask's Answers and how far it may go, then a sub-heading
     Telegram with its own, then what waits for your yes, only when something does. Every row needs the app, so the
     section shows only there (MENU_SETTINGS_JS, CHANNELS_JS)."""
     return ('<section class="setsec apponly" id="ask-settings" hidden>%s%s%s</section>'
@@ -4657,9 +4669,16 @@ CHANNELS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var boxes=document.querySelectorAll('.chsec');if(!host||!boxes.length)return;boxes.forEach(function(b){b.hidden=false});
 var ask=document.getElementById('ask-settings');if(ask)ask.hidden=false;
-function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
+function chSave(sel){var c=sel.dataset.channel,o={};o[c]={autonomy:document.getElementById('ch-'+c+'-autonomy').value};
 host.postMessage({act:{verb:'settings',channels:o}})}
-document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
+document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})});
+/* Answers (#683): Faster, Balanced or Fuller, saved as its pair by the page's own verb; Custom goes once one of the three is saved */
+document.querySelectorAll('.chanswers').forEach(function(g){g.addEventListener('change',function(e){var i=e.target;e.stopPropagation();
+if(!i.matches('input[type=radio]')||i.value==='custom')return;host.postMessage({act:{verb:'channel-answers',channel:g.dataset.answers,answers:i.value}})})});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='channel-answers'){var g=document.getElementById('ch-'+q.channel+'-answers');
+if(g){if(out&&out.ok){g.dataset.was=q.answers;var c=g.querySelector('[data-custom]');if(c)c.remove()}
+else{var b=g.querySelector('input[value="'+g.dataset.was+'"]');if(b)b.checked=true}}return}
+if(prev)return prev(q,out)}})();
 """
 
 def copy(label: str, text: str, say: str) -> str:
@@ -6643,8 +6662,10 @@ window.GarrickUsage={changed:function(){return changed},request:function(){retur
 # and nothing moves until a pass is asked for. Without fade.py, or when it
 # fails, the section is left out or says why, and the page builds as before.
 MEMORY_WIKIS = ("Meetings", "Knowledge")
-MEMORY_PINS = (("thread", "A live thread links it"), ("project", "A live project's notes link it"),
-               ("todo", "An open action in a Todo list links it"), ("pinned", "You pinned it"))
+MEMORY_PINS = (("thread", "a live thread links to it"), ("project", "the notes of a live project link to it"),
+               ("todo", "an open action links to it"), ("pinned", "you pinned it"))
+MEMORY_PINS_LINE = "A page stays working, however old, while:"
+MEMORY_MORE = "More choices"
 MEMORY_MONTHS = (1, 240)          # what the form offers; fade.py and page_action.py have the last word
 MEMORY_MIN = (1, 1000)
 
@@ -6686,14 +6707,43 @@ def sub_row(label: str, control: str) -> str:
     return '<div class="mkrow"><div class="slab">%s</div><div class="sctl">%s</div></div>' % (label, control)
 
 
+def memory_kind_lists(k: dict) -> str:
+    """A kind's page types and domains, kept on its row as data and sent back unchanged when Settings closes (#683): they leave
+    the page, and the assistant still changes them in the settings file."""
+    keep = lambda v: [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+    return ' data-mtypes="%s" data-mdomains="%s"' % (E(json.dumps(keep(k.get("types")))), E(json.dumps(keep(k.get("domains")))))
+
+
+def memory_more_choices(cfg: dict, pins: dict, box: Callable, num: Callable) -> str:
+    """Older pages › More choices (#683): one line over the four things that keep a page working, bringing a page back, whether
+    a search also reads dormant pages (a tick box that stores the two values the list stored), and the morning summary's line
+    as one sentence with its number inside."""
+    pin_rows = "".join(set_row(row_label(E(said), "", ""), box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), "mpin")
+                       for key, said in MEMORY_PINS)
+    nightly = cfg.get("nightly") or {}
+    reach = cfg.get("reach", "dormant")
+    night = ('<span class="launcher-choice"><span>Tell me in the morning summary when %s or more pages are due</span></span>'
+             % num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "How many pages are due"))
+    return ('<details class="madv"><summary>%s</summary>'
+            '<p class="hint mlede">%s</p><div class="mpins">%s</div>%s%s%s</details>'
+            % (E(MEMORY_MORE), E(MEMORY_PINS_LINE), pin_rows,
+               set_row(row_label("Suggest bringing a page back when new work links to it", "", "m-wake"),
+                       box('id="m-wake"', cfg.get("wake", True) is not False, "Suggest bringing a page back when new work links to it")),
+               set_row(row_label("A search also reads dormant pages", "", "m-reach"),
+                       box('id="m-reach"', reach != "working", "A search also reads dormant pages")),
+               set_row(night, box('id="m-night"', nightly.get("on", True) is not False, "Tell me in the morning summary when pages are due"),
+                       "mafter")))
+
+
 def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dict] = None) -> str:
     """Settings › Manage older material, the Memory section (#108), cut to
     its choices (#227): one line saying what it does; per wiki, the switch
     that lets old pages fade, each of its kinds' months, and one line of
     counts, with a link to the full list the last review wrote (`link`).
-    Under one closed Advanced: which pages each kind takes, what keeps a
-    page working, bringing a page back, how far search reaches unasked, and
-    the morning digest's line. How the grades, the steps and age work is
+    Under one closed More choices (#683): what keeps a page working,
+    bringing a page back, whether a search also reads dormant pages, and
+    the morning summary's line. Which pages each kind takes is not on the
+    page: it is kept on each kind's row and sent back as it was. How the grades, the steps and age work is
     behind the "?" and in the docs; how age is counted and what wakes a page
     are fade.py's own sentences (AGE_SAID, WAKE_SAID), shown as they are, so
     the page cannot promise what the code does not do. The rows say what the user sees: how long a page stays in everyday
@@ -6727,7 +6777,7 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
         n = memory_moves(c)
         return " " + request_button("Review them", "what would fade in %s" % w, ws, "act sm") if n else ""
 
-    blocks, advanced = "", ""
+    blocks = ""
     for w in MEMORY_WIKIS:
         kind_rows = ""
         for name, k in kinds.items():
@@ -6737,22 +6787,14 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
             dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
             shown = name[:1].upper() + name[1:]
             kind_rows += (
-                '<div class="mkind" data-mkind="%s" data-mwiki="%s"><p class="mkname">%s</p>%s%s%s</div>'
-                % (E(name), E(w), E(shown),
+                '<div class="mkind" data-mkind="%s" data-mwiki="%s"%s><p class="mkname">%s</p>%s%s%s</div>'
+                % (E(name), E(w), memory_kind_lists(k), E(shown),
                    sub_row(row_label("Dormant after", "", ""),
                            '%s months' % num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name)),
                    sub_row(row_label("Archived after", "", ""),
                            '%s months' % num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
                                              "%s: months to archived" % name, never)),
                    sub_row(row_label("Never archive", "", ""), box('data-mk="never"', never, "%s: never archived" % name))))
-            advanced += ('<div class="mlists" data-mkl="%s"><p class="mkname">%s</p>%s%s</div>'
-                         % (E(name), E(shown),
-                            sub_row(row_label("Page types", "", ""),
-                                    '<textarea rows="1" data-mk="types" placeholder="none" title="%s" aria-label="%s page types">%s</textarea>'
-                                    % (E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("types"))))),
-                            sub_row(row_label("Page domains", "", ""),
-                                    '<textarea rows="1" data-mk="domains" placeholder="none" title="%s" aria-label="%s page domains">%s</textarea>'
-                                    % (E(memory_list(k.get("domains"))), E(name), E(memory_list(k.get("domains")))))))
         blocks += ('<div class="mwiki" data-mw="%s">%s%s%s</div>'
                    % (E(w),
                       set_row(row_label("%s: let old pages become dormant" % E(w), "", ""),
@@ -6760,30 +6802,9 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
                       kind_rows,
                       '<p class="mcount"><span data-mc="line">%s</span>%s%s</p>' % (E(memory_said(w, grades[w])), full_list(w), review(w, grades[w]))
                       if w in grades else ""))
-    pin_rows = "".join(set_row(row_label(E(said), "", ""), box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), "mpin")
-                       for key, said in MEMORY_PINS)
-    wake = mem.get("wake_said")
-    nightly = cfg.get("nightly") or {}
-    reach = cfg.get("reach", "dormant")
     return ('<section class="setsec apponly" id="memory-settings">%s<div class="mgrades" id="m-prev" aria-live="polite">%s</div>'
-            '<p class="hint" id="m-prevsaid" hidden></p>'
-            '<details class="madv"><summary>Advanced</summary>'
-            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">A page belongs to a kind when its page type or its domain is listed. Separate entries with commas.</p>%s'
-            '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">A page stays working, however old, while:</p><div class="mpins">%s</div>'
-            '<h4 class="nsub">Bringing a page back</h4>%s%s'
-            '<h4 class="nsub">Search and the morning summary</h4>%s%s</details></section>'
-            % (head, blocks, advanced, pin_rows,
-               set_row(row_label("Suggest bringing a page back when new work links to it", "", "m-wake"),
-                       box('id="m-wake"', cfg.get("wake", True) is not False, "Suggest bringing a page back when new work links to it")),
-               "",                                       # how waking works is on the docs page (#681)
-               set_row(row_label("Without being asked, search reads", "", "m-reach"),
-                       '<select id="m-reach" aria-label="How far search reaches unasked">'
-                       '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select>'
-                       % (" selected" if reach == "working" else "", " selected" if reach != "working" else "")),
-               set_row(row_label("Tell me in the morning summary when pages are due", "Once at least this many are due.", "m-night"),
-                       '%s %s pages' % (box('id="m-night"', nightly.get("on", True) is not False, "Tell me in the morning summary when pages are due"),
-                                        num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")),
-                       "mafter")))
+            '<p class="hint" id="m-prevsaid" hidden></p>%s</section>'
+            % (head, blocks, memory_more_choices(cfg, pins, box, num)))
 
 
 MEMORY_CSS = r"""
@@ -6819,13 +6840,13 @@ MEMORY_JS = r"""
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,changed=false,timer=null,said=document.getElementById('m-prevsaid');
 function n(e){var v=parseInt(e.value,10);if(isNaN(v))v=parseInt(e.defaultValue,10);return Math.max(+e.min,Math.min(+e.max,v))}
 function list(e){return e?e.value.split(',').map(function(x){return x.trim()}).filter(function(x){return x}):[]}
-function request(){var m={wikis:{},kinds:{},pins:{},wake:document.getElementById('m-wake').checked,reach:document.getElementById('m-reach').value,
+function kept(f,k){try{var v=JSON.parse(f.dataset[k]||'[]');return Array.isArray(v)?v:[]}catch(e){return[]}}
+function request(){var m={wikis:{},kinds:{},pins:{},wake:document.getElementById('m-wake').checked,reach:document.getElementById('m-reach').checked?'dormant':'working',
 nightly:{on:document.getElementById('m-night').checked,min:n(document.getElementById('m-min'))}};
 sec.querySelectorAll('[data-mwikion]').forEach(function(c){m.wikis[c.dataset.mwikion]=c.checked});
 sec.querySelectorAll('[data-mpin]').forEach(function(c){m.pins[c.dataset.mpin]=c.checked});
-sec.querySelectorAll('.mkind').forEach(function(f){var q=function(k){return f.querySelector('[data-mk="'+k+'"]')},d=n(q('dormant')),
-l=sec.querySelector('[data-mkl="'+f.dataset.mkind+'"]'),t=function(k){return l&&l.querySelector('[data-mk="'+k+'"]')};
-m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(t('types')),domains:list(t('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
+sec.querySelectorAll('.mkind').forEach(function(f){var q=function(k){return f.querySelector('[data-mk="'+k+'"]')},d=n(q('dormant'));
+m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:kept(f,'mtypes'),domains:kept(f,'mdomains'),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
 return m}
 function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' dormant'+(c.archived?' · '+c.archived+' archived':'');
 if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?'. '+mv+' page'+(mv===1?'':'s')+' would move.':'. No page would move.')}

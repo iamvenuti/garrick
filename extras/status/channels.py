@@ -57,6 +57,9 @@ LEVELS = ("read", "act", "full")
 DEFAULTS = {"tier": "sonnet", "effort": "medium", "autonomy": "act"}
 LEVELS_FOR = {"ask": LEVELS, "telegram": ("read", "act")}
 DEEP_TIER, DEEP_EFFORT = "opus", "high"
+# Settings' one choice for answers (#683), and the pair each stores: the stored keys and values do not change. Any other
+# pair shows as Custom until one of the three is picked; nothing rewrites a stored pair on its own.
+ANSWERS = {"faster": ("haiku", "low"), "balanced": ("sonnet", "medium"), "fuller": ("opus", "high")}
 PLAIN_TIER = "haiku"
 NO_BINARY_SAID = "The assistant's command was not found."
 CHECKS = ("resume", "removable_tools", "walls_outside_model")
@@ -106,6 +109,11 @@ def clean_one(channel: str, given, kept=None) -> dict:
         raise ValueError("Telegram does not offer Full: nobody is at the desk to stop a wrong send, and an unlocked phone "
                          "should not be enough to send mail in your name")
     return out
+
+
+def answers_of(tier, effort) -> str:
+    """The Answers choice a stored pair is: `faster`, `balanced` or `fuller`, else `custom`."""
+    return next((k for k, pair in ANSWERS.items() if pair == (tier, effort)), "custom")
 
 
 def clean(given, kept=None) -> dict:

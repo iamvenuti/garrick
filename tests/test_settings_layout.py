@@ -290,13 +290,12 @@ class TestEveryControlStays(LayoutCase):
     IDS = ("launch-note", "launch-preview", "launch-finder", "launch-cmux", "launch-codex", "launch-claude", "desk-agent",
            "graph-follow", "graph-reset", "menu-show", "menu-style", "menu-login", "menu-hotkey", "menu-finder", "menu-ask",
            "menu-askkey", "menu-askclose-esc", "menu-askclose-click", "menu-dictation", "menu-dictkey", "n-after", "n-quiet",
-           "n-from", "n-to", "ch-ask-tier", "ch-ask-effort", "ch-ask-autonomy", "ch-telegram-tier", "ch-telegram-effort",
+           "n-from", "n-to", "ch-ask-answers", "ch-ask-autonomy", "ch-telegram-answers",
            "ch-telegram-autonomy", "m-wake", "m-reach", "m-night", "m-min", "role-change", "rel-check", "rel-on", "rel-every",
            "usage-on", "reset-view")
     ATTRS = ('data-nt="needs-you"', 'data-nt="finished"', 'data-nt="job-failed"', 'data-nt="release"', 'data-mwikion="Meetings"',
-             'data-mk="dormant"', 'data-mk="archived"', 'data-mk="never"', 'data-mk="types"', 'data-mk="domains"', 'data-mpin="thread"',
-             'data-mpin="project"', 'data-mpin="todo"', 'data-mpin="pinned"', 'name="rg-mode"', 'name="rg-cross"', 'data-rg-add="tools"',
-             'data-rg-add="skip"', 'class="act sm wchange"', 'class="zcol"', 'class="zico"', 'name="garrick-default"')
+             'data-mk="dormant"', 'data-mk="archived"', 'data-mk="never"', 'data-mtypes=', 'data-mdomains=', 'data-mpin="thread"',
+             'data-mpin="project"', 'data-mpin="todo"', 'data-mpin="pinned"', 'name="rg-mode"', 'data-rg-service-add=', 'class="act sm wchange"', 'class="zcol"', 'class="zico"', 'name="garrick-default"')
 
     def test_every_control_is_still_there(self):
         self.rich()
@@ -311,7 +310,7 @@ class TestEveryControlStays(LayoutCase):
         markup = self.rich()
         ask, opening = self.section(markup, "ask-settings"), self.section(markup, "launcher-settings")
         for ident in ("menu-ask", "menu-askkey", "menu-askclose-esc", "menu-askclose-click", "menu-dictation", "menu-dictkey",
-                      "ch-ask-tier", "ch-ask-effort", "ch-ask-autonomy", "ch-telegram-tier"):
+                      "ch-ask-answers", "ch-ask-autonomy", "ch-telegram-answers"):
             self.assertIn('id="%s"' % ident, ask, ident)
             self.assertNotIn('id="%s"' % ident, opening, ident)
 
@@ -381,19 +380,19 @@ class TestPlainWords(LayoutCase):
         text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-autonomy")
         self.assertEqual("Start with Read. Choose Act when you trust the answers.", text)     # the choices carry their lines (#681)
 
-    def test_model_size_and_effort_have_one_line_between_them(self):
+    def test_answers_takes_the_place_of_model_size_and_effort_with_no_note(self):
         _, markup = self.dom()
         ask = markup.split('id="channels-ask"')[1].split("</section>")[0]
-        self.assertEqual(1, ask.count('data-for="ask-size"'))
-        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", ask)       # #681
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-tier")
-        self.assertIn("deep:", text)
+        self.assertEqual(0, ask.count('data-for="ask-size"'))                               # the note goes (#683)
+        self.assertIn('data-answers="ask"', ask)
+        for gone in ("Model size", "Effort", "A larger size and more effort"):
+            self.assertNotIn(gone, ask)
 
     def test_older_material_says_what_the_user_sees(self):
         _, markup = self.dom()
         sec = markup.split('id="memory-settings"')[1].split("</section>")[0]
         for phrase in ("Dormant after", "Archived after", "Never archive", "page would move", "Review them", "let old pages become dormant",
-                       "You pinned it", "Suggest bringing a page back when new work links to it"):     # #681's words
+                       "you pinned it", "Suggest bringing a page back when new work links to it"):     # #681's words
             self.assertIn(phrase, sec)
         self.assertNotIn("would change grade", sec)
         seen = htmllib.unescape(re.sub(r"<[^>]+>", " ", sec.replace("<ROOT>", "ROOT")))   # the words shown
@@ -444,7 +443,7 @@ class TestPlainWords(LayoutCase):
         choices' own lines, not by a line under every label."""
         _, markup = self.dom()
         self.assertIn("A dormant page is used only when a search reaches back.", markup)
-        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", markup)
+        self.assertIn("Start a message with deep: to get one Fuller answer without changing this choice.", markup)   # Answers' "?" (#683)
         self.assertIn('class="chlevels"', markup)
 
 

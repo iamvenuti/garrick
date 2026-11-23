@@ -106,8 +106,9 @@ class SettingsRouteDocs(unittest.TestCase):
     def test_the_read_guard_page_uses_the_settings_names(self):
         page = text("docs/read-guard.md")
         for word in ("**Off**", "**Watch**", "**On**", "**Refuse**", "**Ask me**", "Settings, then Walls, then *Read guard*",
-                     "In the last 7 days it would have stopped 3 files across 2 sessions in Work", "*Show*", "*Across a wall*", "*Mail and calendar tools*",
-                     "*Tools with nothing to check*"):
+                     "In the last 7 days it would have stopped 3 files across 2 sessions in Work", "*Show*", "*Across a wall*", "*Connected services*",
+                     "**Check it**", "**Leave it**", "*Not decided*", "*Add a service*",
+                     "Settings › Walls › Connected services: Weather is not decided"):
             self.assertIn(word, page, word)
         for old in (r"\benforce\b", r"warn-only", r"\bEnforce\b"):
             self.assertIsNone(re.search(old, page), old)

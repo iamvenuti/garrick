@@ -46,9 +46,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "On, Garrick keeps an assistant ready, and that uses some of your assistant's allowance. Off, the box opens your assistant instead."),
     (r'id="menu-dictkey"', "menu-dictkey", "Dictation shortcut",
      "Press the shortcut that starts your dictation app. If the app takes the keys, pause it first."),
-    (r'id="ch-ask-tier"', "ch-tier", "Model size",
-     "Start a message with deep: to get one answer on the large size at high effort, without changing this choice."),
-    # choices-0800's one Answers choice (#683), Ask's and Telegram's sharing one "?": inert until it is in
+    # Answers (#683): Ask's and Telegram's rows share one "?"
     (r'data-answers="', "ch-answers", "Answers",
      "Start a message with deep: to get one Fuller answer without changing this choice."),
     (r'id="ch-ask-autonomy"', "ch-autonomy", "How far it may go",
@@ -66,7 +64,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'id="m-wake"', "mem-wake", "Suggest bringing a page back",
      "Garrick suggests it and waits for your yes. An archived page comes back only when you pin it."),
     (r'id="m-reach"', "mem-reach", "Search",
-     "Working and dormant pages also finds older ones. Working pages only is quicker and stays on recent work."),
+     "On, answers also use dormant pages. Off, answers are quicker and stay on recent work."),
     # About
     (r'id="rel-on"', "rel-on", "Check for updates",
      "Garrick looks at its public release page. It sends nothing about your work, and it never updates without you."),

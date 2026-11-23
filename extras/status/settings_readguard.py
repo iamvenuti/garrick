@@ -2,9 +2,10 @@
 """settings_readguard.py: Settings > Walls > Read guard and Settings > About > This computer, as the grid draws them (#673, #674, #682).
 
 settings_guard.py keeps what the read guard is and what its log holds: the hook folders it trusts, the log's lines, `read_state()`.
-This file only draws, from what those give: one part of Walls for the read guard with one sub-heading and one "?", the three choices each with
-what it does, a list that names each file and its zone, *Across a wall* only under On, the tool patterns under a closed *Advanced*, and
-the machine's row in the page's grid. It reads and writes nothing. Every function takes the settings_guard module as `sg`, for its words.
+This file only draws, from what those give: one part of Walls for the read guard with one sub-heading and one "?", the three choices
+each with what it does, a list that names each file and its zone, *Across a wall* only under On, the connected services by name under a
+closed fold of their own under Watch and On (#683), and the machine's row in the page's grid. No pattern and no tool name is drawn. It
+reads and writes nothing. Every function takes the settings_guard module as `sg`, for its words.
 Standard library only.
 """
 
@@ -26,8 +27,12 @@ HELP_TEXT = ("Walls stop your assistant from writing across zones. The read guar
 TOOLS_TEXT = ("A mail or calendar search can return messages from every zone. Garrick takes out what sits behind another wall "
               "before your assistant sees it.")
 MACHINE_TEXT = "Change this only if a second computer keeps a copy of your workspace."
-WATCH_NEXT = "This starts when you choose On."
 CODEX_TRUST = "Codex runs the read guard only after you trust it in Codex's own settings, and again after each change you make here."
+# Across a wall shows under On only, and each choice says what it does (#683).
+CROSS_SAID = {"deny": "Every read across a wall is stopped.", "ask": "You decide each time, for one session."}
+SERVICES = "Connected services"
+ADD_SERVICE = "Add a service"
+NO_SERVICE = "No service yet."
 BEHIND = "a file behind another zone's wall"
 NOT_RECORDED = "not recorded"
 WATCH_ONLY_NEXT = " Watch lets every result through, and notes that it could not decide."
@@ -43,13 +48,36 @@ def mode_choices(sg, current: str) -> str:
                                       % (k, " checked" if k == current else "", sg.esc(v), sg.esc(MODE_SAID[k])) for k, v in MODES)))
 
 
-def item_list(sg, key: str, items: List[str], label: str) -> str:
-    rows = "".join('<li class="rgitem" data-item="%s"><span class="rgtool">%s</span>'
-                   '<button class="act sm rgrem" type="button" data-rg-remove="%s" data-list="%s" aria-label="Remove %s">Remove</button></li>'
-                   % (sg.esc(i), sg.esc(i), sg.esc(i), key, sg.esc(i)) for i in items) or '<li class="rgnone hint">None.</li>'
-    return ('<ul class="rgitems" data-list="%s">%s</ul><span class="rgadd"><input type="text" class="rgnew" data-list="%s" '
-            'maxlength="100" autocomplete="off" aria-label="%s" placeholder="mcp__*Mail*">'
-            '<button class="act sm" type="button" data-rg-add="%s">Add</button></span>' % (key, rows, key, sg.esc(label), key))
+def cross_choices(sg, current: str) -> str:
+    """Across a wall's two choices, each with what it does in one line under its name (#683)."""
+    return ('<div class="rgmode rgcross" data-rg="cross" data-was="%s" role="radiogroup" aria-label="Across a wall">%s</div>'
+            % (sg.esc(current), "".join('<label class="rgchoice"><input type="radio" name="rg-cross" value="%s"%s> <span><b>%s</b><small>%s</small></span></label>'
+                                      % (k, " checked" if k == current else "", sg.esc(v), sg.esc(CROSS_SAID[k])) for k, v in sg.CROSS)))
+
+
+def service_line(sg, n: int, line: dict) -> str:
+    """One connected service: its plain name, Check it and Leave it each with its line, and Not decided when neither is set."""
+    name = line["name"] or sg.EVERY_SERVICE
+    choices = "".join('<label class="rgchoice"><input type="radio" name="rg-svc-%d" value="%s"%s> <span><b>%s</b><small>%s</small></span></label>'
+                      % (n, k, " checked" if k == line["choice"] else "", sg.esc(v), sg.esc(said)) for k, v, said in sg.SERVICE_CHOICES)
+    return ('<li class="rgsvc" data-service="%s" data-was="%s"><span class="rgsvcname">%s%s</span>'
+            '<span class="rgchoices" role="radiogroup" aria-label="%s">%s</span></li>'
+            % (sg.esc(line["name"]), sg.esc(line["choice"]), sg.esc(name),
+               ' <small class="rgundecided">%s</small>' % sg.esc(sg.NOT_DECIDED) if not line["choice"] else "", sg.esc(name), choices))
+
+
+def services_fold(sg, services: List[dict], help_button: Callable, help_text: Callable) -> str:
+    """Connected services (#683): a closed fold named for what it holds, with how many are not decided in its name, one line for
+    each service and *Add a service*. Its one "?" stands in the name; its text under the fold."""
+    undecided = sum(1 for l in services if not l["choice"])
+    title = SERVICES + (" (%d not decided)" % undecided if undecided else "")
+    lines = "".join(service_line(sg, n, l) for n, l in enumerate(services)) or '<li class="rgnone hint">%s</li>' % sg.esc(NO_SERVICE)
+    return ('<details class="rgadv rgsvcs" id="rg-services" data-for="warn enforce" data-undecided="%d"><summary><span id="rg-services-name">%s</span>%s</summary>'
+            '<ul class="rgsvclist">%s</ul><span class="rgadd"><label for="rg-add-name">%s</label><input type="text" class="rgnew" id="rg-add-name" '
+            'maxlength="60" autocomplete="off" placeholder="The name of the service">'
+            '<button class="act sm" type="button" id="rg-add" data-rg-service-add="1">Add</button></span></details>%s'
+            % (undecided, sg.esc(title), help_button(SERVICES, "rg-services"), lines, sg.esc(ADD_SERVICE),
+               help_text("rg-services", sg.esc(TOOLS_TEXT))))
 
 
 def as_time(value) -> dt.datetime:
@@ -111,8 +139,8 @@ def read_item(sg, g: dict, own: str, shown: Optional[dict]) -> str:
             what, project = BEHIND, ""
     elif kind == "outside":
         what = "a file outside the workspace"
-    elif kind == "mail":
-        what = "%s%s, a mail or calendar result" % (i.get("tool", ""), " (%s)" % i["source"] if i.get("source") else "")
+    elif kind == "mail":                   # by the service's name, never the tool's (#683)
+        what = "%s%s, a mail or calendar result" % (i.get("service") or "a connected service", " (%s)" % i["source"] if i.get("source") else "")
         held = i.get("held_zone")
         zone = ("held back from %s" % held if may_name_zone(held, shown) else "behind another zone's wall") if held else "zone %s" % NOT_RECORDED
     else:
@@ -155,10 +183,11 @@ def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: 
     """Settings › Walls › Read guard (#674, #682): a part of Walls, after the zones, in the app only. One sub-heading with one "?",
     one sentence on what it protects, the
     three choices each with what it does, and under Watch what the log holds, as a list that names each file and its zone. Across a wall
-    shows only under On. The tool patterns are under a closed Advanced. The two tool lists give way to one line for Codex, which cannot
-    have a result replaced. On a laptop copy the rows give way to one line: the read guard's settings are the workspace's, and this
-    computer only receives it. `shown` says what the page may name, as `{"scope": None for the whole workspace or the zones, "walled":
-    {zone: whether walled}}`."""
+    is on the page under On only, and the connected services under Watch and On only, in a closed fold of their own (#683). Under Off
+    neither is drawn: the page is built again once the mode is saved. The services give way to one line for Codex, which cannot have a
+    result replaced. On a laptop copy the rows give way to one line: the read guard's settings are the workspace's, and this computer
+    only receives it. `shown` says what the page may name, as `{"scope": None for the whole workspace or the zones, "walled": {zone:
+    whether walled}}`."""
     head = '<h4 class="setsubh">Read guard%s</h4>' % help_button("Read guard", "readguard")
     if role == "roaming":
         return ('<div class="setpart apponly" id="readguard-settings" hidden data-roaming="1">%s<p class="hint rgroaming" id="rg-roaming">%s</p></div>'
@@ -178,27 +207,19 @@ def guard_block(sg, state: dict, codex: bool, help_button: Callable, help_text: 
     cannot = ""
     if problem:
         cannot = '<p class="hint rgcannot" id="rg-cannot" role="status">%s%s</p>' % (sg.esc(sg.CANNOT.get(problem, sg.CANNOT["parties"])), sg.esc(CANNOT_NEXT.get(mode, "")))
-    watch = '<p class="hint rgwatch" id="rg-cross-watch" data-for="warn"%s>%s</p>' % ("" if mode == "warn" else " hidden", sg.esc(WATCH_NEXT))
-    cross_row = ('<div class="launcher-row srow rgrow" data-rg="cross" data-was="%s" data-for="enforce"%s><div class="slab"><span class="launcher-choice"><span>Across a wall</span></span></div>'
-                 '<div class="sctl">%s</div></div>'
-                 % (sg.esc(state["cross"]), "" if mode == "enforce" else " hidden", sg.radios("rg-cross", "cross", sg.CROSS, state["cross"], "Across a wall")))
+    cross_row = ""
+    if mode == "enforce":
+        cross_row = ('<div class="rgrow rgcrossrow" data-for="enforce"><p class="rgsub"><b>Across a wall</b></p>%s</div>'
+                     % cross_choices(sg, state["cross"]))
+    lists = ""
     if codex:
         lists = ('<p class="hint rgcodex" id="rg-codex">%s</p><p class="hint rgtrust" id="rg-trust">%s</p>'
                  % (sg.esc(sg.CODEX_LINE), sg.esc(CODEX_TRUST)))
-    else:
-        def list_row(key: str, name: str, label: str, text_key: str) -> str:
-            helped = text_key == "rg-tools"           # the two lists share one "?" (#681)
-            return ('<div class="launcher-row srow rgrow rglist-row" data-rg="%s"><div class="slab"><span class="launcher-choice"><span>%s</span></span></div>'
-                    '<div class="sctl rgbody">%s</div>%s</div>%s'
-                    % (key, sg.esc(name), item_list(sg, key, state[key], label), help_button(name, text_key) if helped else "",
-                       help_text(text_key, sg.esc(TOOLS_TEXT)) if helped else ""))
-        lists = ('<details class="rgadv"><summary>Advanced</summary><p class="rgsub"><b>Which connected tools are checked</b></p>%s%s</details>'
-                 % (list_row("tools", "Mail and calendar tools", "A mail or calendar tool to check", "rg-tools"),
-                    list_row("skip", "Tools with nothing to check", "A tool with nothing to check", "rg-skip")))
-    return ('<div class="setpart apponly" id="readguard-settings" hidden data-tools="%s" data-skip="%s">%s<p class="setlede">%s</p>%s%s%s%s%s%s%s'
+    elif mode != "off" and state.get("services") is not None:
+        lists = services_fold(sg, state["services"], help_button, help_text)
+    return ('<div class="setpart apponly" id="readguard-settings" hidden>%s<p class="setlede">%s</p>%s%s%s%s%s'
             '<p class="hint rgsaid" id="rg-said" role="status" hidden></p></div>'
-            % (sg.esc(json.dumps(state["tools"])), sg.esc(json.dumps(state["skip"])), head, sg.esc(PROTECTS),
-               help_text("readguard", sg.esc(HELP_TEXT)), mode_row, seen + cannot, watch, cross_row, lists, ""))
+            % (head, sg.esc(PROTECTS), help_text("readguard", sg.esc(HELP_TEXT)), mode_row, seen + cannot, cross_row, lists))
 
 
 
@@ -263,6 +284,11 @@ CSS = r"""
 .rgadv{margin-top:8px}.rgadv>summary{display:block;list-style:none;cursor:pointer;font-size:var(--fs-meta);font-weight:560;color:var(--ink2);padding:3px 0}
 .rgadv>summary::-webkit-details-marker{display:none}.rgadv>summary::before{content:'\25B8';display:inline-block;width:14px}.rgadv[open]>summary::before{content:'\25BE'}
 .rgsub{margin:4px 0;font-size:var(--fs-meta)}
+.rgsvcs>summary{display:flex;align-items:center;gap:6px}.rgsvcs>summary::before{flex:0 0 14px}
+.rgsvclist{list-style:none;margin:4px 0 8px;padding:0;display:flex;flex-direction:column;gap:6px}
+.rgsvc{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 14px;font-size:var(--fs-meta)}.rgsvcname{flex:0 0 160px;min-width:0;overflow-wrap:anywhere;font-weight:560}
+.rgsvcname small{display:block;font-weight:400;color:var(--critical)}.rgsvc .rgchoices{align-items:flex-start}
+.rgadd label{font-size:var(--fs-meta);white-space:nowrap}
 .rgsaid.bad{color:var(--critical)}.rgsaid details{margin-top:4px}.rgsaid pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 0;font-size:var(--fs-meta)}
 """
 

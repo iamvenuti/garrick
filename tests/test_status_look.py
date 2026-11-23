@@ -882,7 +882,9 @@ class ChannelsCard(unittest.TestCase):
     def test_off_the_state_line_comes_first_and_the_menus_are_greyed_with_a_button(self):
         block = self.telegram_block(self.card())
         self.assertTrue(block.index(status.TELEGRAM_DOWN) < block.index("<select"))
-        self.assertEqual(3, len(re.findall(r"<select[^>]* disabled ", block)))
+        self.assertTrue(block.index(status.TELEGRAM_DOWN) < block.index('data-answers="telegram"'))
+        self.assertEqual(1, len(re.findall(r"<select[^>]* disabled ", block)))                       # how far it may go
+        self.assertEqual(3, len(re.findall(r'name="ch-telegram-answers" value="[a-z]+"[^>]* disabled ', block)))   # Answers (#683)
         self.assertIn(status.NOT_SET_UP, block)
         self.assertRegex(block, r'<button class="act sm" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
         self.assertLess(block.index("Set up Telegram"), block.index("<select"))
@@ -922,10 +924,11 @@ class ChannelsCard(unittest.TestCase):
         text = re.sub(r"<[^>]+>", " ", html)
         for word in ("System/", "garrick-settings", "haiku", "sonnet", "opus", "git "):
             self.assertNotIn(word, text.lower() if word != "System/" else text)
-        tiers = re.findall(r'data-key="tier"[^>]*>(.*?)</select>', html)
-        self.assertEqual(2, len(tiers))
-        for t in tiers:
-            self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
+        self.assertNotIn('data-key="tier"', html)                                                     # Answers in its place (#683)
+        answers = re.findall(r'<span class="rgmode chanswers"[^>]*>(.*?)</span></label></span>', html, re.S)
+        self.assertEqual(2, len(answers))
+        for a in answers:
+            self.assertEqual(["Faster", "Balanced", "Fuller"], re.findall(r"<b>([^<]*)</b>", a))
         self.assertIn("Telegram keeps your messages and the answers on its servers.", status.TELEGRAM_HELP)   # Telegram's "?" (#681)
 
 

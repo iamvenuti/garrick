@@ -3925,12 +3925,12 @@ class TestMemorySettings(StatusCase):
         reference = sec[sec.index('data-mkind="reference"'):]
         self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
-        advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
-        self.assertIn('<div class="mlists" data-mkl="meetings"><p class="mkname">Meetings</p>', advanced)
-        self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
+        advanced = sec[sec.index('<details class="madv"><summary>More choices</summary>'):]
+        self.assertIn('data-mtypes="[&quot;meeting&quot;, &quot;email&quot;]"', meetings)      # each kind's lists, kept off the page (#683)
+        self.assertNotIn("textarea", sec)
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
         self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Suggest bringing a page back when new work links to it">', advanced)
-        self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
+        self.assertIn('<input type="checkbox" id="m-reach" checked aria-label="A search also reads dormant pages">', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
         self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived. 7 pages would move.'
@@ -3945,9 +3945,9 @@ class TestMemorySettings(StatusCase):
                                           "dormant": 12, "archived": None}}}}))
         sec = self.section()
         self.assertEqual(["board meetings"], re.findall(r'data-mkind="([^"]+)"', sec))      # whatever kinds fade.py returns
-        self.assertIn('>board.example</textarea>', sec)
+        self.assertIn('data-mdomains="[&quot;board.example&quot;]"', sec)
         self.assertIn('<input type="checkbox" data-mwikion="Knowledge" aria-label', sec)
-        self.assertIn('<option value="working" selected>', sec)
+        self.assertIn('<input type="checkbox" id="m-reach" aria-label', sec)                # working only: not ticked
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
         self.assertIn("2 pages would move.</span>", sec)                                   # 24 // 12, never archived, no waking
@@ -3972,7 +3972,8 @@ class TestMemorySettings(StatusCase):
         self.assertIn("window.GarrickMemory=", status.MEMORY_JS)
         self.assertIn("host.postMessage({act:{verb:'memory-preview',memory:request()}})", status.MEMORY_JS)
         self.assertIn("window.GarrickReadsMemory", status.MEMORY_JS)          # only where the host answers it
-        self.assertIn("sec.querySelector('[data-mkl=\"'+f.dataset.mkind+'\"]')", status.MEMORY_JS)   # the lists, from Advanced
+        self.assertIn("types:kept(f,'mtypes'),domains:kept(f,'mdomains')", status.MEMORY_JS)   # the lists, sent back as they were (#683)
+        self.assertIn("reach:document.getElementById('m-reach').checked?'dormant':'working'", status.MEMORY_JS)
         self.assertIn("if(m){q.memory=M.request();M.saved()}", status.JS)     # sent with the rest when Settings closes
         page = self.page()
         self.assertIn(status.MEMORY_CSS.strip()[:60], page)
@@ -4023,21 +4024,78 @@ class TestMemorySettings(StatusCase):
         self.assertIn("review(!changed)", status.MEMORY_JS)                             # an unsaved change hides it, an undone or saved one shows it: the list is the saved one
         self.assertNotIn("host.postMessage({act:{verb:'fade", status.MEMORY_JS)         # it never fades anything itself
 
-    def test_the_kind_rules_are_inside_a_closed_advanced_with_plain_labels_and_fields_that_wrap(self):
+    def test_more_choices_holds_the_four_rows_under_one_line_and_asks_for_nothing_technical(self):
         sec = self.section()
-        adv = sec.index('<details class="madv">')
-        self.assertLess(adv, sec.index("Which pages each kind takes"))
-        self.assertNotIn('<details class="madv" open', sec)                              # closed, so its content is hidden
-        advanced = sec[adv:]
-        self.assertIn("Page types", advanced)
-        self.assertIn("Page domains", advanced)
-        self.assertNotIn("<code>type</code>", advanced)
-        self.assertNotIn('<input type="text" data-mk=', sec)
-        self.assertIn(".mlist textarea{width:100%", status.MEMORY_CSS)                    # a row of its own, the width of the section
-        self.assertIn("overflow-wrap:break-word", status.MEMORY_CSS)
-        self.assertNotIn("text-overflow", status.MEMORY_CSS)                              # a list wraps, it is never cut
-        self.assertIn("if(adv.open)adv.querySelectorAll('textarea').forEach(fit)", status.MEMORY_JS)
-        self.assertIn('title="meeting, email"', advanced)                                 # the whole list on hover as well
+        self.assertNotIn('<details class="madv" open', sec)                              # closed
+        more = htmllib.unescape(sec[sec.index('<details class="madv">'):])
+        self.assertIn("<summary>More choices</summary>", more)
+        self.assertIn("A page stays working, however old, while:", more)
+        labels = re.findall(r'<label class="launcher-choice"[^>]*><span>([^<]+)</span></label>', more)
+        self.assertEqual(["a live thread links to it", "the notes of a live project link to it", "an open action links to it",
+                          "you pinned it", "Suggest bringing a page back when new work links to it", "A search also reads dormant pages"], labels)
+        self.assertRegex(more, r'Tell me in the morning summary when <input type="number" id="m-min"[^>]*value="10"[^>]*> or more pages are due')
+        for word in ("Page types", "Page domains", "frontmatter", "Advanced", "pinned: true", "Which pages each kind takes"):
+            self.assertNotIn(word, sec)
+
+    def form(self, sec, reach_ticked=None):
+        """What MEMORY_JS sends from this markup when Settings closes, run in node with each kind's row as the page drew it."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        kinds = []
+        for part in sec.split('<div class="mkind" ')[1:]:
+            m = re.match(r'data-mkind="([^"]+)" data-mwiki="([^"]+)" data-mtypes="([^"]*)" data-mdomains="([^"]*)">', part)
+            body = part                                         # up to the next kind's row: its own fields come first
+            kinds.append({"mkind": htmllib.unescape(m.group(1)), "mwiki": m.group(2), "mtypes": htmllib.unescape(m.group(3)),
+                          "mdomains": htmllib.unescape(m.group(4)),
+                          "d": re.search(r'data-mk="dormant"[^>]*value="(\d+)"', body).group(1),
+                          "a": re.search(r'data-mk="archived"[^>]*value="(\d+)"', body).group(1),
+                          "n": bool(re.search(r'data-mk="never" checked', body))})
+        ticked = ('id="m-reach" checked' in sec) if reach_ticked is None else reach_ticked
+        harness = r"""
+const kinds=JSON.parse(process.argv[3]),ticked=process.argv[4]==='1';
+const field=(o)=>Object.assign({value:'',checked:false,defaultValue:'',min:'1',max:'240',dataset:{},matches:()=>false,querySelector:()=>null,querySelectorAll:()=>[]},o||{});
+const rows=kinds.map(k=>{const f={dormant:field({value:k.d}),archived:field({value:k.a}),never:field({checked:k.n})};
+return field({dataset:k,querySelector:(q)=>f[(q.match(/data-mk="([a-z]+)"/)||[])[1]]||null})});
+const els={'m-wake':field({checked:true}),'m-reach':field({checked:ticked}),'m-night':field({checked:true}),'m-min':field({value:'10',max:'1000'}),'m-prevsaid':field(),'m-prev':field()};
+const sec={querySelector:(q)=>q==='#m-prev'?els['m-prev']:null,querySelectorAll:(q)=>q==='.mkind'?rows:[],addEventListener:()=>{}};
+global.document={getElementById:(id)=>id==='memory-settings'?sec:els[id]||null};global.window={};
+new Function(require('fs').readFileSync(process.argv[2],'utf8'))();
+console.log(JSON.stringify(window.GarrickMemory.request()));
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            script, js = Path(tmp) / "h.js", Path(tmp) / "m.js"
+            script.write_text(harness, encoding="utf-8")
+            js.write_text(status.MEMORY_JS, encoding="utf-8")
+            out = subprocess.run([node, str(script), str(js), json.dumps(kinds), "1" if ticked else "0"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, out.returncode, out.stderr)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_page_types_and_domains_set_by_hand_come_back_unchanged_and_build_the_same_lists(self):
+        fixtures.write_fade(self.root)
+        import view_settings
+        fade = view_settings.fade_lib(self.root)
+        hand = {"board meetings": {"wiki": "Meetings", "types": ["meeting", "board"], "domains": ["board.example", "acme.example"],
+                                   "dormant": 6, "archived": 18}}
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"kinds": hand}}))
+        before = (fade.settings(self.root)["kinds"], fade.counts(self.root))
+        sent = self.form(self.section())
+        self.assertEqual(["meeting", "board"], sent["kinds"]["board meetings"]["types"])
+        self.assertEqual(["board.example", "acme.example"], sent["kinds"]["board meetings"]["domains"])
+        spec = importlib.util.spec_from_file_location("page_action_for_memory", REPO / "extras" / "status" / "page_action.py")
+        page_action = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(page_action)
+        saved = page_action.clean_memory(sent)
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": saved}))
+        self.assertEqual(before, (fade.settings(self.root)["kinds"], fade.counts(self.root)))
+
+    def test_the_search_tick_box_stores_the_two_values_the_list_stored(self):
+        sec = self.section()
+        self.assertEqual("dormant", self.form(sec, True)["reach"])
+        self.assertEqual("working", self.form(sec, False)["reach"])
+        for reach, ticked in (("working", False), ("dormant", True)):
+            write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"reach": reach}}))
+            self.assertEqual(ticked, 'id="m-reach" checked' in self.section(), reach)
 
     def test_advanced_is_indented_with_a_chevron_that_shows_its_state(self):
         css = status.MEMORY_CSS

@@ -312,6 +312,7 @@ SHAPES = {
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
     "chSave: 'settings'": {"settings": ("channels",)},    # CHANNELS_JS: Settings › Channels (#571)
+    "chSave: 'channel-answers'": {"channel-answers": ("channel", "answers")},    # CHANNELS_JS: Answers (#683), after chSave
     "tell: 'settings'": {"settings": ("ask",)},          # MENU_SETTINGS_JS: Settings › Menu bar › Answer in the Ask box (#528)
     "sdReq: 'settings'": {"settings": ("memory", "release-notice", "release-notice-every", "usage-counts")},      # JS: what Settings closes with, zones and notifications alone,
                                                          # Memory's form assigned to it (#108)
@@ -361,7 +362,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "stchip: v", "launch: 'session-url'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "MENU_SETTINGS_JS": {"tell: 'settings'"},
-           "CHANNELS_JS": {"chSave: 'settings'"},
+           "CHANNELS_JS": {"chSave: 'settings'", "chSave: 'channel-answers'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
            "RELEASE_JS": {"btn.onclick: 'release-check'", "go: 'release-update'"},
            "COMMIT_JS": {"line: 'commit-files'"},

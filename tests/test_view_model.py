@@ -15,6 +15,12 @@ v0.76.0 had them, and the view model are compared field by field. Every differen
     An `Inbox` that is a link to a folder outside its zone:    The count must be of one zone. The view model leaves an
     the old read counted that folder's files.                  Inbox out whose real path is outside the zone it sits in.
 
+Since 0.78.0 the page's other reads are the view model's too (the Todo tab, the questions, the wikis' logs, the
+repositories, the worked example's marker, the graph, the projects kept in System/), each frozen in
+`old_status_reads_0770.py` as v0.77.0 had it and held to the same answer here. The only differences are the one wall: a zone folder that is a link is no zone and has no Todo list, questions, repository or graph notes; a note,
+folder, log or marker that is a link out of its zone or wiki is not read. The old reads followed such a link and showed
+another place's records under this one's name.
+
 Nothing else differs: pieces, their order, their states, resume points, checkpoints, parties, dates and counts match the
 old reads exactly. The display rules (what "late" means, what a chip says) are the page's and are not in the view model.
 
@@ -374,6 +380,18 @@ class TestPageThreads(Case):
             self.assertTrue(data["needs_update"])
             self.assertEqual([], data["rows"])
 
+    def test_a_view_module_from_before_the_parts_builds_a_page_that_says_so(self):
+        old = mock.Mock(spec=["build"])                  # 0.77.0's view.py: no PARTS, and build() takes no `only`
+        with mock.patch.object(status, "view_reader", mock.Mock(return_value=old)):
+            self.assertIsNone(status.view_model(self.root))
+            got = status.threads(self.root)
+            self.assertEqual([], status.todo_list(self.root, status.Links(self.root), TODAY))
+            self.assertEqual([], status.wikis(self.root))
+            self.assertEqual([], status.repos(self.root))
+            self.assertIsNone(status.example_zone(self.root))
+        self.assertTrue(all(data["needs_update"] for data in got.values()))
+        old.build.assert_not_called()
+
     def test_the_resume_helpers_the_tests_and_the_page_still_call_give_the_view_models_answer(self):
         note = self.root / "Zones" / "Home" / "Cedar" / "Threads" / "Fence" / "Fence.md"
         self.assertEqual((True, dt.date(2026, 3, 1)), status.resume_point(note))
@@ -453,10 +471,13 @@ class TestShadowManageData(Case):
         self.assertEqual(view.mixed_papers(folder), status.mixed_papers(folder))
 
 
-# What status.py still reads from the folders for itself, by function, and why: no core module owns it yet. The acceptance
-# line "status.py has no direct read of Zones/, Wikis/ or a thread note" is met when this table is empty; until then it
-# is the list of what is left (#650 is `Part of`). A function that reads anew fails the test below, and one that stops
-# reading must leave the table, so the list never goes stale.
+# What status.py still reads from the folders for itself, by function, and why. The acceptance line "status.py has no
+# direct read of Zones/, Wikis/ or a thread note" is met except for what is named here: the page's own guard for a
+# half-finished update (`threads`, and `visible_dirs`, which only it uses), the check that a folder is a workspace
+# (`is_workspace`), and this Mac's own state, which no workspace holds (`launchd_jobs`, `jobs`: the launchd agents and the
+# jobs folder's logs; the waiting sessions are not read from a folder of the workspace at all). It is `Part of #650`, not
+# `Closes`, while `jobs` and `is_workspace` stand beside the three exceptions the plan names. A function that reads anew
+# fails the test below, and one that stops reading must leave the table, so the list never goes stale.
 LEFT = {
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
     "jobs": "the jobs folder's logs",

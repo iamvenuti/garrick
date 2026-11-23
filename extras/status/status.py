@@ -608,7 +608,10 @@ def view_model(ws: Path, only=None, today: Optional[dt.date] = None) -> Optional
     `only` names the parts to build (view.PARTS), for a caller that needs one; `today` is the day it counts as ticked."""
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
-        return view_reader(ws).build(ws, only=only, today=today)
+        mod = view_reader(ws)
+        if not hasattr(mod, "PARTS"):    # a view.py from before 0.78.0, kept by an update that stopped half way
+            raise FileNotFoundError("System/tools/view.py")
+        return mod.build(ws, only=only, today=today)
     except FileNotFoundError:
         return None
 
@@ -5716,13 +5719,13 @@ def work_id(name: str, key: str) -> str:
     return "pw-%s-%s" % (slug, hashlib.sha1(key.encode("utf-8")).hexdigest()[:6])
 
 
-def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
+def works(ws: Path, T: Dict[str, dict], today: dt.date, model: Optional[dict] = None) -> List[dict]:
     """Every live piece of work, most recent first, for the Overview's Your work list.
     Read from what Garrick keeps already: the thread note's Resume here block
     (Next action, Waiting on), its `updated:` date and an unwrapped
     checkpoint's (`touched`), and the zone's Todo.md lines that open with its
     link (thread_actions(), run first)."""
-    example = example_zone(ws)
+    example = model["example"] if model and "example" in model else example_zone(ws)
     try:
         me = ask_scope_mod().user_name(ws)
     except Exception:
@@ -8354,7 +8357,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     urgent = {(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"])
               for z in T.values() for r in z["rows"] if r.get("late")}      # Explore's ring: a late next action (#233)
     # Your work, the Overview's opening list (#503): the pieces of work, from what Garrick keeps already.
-    HW = works(ws, T, now.date())
+    HW = works(ws, T, now.date(), model)
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs

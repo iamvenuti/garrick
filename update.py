@@ -1544,6 +1544,7 @@ def outside_found(root):
 # The hook files Garrick ships in extras/hooks/, by name. The refresh of a kept download (#672) copies these and nothing else.
 HOOK_FILES = ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
 NO_PROMPT = False       # --json: nobody is asked in the middle of the report
+REFRESH_HOOKS = False   # --apply --refresh-hooks: the user's yes to the kept hooks refresh, given in the session (#680)
 
 
 def hook_words(root):
@@ -1640,27 +1641,34 @@ def put_file(dest, data):
         raise
 
 
-def refresh_hooks(root, folder, shown=None, tty=None):
-    """On a yes at a terminal, copy this Garrick's own hook files over the ones in `folder` that differ (`hook_refresh` says
-    which, checked again here), and say what was copied. With nobody to ask, or a no, nothing is copied. A file that cannot be
+def refresh_hooks(root, folder, shown=None, tty=None, accepted=None):
+    """On a yes, copy this Garrick's own hook files over the ones in `folder` that differ (`hook_refresh` says which, checked
+    again here), and say what was copied. The yes is `--refresh-hooks` (`accepted`, by default REFRESH_HOOKS: #680), or, without
+    it, one typed at a terminal. With nobody to ask, or a no, nothing is copied and the line names the flag. A file that cannot be
     written is put back as it was, and so is every file already copied. Writes no other file and never a settings file."""
     names = hook_refresh(folder, root)
     shown = shown or shown_path(str(folder))        # as the settings write it: a variable by its name, never its value
     if not names:
         return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
-    if tty is None:
+    if accepted is None:
+        accepted = REFRESH_HOOKS
+    if accepted:
+        yes = True
+    else:
+        if tty is None:
+            try:
+                tty = bool(sys.stdin.isatty() and sys.stdout.isatty()) and not NO_PROMPT
+            except (AttributeError, ValueError):
+                tty = False
+        question = "Copy %s from this Garrick over the kept hooks at %s?" % (", ".join(names), shown)
         try:
-            tty = bool(sys.stdin.isatty() and sys.stdout.isatty()) and not NO_PROMPT
-        except (AttributeError, ValueError):
-            tty = False
-    question = "Copy %s from this Garrick over the kept hooks at %s?" % (", ".join(names), shown)
-    try:
-        yes = ask(question, False, tty)
-    except EOFError:
-        yes = False
+            yes = ask(question, False, tty)
+        except EOFError:
+            yes = False
     if not yes:
-        return ("Nothing was copied to the kept hooks at %s%s. The step offered: copy %s from this Garrick, on your yes at a "
-                "terminal. Your settings are not changed." % (shown, "" if tty else ": nobody could be asked", ", ".join(names)))
+        return ("Nothing was copied to the kept hooks at %s%s. To copy %s from this Garrick over them, run the update again "
+                "with --apply --refresh-hooks. Your settings are not changed." % (
+                    shown, "" if tty else ": nobody could be asked", ", ".join(names)))
     names = hook_refresh(folder, root)           # again, after the yes: a link or a clone that appeared meanwhile ends it
     if not names:
         return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
@@ -1891,8 +1899,8 @@ def next_steps(root, p, done=None):
                 said.add(folder)
                 lines = " ".join("%s runs from %s, which differs from this Garrick's, in another version's hook files." % (
                     w[0].upper() + w[1:], s) for w, p2, s in outside_found(root) if Path(p2).parent == folder and w != "the Garrick band")
-                steps.append(("%s Refresh the kept hooks at %s: on your yes at a terminal, copy %s from this Garrick over "
-                              "them. Your settings are not changed" % (lines, shown_folder, ", ".join(names)),
+                steps.append(("%s Refresh the kept hooks at %s: with --refresh-hooks, the update copies %s from this "
+                              "Garrick over them. Your settings are not changed" % (lines, shown_folder, ", ".join(names)),
                               lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
             continue
         again = band_refresh(path, root) if what == "the Garrick band" else None
@@ -1910,8 +1918,8 @@ def next_steps(root, p, done=None):
         steps.append((line, None))
     for folder, (shown_folder, names) in kept.items():
         if folder not in said:           # both guards match, another hook file of the folder does not
-            steps.append(("The kept hooks at %s differ from this Garrick's in %s. Refresh them: on your yes at a terminal, copy "
-                          "%s from this Garrick over them. Your settings are not changed" % (
+            steps.append(("The kept hooks at %s differ from this Garrick's in %s. Refresh them: with --refresh-hooks, the "
+                          "update copies %s from this Garrick over them. Your settings are not changed" % (
                               shown_folder, ", ".join(names), ", ".join(names)),
                           lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
     return steps
@@ -3150,6 +3158,7 @@ def find_workspace(path):
 
 
 def main(argv=None):
+    global NO_PROMPT, REFRESH_HOOKS
     ap = argparse.ArgumentParser(description="Update a Garrick workspace to this Garrick.")
     ap.add_argument("workspace", nargs="?", help="the workspace folder, such as ~/Garrick")
     ap.add_argument("--apply", action="store_true", help="make the changes; without it, only say what they would be")
@@ -3160,6 +3169,9 @@ def main(argv=None):
     ap.add_argument("--clean", action="append", default=[], choices=CLEAN_KINDS, metavar="LIST",
                     help="answer yes to one clean-up list after the walls step: %s (needs --apply; repeat for more)"
                          % ", ".join(CLEAN_KINDS))
+    ap.add_argument("--refresh-hooks", action="store_true",
+                    help="answer yes to copying this Garrick's hook files over the kept hooks folder the report names "
+                         "(needs --apply)")
     ap.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
     ap.add_argument("--names", action="store_true",
@@ -3175,8 +3187,8 @@ def main(argv=None):
             return 0
         if not args.workspace:
             ap.error("name the workspace to update, such as ~/Garrick")
-        global NO_PROMPT
         NO_PROMPT = bool(args.json)
+        REFRESH_HOOKS = bool(args.refresh_hooks and args.apply)       # without --apply nothing runs, the flag included
         install.check_git()
         root = find_workspace(args.workspace)
         p = plan(root)
@@ -3239,6 +3251,8 @@ def main(argv=None):
         print("The update stopped: %s. Run it again without --apply to see where the workspace stands." % exc,
               file=sys.stderr)
         return 1
+    finally:
+        REFRESH_HOOKS = False            # the yes holds for this run only
 
 
 if __name__ == "__main__":

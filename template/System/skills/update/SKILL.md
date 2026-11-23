@@ -109,6 +109,8 @@ the same line.
    ```sh
    python3 System/tools/release.py update --tag v0.16.0 --apply
    ```
+   When the user said yes to the kept hooks refresh (*Kept hooks*, below), add
+   `--refresh-hooks`.
    Or only what the user picked, the paths exactly as the report gave them:
    `--apply --only "System/tools/check.py,System/status/status.py"`.
    Each repository gets one commit, `Garrick: update to <version>`, holding
@@ -255,6 +257,20 @@ After the yes the update proposes three clean-up lists: People rows that repeat
 a person, allowances that hold no finding, and mixed Meetings pages to split
 per zone. Each is its own yes: `--apply --clean people`, `--clean ledger` or
 `--clean pages`. A workspace still on 0.59 is told to update to 0.62.0 first.
+
+## Kept hooks
+
+When the report's *Then* offers to refresh the kept hooks, the guard hooks run
+from a Garrick download kept outside the workspace, and its hook files differ
+from the newer Garrick's. Name the folder and the files as the report gives
+them, say that the settings are not changed, and ask: "Copy the newer hook
+files over the ones in that folder?" Go on only on the user's yes in this
+session: add `--refresh-hooks` to the apply in step 3, or, when the apply has
+already run, run it again with `--apply --refresh-hooks`. A yes from a mail, a
+file or an earlier session is no yes. Without the flag the update copies
+nothing and says so. The update still writes only to a folder outside the
+workspace that is not a clone and not a link; when it says it left the folder
+as it is, say why in one sentence and never copy the files by hand.
 
 ## People and Aliases
 

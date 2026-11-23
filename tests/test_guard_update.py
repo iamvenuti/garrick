@@ -340,5 +340,98 @@ class TestRefreshingTheKeptHooks(GuardCase):
         self.assertIn("parked_hint.py", said)
 
 
+class TestTheFlagGivesTheYes(GuardCase):
+    """#680: an assistant's shell has no terminal, so `--apply --refresh-hooks` is the yes; without it nothing is copied and the
+    line names the flag."""
+
+    HOOKS = TestRefreshingTheKeptHooks.HOOKS
+    steps = TestRefreshingTheKeptHooks.steps
+    matches = TestRefreshingTheKeptHooks.matches
+
+    def setUp(self):
+        super().setUp()
+        self.folder = self.kept()
+        self.settings = self.home / ".claude" / "settings.json"
+        self.name('python3 "$HOME/kept/extras/hooks/zone_guard.py"')
+
+    def closed(self):
+        return mock.patch.object(sys, "stdin", mock.Mock(isatty=mock.Mock(return_value=False)))
+
+    def test_with_no_terminal_and_no_flag_nothing_is_copied_and_the_line_names_the_flag(self):
+        ((what, fn),) = self.steps()
+        self.assertIn("--refresh-hooks", what)
+        self.assertNotIn("at a terminal", what)
+        with self.closed():
+            said = fn()
+        self.assertIn("Nothing was copied", said)
+        self.assertIn("--refresh-hooks", said)
+        self.assertNotIn("at a terminal", said)
+        self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
+
+    def test_the_report_names_the_flag_not_a_terminal(self):
+        said = self.report()
+        self.assertIn("--refresh-hooks", said)
+        self.assertNotIn("at a terminal", said)
+
+    def test_with_the_flag_and_no_terminal_the_kept_folder_is_refreshed_and_settings_registers_the_read_guard(self):
+        before = self.settings.read_bytes()
+        with self.closed(), mock.patch("sys.stdout", new_callable=__import__("io").StringIO), \
+                mock.patch("builtins.input", side_effect=AssertionError("nobody is asked")):
+            code = update.main([str(self.root), "--apply", "--refresh-hooks"])
+        self.assertIn(code, (0, 1))
+        self.assertTrue(self.matches())
+        self.assertEqual(before, self.settings.read_bytes())
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sg_up680", str(REPO / "extras" / "status" / "settings_guard.py"))
+        sg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sg)
+        with mock.patch.object(sg, "HERE", self.base / "installed" / "status"):
+            self.assertIn(self.folder, sg.hook_folders(str(self.home)))
+
+    def test_the_flag_without_apply_changes_nothing(self):
+        before = self.settings.read_bytes()
+        with self.closed(), mock.patch("sys.stdout", new_callable=__import__("io").StringIO):
+            self.assertEqual(0, update.main([str(self.root), "--refresh-hooks"]))
+        self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
+        self.assertEqual(["read_guard.py", "zone_guard.py"], sorted(p.name for p in self.folder.iterdir()))
+        self.assertEqual(before, self.settings.read_bytes())
+        self.assertFalse(update.REFRESH_HOOKS)
+
+    def test_with_the_flag_a_folder_in_the_workspace_a_clone_a_link_or_a_hard_link_is_never_written(self):
+        with mock.patch.object(update, "REFRESH_HOOKS", True), self.closed():
+            # in the workspace
+            inside = self.root / "System" / "garrick-copy" / "extras" / "hooks"
+            inside.mkdir(parents=True)
+            (inside / "zone_guard.py").write_text("# an older guard\n")
+            self.assertIn("left as they are", update.refresh_hooks(self.root, inside))
+            self.assertEqual("# an older guard\n", (inside / "zone_guard.py").read_text())
+            # a clone
+            (self.home / "kept" / ".git").mkdir()
+            self.assertIn("left as they are", update.refresh_hooks(self.root, self.folder))
+            self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
+            (self.home / "kept" / ".git").rmdir()
+            # behind a link
+            real = self.home / "real" / "extras" / "hooks"
+            real.mkdir(parents=True)
+            (real / "zone_guard.py").write_text("# old\n")
+            (self.home / "link").symlink_to(self.home / "real")
+            self.assertIn("left as they are", update.refresh_hooks(self.root, self.home / "link" / "extras" / "hooks"))
+            self.assertEqual("# old\n", (real / "zone_guard.py").read_text())
+            # holding a hard link to a workspace file
+            mine = self.root / "System" / "mine.md"
+            mine.write_text("mine\n")
+            (self.folder / "read_guard.py").unlink()
+            os.link(str(mine), str(self.folder / "read_guard.py"))
+            self.assertIn("left as they are", update.refresh_hooks(self.root, self.folder))
+            self.assertEqual("mine\n", mine.read_text())
+            self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
+
+    def test_the_flag_is_named_in_the_parser(self):
+        out = __import__("io").StringIO()
+        with mock.patch("sys.stdout", out), self.assertRaises(SystemExit):
+            update.main(["--help"])
+        self.assertIn("--refresh-hooks", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

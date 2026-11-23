@@ -101,7 +101,16 @@ thread whose name another note shares.
    summarised. Offer its fix: take the link, embed, path or copy out, or
    move the file into that zone. On a yes, edit that file alone, and commit
    it in its repository through the hook. Never move material into another
-   zone, and never decide alone.
+   zone, and never decide alone. A finding for repeated wording says so
+   in its fix: take the repeated wording out, or move the file into that
+   zone; there is no link to take out. When one note repeats wording from
+   four or more projects of one other walled zone, and the same wording
+   is in four or more files of its own zone, the finding is one for the
+   note and says it may be text from an old note template, with the two
+   counts and no words. Offer what it says to do: put a copy of that
+   template in `System/templates.local/`, or take the template text out of
+   the notes, each on a yes. The wall check does not change, and the
+   findings stay until the wording is common or gone.
 5. **Attribution**, one at a time. Each finding carries its question, and a
    proposal when the context file settles one. An answer that says a value
    written down is wrong is a correction: see *A correction* below. Add your

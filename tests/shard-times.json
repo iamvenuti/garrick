@@ -78,6 +78,7 @@
   "test_status_work": 3.1,
   "test_todo": 2.1,
   "test_telegram": 30.0,
+  "test_template_hint": 45.0,
   "test_threads_card": 2.0,
   "test_todo_skips": 0.4,
   "test_todo_solo": 6.0,

@@ -133,6 +133,7 @@ Each question has a small label (*Private material*, *Tidy up*, *Safety check*, 
 | A correction that is not finished | *Finish the correction with my assistant* (recommended; in the background when its values are known and every copy is in the zone), *Let me open it*, *Not now* |
 | A commit hook of yours in the way of the wall check | *Add the wall check to my hook* (recommended) |
 | A wall finding | *Take it out* (recommended), *Show me both texts* |
+| A note that repeats wording from four or more projects of one other zone, when its own zone holds the same wording in four or more notes | *It is an old template*, *Show me the findings one by one* (no answer is recommended, and there is no *Not now*) |
 | A wiki question | the field for your answer, *Record as a decision* (a Meetings question only), *Later* with its day, *Close* |
 | A proposed verdict | *Accept* (recommended), *Answer it myself*, *Not now* |
 | A decision to review | *Open the decision*, *It still holds*, *Not now* |
@@ -171,7 +172,7 @@ The **Context** tab is one card, *Context*, and what you do there is answer: eve
 
 In a browser, which cannot act, each answer that needs the app is hidden and a wiki question's field copies what to say.
 
-A finding that is a wall is a *Private material* question in its zone's queue, put first; a page with a wall finding has no question of its own. The page answers no attribution and writes no party: a person's employer, an entity page's party and a value written wrong are settled in a session (`nurture.py`, or "nurture the context"), which the queue's text field hands over.
+A finding that is a wall is a *Private material* question in its zone's queue, put first; a note that looks like an old template is one such question for the note, which says how many projects of the other zone and how many notes of its own zone hold the wording, and names neither words nor projects ([A template from before Garrick](../enforced.md#a-template-from-before-garrick)); a page with a wall finding has no question of its own. The page answers no attribution and writes no party: a person's employer, an entity page's party and a value written wrong are settled in a session (`nurture.py`, or "nurture the context"), which the queue's text field hands over.
 
 **What the walls decide.** The page is one static file, as the rest of the status page is: every zone's lines and queue are in the page source, each holding only what belongs to that zone. An item is asked, counted or offered only if its zone can be read, from its folder under `Zones/` or a Meetings page's `zone:`, and is the zone of the queue it is in; a question that carries no zone, in the Knowledge wiki, is in the Knowledge wiki's own queue. A question whose `pages:` name a page of another zone does not list that page, and an item with no zone the workspace knows is listed nowhere. A page with a wall finding on it has no question of its own. No line, count or summary adds two zones: the summary says how many places need you and nothing more. `party:` and `parties:` are an index: the page never reads them as a wall. What you type is data: it is written as text, never run, opened or followed as a path. The menu bar's *Context* row keeps its count for each zone.
 

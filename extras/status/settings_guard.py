@@ -101,7 +101,7 @@ HOOK_NAME = re.compile(r".*(?:zone_guard|read_guard|waiting_hook)\.py", re.S)
 # `tests/test_settings_actions.py` fails when a release changes a hook file and leaves its digest here behind.
 RELEASE_HOOKS = {
     "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
-    "read_guard.py": "da3bb1e310c57bbdc98578b35f4cb4522dd6375c15981ef4da6e216ee140734c",
+    "read_guard.py": "4704d7897e86f657dbe8951c0c1a7ed241797c5f708ed32acdeb2be739d0e45b",
 }
 
 
@@ -112,12 +112,20 @@ def _bytes(path: Path) -> Optional[bytes]:
         return None
 
 
+def clone_hooks() -> Optional[Path]:
+    """`extras/hooks/` beside the page when the page runs from `extras/status/` of a Garrick clone (#671), else None. An
+    installed page runs from `System/status/`, where `hooks/` is no folder Garrick makes: nothing there is trusted or
+    listed, whatever it holds."""
+    return HERE.parent / "hooks" if HERE.parent.name == "extras" else None
+
+
 def trusted_hook_folder(folder: Path) -> bool:
-    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. The folder
-    beside the page passes; any other passes only on the same bytes. Reads the files; never imports them."""
-    beside = HERE.parent / "hooks"
+    """Whether `folder` holds Garrick's own `zone_guard.py` and `read_guard.py`, as this release ships them. In a clone the
+    folder beside the page passes; any other passes only on the same bytes as the clone's, or, where the page has no clone
+    beside it (an installed page), the same as `RELEASE_HOOKS`. Reads the files; never imports them."""
+    beside = clone_hooks()
     try:
-        if folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
+        if beside is not None and folder.resolve() == beside.resolve() and (folder / "read_guard.py").is_file():
             return True
     except OSError:
         return False
@@ -125,13 +133,21 @@ def trusted_hook_folder(folder: Path) -> bool:
         have = _bytes(folder / name)
         if have is None:
             return False
-        ours = _bytes(beside / name)
+        ours = _bytes(beside / name) if beside is not None else None
         if ours is not None:
             if have != ours:
                 return False
         elif hashlib.sha256(have).hexdigest() != digest:
             return False
     return True
+
+
+def hook_path(word: str) -> Optional[str]:
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and read_guard.py (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable
+    the same way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
 
 
 def hook_scripts(text: str) -> List[str]:
@@ -163,18 +179,19 @@ def hook_scripts(text: str) -> List[str]:
 
 
 def named_folders(home: Optional[str] = None) -> List[Path]:
-    """The folders of the Garrick hooks the assistants' settings name, and the one beside this page, trusted or not."""
+    """The folders of the Garrick hooks the assistants' settings name, and, in a clone, the one beside the page, trusted or
+    not. An installed page lists no folder of its own (#671)."""
     home = home or str(Path.home())
-    folders = [HERE.parent / "hooks"]
+    folders = [clone_hooks()] if clone_hooks() is not None else []
     for rel in (".claude/settings.json", ".codex/hooks.json"):
         try:
             text = (Path(home) / rel).read_text(encoding="utf-8")
         except OSError:
             continue
         for found in hook_scripts(text):
-            there = Path(os.path.expanduser(found))
-            if there.is_absolute():
-                folders.append(there.parent)
+            there = hook_path(found)
+            if there:
+                folders.append(Path(there).parent)
     out: List[Path] = []
     for f in folders:
         if f not in out:
@@ -188,6 +205,52 @@ def hook_folders(home: Optional[str] = None) -> List[Path]:
     folder a settings file names is kept only when `trusted_hook_folder` says it holds Garrick's own two files. The
     workspace has no copy of its own: the hooks stay where the Garrick download is."""
     return [f for f in named_folders(home) if (f / "read_guard.py").is_file() and trusted_hook_folder(f)]
+
+
+REASONS = ("not a full path", "no read_guard.py beside it", "another version's hook files", "used")
+
+
+def shown_path(word: str, home: Optional[str] = None) -> str:
+    """A hook path as the settings file writes it, with the home folder as `~` (#672): `$HOME/x` and `${HOME}/x` show as `~/x`,
+    a path under the home folder shows with `~`, and any other word shows as written, a variable by its name and never its
+    value."""
+    for var in ("$HOME", "${HOME}"):
+        if word == var or word.startswith(var + "/"):
+            return "~" + word[len(var):]
+    home = home or str(Path.home())
+    if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
+        return "~" + word[len(home):]
+    return word
+
+
+def named_hooks(home: Optional[str] = None) -> List[Tuple[str, str]]:
+    """What Settings found: each Garrick hook path the assistants' settings name, once, as [(path as written, reason)]. The
+    reason is one of `REASONS`: "not a full path" (it stays relative or names an unset variable), "no read_guard.py beside it",
+    "another version's hook files" (both files are there but are not this release's) or "used". Nothing else from the
+    settings is returned, and no variable's value."""
+    home = home or str(Path.home())
+    used = hook_folders(home)
+    out: List[Tuple[str, str]] = []
+    for rel in (".claude/settings.json", ".codex/hooks.json"):
+        try:
+            text = (Path(home) / rel).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for word in hook_scripts(text):
+            shown = shown_path(word, home)
+            if any(shown == s for s, _ in out):
+                continue
+            full = hook_path(word)
+            if full is None:
+                reason = REASONS[0]
+            elif not (Path(full).parent / "read_guard.py").is_file():
+                reason = REASONS[1]
+            elif Path(full).parent in used:
+                reason = REASONS[3]
+            else:
+                reason = REASONS[2]
+            out.append(("".join(c for c in shown if c.isprintable())[:200], reason))
+    return out
 
 
 def other_version(home: Optional[str] = None) -> bool:

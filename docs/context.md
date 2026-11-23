@@ -1,21 +1,41 @@
 # How Garrick keeps context
 
-What the assistant knows about your work is spread over many places in Garrick: the wikis, the thread notes, `System/context.md` and `System/names.md`, each zone's `Todo.md` and the assistant's own memory. This page shows how they fit together, in four stages. Each stage says what happens, which file or tool does it, and where the detail is. It repeats none of that detail.
+What the assistant knows about your work is spread over many places in Garrick: the wikis, the thread notes, `System/context.md` and `System/names.md`, each zone's `Todo.md` and the assistant's own memory. This page shows how they fit together, in five stages. Each stage says what happens, which file or tool does it, and where the detail is. It repeats none of that detail.
 
 ![Context is all you need. Articles and reports are ingested into Knowledge, a graph of what you read, linked by topic. Recordings and mail are ingested into Meetings, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Your assistant draws on all three and starts already set up. Two graphs and a tree, so you never set up the same context twice.](assets/two-graphs-and-a-tree.png)
 
 The content itself sits in two graphs and a tree. The two wikis are the graphs: what comes in is ingested into them, and their pages link to one another by topic, person and organisation. Your zones are the tree: folders by subject, a project inside a zone and a piece of work inside a project. The rest of this page is how the three are filled, kept true, used and let go.
 
-All four stages work under one rule: [one memory, walled use](principles.md#one-memory-walled-use). Every conversation is kept in one place, so you can find your own record. The walls apply where material is *used*, not where it is stored. The zones and each zone's walled or open flag in `System/context.md` are what each stage reads, and the parties are the names it routes mail by. They are not a stage of their own.
+All five stages work under one rule: [one memory, walled use](principles.md#one-memory-walled-use). Every conversation is kept in one place, so you can find your own record. The walls apply where material is *used*, not where it is stored. The zones and each zone's walled or open flag in `System/context.md` are what each stage reads, and the parties are the names it routes mail by. They are not a stage of their own.
 
 > Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed.
 
 | Stage | What it does | What does it |
 |---|---|---|
+| [Start small](#start-small) | What a session loads is kept short, so work starts with room to spare | The budgets in `check.py`, `System/names.md`, the memory index and its `parked/` folder, the history mover, the wikis' indexes |
 | [Take in](#take-in) | Everything lands in an inbox and is filed by who it came from | The inboxes, the `intake` skill, the two wikis' `raw/` folders, the Parties table |
 | [Keep true](#keep-true) | What the workspace holds stays correct, and says where it came from | Learned entries and their origin, `correct.py`, `check.py`, `wiki_lint.py`, `drift.py`, Nurture, the wrap |
 | [Use within walls](#use-within-walls) | The right context reaches the task, and a confidence stays on its own side | The Resume here block, question routing, briefs, the wall check at use and at commit |
 | [Let fade](#let-fade) | What nobody uses steps back, and can be brought back | The todo sweep's archive, park and finish, memory pointers set aside with a parked thread and deleted with a finished one, and graded oblivion in the wikis, `fade.py` |
+
+## Start small
+
+Every session pays for what it loads, in every zone, before it does any work. What is loaded and not needed competes with what is, so Garrick keeps the start short and reads the rest only when a request needs it. The table says what a session loads, how much of it there may be, and what happens when a file grows past that. Each row links the page that owns the detail.
+
+| File | When it is read | Limit | When it is over | Detail |
+|---|---|---|---|---|
+| `AGENTS.md`, `AGENTS.local.md` | Every session: the root's, and the one of the zone or wiki you work in | 800 words each at the root, 1,000 elsewhere | `check.py` warns | [The check](commands.md#the-check) |
+| `System/rules.md` | Every session | 8,000 characters | `check.py` warns | [What is enforced](enforced.md#the-table) |
+| `System/rules.local.md` | Every session | None of its own | Nothing | [Your rules, and Garrick's](updating.md#your-rules-and-garricks) |
+| `System/context.md` | Every session | 8,000 characters | `check.py` warns and names the section that grew; the update moves People and Aliases on your yes | [People and Aliases](updating.md#people-and-aliases) |
+| `System/names.md` | When a name needs it | None | Nothing | [People and Aliases](updating.md#people-and-aliases) |
+| The assistant's memory index, `MEMORY.md` | Every session | 8,000 characters, 160 for a line | `check.py` warns; Nurture moves the pointers of parked and finished threads on your yes | [The memory index](#the-memory-index) |
+| A thread's Resume here block | When you open the thread | 400 words | `check.py` warns; the wrap trims it as `resume-trim` says | [Opening and wrapping](commands.md#opening-and-wrapping) |
+| A hub or thread note | When you open it | 4,000 words; entries older than 6 months | The older entries move to `history/` beside it, at the wrap and in the nightly run | [Opening and wrapping](commands.md#opening-and-wrapping) |
+| A meeting page | When a question reaches it | 450 words of body | `check.py` warns | [Check settings](commands.md#check-settings) |
+| A wiki's `index.md` | Every question that reaches the wiki | Working pages only | Old pages go dormant, then to the archive, and leave it | [Fading](commands.md#fading) |
+
+A limit that is a setting reads from the [check settings](commands.md#check-settings), and the table gives the value Garrick ships.
 
 ## Take in
 

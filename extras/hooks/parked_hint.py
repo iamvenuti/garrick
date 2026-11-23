@@ -39,7 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-import zone_guard as zg  # noqa: E402
+zg = None     # zone_guard, imported inside main()'s try: a hook that cannot load it adds nothing
 
 CACHE = ("System", "generated", "parked-hints.json")
 CACHE_VERSION = 1
@@ -80,25 +80,37 @@ def contains(prompt_words, key):
 
 
 def note_paths(root):
-    """[(path from the root, modification time in ns)] of every hub and thread note, by listing folders only."""
+    """[(path from the root, modification time in ns)] of every hub and thread note, by listing folders only. A
+    project or thread folder whose real place is not inside its own zone's is skipped (a link into another zone
+    would give that zone's work under this one's name); one that leaves the workspace altogether may stay."""
     out = []
     zones = os.path.join(root, "Zones")
+    base = os.path.realpath(root)
+
+    def kept(path, zone_real):
+        real = os.path.realpath(path)
+        inside = lambda b, p: p == b or p.startswith(b + os.sep)
+        return inside(zone_real, real) or not inside(base, real)
+
     for zone in sorted(os.listdir(zones)):
         zdir = os.path.join(zones, zone)
         if zone.startswith((".", "_")) or not os.path.isdir(zdir):
             continue
+        zone_real = os.path.realpath(zdir)
         for project in sorted(os.listdir(zdir)):
             pdir = os.path.join(zdir, project)
-            if project.startswith((".", "_")) or project in ("Inbox", "archive") or not os.path.isdir(pdir):
+            if project.startswith((".", "_")) or project in ("Inbox", "archive") or not os.path.isdir(pdir) \
+                    or not kept(pdir, zone_real):
                 continue
             hub = os.path.join(pdir, project + ".md")
             if os.path.isfile(hub):
                 out.append((hub, os.stat(hub).st_mtime_ns))
             threads = os.path.join(pdir, "Threads")
-            if os.path.isdir(threads):
+            if os.path.isdir(threads) and kept(threads, zone_real):
                 for thread in sorted(os.listdir(threads)):
-                    note = os.path.join(threads, thread, thread + ".md")
-                    if os.path.isfile(note):
+                    tdir = os.path.join(threads, thread)
+                    note = os.path.join(tdir, thread + ".md")
+                    if os.path.isfile(note) and kept(tdir, zone_real):
                         out.append((note, os.stat(note).st_mtime_ns))
     return [(os.path.relpath(p, root).replace(os.sep, "/"), m) for p, m in out]
 
@@ -147,17 +159,19 @@ def build(root, lib):
     return {"entries": entries, "walled": walled}
 
 
-def load(root, lib):
-    """The cache, rebuilt when a note's time changed; None when it cannot be had."""
+def load(root, lib, rebuild=False):
+    """The cache, rebuilt when a note's time changed, when it does not read as a cache, or when `rebuild` is set."""
     notes = note_paths(root)
     sig = signature(root, notes)
     path = os.path.join(root, *CACHE)
     try:
         with open(path, encoding="utf-8") as f:
             have = json.load(f)
-        if have.get("version") == CACHE_VERSION and have.get("signature") == sig:
+        if not rebuild and isinstance(have, dict) and have.get("version") == CACHE_VERSION \
+                and have.get("signature") == sig and isinstance(have.get("entries"), list) \
+                and isinstance(have.get("walled"), dict):
             return have
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError, TypeError):
         pass
     have = dict(build(root, lib), version=CACHE_VERSION, signature=sig)
     try:
@@ -237,8 +251,12 @@ def run(event):
     import garrick_lib as lib
     if not lib.memory_folders(root):                    # no memory setting: no pointer ever left an index
         return None
-    have = load(root, lib)
-    line = hint(prompt, have["entries"], zones_told(root, home, have["walled"]))
+    try:
+        have = load(root, lib)
+        line = hint(prompt, have["entries"], zones_told(root, home, have["walled"]))
+    except (AttributeError, TypeError, KeyError):         # a cache that read but does not fit: made again
+        have = load(root, lib, rebuild=True)
+        line = hint(prompt, have["entries"], zones_told(root, home, have["walled"]))
     if not line:
         return None
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}}
@@ -246,6 +264,8 @@ def run(event):
 
 def main():
     try:
+        global zg
+        import zone_guard as zg  # noqa: E402
         event = json.loads(sys.stdin.read() or "{}")
         reply = run(event) if isinstance(event, dict) else None
         if reply:

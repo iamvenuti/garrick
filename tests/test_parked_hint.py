@@ -202,6 +202,31 @@ class TheHint(Workspace):
             self.assertNotIn(there, line, (here, there))
             self.assertIn(names[here], line, (here, there))
 
+    def test_a_folder_that_links_into_another_zone_gives_that_zones_names_to_nobody(self):
+        os.symlink("../Personal/Home", str(self.where("Zones", "Work", "Linked")))
+        self.assertEqual("", self.fire("fix the roof repair", self.where("Zones", "Work")))
+        self.assertIn("Roof repair", self.said("fix the roof repair", self.where("Zones", "Personal")))
+
+    def test_a_cache_that_does_not_read_as_one_is_made_again(self):
+        work = self.where("Zones", "Work")
+        cache = self.root / "System" / "generated" / "parked-hints.json"
+        self.fire("anything", work)
+        good = json.loads(cache.read_text())
+        for bad in ("[]", '"x"', "null", json.dumps(dict(good, entries=[1, 2])), json.dumps(dict(good, walled=[]))):
+            cache.write_text(bad)
+            self.assertIn("Liveness Pricing", self.said("liveness pricing", work), bad)
+        entries = [{"zone": "Work", "say": 5, "name": None, "spoken": 3, "party": 7, "people": 1}]
+        cache.write_text(json.dumps(dict(good, entries=entries)))
+        self.assertIn("Liveness Pricing", self.said("liveness pricing", work))
+
+    def test_a_hook_that_cannot_load_the_zone_guard_adds_nothing_and_exits_0(self):
+        alone = self.base / "alone"
+        alone.mkdir()
+        (alone / "parked_hint.py").write_text(HOOK.read_text())
+        done = subprocess.run([sys.executable, str(alone / "parked_hint.py")], capture_output=True, text=True, timeout=30,
+                              input=json.dumps({"prompt": "liveness pricing", "cwd": str(self.root / "Zones" / "Work")}))
+        self.assertEqual((0, "", ""), (done.returncode, done.stdout, done.stderr))
+
     def test_no_message_says_that_a_hidden_thread_exists(self):
         line = self.fire("roof repair", self.where("Zones", "Work"))
         self.assertEqual("", line)

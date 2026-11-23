@@ -12,3 +12,5 @@ issue: https://github.com/iamvenuti/garrick/issues/664
 **What was measured.** In one workspace the index reached 21,800 characters for 103 pointers, almost three times `System/context.md`, and a quarter of the pointers were parked threads. A test parks and wakes a thread in an invented workspace and compares the index with what it was, character for character.
 
 **What would show it is wrong.** A session that needs a parked thread's pointer, does not find it, and loses something the thread note did not hold. Or a pointer that does not come back exactly. Either one would put the pointers back in the index.
+
+**Choices to know.** The boundary a pointer holds is kept in the thread note by a sentence in the threads skill's *Park* step, since no check can tell a boundary from other text without guessing. Nurture offers the move of a parked or done thread's pointer, files the finding under `System`, and applies it on one yes, never in the nightly run. The move refuses a memory folder inside the workspace's `Zones/`, `Wikis/` or `System/`, an index or `parked/` that is a link, and a kept line that holds a line break; it says so and moves nothing.

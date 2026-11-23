@@ -166,6 +166,101 @@ class TheMove(Memory):
         self.assertIn("Delete the memory pointer", finish)
 
 
+class Light(unittest.TestCase):
+    """The same moves on a small invented workspace with no install: fast, and room for the cases that must refuse."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name).resolve()
+        self.root = self.base / "ws"
+        for rel, status in (("Zones/Work/Acme/Acme.md", "parked"), ("Zones/Work/Acme/Threads/Pricing/Pricing.md", "active"),
+                            ("Zones/Work/Birch/Threads/Rates/Rates.md", "parked")):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("---\nstatus: %s\n---\n\nbody\n" % status)
+        (self.root / "Zones/Work/Birch/Birch.md").write_text("---\nstatus: active\n---\n")
+        (self.root / "System").mkdir(exist_ok=True)
+        self.mem = self.base / "memory"
+        self.mem.mkdir()
+        self.settings(str(self.mem))
+        self.rates = "Zones/Work/Birch/Threads/Rates/Rates.md"
+        self.index = self.mem / "MEMORY.md"
+        self.index.write_text("# Index\n\n- [Rates](rates.md) - resume\n- [Pricing](pricing.md) - resume\n")
+        (self.mem / "rates.md").write_text("Resume from %s.\n" % self.rates)
+        (self.mem / "pricing.md").write_text("Resume from Zones/Work/Acme/Threads/Pricing/Pricing.md.\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def settings(self, folder):
+        (self.root / "System" / "garrick-checks.json").write_text(json.dumps({"memory": folder}))
+
+    def test_a_live_thread_of_a_parked_project_is_not_listed_as_leaving(self):
+        report = lib.memory_index_report(self.root, self.mem)
+        self.assertEqual(["rates.md"], [f for f, _ in report["leaving"]])
+
+    def test_a_folder_that_is_a_link_into_another_zone_is_not_read_as_this_zones_work(self):
+        (self.root / "Zones/Personal/Home/Threads/Roof/Roof.md").parent.mkdir(parents=True)
+        (self.root / "Zones/Personal/Home/Threads/Roof/Roof.md").write_text("---\nstatus: parked\n---\n")
+        os.symlink("../Personal/Home", str(self.root / "Zones/Work/Linked"))
+        self.assertEqual([], [n for n in lib.work_notes(self.root) if n.startswith("Zones/Work/Linked")])
+        self.assertIn("Zones/Personal/Home/Threads/Roof/Roof.md", lib.work_notes(self.root))
+        (self.mem / "roof.md").write_text("Zones/Work/Linked/Threads/Roof/Roof.md\n")
+        self.index.write_text(self.index.read_text() + "- [Roof](roof.md) - x\n")
+        self.assertEqual("", lib.park_memory_pointer(self.root, "Zones/Work/Linked/Threads/Roof/Roof.md"))
+        self.assertTrue((self.mem / "roof.md").is_file())
+        self.assertNotIn("roof.md", [f for f, _ in lib.memory_index_report(self.root, self.mem)["leaving"]])
+
+    def test_a_link_that_leaves_the_workspace_may_stay(self):
+        outside = self.base / "elsewhere" / "Threads" / "Far"
+        outside.mkdir(parents=True)
+        (outside / "Far.md").write_text("---\nstatus: parked\n---\n")
+        os.symlink(str(self.base / "elsewhere"), str(self.root / "Zones/Work/Away"))
+        self.assertIn("Zones/Work/Away/Threads/Far/Far.md", lib.work_notes(self.root))
+
+    def test_an_index_that_is_a_link_holds_and_writes_nothing(self):
+        real = self.base / "real-index.md"
+        real.write_text(self.index.read_text())
+        self.index.unlink()
+        os.symlink(str(real), str(self.index))
+        before = real.read_text()
+        said = lib.park_memory_pointer(self.root, self.rates)
+        self.assertIn("not moved", said)
+        self.assertEqual(before, real.read_text())
+        self.assertTrue((self.mem / "rates.md").is_file())
+        self.assertFalse((self.mem / "parked").exists())
+
+    def test_a_parked_folder_that_is_a_link_holds(self):
+        elsewhere = self.base / "else"
+        elsewhere.mkdir()
+        os.symlink(str(elsewhere), str(self.mem / "parked"))
+        self.assertIn("not moved", lib.park_memory_pointer(self.root, self.rates))
+        self.assertEqual([], list(elsewhere.iterdir()))
+        self.assertTrue((self.mem / "rates.md").is_file())
+
+    def test_a_memory_folder_inside_the_workspace_moves_nothing_and_says_so(self):
+        for inside in ("Zones/Work/memory", "Wikis/memory", "System/memory", ""):
+            folder = self.root / inside if inside else self.root
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "MEMORY.md").write_text(self.index.read_text())
+            (folder / "rates.md").write_text("Resume from %s.\n" % self.rates)
+            self.settings(str(folder))
+            self.assertEqual("Its memory pointer was not moved: the memory folder is inside the workspace.",
+                             lib.park_memory_pointer(self.root, self.rates), inside)
+            self.assertTrue((folder / "rates.md").is_file())
+            self.assertFalse((folder / "parked").exists())
+
+    def test_a_kept_line_with_a_line_break_is_not_put_back(self):
+        self.assertIn("set aside", lib.park_memory_pointer(self.root, self.rates))
+        side = self.mem / "parked" / "rates.md.index-line"
+        side.write_text(json.dumps({"line": "- [Rates](rates.md)\n- [Evil](evil.md)", "heading": "", "after": "", "offset": 0}))
+        before = self.index.read_text()
+        self.assertIn("not moved", lib.park_memory_pointer(self.root, self.rates, wake=True))
+        self.assertEqual(before, self.index.read_text())
+        self.assertTrue((self.mem / "parked" / "rates.md").is_file())
+
+
 class TheSkill(unittest.TestCase):
     """The threads skill's words: a skill is read by an assistant, so what it must say is held here as text."""
 

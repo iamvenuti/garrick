@@ -13,7 +13,7 @@ The move happens once, and only when both tables are found whole: each is a sect
 one Markdown table in it, and no row has more cells than the header. A row with fewer cells is shown by Markdown with
 its last cells empty, and the move writes it that way, padded to the header's count. Anything else stays where it is, and the
 report says so in one sentence. Every line of both sections is carried over as it was, byte for byte, the prose
-above a table included; a row the move did not parse is never lost, since it is not moved. Before anything is
+above a table included, but for a row with fewer cells than its header, which is padded with empty cells; a row the move did not parse is never lost, since it is not moved. Before anything is
 written the move checks that every row of the two tables is in names.md once, and none is left in context.md.
 Both files go into one commit of the workspace's own repository. A second run finds nothing to move.
 
@@ -58,14 +58,15 @@ def cells(line):
 def pad(line, count):
     """A row with fewer cells than `count`, closed and given empty cells up to it, as Markdown shows it. A row with
     enough cells is returned as it was. A carriage return at the end of the line stays at the end."""
-    if len(cells(line)) >= count:
+    have = 0 if not line.replace("|", "").strip() else len(cells(line))      # a row of bars alone has no cells
+    if have >= count:
         return line
     tail = "\r" if line.endswith("\r") else ""
     body = line[:-1] if tail else line
-    body = body.rstrip()
+    body = body.rstrip() if have else "|"
     if not body.endswith("|") or body.endswith("\\|"):
         body += " |"
-    return body + " |" * (count - len(cells(body))) + tail
+    return body + " |" * (count - have) + tail
 
 
 def sections(lines):

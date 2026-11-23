@@ -373,6 +373,11 @@ class TheMove(Legacy):
         self.assertEqual("| a | b | |\r", names_move.pad("| a | b\r", 3))
         self.assertEqual("| a | b |", names_move.pad("| a | b |", 2))
 
+    def test_a_row_of_bars_alone_has_no_cells_and_is_padded_to_the_headers(self):
+        self.assertEqual("| | | |", names_move.pad("|", 3))
+        self.assertEqual(3, len(names_move.cells(names_move.pad("||", 3))))
+        self.assertEqual(3, len(names_move.cells(names_move.pad("|", 3))))
+
     def test_a_row_with_one_cell_more_than_the_header_refuses_and_names_its_line_and_both_counts(self):
         text = (self.root / CONTEXT).read_text()
         bad = text.replace("| dana whitlaw | Dana Whitlock |", "| dana whitlaw | Dana | Whitlock |")

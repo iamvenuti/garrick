@@ -1,5 +1,5 @@
-"""#670: one reader of a hook path, written three times because the hooks run from a kept download and stay self-contained.
-`settings_guard.hook_path`, `update.hook_path` and `read_guard.hook_path` are fed one table of command words and must give one
+"""#670: one reader of a hook path, written four times because the hooks run from a kept download and stay self-contained.
+`settings_guard.hook_path`, `update.hook_path`, `read_guard.hook_path` and `check.hook_path` (#685) are fed one table of command words and must give one
 answer each. A fake HOME and a marker value stand in for this Mac's environment.
 
     cd tests && python3 -m unittest test_hook_path
@@ -28,6 +28,15 @@ def load(name, path):
     return mod
 
 
+def check_module():
+    """template/System/tools/check.py, with garrick_lib beside it on the path, as the check runs (#685: the fourth copy)."""
+    tools = str(REPO / "template" / "System" / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import check
+    return check
+
+
 class TestOneReaderThreeCopies(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -42,6 +51,7 @@ class TestOneReaderThreeCopies(unittest.TestCase):
             "settings_guard": load("sg_hp", REPO / "extras" / "status" / "settings_guard.py").hook_path,
             "update": load("up_hp", REPO / "update.py").hook_path,
             "read_guard": load("rg_hp", REPO / "extras" / "hooks" / "read_guard.py").hook_path,
+            "check": check_module().hook_path,
         }
 
     def table(self):
@@ -62,7 +72,7 @@ class TestOneReaderThreeCopies(unittest.TestCase):
             ("", None),
         ]
 
-    def test_the_three_readers_give_one_answer_for_every_word(self):
+    def test_the_four_readers_give_one_answer_for_every_word(self):
         for word, want in self.table():
             for name, reader in self.readers.items():
                 with self.subTest(word=word, reader=name):

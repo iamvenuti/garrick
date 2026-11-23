@@ -30,6 +30,7 @@
   "test_fetch": 0.8,
   "test_finding_queue": 30.0,
   "test_guard_hooks": 15.0,
+  "test_guard_hooks_check": 1.0,
   "test_guard_update": 60.0,
   "test_history_hold": 90.0,
   "test_hook_path": 1.0,

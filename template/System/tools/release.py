@@ -9,6 +9,7 @@
     python3 System/tools/release.py update --tag v0.16.0 --apply --only System/tools/check.py
     python3 System/tools/release.py update --apply --yes     ... and answer the walls step's yes (the update installs nothing until it is given)
     python3 System/tools/release.py update --apply --clean people     ... and answer yes to one clean-up list (people, ledger, pages)
+    python3 System/tools/release.py update --apply --refresh-hooks     ... and answer yes to refreshing the kept hooks folder
     python3 System/tools/release.py update --split      move your text out of Garrick's instruction files
 
 The release notice is off until System/garrick-settings.json says
@@ -286,7 +287,7 @@ def ahead_of_release(root: Path) -> bool:
 
 
 def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_json: bool = False,
-           split: bool = False, yes: bool = False, clean: tuple = ()) -> int:
+           split: bool = False, yes: bool = False, clean: tuple = (), refresh_hooks: bool = False) -> int:
     """Download the release `tag`, the newest when empty, and run its update
     on this workspace, or with `split` its split of the instruction files.
     Returns the update's exit code. Never a release older than the workspace
@@ -301,7 +302,7 @@ def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_js
         if older or (same and ahead_of_release(root)):
             raise ReleaseError("This workspace runs %s%s, so %s would take it back. Update from a newer Garrick." % (
                 current, " and changes from main after it" if same else "", tag))
-        if same and not named and not split and not clean:
+        if same and not named and not split and not clean and not refresh_hooks:
             print("Up to date: Garrick %s is the newest release, and this workspace runs it." % current)
             return 0
     repo = release_repository(root)
@@ -325,6 +326,7 @@ def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_js
         cmd += ["--split"] if split else []
         cmd += ["--yes"] if yes else []
         cmd += [a for c in clean for a in ("--clean", c)]
+        cmd += ["--refresh-hooks"] if refresh_hooks else []
         return subprocess.run(cmd, cwd=str(tmp)).returncode
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -364,6 +366,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="answer yes to the walls step: write the zone flags, then install (needs --apply)")
     up.add_argument("--clean", action="append", default=[], choices=("people", "ledger", "pages"), metavar="LIST",
                     help="answer yes to one clean-up list that follows the walls step: people, ledger or pages (needs --apply)")
+    up.add_argument("--refresh-hooks", action="store_true",
+                    help="answer yes to copying the new Garrick's hook files over the kept hooks folder the report names "
+                         "(needs --apply)")
     up.add_argument("--json", action="store_true", help="the update's report as JSON")
     up.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
@@ -389,7 +394,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.command == "update":
         try:
-            return update(root, args.tag, args.apply, args.only, args.json, args.split, args.yes, tuple(args.clean))
+            return update(root, args.tag, args.apply, args.only, args.json, args.split, args.yes, tuple(args.clean),
+                          args.refresh_hooks)
         except ReleaseError as exc:
             print(exc, file=sys.stderr)
             return 1

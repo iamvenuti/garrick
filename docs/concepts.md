@@ -265,6 +265,10 @@ The folder the tools write their pages into, such as the Garrick App's page, Nur
 
 An optional hook for Claude Code and Codex. Before the assistant edits a file outside the project the session was opened in, it stops once so the assistant asks you. It is a reminder, not a gate, and a shell command that writes a file is not covered. See [the zone guard](../extras/hooks/README.md).
 
+### The guard hooks check
+
+The check that warns when a guard hook your assistant runs is not this release's ([#685](https://github.com/iamvenuti/garrick/issues/685)). It reads the assistants' settings for the zone guard and the read guard, and says when one runs another version's file, runs from inside the workspace, or names a path that does not exist, each with one step to fix it. It is quiet when no guard is registered, and the nightly run shows it like any other check. See [the guard hooks check](enforced.md#the-guard-hooks-check).
+
 ### The parked-thread hint
 
 An optional hook for Claude Code that adds one line to a session when your request may belong to a parked thread, since a parked thread's pointer is no longer in the memory index ([#664](https://github.com/iamvenuti/garrick/issues/664)). It names only threads the session may see: its own zone's, an open zone's, and any zone's from the workspace root. See [the parked-thread hint](../extras/hooks/README.md#the-parked-thread-hint).

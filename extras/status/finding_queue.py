@@ -1387,8 +1387,11 @@ function kept(){var t={},n={};for(var k in tally)if(UNSAVED.indexOf(k)<0)t[k]=ta
 function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,taken:taken,t:Date.now()}))}}
 function sum(){var p=[];LINES.forEach(function(l){if(tally[l[0]])p.push(tally[l[0]]+' '+l[1])});if(running())p.push(running()+' working in the background');return p.join(', ')||'Nothing answered.'}
 function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length});return o[0]||null}
-function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
+function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);if(window.GarrickFailClear)GarrickFailClear(s);
 var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}else p.hidden=true}
+/* a failed reply (#511): the row's sentence and its one next step (the page's GarrickFail), the reply's own text under Details */
+function failed(q,code,raw,again){if(!window.GarrickFail){out(q,raw||'That did not work.',true);return}var s=q.querySelector('.qsay');
+s.classList.add('bad');GarrickFail(s,code,raw,again);q.querySelector('.qout').hidden=true}
 var RECS='.opt.rec:not([hidden]):not(:disabled)';
 function foc(q){var c=[q.querySelector(RECS),q.querySelector('.opts>[data-ansrow]:first-child input'),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
 for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();return}}
@@ -1408,7 +1411,8 @@ else{if(placed[cur.dataset.scope]){looked(req,placed[cur.dataset.scope]);return}
 function wallq(path){return cur?qs(cur).filter(function(x){return x.dataset.kind==='wall'&&x.dataset.wallfile===path})[0]:null}
 function textBlock(t){var d=document.createElement('div');d.className='qtext';var h=document.createElement('small');h.textContent=t.where;d.appendChild(h);
 d.appendChild(document.createTextNode(t.before));var m=document.createElement('mark');m.textContent=t.run;d.appendChild(m);d.appendChild(document.createTextNode(t.after));return d}
-function nothing(el,res){var sb=el.querySelector('[data-id="show-both"]');if(sb)sb.hidden=true;out(el,res&&res.ok?res.say||'The check finds nothing to take out in this file now.':(res&&res.say)||'The check could not run, so nothing can be taken out from here.',!(res&&res.ok))}
+function nothing(el,res){var sb=el.querySelector('[data-id="show-both"]');if(sb)sb.hidden=true;if(res&&res.ok){out(el,res.say||'The check finds nothing to take out in this file now.');return}
+failed(el,'walls-look',(res&&res.say)||'The check could not run, so nothing can be taken out from here.',function(){delete el.dataset.checked;if(cur)delete placed[cur.dataset.scope];lookup(el)})}
 function named(el,f,res){el.dataset.wallfile=f.path;el.dataset.lookid=f.id;
 if(f.sentence)el.querySelector('.qs').textContent=f.sentence;if(f.why){var wy=el.querySelector('.why');if(wy)wy.textContent=f.why}
 var dc=el.querySelector('.qdet code');if(dc&&f.details)dc.textContent=f.details;el.classList.add('looked');out(el,'')}
@@ -1416,13 +1420,13 @@ function looked(req,res){
 if(!req.path){delete cur.dataset.checking;placed[cur.dataset.scope]=res;var by={};((res&&res.ok&&res.findings)||[]).forEach(function(f){if(!by[f.key]||f.rule==='wording'&&by[f.key].rule!=='wording')by[f.key]=f});
 qs(cur).filter(function(x){return x.dataset.kind==='wall'&&x.dataset.checked&&!x.dataset.wallfile&&!x.dataset.lookid}).forEach(function(el){var wk=el.getAttribute('data-key');if(by[wk])named(el,by[wk],res);else nothing(el,res)});return}
 var el=wallq(req.path);if(!el)return;
-if(!res||!res.ok){out(el,(res&&res.say)||'That could not be shown.',true);return}
+if(!res||!res.ok){failed(el,'walls-look',(res&&res.say)||'That could not be shown.',function(){out(el,'Checking the file\u2026');host.postMessage({act:req})});return}
 if(!req.id){var f=res.findings||[];if(!f.length){nothing(el,res);return}
 named(el,f.filter(function(x){return x.rule==='wording'})[0]||f[0],res);return}
 if(!res.a||!res.b){out(el,res.say||'Nothing to show for this one.',true);return}
 var box=el.querySelector('.qtexts');box.textContent='';box.appendChild(textBlock(res.a));box.appendChild(textBlock(res.b));box.hidden=false;
 seen[el.dataset.gk]={id:req.id,blob:res.blob};[].forEach.call(el.querySelectorAll('[data-needseen]'),function(b){b.hidden=false});out(el,'')}
-function allowed(req,res){var el=wallq(req.path);pend=null;if(!el)return;if(res&&res.ok){finish(el,'done');return}out(el,(res&&res.say)||'That did not work.',true)}
+function allowed(req,res){var el=wallq(req.path);pend=null;if(!el)return;if(res&&res.ok){finish(el,'done');return}failed(el,'walls-allow',(res&&res.say)||'That did not work.')}
 function show(done0){if(!cur)return;clearTexts();showLast();var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
@@ -1434,7 +1438,7 @@ cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').styl
 var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);lookup(q);bare(q);save();foc(q)}
 /* A refused answer stays open by design. It is disabled, with the refusal under the answers, and Skip for now shows. When the refusal says
    nothing can move, the handoff that stands in for the move takes its place, with its number. */
-function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]')||q.querySelector('.opt[data-id="'+f.id+'"] button[data-fa]');if(b){b.disabled=true;b.classList.remove('rec')}
+function refuse(q,f){failed(q,'finding',f.say);var b=q.querySelector('button.opt[data-id="'+f.id+'"]')||q.querySelector('.opt[data-id="'+f.id+'"] button[data-fa]');if(b){b.disabled=true;b.classList.remove('rec')}
 if(f.cant){var fb=q.querySelector('button.opt[data-for]');if(fb){var r=q.querySelector('button.opt[data-id="'+fb.dataset.for+'"]');
 if(r){r.hidden=true;r.classList.remove('rec')}fb.hidden=false;fb.classList.add('rec')}}
 if(f.phrase&&!q.querySelector('[data-qtry]')){var t=document.createElement('button');t.type='button';t.className='act';t.setAttribute('data-qtry','1');

@@ -592,8 +592,19 @@ Every failure the app can show has one plain sentence and one next step. The too
 | Ask stopped on an unexpected error | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*; no second try is offered, since part of the request may have run |
 | The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
 | The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
+| *Check for updates* could not ask GitHub | Settings, About Garrick | Garrick could not ask GitHub for the newest release. Nothing was changed. | *Try again*, which asks once more |
+| The update *Update now* started did not finish | Settings, About Garrick | The update did not finish. | *Show why*, which opens *Details*; no second try is offered, since part of the update may have run |
+| Settings could not count what a change to Memory would do | Settings, Memory | Garrick could not count what these changes would do. They are not saved yet. | *Try again*, which counts once more and saves nothing |
+| A note's Preview could not show the note | Explore's Preview | This note could not be shown. | *Try again*, which reads it once more; none for a note that is no longer there |
+| *Open in default app* did not open the note | Explore's Preview | The note did not open in its app. | *Try again* |
+| An answer in the Context queue was refused | The Context queue, after a button or an answer you typed | This answer was not taken. | *Show why*, which opens *Details*; the answer stays open, and *Skip for now* shows |
+| A wall question could not look at its file | The Context queue's wall question | Garrick could not look at this file. | *Try again*, which looks once more and writes nothing |
+| *The words are mine* was refused | The Context queue's wall question | The words were not marked as yours. | *Show why* |
+| *Commit these* was refused | Waiting on you now, a zone with files not committed | These files were not committed. | *Show why*; the button is ready again |
+| *Undo* after a commit did not undo it | Waiting on you now | The commit was not undone. | *Show why* |
+| A follow-up could not be prepared | Waiting on you now, Follow-ups | The follow-up was not prepared, and nothing was sent. | *Show why*; the button is ready again |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
-| Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
+| Recall's index is old | Never: every search brings its index up to date before it reads, and a refresh that fails gives no results at all, never older ones, so no answer can rest on an old index | None | None: an *Index now* button would write, and none is added |
 
 Two Settings actions name their failure, since each leaves a place outside the workspace as it was when it fails: *Change…* on *This machine*, which sets the role of this computer, and the *Read guard* rows in Walls. Each failure says one of these sentences, with the one next step beside it, and the tool's own words under *Details*:
 

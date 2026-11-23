@@ -2258,6 +2258,8 @@ WORK_CSS = r"""
 @keyframes wspin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#work .wspin{animation:none;border-right-color:currentColor;opacity:.6}}
 #work .wx{flex:none;background:none;border:0;color:inherit;font:inherit;font-size:var(--fs-h3);line-height:1;padding:0 2px;cursor:pointer;opacity:.7}#work .wx:hover{opacity:1}
 #work .wdet{margin-top:4px;font-size:var(--fs-meta)}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
+[data-failure] .fsay{color:var(--ink)}[data-failure] .fnext{margin-left:6px}[data-failure] .fdet{margin-top:4px;font-size:var(--fs-meta);color:var(--ink2)}
+[data-failure] .fdet summary{cursor:pointer}[data-failure] .fdet p{margin:4px 0 0;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text}
 """
 
 
@@ -2283,6 +2285,23 @@ def failure_table():
 # says when a zone is still busy, and window.GarrickBusy what it is busy with.
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
+/* A failure in plain words for a panel of its own (#511): window.GarrickFail(el, code, raw, again) draws the row of FW for `code`
+   into `el`: its sentence, its one next step and, under Details, closed, the tool's own text. Show why opens Details; Try again
+   calls `again`, and shows only when the panel gave one, so a button does what it says on every path. The panel's own writer
+   takes the drawing away with GarrickFailClear(el) when it says something else. Defined for a browser too, which has no host. */
+(function(){var FW=@FAILURES@;
+function row(c){for(var i=0;i<FW.length;i++)if(FW[i][0]===c)return FW[i];return FW[FW.length-1]}
+window.GarrickFailClear=function(el){if(el)el.removeAttribute('data-failure')};
+window.GarrickFail=function(el,code,raw,again){if(!el)return null;var r=row(code),d=null;raw=String(raw||'').trim();
+el.textContent='';el.hidden=false;if(/^A wall holds /.test(raw)){el.textContent=raw;el.setAttribute('data-failure','wall');return el}
+el.setAttribute('data-failure',r[0]);
+var s=document.createElement('span');s.className='fsay';s.textContent=r[1];el.appendChild(s);
+if(raw&&raw!==r[1]){d=document.createElement('details');d.className='fdet';var m=document.createElement('summary');m.textContent='Details';d.appendChild(m);
+var p=document.createElement('p');p.textContent=raw;d.appendChild(p)}
+if(r[2]&&(r[3]==='why'&&d||r[3]==='retry'&&typeof again==='function')){var b=document.createElement('button');b.type='button';b.className='act sm fnext';
+b.setAttribute('data-fail-next',r[3]);b.textContent=r[2];b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();
+if(r[3]==='why'){d.open=true;d.querySelector('summary').focus()}else{window.GarrickFailClear(el);again()}});el.appendChild(document.createTextNode(' '));el.appendChild(b)}
+if(d)el.appendChild(d);return el}})();
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,FW=@FAILURES@,SEEN=[],OPS={},
 BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
@@ -6520,7 +6539,9 @@ RELEASE_JS = r"""
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,btn=document.getElementById('rel-check'),
 line=document.getElementById('rel-line'),box=document.getElementById('rel-detail'),on=document.getElementById('rel-on'),every=document.getElementById('rel-every'),
 changed=false,busy=false;
-function put(t){line.textContent=t}
+function put(t){line.textContent=t;if(window.GarrickFailClear)GarrickFailClear(box)}
+/* a failed reply (#511): the plain sentence and its next step in the box, the reply's own text under Details */
+function failed(code,raw,again,fallback){if(!window.GarrickFail){put(raw||fallback);return}put('');GarrickFail(box,code,raw,again)}
 function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
 function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
 function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
@@ -6550,10 +6571,10 @@ btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can as
 host.postMessage({act:{verb:'release-check'}})};
 sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put((out&&out.say)||'Could not ask GitHub. Nothing was changed.');done();return}
+if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){failed('release-check',out&&out.say,function(){btn.click()},'Could not ask GitHub. Nothing was changed.');done();return}
 if(r.state==='newer'){offer(r);return}
 put(r.line+at(r));done();return}
-if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
+if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){if(out&&out.say)failed('release-update',out.say,null,out.say);else put('The update could not start. Nothing was changed.');done();return}
 put(u.line);show(u);done();return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={update:function(){if(!busy)go()},changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
@@ -6779,7 +6800,7 @@ function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' d
 if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?'. '+mv+' page'+(mv===1?'':'s')+' would move.':'. No page would move.')}
 function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
 if(c&&e)e.textContent=line(w.dataset.mw,c)})}
-function tell(t){said.textContent=t;said.hidden=false}
+function tell(t){said.textContent=t;said.hidden=false;if(window.GarrickFailClear)GarrickFailClear(said)}
 /* Review hands over the list as saved, so it waits while a change is not saved */
 function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
 /* what the form held when it was saved or the page loaded: an edit that is put back, or saved, shows Review again */
@@ -6796,7 +6817,8 @@ sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches(
 function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
 var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function(){if(adv.open)adv.querySelectorAll('textarea').forEach(fit)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
-if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
+if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}
+else if(window.GarrickFail)GarrickFail(said,'count',out&&out.say,ask);else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
 window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){base=JSON.stringify(request());changed=false;review(true)}};
 })();
@@ -7062,7 +7084,11 @@ if(e.target===dlg&&down===dlg)shut()});
 /* Escape is the preview's alone, and never reaches the card underneath, whose own Escape closes it */
 dlg.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();shut()}});
 dlg.addEventListener('cancel',function(e){e.preventDefault();shut()})}
-function said(s,bad){var p=el('.nv-said');p.textContent=s||'';p.classList.toggle('bad',!!bad)}
+function said(s,bad){var p=el('.nv-said');p.textContent=s||'';p.classList.toggle('bad',!!bad);if(window.GarrickFailClear)GarrickFailClear(p)}
+/* a failed reply (#511): the row's sentence and its one next step, the reply's own text under Details; a note that is not there
+   has nothing to try again */
+function failed(code,out,fallback,again){if(!window.GarrickFail){said((out&&out.say)||fallback,true);return}
+var p=el('.nv-said');p.classList.add('bad');GarrickFail(p,code,out&&out.say,out&&out.missing?null:again)}
 /* the note asked for, named and placed at once, its body once the host has read it */
 function read(path,title,btn){if(!dlg)make();cur={path:path};back=btn||null;
 el('#nview-h').textContent=title||path.split('/').pop().replace(/\.md$/,'');el('.nv-path').textContent=path;
@@ -7074,9 +7100,9 @@ function shut(){if(!dlg||!dlg.open)return;dlg.close();cur=null;down=null;
 var b=back&&document.contains(back)?back:document.querySelector('#gpop button[data-note]');back=null;if(b)b.focus({preventScroll:true})}
 /* a reply for a note no longer shown is dropped. A note that is not there has nothing to open, so Open in default app goes */
 function heard(q,out){if(!cur||!dlg.open||q.path!==cur.path)return;if(out&&out.missing)el('[data-nv="open"]').hidden=true;
-if(q.verb==='note-open'){if(out&&out.ok)shut();else said((out&&out.say)||'That did not open.',true);return}
+if(q.verb==='note-open'){if(out&&out.ok)shut();else failed('note-open',out,'That did not open.',function(){openIn(cur&&cur.path)});return}
 if(out&&out.ok&&typeof out.html==='string'){said('');el('.nv-body').innerHTML=out.html;el('.nv-body').scrollTop=0}
-else said((out&&out.say)||'That note could not be read.',true)}
+else{var t=el('#nview-h').textContent,b=back;failed('note-read',out,'That note could not be read.',function(){read(cur.path,t,b)})}}
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}
 if(prev)return prev(q,out)};
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-note]');if(!b||!able())return;e.preventDefault();read(b.dataset.note,b.dataset.title,b)});
@@ -8081,6 +8107,9 @@ COMMIT_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 function mk(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e}
 function rowOf(zone){var r=null;[].forEach.call(document.querySelectorAll('#wneeds [data-commit]'),function(b){if(b.dataset.commit===zone)r=b.closest('.wneed')});return r}
+/* a refused commit or undo (#511): the row's sentence and Show why, the reply's own text under Details */
+function failed(row,code,raw){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote','');row.appendChild(n);
+if(window.GarrickFail)GarrickFail(n,code,raw);else n.textContent=raw}
 function line(row,text,undo,repo){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote',text);
 if(undo){var u=mk('button','act','Undo');u.type='button';u.dataset.undoCommit=undo;u.dataset.repo=repo;n.appendChild(u)}
 var go=row.querySelector('.wacts .alt');if(go){var s=go.cloneNode(true);s.textContent='Show me';n.appendChild(document.createTextNode(' '));n.appendChild(s)}
@@ -8095,10 +8124,10 @@ var u=e.target.closest&&e.target.closest('[data-undo-commit]');
 if(u){e.preventDefault();u.disabled=true;host.postMessage({act:{verb:'commit-files',undo:u.dataset.undoCommit,repo:u.dataset.repo}})}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='commit-files'){var b=out&&out.bounded,say=(out&&out.say)||(out&&out.ok?'Done.':'Nothing was committed.');
-if(q.undo){var rr=document.querySelector('#wneeds .wnote button[data-undo-commit="'+q.undo+'"]'),n=rr&&rr.closest('.wneed');if(n)line(n,say);return}
+if(q.undo){var rr=document.querySelector('#wneeds .wnote button[data-undo-commit="'+q.undo+'"]'),n=rr&&rr.closest('.wneed');if(n){if(out&&out.ok)line(n,say);else failed(n,'commit-undo',say)}return}
 var row=rowOf(q.zone);if(!row)return;
 if(out&&out.ok&&b){line(row,say,b.commit,b.repo);var m=row.querySelector('[data-commit]');if(m)m.hidden=true}
-else{line(row,say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
+else{if(out&&out.ok)line(row,say);else failed(row,'commit-files',say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
 """
@@ -8138,7 +8167,9 @@ if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q})}
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('#wneeds [data-fu]');if(!b)return;e.preventDefault();go(b.closest('.wfu'),b)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='chase'){var row=rowOf(q);if(row){var again=row.querySelector('[data-fu="chase"]');
-note(row,(out&&out.say)||(out&&out.ok?'Done.':'Nothing was sent.'),out&&out.draft);if(again)again.disabled=false}return}
+if(out&&out.ok)note(row,out.say||'Done.',out.draft);
+else{note(row,'');var n=row.querySelector('.wnote');if(window.GarrickFail)GarrickFail(n,'chase',(out&&out.say)||'Nothing was sent.');else n.textContent=(out&&out.say)||'Nothing was sent.'}
+if(again)again.disabled=false}return}
 if(prev)return prev(q,out)};
 })();
 """

@@ -2797,10 +2797,11 @@ def serve_locked(ws: Path, path: Path) -> None:
                 except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
                     out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}
                 except Bad as e:
-                    out = {"say": "That did not work: %s." % e, "done": [], "launch": [], "ok": False, "failed": True}
+                    out = failing({"say": "That did not work: %s." % e, "done": [], "launch": [], "ok": False, "failed": True},
+                                  "ask-failed")
                 except Exception as e:  # a bug must still say so, and the server carry on
-                    out = {"say": "Something went wrong: %s: %s." % (type(e).__name__, e), "done": [], "launch": [], "ok": False,
-                           "failed": True}
+                    out = failing({"say": "Something went wrong: %s: %s." % (type(e).__name__, e), "done": [], "launch": [],
+                                   "ok": False, "failed": True}, "ask-failed")
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
                 if op == "ask" and asker.afresh:
@@ -2865,6 +2866,16 @@ def stop_on_interrupt(conn):
         signal.signal(signal.SIGINT, old)
 
 
+def failing(out: dict, code: str) -> dict:
+    """A failed reply with its row of page_action.py's FAILURES as "plain" (#511): the box says that sentence and its one
+    next step, and keeps `say`, the tool's own words, under Details. The reply is otherwise as it was."""
+    try:
+        out["plain"] = page_action().plain_failure(code)
+    except Exception:
+        pass                            # no table: the box says what it said before
+    return out
+
+
 def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None, zone: Optional[str] = None,
          picked: bool = False) -> Optional[dict]:
     """One op to the workspace's server, starting it first if asked and needed:
@@ -2886,7 +2897,7 @@ def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None, z
                                  start_new_session=True)
             time.sleep(0.1)
     else:
-        return {"say": "The ask server did not start.", "ok": False}
+        return failing({"say": "The ask server did not start.", "ok": False}, "ask-start")
     reply, heard = None, False
     with c, (stop_on_interrupt(c) if op == "ask" else contextlib.ExitStack()):
         until = time.time() + ASK_WAIT         # the whole wait, however many lines come in it
@@ -2911,11 +2922,11 @@ def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None, z
                     continue
                 reply = msg if isinstance(msg, dict) else {}
         except socket.timeout:
-            return {"say": GAVE_UP % how_long(ASK_WAIT), "ok": False}
+            return failing({"say": GAVE_UP % how_long(ASK_WAIT), "ok": False}, "ask-silent")
         except OSError:
             pass
     if reply is None and heard:                 # it was working on it: never asked a second time
-        return {"say": "The ask server stopped before it answered.", "ok": False, "failed": True}
+        return failing({"say": "The ask server stopped before it answered.", "ok": False, "failed": True}, "ask-stopped")
     if reply is None and start and op != "stop":     # reached a server on its way out
         time.sleep(0.3)
         return call(ws, op, text, start, progress, zone, picked)
@@ -2964,7 +2975,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 ap.print_usage()
                 return 2
         except Bad as e:
-            out = {"say": "That did not work: %s." % e, "ok": False}
+            out = failing({"say": "That did not work: %s." % e, "ok": False}, "ask-failed")
     if args.json or args.op == "status":
         if out.get("kind") not in KINDS:
             out["kind"] = "command"                 # the final line always says what it is

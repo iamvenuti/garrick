@@ -594,6 +594,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
 | *Check for updates* could not ask GitHub | Settings, About Garrick | Garrick could not ask GitHub for the newest release. Nothing was changed. | *Try again*, which asks once more |
 | The update *Update now* started did not finish | Settings, About Garrick | The update did not finish. | *Show why*, which opens *Details*; no second try is offered, since part of the update may have run |
+| Settings could not count what a change to Memory would do | Settings, Memory | Garrick could not count what these changes would do. They are not saved yet. | *Try again*, which counts once more and saves nothing |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 

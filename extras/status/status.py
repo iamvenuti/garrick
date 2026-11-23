@@ -6800,7 +6800,7 @@ function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' d
 if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?'. '+mv+' page'+(mv===1?'':'s')+' would move.':'. No page would move.')}
 function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
 if(c&&e)e.textContent=line(w.dataset.mw,c)})}
-function tell(t){said.textContent=t;said.hidden=false}
+function tell(t){said.textContent=t;said.hidden=false;if(window.GarrickFailClear)GarrickFailClear(said)}
 /* Review hands over the list as saved, so it waits while a change is not saved */
 function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
 /* what the form held when it was saved or the page loaded: an edit that is put back, or saved, shows Review again */
@@ -6817,7 +6817,8 @@ sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches(
 function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
 var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function(){if(adv.open)adv.querySelectorAll('textarea').forEach(fit)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
-if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
+if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}
+else if(window.GarrickFail)GarrickFail(said,'count',out&&out.say,ask);else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
 window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){base=JSON.stringify(request());changed=false;review(true)}};
 })();

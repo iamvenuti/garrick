@@ -69,11 +69,12 @@ LIST = {
     "release-check": ("Settings, Check for updates: status.py RELEASE_JS, page_action.py release-check", "TestThePanels"),
     "release-update": ("Settings, the update Check for updates starts: status.py RELEASE_JS, page_action.py release-update",
                        "TestThePanels"),
+    "count": ("Settings, Memory: what the changes would do, status.py MEMORY_JS, page_action.py memory-preview", "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
-PANELS = ("release-check", "release-update")
+PANELS = ("release-check", "release-update", "count")
 
 # Failures drawn outside the table: where the sentence and the next step are written, and the test that holds them.
 OUTSIDE = {
@@ -290,6 +291,13 @@ class TestThePanels(unittest.TestCase):
         self.assertNotIn("put((out&&out.say)", js)                # the reply's text is never the line
         self.assertIn("GarrickFail(box,code,raw,again)", js)
         self.assertIn("GarrickFailClear(box)", js)
+
+    def test_the_memory_count_draws_its_row_and_tries_again_by_counting_again(self):
+        js = block("MEMORY_JS")
+        self.assertIn("GarrickFail(said,'count',out&&out.say,ask)", js)
+        self.assertIn("GarrickFailClear(said)", js)
+        self.assertIn("else if(window.GarrickFail)GarrickFail(said,'count'", js)       # the reply's text only without the helper
+        self.assertIn("verb:'memory-preview'", js.split("function ask()", 1)[1].split("\n", 2)[0] + js.split("function ask()", 1)[1].split("\n", 3)[1])   # Try again only counts
 
     def test_the_wall_sentence_is_shown_as_it_stands(self):
         fn = block("WORK_JS").split("window.GarrickFail=function", 1)[1]

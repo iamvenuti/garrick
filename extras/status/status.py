@@ -5707,10 +5707,12 @@ def work_name_for(r: dict) -> str:
     return "%s, %s" % (r["project"], r["thread"])
 
 
-def example_zone(ws: Path) -> Optional[str]:
+def example_zone(ws: Path, model: Optional[dict] = None) -> Optional[str]:
     """The zone the worked example is in, or None: the first zone whose .example.json names it. The view model reads the
     markers (view.example_zone)."""
-    return (view_model(ws, ("example",)) or {}).get("example")
+    if model is None or "example" not in model:
+        model = view_model(ws, ("example",))
+    return (model or {}).get("example")
 
 
 def work_id(name: str, key: str) -> str:
@@ -5725,7 +5727,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date, model: Optional[dict] = 
     (Next action, Waiting on), its `updated:` date and an unwrapped
     checkpoint's (`touched`), and the zone's Todo.md lines that open with its
     link (thread_actions(), run first)."""
-    example = model["example"] if model and "example" in model else example_zone(ws)
+    example = example_zone(ws, model)
     try:
         me = ask_scope_mod().user_name(ws)
     except Exception:

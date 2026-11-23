@@ -184,22 +184,86 @@ class TestRefreshingTheKeptHooks(GuardCase):
         self.assertEqual("mine too\n", (self.folder / "notes.md").read_text())
         self.assertEqual({*self.HOOKS, "mine.py", "notes.md"}, {p.name for p in self.folder.iterdir()})
 
-    def test_a_failed_copy_puts_every_file_back(self):
+    def test_a_failed_copy_puts_every_file_back_and_the_message_holds_no_full_path(self):
         ((what, fn),) = self.steps()
-        real = Path.write_bytes
+        real = update.put_file
         calls = []
 
-        def write(path, data):
-            calls.append(path.name)
-            if path.name == "parked_hint.py":
-                raise OSError("disk full")
-            return real(path, data)
-        with mock.patch.object(Path, "write_bytes", write):
+        def put(dest, data):
+            calls.append(Path(dest).name)
+            if Path(dest).name == "parked_hint.py" and calls.count("parked_hint.py") == 1:
+                raise OSError(28, "No space left on device", str(dest))
+            return real(dest, data)
+        with mock.patch.object(update, "put_file", put):
             said = self.yes(fn)
-        self.assertIn("were not refreshed: disk full", said)
+        self.assertIn("were not refreshed: No space left on device", said)
+        self.assertNotIn(str(self.home), said)                       # C5: the shown path, never the raw OSError text
         self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
         self.assertEqual("# an older guard\n", (self.folder / "read_guard.py").read_text())
         self.assertFalse((self.folder / "parked_hint.py").exists())
+        self.assertEqual(["read_guard.py", "zone_guard.py"], sorted(p.name for p in self.folder.iterdir()))   # no temp file left
+
+    def test_a_link_that_appears_after_the_offer_is_not_followed(self):
+        """S1: the folder is checked again after the yes, and a file is replaced, never written through."""
+        ((what, fn),) = self.steps()
+        mine = self.root / "System" / "mine.md"
+        mine.write_text("mine\n")
+
+        def swap(question=""):
+            (self.folder / "read_guard.py").unlink()
+            (self.folder / "read_guard.py").symlink_to(mine)
+            return "y"
+        with mock.patch.object(sys, "stdin") as stdin, mock.patch.object(sys, "stdout") as out, \
+                mock.patch("builtins.input", swap):
+            stdin.isatty.return_value = True
+            out.isatty.return_value = True
+            said = fn()
+        self.assertIn("left as they are", said)
+        self.assertEqual("mine\n", mine.read_text())
+        self.assertEqual("# an older guard\n", (self.folder / "zone_guard.py").read_text())
+
+    def test_a_link_met_by_the_replace_is_replaced_not_followed(self):
+        mine = self.root / "System" / "mine.md"
+        mine.write_text("mine\n")
+        (self.folder / "x.py").symlink_to(mine)
+        update.put_file(self.folder / "x.py", b"new\n")
+        self.assertEqual("mine\n", mine.read_text())
+        self.assertFalse((self.folder / "x.py").is_symlink())
+        self.assertEqual("new\n", (self.folder / "x.py").read_text())
+
+    def test_a_hard_link_to_a_workspace_file_is_never_written(self):
+        """S2: another name for a file in the workspace stays out of the refresh, and the workspace file is unchanged."""
+        mine = self.root / "System" / "mine.md"
+        mine.write_text("mine\n")
+        (self.folder / "read_guard.py").unlink()
+        os.link(str(mine), str(self.folder / "read_guard.py"))
+        self.assertIsNone(update.hook_refresh(self.folder, self.root))
+        self.assertEqual([], [fn for w, fn in self.steps() if fn])
+        self.assertEqual("mine\n", mine.read_text())
+
+    def test_only_a_hook_command_names_a_hook(self):
+        """S3: a permission rule or a server entry that names a hook file is no hook."""
+        self.settings.write_text(json.dumps({"permissions": {"deny": ["Read(~/other/extras/hooks/zone_guard.py)"]},
+                                             "mcpServers": {"x": {"args": ["~/other/extras/hooks/read_guard.py"]}},
+                                             "hooks": {"PreToolUse": [{"hooks": [
+                                                 {"type": "command", "command": 'python3 "$HOME/kept/extras/hooks/zone_guard.py"'}]}]}}))
+        self.assertEqual(["$HOME/kept/extras/hooks/zone_guard.py"], [w for w, _ in update.hook_words(self.root)])
+        self.settings.write_text("not json")
+        self.assertEqual([], update.hook_words(self.root))
+
+    def test_a_path_is_shown_printable_and_at_most_200_characters(self):
+        """S4: as settings_guard.named_hooks shows it."""
+        shown = update.shown_path("~/a\x1b[31mb/" + "x" * 300 + "/zone_guard.py")
+        self.assertTrue(shown.isprintable())
+        self.assertLessEqual(len(shown), 200)
+
+    def test_nothing_returns_the_expanded_path_for_printing(self):
+        """S5: outside_copies is gone; outside_found's third field is the one to print."""
+        self.assertFalse(hasattr(update, "outside_copies"))
+        with mock.patch.dict(os.environ, {"GARRICK_KEEP": str(self.home / "kept")}):
+            self.name('python3 "$GARRICK_KEEP/extras/hooks/zone_guard.py"')
+            ((what, path, shown),) = [f for f in update.outside_found(self.root) if f[0] == "the zone guard"]
+        self.assertEqual("$GARRICK_KEEP/extras/hooks/zone_guard.py", shown)
 
     def test_a_folder_in_the_workspace_is_named_and_not_offered(self):
         inside = self.root / "System" / "garrick-copy" / "extras" / "hooks"

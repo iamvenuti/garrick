@@ -546,7 +546,7 @@ rect.c-bg-rect { fill: var(--bg); }
         </g>
         <g data-graph-role="segment-label" data-segment-id="2">
           <rect x="56" y="308" width="175.20000000000002" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="321" class="t-dim" font-size="9" font-weight="600">Another walled zone: Watch only</text>
+          <text x="62" y="321" class="t-dim" font-size="9" font-weight="600">Another walled zone: Watch</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="3">
           <rect x="56" y="393" width="175.20000000000002" height="18" rx="3" class="c-mask"/>

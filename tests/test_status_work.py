@@ -827,8 +827,8 @@ class TestFailuresInPlainWords(NodeCase):
                 reply = {"ok": False, "say": tool}
                 if code in ("refused", "crashed", "unknown", "lost"):
                     reply["outcome"] = code
-                elif code.startswith(("role-", "guard-")):
-                    reply["plain"] = {"code": code}                          # Settings' two actions name their own row (#621)
+                elif code.startswith(("role-", "guard-", "handoff-", "ask-")):
+                    reply["plain"] = {"code": code}                          # a refusal that names its own row: Settings (#621), a hand-off, Ask
                 elif code not in ("handoff", "noreply"):
                     reply["outcome"] = "never-heard-of"                      # a row the page does not name: the fallback
                 box = self.run_js(("act", 0, q, "Working…"), ("reply", 3, q, reply))[1]["box"]

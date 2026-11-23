@@ -1892,7 +1892,7 @@ MACHINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
 TOOL_PATTERN = re.compile(r"[A-Za-z0-9_.*?-]{1,100}")        # a tool name or a pattern for one: never a path or a space
 GUARD_MODES = ("off", "warn", "enforce")
 GUARD_CROSS = ("deny", "ask")
-GUARD_WORDS = {"off": "Off", "warn": "Watch only", "enforce": "On"}
+GUARD_WORDS = {"off": "Off", "warn": "Watch", "enforce": "On"}
 GUARD_KEYS = {"warn": "warn", "enforce": "enforce", "off": "warn"}      # Off is no registration, and the mode stays warn
 MAX_PATTERNS = 40
 
@@ -1903,6 +1903,18 @@ def fails(code: str, text: str):
     e = Refused(text)
     e.reply = {"failure": code}
     return e
+
+
+def hand_off_failure(e, row: str = "handoff"):
+    """A hand-off that did not happen (handoff.py), as the row of FAILURES it is: the desktop app may well have opened
+    after a timeout, so that row offers Refresh, never a second try; a Mac that does not allow local sessions has its
+    own sentence. Any other hand-off failure is `row`. The tool's words go under Details."""
+    H = handoff()
+    if isinstance(e, H.TimedOut):
+        return fails("handoff-late", str(e))
+    if isinstance(e, H.LocalOff):
+        return fails("handoff-off", str(e))
+    return fails(row, str(e))
 
 
 def machine_lib(ws: Path):
@@ -1974,6 +1986,29 @@ def guard_version_differs() -> bool:
         return False
 
 
+def guard_named() -> list:
+    """Each Garrick hook path the assistants' settings name, with the reason Settings gave it, as [{"path", "reason"}]: the
+    path as the settings write it, the home folder as `~`, the reason one of four fixed phrases (#672). Fails closed: anything
+    unreadable is an empty list."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    try:
+        found = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(found)
+        return [{"path": path, "reason": reason} for path, reason in found.named_hooks()]
+    except Exception:
+        return []
+
+
+def guard_refusal(code: str, text: str):
+    """`fails(code, text)` with what Settings found added to Show why, one path with its reason each, and the same list in the
+    reply as `hooks`, for a page that draws it. Without a hook path in the settings, Show why says so."""
+    named = guard_named()
+    said = "; ".join("%s (%s)" % (h["path"], h["reason"]) for h in named) or "no Garrick hook file"
+    e = fails(code, "%s. The assistants' settings name: %s" % (text, said))
+    e.reply["hooks"] = named
+    return e
+
+
 def clean_patterns(value, what: str, needs_one: bool = False) -> list:
     """A list of tool name patterns as the page sends it: each a tool name or a pattern for one, none empty, none with a
     path separator or a space, none that is only wildcards, no repeat, not many. `needs_one` refuses an empty list: the mail
@@ -1992,14 +2027,14 @@ def clean_patterns(value, what: str, needs_one: bool = False) -> list:
 
 def set_read_guard(ws: Path, req: dict) -> dict:
     """Settings › Walls › Read guard. `mode`: `off` takes the hook out of each assistant's settings and leaves the mode on
-    `warn`; `warn` (Watch only) and `enforce` (On) put it in, the way extras/hooks/README.md says, and set the mode. `cross`
+    `warn`; `warn` (Watch) and `enforce` (On) put it in, the way extras/hooks/README.md says, and set the mode. `cross`
     is `deny` (Refuse) or `ask` (Ask me). `tools` and `skip` are the two lists of tool name patterns. The settings go in
     System/garrick-settings.json through the page's own save (prefs). A registration is confirmed by `read_guard.py --check`
     before it is called done; anything less is a refusal, and nothing shows as saved."""
     new = {}
     mode = req.get("mode")
     if mode is not None and mode not in GUARD_MODES:
-        raise fails("guard-value", "the read guard is off, watch only or on, not %r" % (mode,))
+        raise fails("guard-value", "the read guard is off, watch or on, not %r" % (mode,))
     if "cross" in req:
         if req["cross"] not in GUARD_CROSS:
             raise fails("guard-value", "across a wall is refuse or ask me, not %r" % (req["cross"],))
@@ -2016,8 +2051,8 @@ def set_read_guard(ws: Path, req: dict) -> dict:
         guard, src = guard_hooks()
         if guard is None:
             if guard_version_differs():
-                raise fails("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
-            raise fails("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
+                raise guard_refusal("guard-version", "the hook files the assistants' settings name are not this release's: the Garrick download you keep is another version")
+            raise guard_refusal("guard-file", "no copy of read_guard.py was found: the Garrick you keep is not where any assistant's settings point")
         home = str(Path.home())
         try:
             guard.register(str(src), home, install=mode != "off")
@@ -4408,10 +4443,10 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             raise Refused("there is no suggested request waiting for %s; press Continue" % name)
         asked, brief = " ".join(str(look["request"]).split())[:PROMPT_MAX].lstrip("- "), H.REQUEST_BRIEF
     if H.managed_off(managed_places()):          # not kept: the page reads the setting at every build
-        raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
+        raise fails("handoff-off", "%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
     claude = H.find_claude()
     if claude is None:
-        raise Refused(H.NO_CLI)
+        raise fails("handoff-cli", H.NO_CLI)
     folder = work_folder(zone, parts)
     files, own = files_folder(ws, zone, parts)
     add_dirs, guard = [], None
@@ -4463,9 +4498,9 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")
-        raise Refused(str(e))
+        raise hand_off_failure(e)
     except H.HandOffError as e:
-        raise Refused(str(e))
+        raise hand_off_failure(e)
     H.keep_session(ws, key, sid, folder, H.walk(walked, project=own and not moved), primed=not resume, now=now)
     if suggested:
         Y.keep_first_look(ws, key, used=True)
@@ -4490,11 +4525,11 @@ def ask_desktop(ws: Path, req: dict) -> dict:
         raise Refused("no prompt given")
     claude = H.find_claude()
     if claude is None:
-        raise Refused(H.NO_CLI)
+        raise fails("handoff-cli", H.NO_CLI)
     try:
         sid, said = H.prime(claude, ws, prompt, brief=H.ASK_BRIEF, name=H.session_name(prompt))
     except H.HandOffError as e:
-        raise Refused(str(e))
+        raise hand_off_failure(e)
     if not H.managed_off(managed_places()):      # a managed setting is read at every build, never kept
         try:
             H.open_desktop(claude, ws, sid)
@@ -4787,7 +4822,7 @@ def start_work(ws: Path, req: dict, today: dt.date) -> dict:
         raise Refused("%s already has its first look; Continue goes on from it" % name)
     claude = H.find_claude()
     if claude is None:
-        raise Refused(H.NO_CLI)
+        raise fails("handoff-cli", H.NO_CLI)
     extracted = tool_json(ws, "extract.py", *(["--work", pid] if pid and members is not None else [str(folder)]),
                           timeout=EXTRACT_TIMEOUT)
     extracts = ws / extracted["extracts"] if extracted.get("made") or extracted.get("kept") else None
@@ -4809,12 +4844,12 @@ def start_work(ws: Path, req: dict, today: dt.date) -> dict:
                           settings=Y.settings_arg(str(folder)))
     except H.HandOffError as e:
         unwritten()
-        raise Refused(str(e).replace("so nothing was opened", "so nothing was written"))
+        raise hand_off_failure(type(e)(str(e).replace("so nothing was opened", "so nothing was written")), "handoff-look")
     look = Y.parse_first_look(said)
     if look is None:
         unwritten()
-        raise Refused("Claude's first look at %s did not come back in a shape Garrick can use, so nothing was written. "
-                      "Try Start again" % name)
+        raise fails("handoff-look", "Claude's first look at %s did not come back in a shape Garrick can use, so nothing was "
+                    "written. Try Start again" % name)
     hub = zone / parts[0] / (parts[0] + ".md")
     box = note.parent / NEEDS
     q = box / ("%s - next-step.md" % today.strftime("%y%m%d"))
@@ -6445,6 +6480,19 @@ FAILURES = (
      "Open the page and choose Refresh."),
     ("noreply", "This was not saved: the action stopped before it finished.", "Try again", "retry", "Open the page and choose Try again."),
     ("handoff", "Claude did not open.", "Try again", "retry", "Choose Try again on the page."),
+    # Hand-offs that end otherwise (#511). A request the app may already have sent on says so and offers no second try.
+    ("handoff-late", "Claude may have opened, so Garrick did not try again.", "Refresh", "refresh", "Open the page and choose Refresh."),
+    ("handoff-off", "The Claude desktop app does not open work on this Mac.", "Show why", "why", "Open the page and choose Show why."),
+    ("handoff-cli", "Claude Code is not installed on this Mac.", "Show why", "why", "Open the page and choose Show why."),
+    ("handoff-look", "Claude's first look did not come back, so nothing was written.", "Try again", "retry",
+     "Choose Try again on the page."),
+    # Ask's box (#511): what it says when the question did not get an answer. "ask-silent" and "ask-stopped" offer no second try,
+    # since the request may already have been acted on.
+    ("ask-start", "Ask did not start.", "Try again", "retry", "Ask again in the Ask window."),
+    ("ask-silent", "Ask has not answered yet, and it may still finish.", "Show why", "why",
+     "Open the Ask window and choose Details before you ask again."),
+    ("ask-stopped", "Ask stopped before it answered.", "Show why", "why", "Open the Ask window and choose Details."),
+    ("ask-failed", "Ask could not answer this.", "Try again", "retry", "Ask again in the Ask window."),
     # Settings: this computer's role and the read guard (#621, #511). Each is a refusal that says what was not changed.
     ("role-server", "The role was not changed: a laptop copy needs the name of the home server.", "Show why", "why",
      "Open Settings and choose Show why."),

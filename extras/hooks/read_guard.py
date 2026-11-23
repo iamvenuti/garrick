@@ -30,8 +30,10 @@ every other enforcement point asks.
 A session opened at the workspace root or in System/ keeps full read. Nothing
 is refused unless System/garrick-settings.json says `"read-guard": "enforce"`:
 by default the guard decides and logs, and lets every call through. The log
-holds the time, the tool, the decision, the scope's zone and a hash of the
-path: never a path, a party, a title or a count of what was held back. Any
+holds the time, the tool, the decision, the scope's zone and a hash of what
+it named, and for the list in Settings the session's project, a hash of the session, the file's path from the workspace and its zone
+(or only that it is outside the workspace), or for a mail or calendar result the connector and the zone held back: never a file's or a
+message's content, a party, a title, a count, or the path of anything outside the workspace. Any
 error lets the call through and logs that it did; a broken guard must not stop
 work. A scheduled job (GARRICK_HEADLESS=1) is logged and never refused.
 
@@ -84,8 +86,56 @@ def safe(name):
     return re.sub(r"[^A-Za-z0-9_.-]", "", str(name or ""))
 
 
+# What a line says about the session and the file, for the list in Settings (#674): set by handle() for the call in hand.
+LOGCTX = {}
+PARTS = ("System", "Wikis", "Zones")
+
+
+def session_fields(tool, what, kind=""):
+    """What a line says beyond when, the tool and the decision, so the list in Settings can name what was read: the session's
+    project and a hash of the session (so reads of one file in one session fold into one line); for a file, its path from the
+    workspace and the zone or part it belongs to, or only that it is outside the workspace; for a mail or calendar result, the
+    connector it came from and the zone of what was held back. Never the contents of a file or a message, and never the
+    path of a file outside the workspace."""
+    out = {}
+    scope = LOGCTX.get("scope") or {}
+    if scope.get("project"):
+        out["project"] = str(scope["project"])[:80]
+    if LOGCTX.get("session"):
+        out["session"] = LOGCTX["session"]
+    root, lib = LOGCTX.get("root"), LOGCTX.get("lib")
+    is_mail = str(tool).startswith("mcp__")
+    # a mail or calendar result's text is never taken for a file, whatever it looks like (#674 review W3)
+    if isinstance(what, str) and os.path.isabs(what) and root and not is_mail and kind not in ("unparsed", "error"):
+        names = zg.parts(root, what, zg.case_blind(root))
+        if names is None:
+            out["outside"] = True
+        elif names:
+            out["file"] = "/".join(names)[:300]
+            out["part"] = names[0] if names[0] in PARTS else ""
+            try:
+                if names[0] == "Zones" and len(names) >= 2:
+                    out["file_zone"] = lib.zone_of(root, "Zones/%s/x" % names[1]) or names[1]
+                elif names[:2] == ["Wikis", "Meetings"] and len(names) >= 3:
+                    zone = lib.zone_of(root, "/".join(names))
+                    if zone:
+                        out["file_zone"] = zone
+            except Exception:
+                pass
+    elif is_mail:
+        pieces = str(tool).split("__")
+        if len(pieces) >= 3 and pieces[1]:
+            out["source"] = pieces[1][:60]
+        held = sorted(LOGCTX.get("held") or ())
+        if len(held) == 1:
+            out["held_zone"] = held[0]
+    return out
+
+
 def log(folder, tool, decision, zone, what, kind=""):
-    """One line: when, the tool, the decision, the scope's zone, a hash. Never the path, a party, a title or a count."""
+    """One line: when, the tool, the decision, the scope's zone, a hash of what it named, and what session_fields() says: the
+    session's project, the file's path from the workspace and its zone, or the connector and the zone of what was held back.
+    Never a file's or a message's contents, a party, a title or a count."""
     try:
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, "read-guard.log")
@@ -98,6 +148,10 @@ def log(folder, tool, decision, zone, what, kind=""):
                 "zone": zone or "", "id": digest(what)}
         if kind:
             line["kind"] = kind
+        try:
+            line.update(session_fields(tool, what, kind))
+        except Exception:
+            pass
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(line, ensure_ascii=False) + "\n")
     except OSError:
@@ -675,7 +729,10 @@ def decide_result(lib, ctx, scope, suggest, text):
     addresses = EMAIL.findall(text)
     labels = lib.connector_labels(ctx, addresses, suggest) if addresses else None
     mine = {scope["zone"]} if scope["kind"] == "zone" and scope["zone"] else set()
-    return lib.decide(mine, labels, "read", ctx) == "permit"
+    permitted = lib.decide(mine, labels, "read", ctx) == "permit"
+    if not permitted:           # the log names the zone a held-back result belongs to (#674), never what it says
+        LOGCTX.setdefault("held", set()).update(z for z in (labels or ()) if z not in mine and z in (ctx.get("zone_walled") or {}))
+    return permitted
 
 
 def load_suggest(root):
@@ -901,6 +958,8 @@ def handle(event):
         record_scope(lib, root, event, folder)
         return None
     scope = session_scope(lib, root, event, folder)
+    LOGCTX.clear()
+    LOGCTX.update(root=root, lib=lib, scope=scope or {}, session=digest(event.get("session_id")) if event.get("session_id") else "")
     if scope is None:
         return failed_closed(event) if stage == "PostToolUse" else None
     if stage == "PostToolUse":
@@ -949,6 +1008,14 @@ def main():
 # ------------------------------------------------------------------ --check
 
 
+def hook_path(word):
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and here (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable the same
+    way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
+
+
 def registered(path, wants):
     """Problems with the read guard's hooks in the settings file at `path`. `wants` is [(event, [tools])]."""
     shown = path.replace(os.path.expanduser("~"), "~", 1)
@@ -972,7 +1039,7 @@ def registered(path, wants):
                     words = shlex.split(command)
                 except ValueError:
                     words = command.split()
-                scripts = [os.path.expanduser(os.path.expandvars(w)) for w in words if w.endswith("read_guard.py")]
+                scripts = [hook_path(w) or "" for w in words if w.endswith("read_guard.py")]
                 if scripts and all(os.path.isfile(s) for s in scripts):
                     covered |= {t for t in tools if zg.matches(str(entry.get("matcher") or ""), t)}
         missed = [t for t in tools if t not in covered]

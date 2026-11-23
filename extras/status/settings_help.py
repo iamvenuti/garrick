@@ -24,7 +24,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 # The class of each kind of row: an element with one of these, holding a control, is a setting row.
 ROW_CLASSES = ("launcher-row", "zrow", "gkrow", "wallrow", "mkind", "mlists", "mpin", "setrelrow", "nsitem", "nsq", "rgrow")
-CONTROL = re.compile(r"<(?:input|select|textarea)\b|<button\b[^>]*class=\"act\"|class=\"(?:zbtn|wchange|rgchoice)\"|data-rolechange")
+CONTROL = re.compile(r"<(?:input|select|textarea)\b|<button\b[^>]*class=\"act[ \"]|class=\"(?:zbtn|rgchoice)\"|class=\"[^\"]*\bwchange\b|data-rolechange")
 OPEN = re.compile(r'<(div|li|label|p)\b([^>]*)>')
 
 # (a pattern found in the row's own markup, the key, the row's name, its text), the first that matches wins. The text is
@@ -114,28 +114,30 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "gets through. Change the hours to fit your day."),
     # Channels
     (r'id="ch-ask-tier"', "ch-ask-tier", "Ask: model size",
-     "How large a model answers in the Ask box. Small is quick and cheap. Large thinks longer and costs more. Pick Medium "
-     "until an answer falls short."),
+     "How large a model answers in the Ask box. A larger size and more effort give fuller answers, and take longer and cost "
+     "more. Pick Medium until an answer falls short."),
     (r'id="ch-ask-effort"', "ch-ask-effort", "Ask: effort",
-     "How much thought goes into an answer. Low is faster. High takes longer and may answer better. Raise it for hard questions."),
+     "How much thought goes into an answer. More effort gives fuller answers, and takes longer and costs more. Raise it for "
+     "hard questions."),
     (r'id="ch-ask-autonomy"', "ch-ask-autonomy", "Ask: how far it may go",
-     "Read only answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. "
-     "Full sends without asking you first. Pick Read until you trust it with more."),
+     "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
+     "anything is sent, shared or deleted. Full does what Act does, and also sends what you asked for without asking you first. "
+     "Pick Read until you trust it with more."),
     (r'id="ch-telegram-tier"', "ch-telegram-tier", "Telegram: model size",
-     "How large a model answers in a Telegram chat. Small is quick and cheap. Large thinks longer and costs more. Pick Medium "
-     "until an answer falls short."),
+     "How large a model answers in a Telegram chat. A larger size and more effort give fuller answers, and take longer and "
+     "cost more. Pick Medium until an answer falls short."),
     (r'id="ch-telegram-effort"', "ch-telegram-effort", "Telegram: effort",
-     "How much thought goes into an answer in a Telegram chat. Low is faster. High takes longer and may answer better."),
+     "How much thought goes into an answer in a Telegram chat. More effort gives fuller answers, and takes longer and costs more."),
     (r'id="ch-telegram-autonomy"', "ch-telegram-autonomy", "Telegram: how far it may go",
-     "Read only answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. "
-     "Telegram never offers Full. Pick Read until you trust it with more."),
+     "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
+     "anything is sent, shared or deleted. Telegram never offers Full. Pick Read until you trust it with more."),
     # Manage older material
     (r'data-mwikion="', "mem-wiki-%(wiki)s", "Let old pages become dormant",
-     "Lets old pages of this wiki become dormant, then archived, so search stays on what matters. Turn it off to keep every "
-     "page working. Nothing is deleted either way."),
+     "Lets old pages of this wiki move out of everyday answers, then to the archive, so search stays on what matters. Turn it "
+     "off to keep every page in everyday answers. Nothing is deleted either way."),
     (r'class="mkind"', "mem-kind-%(kind)s", "Months for this kind of page",
-     "How many months a page of this kind stays working before it goes dormant, and before it is archived. Tick never archived "
-     "to let it go dormant and no further. Nothing is deleted."),
+     "How many months a page of this kind stays in everyday answers, and how many before it is kept only in the archive. Tick "
+     "Never archive to stop it at the first step. Nothing is deleted."),
     (r'class="mlists"', "mem-lists-%(kind)s", "Which pages belong to this kind",
      "Which pages count as this kind: by page type or by domain, separated by commas. Change them only if a page ends up in "
      "the wrong kind."),
@@ -150,22 +152,22 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'data-mpin="pinned"', "mem-pin-pinned", "It says pinned",
      "A page that says it is pinned stays working, however old. This is how you keep one page by hand."),
     (r'id="m-wake"', "mem-wake", "Propose bringing a page back",
-     "When on, a dormant page that active work links again is proposed for coming back. Off, only a page marked as pinned "
-     "comes back."),
+     "When on, a page that has left everyday answers is proposed for coming back when active work links it again. Off, only a "
+     "page marked as pinned comes back."),
     (r'id="m-reach"', "mem-reach", "How far search reaches",
      "How far search reaches when you do not say. Working pages only is quicker and quieter. Working and dormant pages also "
      "looks at older ones: pick it if you often look for old material."),
     (r'id="m-night"', "mem-night", "Say it in the morning digest",
-     "Adds a line to the morning digest when enough pages would change grade. Turn it off if you do not read the digest."),
+     "Adds a line to the morning digest when enough pages would move. Turn it off if you do not read the digest."),
     # Walls
-    (r'class="wallrow"', "wall-%(zone)s", "Walled or open",
+    (r'class="[^"]*\bwallrow\b', "wall-%(zone)s", "Walled or open",
      "Walled keeps this zone's material in the zone. Open lets it go anywhere. Change asks your assistant to make the switch, "
      "and it asks you first."),
     # Zones, graph colours
-    (r'class="zrow"', "zone-%(zone)s", "A zone's colour and icon",
+    (r'class="[^"]*\bzrow\b', "zone-%(zone)s", "A zone's colour and icon",
      "A colour and an icon for this zone. They mark its name on every card, so you can tell zones apart at a glance. "
      "Choose none to leave the zone plain."),
-    (r'class="gkrow"', "kind-%(kind)s", "A kind of note's colour",
+    (r'class="[^"]*\bgkrow\b', "kind-%(kind)s", "A kind of note's colour",
      "The colour of this kind of note in Explore's graph. Pick one that stands out from its neighbours, or leave it on its "
      "default. Reset colours puts every kind back."),
     # About

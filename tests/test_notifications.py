@@ -556,8 +556,8 @@ class TestPageAndSettings(Case):
         self.assertEqual({"Work": {"color": "Teal"}}, data["zones"])
         self.assertEqual(self.page_request(), data["notifications"])
         sec = self.section()
-        self.assertIn('<input type="checkbox" data-nt="needs-you" checked>', sec)
-        self.assertIn('<input type="checkbox" data-nt="finished" aria-label="a long task finishes">', sec)
+        self.assertIn('<input type="checkbox" data-nt="needs-you" id="nt-needs-you" checked>', sec)
+        self.assertIn('<input type="checkbox" data-nt="finished" id="nt-finished" aria-label="a long task finishes">', sec)
         self.assertIn('id="n-after" min="0" max="240" value="4"', sec)
         self.assertIn('id="n-from" value="22:30"', sec)
 
@@ -582,8 +582,8 @@ class TestPageAndSettings(Case):
                       "a newer Garrick is out", "Quiet from"):
             self.assertIn(words, sec)
         self.assertNotIn("a session is waiting on me", sec)                                    # one row for both events
-        self.assertIn('a long task finishes, <span class="nsafter">after <input type="number" id="n-after"', sec)
-        self.assertRegex(sec, r'<p class="hint nsrule">At night only &#8220;a session needs me&#8221; gets through(\.|, and so do cmux)')
+        self.assertIn('<span class="nsafter">after <input type="number" id="n-after"', sec)
+        self.assertRegex(sec, r'<small>At night only &#8220;a session needs me&#8221; gets through(\.|, and so do cmux)')
         self.assertNotIn("desk", sec.lower())                                                  # the cmux extra's own name for itself
         self.assertIn("With every choice off, Garrick sends nothing.", sec)                      # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
@@ -617,12 +617,13 @@ class TestPageAndSettings(Case):
             html = self.status.build(self.ws, folder=self.base / "jobs")
         sec = html[html.index('id="notify-settings"'):]
         sec = sec[:sec.index("</section>")]
-        todo = sec[sec.index('<label class="nsown nsitem"'):]
-        todo = todo[:todo.index("</label>") + 8]
-        self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", todo)
-        self.assertIn('data-nt="todo-summary" disabled aria-disabled="true" checked', todo)    # not in use, and what is saved is kept
-        self.assertEqual(1, sec.count('class="nsown nsitem"'))                                       # the Context row has no job that does it
-        self.assertIn("nsown input{visibility:hidden", self.status.SETTINGS_CSS)
+        # a notice a job sends its own way has no switch (#673): one line under the list says what sends it, and what is saved is kept, out of sight
+        line = sec[sec.index('id="n-own"'):]
+        line = line[:line.index("</p>")]
+        self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", line)
+        self.assertIn('data-nt="todo-summary" disabled hidden checked', sec)
+        self.assertNotIn('class="nsown nsitem"', sec)
+        self.assertEqual(1, line.count("Sent by"))                                                  # the Context row has no job that does it
         self.assertNotIn("desk", re.sub(r"<[^>]+>", " ", sec).lower())                       # the card holds no word desk
 
     def test_switching_off_the_todo_row_stops_the_todo_digest_and_not_the_context_digest(self):

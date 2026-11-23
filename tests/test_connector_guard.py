@@ -176,10 +176,10 @@ class WarnOnly(FilterCase):
         self.after(response({"threads": THREADS, "resultSizeEstimate": 7}))
         self.assertTrue(self.log_text())
         text = "\n".join(json.dumps({k: v for k, v in line.items() if k != "t"}) for line in self.log_lines())   # the time stamp holds a year
-        for word in ("birch", "Birch", "acme", "Acme", "stranger", "gmail", "Pallet", "Hello", "pricing", "2026", "stimate"):
+        for word in ("stranger", "gmail", "Pallet", "Hello", "pricing", "2026", "stimate"):          # the project and the zone held back are named since 0.79.0 (#674)
             self.assertNotIn(word, text, word)
         for line in self.log_lines():
-            self.assertEqual({"t", "tool", "decision", "zone", "id"}, set(line) - {"kind"})
+            self.assertEqual({"t", "tool", "decision", "zone", "id"}, set(line) - {"kind"} - {"project", "session", "file", "part", "file_zone", "outside", "source", "held_zone"})
             self.assertRegex(line["id"], r"^[0-9a-f]{12}$")
 
     def test_an_unreadable_result_is_passed_and_logged(self):
@@ -233,9 +233,9 @@ class BrokenIntake(FilterCase):
                 self.assertIsNone(self.after(response({"threads": THREADS})))
                 [line] = self.log_lines()
                 self.assertEqual(("undecided", TOOL), (line["decision"], line["tool"]))
-                self.assertEqual({"t", "tool", "decision", "zone", "id", "kind"}, set(line))
+                self.assertEqual({"t", "tool", "decision", "zone", "id", "kind"}, set(line) - {"project", "session", "file", "part", "file_zone", "outside", "source", "held_zone"})
                 text = self.log_text()
-                for word in ("acme", "Acme", "birch", "Pallet", "stranger", "Hello"):
+                for word in ("birch", "Pallet", "stranger", "Hello"):
                     self.assertNotIn(word, text.replace(line["t"], ""), word)
 
     def test_a_scheduled_job_is_logged_and_never_refused(self):

@@ -1469,11 +1469,31 @@ def desk_links():
     return out
 
 
-def outside_copies(root):
-    """The extras that run from a Garrick kept outside the workspace, the zone
-    guard and the Garrick band, where the assistants' settings point at a copy
-    that differs from this Garrick's: [(what, path)]. Reads the settings for
-    those paths only."""
+def hook_path(word):
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py, update.py
+    and here (the hooks stay self-contained: #670): the shell's `$HOME`, `${HOME}` and `~` expand, any other variable the same
+    way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
+
+
+def shown_path(word):
+    """A hook path as the settings write it, with the home folder as `~` and a variable as its name, never its value (#670):
+    `$HOME/x` and `${HOME}/x` show as `~/x`; a path under the home folder shows with `~`; any other word shows as written."""
+    word = "".join(c for c in word if c.isprintable())[:200]       # as settings_guard.named_hooks shows it
+    for var in ("$HOME", "${HOME}"):
+        if word == var or word.startswith(var + "/"):
+            return "~" + word[len(var):]
+    home = str(Path.home())
+    if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
+        return "~" + word[len(home):]
+    return word
+
+
+def outside_found(root):
+    """The extras that run from a Garrick kept outside the workspace, the zone guard, the read guard and the Garrick band, where
+    the assistants' settings point at a copy that differs from this Garrick's: [(what, path, shown)]. `path` is the expanded
+    path, for reading files only; `shown` is the one to print: as the settings write it, a variable by its name."""
     found = []
     guard = REPO / "extras" / "hooks" / "zone_guard.py"
     band = REPO / "extras" / "mods" / "garrick-band"
@@ -1487,22 +1507,24 @@ def outside_copies(root):
     for text in texts:
         paths |= set(re.findall(r"[^\s\"']*zone_guard\.py", text))
     for path in sorted(paths):
-        there = Path(os.path.expanduser(path))
-        if there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
-            found.append(("the zone guard", str(there)))
+        full = hook_path(path)
+        there = Path(full) if full else None
+        if there and there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
+            found.append(("the zone guard", str(there), shown_path(path)))
     reader = REPO / "extras" / "hooks" / "read_guard.py"
     paths = set()
     for text in texts:
         paths |= set(re.findall(r"[^\s\"']*read_guard\.py", text))
     for path in sorted(paths):
-        there = Path(os.path.expanduser(path))
-        if there.is_file() and reader.is_file() and read(there) != read(reader) and not same_place(there, reader):
-            found.append(("the read guard", str(there)))
+        full = hook_path(path)
+        there = Path(full) if full else None
+        if there and there.is_file() and reader.is_file() and read(there) != read(reader) and not same_place(there, reader):
+            found.append(("the read guard", str(there), shown_path(path)))
     dirs = set()
     for text in texts:
         try:
             env = (json.loads(text).get("env") or {})
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             continue
         value = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
         if isinstance(value, str):
@@ -1515,8 +1537,153 @@ def outside_copies(root):
         # release is refreshed even when every band file matches (#515): the update and the band decide alike.
         if any(read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()) \
                 or band_refresh(there, root) is not None:
-            found.append(("the Garrick band", str(there)))
+            found.append(("the Garrick band", str(there), str(there)))
     return found
+
+
+# The hook files Garrick ships in extras/hooks/, by name. The refresh of a kept download (#672) copies these and nothing else.
+HOOK_FILES = ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
+NO_PROMPT = False       # --json: nobody is asked in the middle of the report
+
+
+def hook_words(root):
+    """Each Garrick hook path the assistants' settings name in a hook `command`, as the settings write it: [(word, full path or
+    None)], once each. The settings are read as JSON and only the words of each hook `command` count, split as a shell splits
+    them, as settings_guard.hook_scripts does: a permission rule or a server entry that names a hook file is no hook."""
+    out, seen = [], set()
+    name = re.compile(r".*(?:zone_guard|read_guard|parked_hint|waiting_hook)\.py", re.S)
+
+    def walk(node):
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                try:
+                    words = shlex.split(command)
+                except ValueError:
+                    words = command.split()
+                for word in words:
+                    if name.fullmatch(word) and word not in seen:
+                        seen.add(word)
+                        out.append((word, hook_path(word)))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    for settings in (Path.home() / ".claude" / "settings.json", Path.home() / ".codex" / "hooks.json"):
+        try:
+            walk(json.loads(settings.read_text(encoding="utf-8")))
+        except (OSError, ValueError, RecursionError):
+            continue
+    return out
+
+
+def hook_refresh(folder, root):
+    """The names of Garrick's own hook files in `folder`, a Garrick download's `extras/hooks/` that the settings name, that
+    differ from this Garrick's or are missing there: the files a refresh would copy (#672). None when no refresh is offered: the
+    folder is not an `extras/hooks/` outside the workspace and the running Garrick, it is in a git clone or is, or is under, a
+    link, it lies outside the home folder, a file in it is a link or has another hard link, or nothing differs. Reads files only. A folder inside the
+    workspace is never written."""
+    folder = Path(os.path.abspath(str(folder)))
+    ours = REPO / "extras" / "hooks"
+    if folder.name != "hooks" or folder.parent.name != "extras" or same_place(folder, ours) or not ours.is_dir():
+        return None
+    if inside(folder, root) or inside(root, folder):
+        return None
+    home = Path(os.path.abspath(str(Path.home())))
+    if home not in folder.parents:
+        return None                      # a download outside the home folder is named, never written
+    here = folder
+    while True:
+        if here.is_symlink() or (here / ".git").exists():
+            return None                  # a link, or a clone: git updates it, not this step
+        if here == home:
+            break
+        here = here.parent
+    names = []
+    for name in HOOK_FILES:
+        source = ours / name
+        if not source.is_file():
+            continue
+        dest = folder / name
+        if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+            return None
+        try:
+            if dest.exists() and dest.stat().st_nlink > 1:
+                return None              # a hard link: another name for a file that may be outside this folder
+        except OSError:
+            return None
+        if read(dest) != read(source):
+            names.append(name)
+    return names or None
+
+
+def put_file(dest, data):
+    """Write `data` as `dest` through a temporary file in the same folder and `os.replace`: a link at `dest` is replaced, never
+    followed. The file keeps the mode `dest` had, else 0644."""
+    dest = Path(dest)
+    try:
+        mode = dest.stat().st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=".garrick-", dir=str(dest.parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, str(dest))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def refresh_hooks(root, folder, shown=None, tty=None):
+    """On a yes at a terminal, copy this Garrick's own hook files over the ones in `folder` that differ (`hook_refresh` says
+    which, checked again here), and say what was copied. With nobody to ask, or a no, nothing is copied. A file that cannot be
+    written is put back as it was, and so is every file already copied. Writes no other file and never a settings file."""
+    names = hook_refresh(folder, root)
+    shown = shown or shown_path(str(folder))        # as the settings write it: a variable by its name, never its value
+    if not names:
+        return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
+    if tty is None:
+        try:
+            tty = bool(sys.stdin.isatty() and sys.stdout.isatty()) and not NO_PROMPT
+        except (AttributeError, ValueError):
+            tty = False
+    question = "Copy %s from this Garrick over the kept hooks at %s?" % (", ".join(names), shown)
+    try:
+        yes = ask(question, False, tty)
+    except EOFError:
+        yes = False
+    if not yes:
+        return ("Nothing was copied to the kept hooks at %s%s. The step offered: copy %s from this Garrick, on your yes at a "
+                "terminal. Your settings are not changed." % (shown, "" if tty else ": nobody could be asked", ", ".join(names)))
+    names = hook_refresh(folder, root)           # again, after the yes: a link or a clone that appeared meanwhile ends it
+    if not names:
+        return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
+    folder = Path(os.path.abspath(str(folder)))
+    ours = REPO / "extras" / "hooks"
+    before, wrote = {}, []
+    try:
+        for name in names:
+            before[name] = read(folder / name)
+            put_file(folder / name, (ours / name).read_bytes())
+            wrote.append(name)
+    except OSError as exc:
+        for name in before:
+            try:
+                if before[name] is None:
+                    (folder / name).unlink()
+                else:
+                    put_file(folder / name, before[name])
+            except OSError:
+                pass
+        return ("The kept hooks at %s were not refreshed: %s. Each file was put back as it was. Copy extras/hooks/ from this "
+                "Garrick over them by hand." % (shown, exc.strerror or type(exc).__name__))
+    return "Kept hooks: %s now holds this Garrick's %s. Your settings are not changed." % (shown, ", ".join(wrote))
 
 
 BAND_PATH = ("extras", "mods", "garrick-band")
@@ -1709,7 +1876,25 @@ def next_steps(root, p, done=None):
     steps.extend(ask_steps(root))
     steps.extend(before_quit_steps(root))
 
-    for what, path in outside_copies(root):
+    kept = {}
+    for word, full in hook_words(root):
+        if full and Path(full).parent not in kept:
+            names = hook_refresh(Path(full).parent, root)
+            if names:
+                kept[Path(full).parent] = (shown_path(word).rsplit("/", 1)[0], names)
+    said = set()
+    for what, path, shown in outside_found(root):
+        folder = Path(path).parent
+        if what != "the Garrick band" and folder in kept:
+            shown_folder, names = kept[folder]
+            if folder not in said:
+                said.add(folder)
+                lines = " ".join("%s runs from %s, which differs from this Garrick's, in another version's hook files." % (
+                    w[0].upper() + w[1:], s) for w, p2, s in outside_found(root) if Path(p2).parent == folder and w != "the Garrick band")
+                steps.append(("%s Refresh the kept hooks at %s: on your yes at a terminal, copy %s from this Garrick over "
+                              "them. Your settings are not changed" % (lines, shown_folder, ", ".join(names)),
+                              lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
+            continue
         again = band_refresh(path, root) if what == "the Garrick band" else None
         if again:
             top, old, new = again
@@ -1719,10 +1904,16 @@ def next_steps(root, p, done=None):
                           lambda top=top, old=old, new=new: refresh_band(root, top, old, new)))
             continue
         line = ("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
-                "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path))
+                "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], shown))
         if what == "the Garrick band":
             line += ". " + BAND_BY_HAND % Path(path).parent.parent.parent
         steps.append((line, None))
+    for folder, (shown_folder, names) in kept.items():
+        if folder not in said:           # both guards match, another hook file of the folder does not
+            steps.append(("The kept hooks at %s differ from this Garrick's in %s. Refresh them: on your yes at a terminal, copy "
+                          "%s from this Garrick over them. Your settings are not changed" % (
+                              shown_folder, ", ".join(names), ", ".join(names)),
+                          lambda folder=folder, shown_folder=shown_folder: refresh_hooks(root, folder, shown_folder)))
     return steps
 
 
@@ -2984,6 +3175,8 @@ def main(argv=None):
             return 0
         if not args.workspace:
             ap.error("name the workspace to update, such as ~/Garrick")
+        global NO_PROMPT
+        NO_PROMPT = bool(args.json)
         install.check_git()
         root = find_workspace(args.workspace)
         p = plan(root)

@@ -67,11 +67,13 @@ TOUCH_MAP = {
     "extras/status/finding_queue.py": ["test_finding_queue", "test_context_card", "test_decisions", "test_page_action", "test_walls_page"],
     "update.py": ["test_update", "test_merge_hooks"],
     "extras/status/page_action.py": ["test_page_action", "test_finding_queue", "test_operations", "test_walls_page", "test_notes",
-                                     "test_failure_words", "test_page_route", "test_settings_actions", "test_settings_ui",
+                                     "test_failure_words", "test_failures_plain", "test_page_route", "test_settings_actions", "test_settings_ui",
                                      "test_new_session"],
     "template/System/skills/intake/intake.py": ["test_intake", "test_notes", "test_notes_process", "test_inbox_run"],
     "template/System/skills/intake/process_notes.py": ["test_notes_process"],
     "extras/jobs/notes_job.py": ["test_notes_process", "test_jobs"],
+    "extras/status/ask.py": ["test_ask", "test_failures_plain"],
+    "extras/status/app/Garrick.swift": ["test_failures_plain", "test_failure_words"],
     "extras/status/channels.py": ["test_channels", "test_status", "test_page_action", "test_operations"],
     "extras/status/engine.py": ["test_channels", "test_ask", "test_ask_agent"],
     "extras/status/engine_guard.py": ["test_channels"],
@@ -129,6 +131,30 @@ for _key in ("template/System/tools/history.py", "extras/status/finding_queue.py
 # nurture-0780 (#662): wall findings that look like an old note template.
 for _key in ("template/System/tools/check.py", "template/System/tools/nurture.py", "extras/status/finding_queue.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_template_hint"]
+# guard-0790 (#670, #671, #672): the guard hooks, found as the assistants name them.
+for _key, _mods in (("extras/status/settings_guard.py", ["test_guard_hooks", "test_hook_path"]),
+                    ("extras/hooks/read_guard.py", ["test_guard_hooks", "test_hook_path"]),
+                    ("extras/status/page_action.py", ["test_guard_hooks"]),
+                    ("update.py", ["test_guard_update", "test_hook_path"]),
+                    ("docs/context.md", ["test_start_small"]),
+                    ("README.md", ["test_start_small", "test_docs", "test_docs_limits"]),
+                    ("template/System/tools/check.py", ["test_start_small"]),
+                    ("template/System/tools/garrick_lib.py", ["test_start_small"]),
+                    ("template/System/tools/history.py", ["test_start_small"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+# settings-0790 (#650): Settings' data has a reader in the core.
+for _key, _mods in (("template/System/tools/view_settings.py", ["test_view_settings", "test_view_model", "test_status", "test_settings_ui"]),
+                    ("tests/test_view_settings.py", ["test_view_settings"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+for _key in ("template/System/tools/view.py", "extras/status/status.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_view_settings"]
+# settings-0790 (#673, #674, #675): Settings as one grid, the read guard's list, plain words.
+for _key in ("extras/status/status.py", "extras/status/settings_help.py", "extras/status/settings_guard.py", "extras/status/settings_readguard.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_settings_layout", "test_read_guard_list"]
+for _key in ("extras/hooks/read_guard.py", "tests/read_guard_case.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_read_guard_list"]
+TOUCH_MAP["tests/test_settings_layout.py"] = ["test_settings_layout"]
+TOUCH_MAP["tests/test_read_guard_list.py"] = ["test_read_guard_list"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

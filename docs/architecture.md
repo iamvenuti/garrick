@@ -86,6 +86,29 @@ The shape, with one piece of work and one inbox:
 
 `files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. `todo` is the zone's open actions, as the Todo tab draws them: every open line of the zone's notes with the note it names (`note`) and the project and thread of that note, the `## ` headings of its `Todo.md` in order, and the lines ticked on `today`, the day the build counts from. The view model decides which note a line names; the page decides what late means and how a row sorts. A zone folder that is a link has no `todo`, and a note that is a link into another zone or a wiki gives that zone none of the lines it leads to. `questions` is what Garrick asked and waits on, the open files in the `Needs you` folders of the zone, its projects and its threads, oldest first; one put off to a day that has not come is left out, and a project, thread or file that is a link into another zone or a wiki is not read. `wikis` is each wiki's log: how many entries it holds and the newest one, with the page it names, taken from the wiki's own folder; a log that is a link into another zone or a wiki is not read, and a wiki belongs to no zone, so a build limited to some zones holds none. `repos` is what each repository has uncommitted: the root, each zone, the wikis, and a wiki with one of its own; a repository git could not read is `unread`, never clean, a zone folder that is a link has none here, and a build limited to some zones holds those zones' repositories alone. `graph` is what Explore draws: every note of the zones and of the wikis with its place, kind, status, date, parties and title, and the links between notes as pairs of indexes, each pair once. Notes in an `Inbox`, in an archive or raw folder, hidden notes, instructions and what the vault excludes are left out, and so are a zone folder that is a link and a note that is a link into another zone or a wiki; a build limited to some zones holds those zones' notes and no wiki. `example` names the zone the worked example is in, by the `.example.json` marker that zone holds, or is null. `system` lists the projects kept in `System/`, which belong to no zone: the hub note and each thread note, by path, so the page can match a Todo line's link to one; a build limited to some zones holds none of it. The field names are stable: the page, the tests and any later reader build on them.
 
+Settings has a document of its own: `view.settings(root)`, from `System/tools/view_settings.py`. It is not part of `build()`, because Settings is the page's and not a zone's, and it names every zone's walled flag, so it never rides in a document built for one zone. It reads the files the page used to read for itself and writes nothing: the choices in `System/garrick-settings.json`, the fade settings, the notice switches, the channels, the read guard's state and log, the flags, and this computer's role. `status.py` draws it. A reader that cannot read its source leaves its field empty or `null`, and the section is drawn as it is when that source is missing. `view.settings(root, only=("flags",))` reads the parts named and no others.
+
+```json
+{"api": 1,
+ "desk_agent": "claude",
+ "flags": {"effort": false},
+ "release": {"number": "0.79.0", "installed": "Garrick 0.79.0 ...", "notice_on": false, "notice_every": 1, "stale": []},
+ "usage_counts": true,
+ "walls": {"flags": {"Work": true, "Personal": true}, "pending": false},
+ "notifications": {"settings": {"tell": {"needs-you": true}, "after": 10, "quiet": {"on": false, "from": "22:00", "to": "07:00"}},
+                   "tell": [["needs-you", "a session needs me"]], "after_max": 120, "own_way": {}},
+ "channels": {"settings": {"ask": {"tier": "sonnet", "effort": "medium", "autonomy": "read"}},
+              "capability": {"ok": true}, "names": ["ask", "telegram"], "tiers": ["haiku", "sonnet", "opus"],
+              "efforts": ["low", "medium", "high"], "levels": {"ask": ["read", "act", "full"], "telegram": ["read", "act"]},
+              "telegram": {"state": "off", "said": "Telegram is not set up.", "last": ""}, "held": []},
+ "memory": {"age_said": "...", "wake_said": "...", "error": null, "settings": {"wikis": {}, "kinds": {}, "pins": {}},
+            "counts": {"Meetings": {"working": 12, "dormant": 0}}, "full_list": {}},
+ "machine": {"role": "solo", "name": "", "server": ""},
+ "read_guard": {"state": {"registered": false, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}}, "codex": false}}
+```
+
+What stays with the page, because it is this Mac's and no workspace's: which apps are installed, this Mac's launchd agents (the page hands them in, so a notice row can say who sends it), and whether cmux is here. A zone's colour and icon, and each kind of note's colour in Explore, are read for the cards too, so the page reads them once for both.
+
 #### What the App counts
 
 The App counts which cards are opened, in `System/garrick-usage.json`: a card id, a day and a count, written by the status extra (`status.py` owns the file, through `page_action.py`'s `count-card`) and never committed. `System/tools/usage.py` reads it, with the operations journal and the App's action log, and prints the report. The setting `usage-counts` in `System/garrick-settings.json` turns it off. See [Counting which cards you open](extras/status-page.md#counting-which-cards-you-open).
@@ -159,7 +182,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `check.py` tests the workspace against every rule a machine can check. Run by hand it reports; run by the pre-commit hook as `--staged --walls-only` it refuses. See [The check](commands.md#the-check).
 - `scaffold.py` makes zones, parties, projects and threads, and parks, wakes, renames and deletes them. It checks a name and a party before it writes anything. See [Your first project](commands.md#your-first-project).
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
-- `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes.
+- `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes. `view_settings.py`, loaded through it, does the same for Settings.
 - `usage.py` prints what the Garrick App is used for: card opens, wraps started from the App and Ask actions, from records that already exist. It names each source and what it cannot see. It reads and never writes.
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.

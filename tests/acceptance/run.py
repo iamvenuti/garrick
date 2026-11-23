@@ -27,6 +27,10 @@ and says so, when that one failed:
               Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653). The
               tables have a Learned column that the older rows do not fill, so those rows are one cell short:
               each is padded in names.md to the header's cells (#663)
+    hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of the previous release:
+              the update report names the guard as another version's and offers to refresh the kept hooks; without a
+              yes nothing is copied, and on a yes the folder holds this release's hook files and the settings are
+              unchanged (#670, #672)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
 
@@ -64,7 +68,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 ASK_SET = HERE / "ask_set.json"
 
-STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "refused", "ask")
+STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "hooks", "refused", "ask")
 # The demo's thread this run wraps, the call it files, and the fact it corrects.
 ZONE, PROJECT, THREAD = "Birch", "Birch Entry", "Launch Plan"
 SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-northern-lane-for-birch"
@@ -608,6 +612,57 @@ class Run:
         s.note("a v0.76.0 workspace with %d People and Aliases rows: the update alone moved none; after --names --apply names.md holds all %d once, "
                "context.md holds none and is %d characters; check.py is clean" % (len(before), len(in_names), size))
 
+    def step_hooks(self, s):
+        """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download of the previous release
+        kept in the home folder. The update's report names each guard that differs and offers the refresh; an apply with nobody
+        to ask copies nothing; a yes copies Garrick's own hook files, and the settings file is the same bytes afterwards."""
+        tag = self.previous_tag()
+        old = self.tag_tree(tag, "hooks-previous")
+        kept = self.home / "kept-garrick"
+        shutil.copytree(old / "extras" / "hooks", kept / "extras" / "hooks")
+        target = self.tmp / "hooks-ws"
+        sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
+           env=self.env, cwd=old, timeout=900)
+        settings = self.home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        entry = lambda name: {"hooks": [{"type": "command", "command": 'python3 "$HOME/kept-garrick/extras/hooks/%s"' % name}]}
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [entry("zone_guard.py"), entry("read_guard.py")]}}), encoding="utf-8")
+        before = settings.read_bytes()
+        folder = kept / "extras" / "hooks"
+        differing = [n for n in ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
+                     if (folder / n).read_bytes() != (self.cand / "extras" / "hooks" / n).read_bytes()]
+        if not differing:
+            raise Fail("the previous release's hook files equal the candidate's: there is nothing to refresh")
+        said = sh([sys.executable, self.cand / "update.py", target], env=self.env, cwd=self.cand, timeout=900, stdin="").stdout
+        for name in [n for n in ("zone_guard.py", "read_guard.py") if n in differing]:
+            line = "runs from ~/kept-garrick/extras/hooks/%s, which differs from this Garrick's" % name
+            if line not in said:
+                raise Fail("the update report does not name %s as another version's: %s" % (name, said.strip()[-300:]))
+        if "Refresh the kept hooks at ~/kept-garrick/extras/hooks" not in said:
+            raise Fail("the update report does not offer to refresh the kept hooks")
+        if str(self.home) in said.split("Refresh the kept hooks", 1)[1]:
+            raise Fail("the update report shows the home folder, not ~")
+        sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand, timeout=900, stdin="")
+        if any((folder / n).read_bytes() == (self.cand / "extras" / "hooks" / n).read_bytes() for n in differing):
+            raise Fail("the update copied hook files with nobody to ask")
+        # A yes at a terminal, stood in for: input() answers y and both streams say they are terminals.
+        script = ("import sys, builtins\nfrom pathlib import Path\nsys.path.insert(0, %r)\nimport update\n"
+                  "class T:\n    def isatty(self): return True\n    def write(self, x): pass\n    def flush(self): pass\n"
+                  "sys.stdin, sys.stdout = T(), T()\nbuiltins.input = lambda q='': 'y'\n"
+                  "r = update.refresh_hooks(Path(%r), Path(%r), '~/kept-garrick/extras/hooks')\nsys.stderr.write(r)\n"
+                  % (str(self.cand), str(target), str(folder)))
+        r = sh([sys.executable, "-c", script], env=self.env, cwd=self.cand, timeout=300, check=False)
+        if r.returncode != 0 or "now holds this Garrick's" not in r.stderr:
+            raise Fail("the refresh on a yes said: %s" % (r.stderr or r.stdout).strip()[-200:])
+        for n in differing:
+            if (folder / n).read_bytes() != (self.cand / "extras" / "hooks" / n).read_bytes():
+                raise Fail("%s in the kept folder is not this release's after the refresh" % n)
+        if settings.read_bytes() != before:
+            raise Fail("the refresh changed the assistant's settings")
+        s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s: the report names %s as "
+               "another version's and offers the refresh; with nobody to ask nothing was copied; on a yes %d hook file(s) match "
+               "this release and the settings are unchanged" % (tag, ", ".join(n for n in differing if n.endswith("_guard.py")), len(differing)))
+
     def step_refused(self, s):
         root = self.demo
         note = self.thread_note(root)
@@ -781,6 +836,7 @@ class Run:
         titles = {"install": "Install from the zip", "demo": "Build the demo", "file": "File one conversation",
                   "brief": "Ask for a brief", "wrap": "Wrap a thread", "restart": "Restart the page builder",
                   "resume": "Resume the thread", "correct": "Correct one fact", "update": "Update from the previous tag", "names": "Move People and Aliases to names.md",
+                  "hooks": "Refresh the kept hooks",
                   "refused": "A refused save", "ask": "The fixed Ask set"}
         needs = {"file": "demo", "brief": "demo", "wrap": "demo", "restart": "demo", "resume": "wrap", "correct": "demo",
                  "refused": "demo", "ask": "demo"}

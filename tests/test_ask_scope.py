@@ -1846,7 +1846,10 @@ class TestTheWindowCites(unittest.TestCase):
     def test_a_link_names_a_turn_and_a_source_never_a_path(self):
         cited = self.body("askCited")
         self.assertIn('a[.link] = URL(string: askSourceLink + "\\(i)-\\(n)")', cited)
-        self.assertEqual(2, self.swift.count("[.link] ="))               # a source's, and "And N more" (#329)
+        # a source's, "And N more" (#329), and a failed turn's Try again and Details (#511): no link names a path
+        self.assertEqual(4, self.swift.count("[.link] ="))
+        self.assertIn('link[.link] = URL(string: askTryLink + "\\(i)")', self.swift)
+        self.assertIn('link[.link] = URL(string: askDetailLink + "\\(i)")', self.swift)
         self.assertIn("a[.link] = URL(string: askMoreLink + \"\\(i)\")", cited)
         clicked = self.body("textView")
         self.assertIn("guard view === askLog else { return false }", clicked)

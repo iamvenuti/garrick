@@ -835,7 +835,7 @@ class OpeningAThread(unittest.TestCase):
     def test_the_agent_row_sits_under_cmux_indented_and_hides_with_its_box(self):
         card = self.card()
         self.assertLess(card.index('data-launcher="cmux"'), card.index('id="desk-agent-row"'))
-        self.assertRegex(card, r'class="launcher-row apponly launcher-sub" id="desk-agent-row"')
+        self.assertRegex(card, r'class="launcher-row srow apponly launcher-sub" id="desk-agent-row"')
         self.assertRegex(status.SETTINGS_CSS, r"\.launcher-sub\{padding-left:\d+px\}")
         # shown and hidden in the script as the box is ticked, with no rebuild
         self.assertIn("r.style.display=!c||c.disabled||!c.checked?'none':''", status.JS)
@@ -872,14 +872,14 @@ class ChannelsCard(unittest.TestCase):
                 return status.channels_settings(root)
 
     def telegram_block(self, html):
-        return html[html.index("<b>Telegram</b>"):html.index('<div id="held-actions">')]
+        return html[html.index('<section class="setsec setsub apponly chsec" id="channels-telegram"'):html.index('<section class="setsec setsub apponly chsec" id="channels-held"')]
 
     def test_off_the_state_line_comes_first_and_the_menus_are_greyed_with_a_button(self):
         block = self.telegram_block(self.card())
         self.assertTrue(block.index("Telegram is not set up.") < block.index("<select"))
         self.assertEqual(3, len(re.findall(r"<select[^>]* disabled ", block)))
         self.assertIn(status.NOT_SET_UP, block)
-        self.assertRegex(block, r'<button class="act" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
+        self.assertRegex(block, r'<button class="act sm" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
         self.assertLess(block.index("Set up Telegram"), block.index("<select"))
 
     def test_running_the_menus_are_live_and_there_is_no_button(self):
@@ -898,8 +898,8 @@ class ChannelsCard(unittest.TestCase):
 
     def test_the_held_list_has_its_own_heading_outside_both_channels(self):
         html = self.card()
-        self.assertIn('<div id="held-actions"><p class="chnote"><b>Waiting for your yes</b></p>', html)
-        self.assertLess(html.index("<b>Telegram</b>"), html.index("Waiting for your yes"))
+        self.assertIn('<h3>Waiting for your yes</h3><div id="held-actions">', html)
+        self.assertLess(html.index("<h3>Telegram</h3>"), html.index("Waiting for your yes"))
         self.assertGreater(html.index("Waiting for your yes"), html.rindex('data-key="autonomy"'))
 
     def test_no_path_and_no_model_code_name_in_the_visible_text(self):

@@ -1626,7 +1626,7 @@ class TestFlag(unittest.TestCase):
             self.assertNotIn("ask", status.preview_flags(Path(tmp)))
             html = status.preview_section(status.preview_flags(Path(tmp)))
             self.assertNotIn("Ask", html)
-            self.assertIn("Off until you switch them on in a file.", html)
+            self.assertIn("Off until you ask your assistant to switch one on.", html)
             self.assertNotIn("not released yet", html)
 
     def test_on_with_no_settings_and_with_nothing_that_reads(self):

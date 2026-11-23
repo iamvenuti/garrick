@@ -39,6 +39,7 @@ ISSUE = {
     "rg-cross": "Refuse stops every read across a wall, with no question. Ask me asks you each time, so you can allow one read for one session.",
     "rg-tools": "A mail or calendar search can return messages from every part of your life in one list. Before your assistant sees the list, Garrick removes what belongs behind another wall. These are the tools it checks. Add one when you connect a new mail or calendar service.",
     "rg-skip": "Tools that return nothing tied to a person or a company, such as a weather service. Garrick does not check them and does not warn you about them.",
+    "rg-services": "A mail or calendar search can return messages from every zone. Garrick takes out what sits behind another wall before your assistant sees it.",
 }
 CODEX = "Codex cannot have its mail and calendar results checked. Only the instructions keep them apart."
 FORBIDDEN = re.compile(r"\.json|\.py|--|#\d|\.md\b|System/|garrick-settings|read-guard|connector-tools|machine\.|python3|--role|\bhook\b", re.I)
@@ -201,22 +202,26 @@ class TestReadGuardBlock(SettingsCase):
     def block(self, **kw):
         return self.section(self.full(), "readguard-settings")        # its own section since 0.79.0 (#673)
 
-    def test_the_four_rows_and_their_defaults(self):
+    def test_the_rows_and_their_defaults(self):
         self.assistants()
         sec = self.block()
         self.assertIn('id="readguard-settings"', sec)
         self.assertRegex(sec, r'setsec apponly')
         self.assertRegex(sec, r'<input type="radio" name="rg-mode" value="off" checked>')            # Off
-        self.assertRegex(sec, r'<input type="radio" name="rg-cross" value="deny" checked>')          # Refuse
         for label in ("Off", "Watch", "On"):
             self.assertIn("<b>%s</b>" % label, sec)
+        self.assertNotIn('data-rg="cross"', sec)                                                    # Across a wall: under On only (#683)
+        self.assertNotIn('id="rg-services"', sec)                                                   # the services: under Watch and On only
+        self.assistants(registered=True)
+        self.settings_file(**{"read-guard": "enforce"})
+        sec = self.block()
+        self.assertRegex(sec, r'<input type="radio" name="rg-cross" value="deny" checked>')          # Refuse
         for label in ("Refuse", "Ask me"):
-            self.assertIn("> %s</label>" % label, sec)
-        self.assertIn('<span class="rgtool">mcp__*Gmail*</span>', sec)
-        self.assertIn('<span class="rgtool">mcp__*Calendar*</span>', sec)
-        self.assertEqual(2, sec.count('data-rg-remove='))                                           # a remove button on each item
-        self.assertEqual(2, sec.count('data-rg-add='))                                              # an Add on each list
-        self.assertRegex(sec, r'data-rg="skip">.*?None\.')                                          # the second list is empty
+            self.assertIn("<b>%s</b>" % label, sec)
+        self.assertRegex(sec, r'data-service="Gmail" data-was="check"')
+        self.assertRegex(sec, r'data-service="Calendar" data-was="check"')
+        self.assertIn('<span id="rg-services-name">Connected services</span>', sec)               # nothing waits: no count
+        self.assertEqual(1, sec.count('data-rg-service-add='))                                     # one Add a service
 
     def test_a_laptop_copy_shows_one_line_in_place_of_the_controls(self):
         self.role("roaming", name="laptop", server="mini")
@@ -275,14 +280,15 @@ class TestReadGuardBlock(SettingsCase):
         self.assertRegex(sec, r'name="rg-mode" value="warn" checked')
         self.assertNotIn("cannot read your settings file", sec)
 
-    def test_the_cross_wall_choice_and_the_lists_come_from_the_settings(self):
-        self.assistants()
-        self.settings_file(**{"read-guard-cross-zone": "ask", "connector-tools": ["mcp__*Mail*"], "connector-tools-skip": ["mcp__weather__*"]})
+    def test_the_cross_wall_choice_and_the_services_come_from_the_settings(self):
+        self.assistants(registered=True)
+        self.settings_file(**{"read-guard": "enforce", "read-guard-cross-zone": "ask", "connector-tools": ["mcp__*Mail*"],
+                              "connector-tools-skip": ["mcp__weather__*"]})
         sec = self.block()
         self.assertRegex(sec, r'name="rg-cross" value="ask" checked')
-        self.assertIn('<span class="rgtool">mcp__*Mail*</span>', sec)
-        self.assertNotIn("mcp__*Gmail*", sec)
-        self.assertIn('<span class="rgtool">mcp__weather__*</span>', sec)
+        self.assertRegex(sec, r'data-service="Mail" data-was="check"')
+        self.assertNotIn('data-service="Gmail"', sec)
+        self.assertRegex(sec, r'data-service="weather" data-was="leave"')
 
     def test_under_watch_only_it_says_what_it_would_have_stopped_in_the_last_seven_days_with_show(self):
         self.assistants(registered=True)
@@ -347,16 +353,17 @@ class TestReadGuardBlock(SettingsCase):
         sec = self.block()
         self.assertIn(CODEX, sec)
         self.assertIn("Codex runs the read guard only after you trust it in its hooks screen, and again after each change you make here.", sec)
-        self.assertNotIn('data-rg-add', sec)
-        self.assertNotIn("Mail and calendar tools", sec)
+        self.assertNotIn('data-rg-service-add', sec)
+        self.assertNotIn('id="rg-services"', sec)
         os.environ["GARRICK_HARNESS"] = "claude"
         self.assertNotIn(CODEX, self.block())
         self.assertNotIn("rg-trust", self.block())
 
     def test_the_block_texts_are_the_issues_word_for_word(self):
-        self.assistants()
+        self.assistants(registered=True)
+        self.settings_file(**{"read-guard": "warn"})
         sec = self.block()
-        for key in ("readguard", "rg-cross", "rg-tools", "rg-skip"):       # the mode row has no "?" of its own since 0.79.0: the heading's has its text
+        for key in ("readguard", "rg-services"):       # the mode row has no "?" of its own since 0.79.0, Across a wall none since #683
             self.assertIn('id="help-%s"' % key, sec)
             self.assertIn(htmllib.escape(rgs.HELP_TEXT if key == "readguard" else ISSUE[key]), sec, key)
         for key, text in sg.GUARD_TEXT.items():
@@ -373,13 +380,86 @@ class TestReadGuardBlock(SettingsCase):
     def test_the_markup_sends_only_the_pages_own_verb_with_the_four_choices(self):
         self.assertIn("{verb:'read-guard'}", sg.JS)
         self.assertIn("{verb:'machine-role',role:r}", sg.JS)
-        for word in ("rg-mode", "rg-cross", "data-rg-add", "data-rg-remove"):
-            self.assertIn(word, sg.JS.replace("rgAdd", "data-rg-add").replace("rgRemove", "data-rg-remove") + " rg-mode rg-cross")
+        self.assertIn("{verb:'connected-service',service:li.dataset.service,choice:i.value}", sg.JS)
+        self.assertIn("{verb:'connected-service',service:v,choice:'check',add:true}", sg.JS)
+        self.assertNotIn("mcp__", sg.JS)                                              # the page sends a name, never a pattern (#683)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_script_parses(self):
         done = subprocess.run(["node", "-e", "new Function(process.argv[1])", sg.JS], capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
+
+
+class TestConnectedServices(SettingsCase):
+    """Connected services by name (#683), drawn from a settings file and what the guard has seen."""
+
+    def seen(self, *tools):
+        self.guard_dir.mkdir(parents=True, exist_ok=True)
+        (self.guard_dir / "tools-seen.json").write_text(json.dumps({t: "2026-11-20" for t in tools}))
+
+    def block(self):
+        return self.section(self.full(), "readguard-settings")
+
+    def on(self, mode="warn", **keys):
+        self.assistants(registered=True)
+        self.settings_file(**dict({"read-guard": mode}, **keys))
+
+    def test_a_service_seen_and_on_no_list_is_not_decided_and_counted_in_the_folds_name(self):
+        self.on()
+        self.seen("mcp__claude_ai_Weather__forecast", "mcp__claude_ai_Gmail__search_threads", "mcp__claude_ai_Google_Calendar__list_events")
+        sec = self.block()
+        fold = re.search(r'<details class="rgadv rgsvcs"(?P<open>[^>]*)>(?P<body>.*?)</details>', sec, re.S)
+        self.assertNotIn(" open", fold.group("open"))                                             # closed
+        self.assertIn('<span id="rg-services-name">Connected services (1 not decided)</span>', fold.group("body"))
+        lines = re.findall(r'<li class="rgsvc" data-service="([^"]*)" data-was="([^"]*)">', fold.group("body"))
+        self.assertEqual([("Gmail", "check"), ("Calendar", "check"), ("Weather", "")], lines)
+        weather = re.search(r'<li class="rgsvc" data-service="Weather".*?</li>', sec, re.S).group(0)
+        self.assertIn("Not decided", weather)
+        self.assertNotIn("checked", weather)
+        for name, said in (("Check it", "It returns mail, events or messages."), ("Leave it", "It returns nothing about people.")):
+            self.assertIn("<b>%s</b><small>%s</small>" % (name, said), weather)
+        self.assertIn('<label for="rg-add-name">Add a service</label>', fold.group("body"))
+
+    def test_no_pattern_and_no_tool_name_shows_anywhere_in_the_dialog(self):
+        self.seen("mcp__claude_ai_Birch__find", "mcp__claude_ai_Gmail__search_threads")
+        self.log(("Work", "mcp__claude_ai_Gmail__search_threads", "deny", 2))
+        for mode in ("warn", "enforce"):
+            with self.subTest(mode=mode):
+                self.on(mode, **{"connector-tools": ["mcp__*Gmail*", "mcp__acme_mail__*"], "connector-tools-skip": ["mcp__*Weather*"]})
+                markup = self.full()
+                self.assertIn('data-service="Birch"', markup)
+                if mode == "warn":
+                    self.assertIn("Gmail, a mail or calendar result", markup)                  # the Show list names the service
+                dialog = re.sub(r"<script\b.*?</script>|<style\b.*?</style>", "", markup, flags=re.S)
+                self.assertNotIn("mcp__", dialog)
+                self.assertNotIn("*", dialog)
+
+    def test_a_pattern_written_by_hand_in_0790_shows_as_a_line_named_from_it(self):
+        self.on(**{"connector-tools": ["mcp__*Gmail*", "mcp__*Calendar*", "mcp__acme_mail__*"], "connector-tools-skip": ["mcp__birch__*"]})
+        sec = self.block()
+        self.assertRegex(sec, r'<li class="rgsvc" data-service="acme mail" data-was="check"><span class="rgsvcname">acme mail</span>')
+        self.assertRegex(sec, r'<li class="rgsvc" data-service="birch" data-was="leave">')
+        self.assertIn("Connected services</span>", sec)                                         # nothing waits
+
+    def test_the_fold_is_not_on_the_page_under_off_and_across_a_wall_only_under_on(self):
+        self.seen("mcp__claude_ai_Weather__forecast")
+        self.assistants()
+        self.settings_file(**{"read-guard": "warn"})
+        off = self.block()                                                                       # not registered: Off
+        self.assertNotIn("Connected services", off)
+        self.assertNotIn("Across a wall", off)
+        self.on("warn")
+        self.assertIn("Connected services", self.block())
+        self.assertNotIn("Across a wall", self.block())
+        self.on("enforce")
+        self.assertIn("Connected services", self.block())
+        self.assertIn("Across a wall", self.block())
+
+    def test_the_fold_has_one_question_mark_and_its_text_is_the_issues(self):
+        self.on()
+        sec = self.block()
+        self.assertEqual(1, sec.count('aria-controls="help-rg-services"'))
+        self.assertIn(htmllib.escape(ISSUE["rg-services"]), sec)
 
 
 class TestEverySettingHasItsOwnHelp(SettingsCase):
@@ -392,9 +472,9 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
     def test_every_control_sits_in_a_row_that_has_a_question_mark(self):
         bare = []
         for tag, attrs, row in self.parsed.controls:
-            if attrs.get("type") == "hidden" or attrs.get("name") in ("role-pick", "rg-mode") or attrs.get("class") in ("rgnew",) \
-                    or attrs.get("id") in ("role-name", "role-server"):
-                continue                                          # the dialog's fields: its own text is the explanation
+            if attrs.get("type") == "hidden" or attrs.get("name") in ("role-pick", "rg-mode", "rg-cross") or attrs.get("class") in ("rgnew",) \
+                    or attrs.get("id") in ("role-name", "role-server") or (attrs.get("name") or "").startswith("rg-svc-"):
+                continue                                          # the dialog's fields, choices that carry their lines, the services under their fold's "?"
             if row is None or not row["help"]:
                 bare.append((tag, attrs.get("id") or attrs.get("data-launcher") or attrs.get("data-nt") or attrs.get("name") or attrs.get("class")))
         self.assertEqual([], bare)
@@ -437,7 +517,7 @@ class TestEverySettingHasItsOwnHelp(SettingsCase):
 
     def test_the_same_choice_has_the_same_name_everywhere(self):
         text = self.markup
-        for word in ("One computer", "Home server", "Laptop copy", "Watch", "Refuse", "Ask me"):
+        for word in ("One computer", "Home server", "Laptop copy", "Watch"):        # Refuse and Ask me: under On only (#683)
             self.assertIn(word, text)
         for old in ("solo", "roaming", "Roaming", "Server", "Enforce", "enforce"):
             visible = re.sub(r'<script.*?</script>|value="[^"]*"|data-[a-z-]+="[^"]*"|id="[^"]*"|class="[^"]*"', "", text, flags=re.S)

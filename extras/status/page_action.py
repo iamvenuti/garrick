@@ -373,6 +373,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "outbox-drop",
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
+         "connected-service",
          "count-card",
          "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
@@ -2080,6 +2081,53 @@ def set_read_guard(ws: Path, req: dict) -> dict:
     if "connector-tools-skip" in new:
         bits.append("The list of tools with nothing to check is saved.")
     return {"say": " ".join(bits), "logged": " ".join(bits)}
+
+
+def guard_settings():
+    """settings_guard.py, beside this file: the lines of Connected services and what a choice does to the two lists."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    found = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(found)
+    return found
+
+
+def set_connected_service(ws: Path, req: dict) -> dict:
+    """Settings › Walls › Connected services (#683): `service`, a plain name, takes `choice`, `check` (Check it) or `leave`
+    (Leave it). The page sends no pattern: this writes them, `mcp__*<Service>*` for a service that has none, and moves a line's
+    own patterns, a hand-written one too, to the list chosen. `add` is *Add a service*: it refuses a name a pattern cannot be
+    built from, or would match every tool, and one whose pattern is already on the other list. The two lists are checked as
+    the read-guard verb checks them, and saved in the settings file through the page's own save (prefs). Nothing else changes."""
+    add = req.get("add", False)
+    if not isinstance(add, bool):
+        raise fails("guard-value", "add is true or false, not %r" % (add,))
+    if not isinstance(req.get("service"), str) or len(req["service"]) > 100:
+        raise fails("guard-value", "a connected service is given by its name")
+    keep = prefs()
+    lib = keep.lib(ws)
+    if lib is None or not callable(getattr(lib, "service_name", None)):
+        raise fails("guard-save", "this workspace's garrick_lib names no connected service; update Garrick")
+    try:
+        sg = guard_settings()
+    except Exception as e:
+        raise fails("guard-save", "settings_guard.py did not load: %s" % type(e).__name__)
+    try:
+        tools, skip = list(lib.connector_patterns(ws)), list(lib.connector_skips(ws))
+        new_tools, new_skip = sg.service_choice(tools, skip, sg.seen_tools(lib), req["service"], req.get("choice"), add,
+                                                lib.service_name, lib.tool_matches)
+    except sg.ServiceRefused as e:
+        raise fails("guard-value", str(e))
+    new = {"connector-tools": clean_patterns(new_tools, "the mail and calendar tools", needs_one=True),
+           "connector-tools-skip": clean_patterns(new_skip, "the tools with nothing to check")}
+    if new["connector-tools"] == tools and new["connector-tools-skip"] == skip:
+        return {"say": "Nothing changed.", "logged": "Connected services: nothing changed."}
+    try:
+        keep.migrate(ws)
+        keep.save(ws, new)
+    except (OSError, ValueError, keep.NoAccessor) as e:
+        raise fails("guard-save", "%s: %s" % (type(e).__name__, e))
+    name = " ".join(req["service"].split())
+    said = "%s is now %s." % (name, "Check it" if req["choice"] == "check" else "Leave it")
+    return {"say": said, "logged": "Connected services: %s" % said}
 
 
 _CHANNELS = None
@@ -6339,6 +6387,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_machine_role(ws, req)
     if req["verb"] == "read-guard":
         return set_read_guard(ws, req)
+    if req["verb"] == "connected-service":
+        return set_connected_service(ws, req)
     if req["verb"] == "wrap":
         return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
@@ -6367,6 +6417,7 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "machine-role", "read-guard",
+         "connected-service",
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
@@ -6382,6 +6433,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "outbox-drop",
              "inbox-run", "intake-answer",
              "machine-role", "read-guard",
+         "connected-service",
              "count-card",
              "session-url")
 

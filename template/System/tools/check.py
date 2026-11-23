@@ -161,6 +161,7 @@ from garrick_lib import (  # noqa: E402
     connector_skips,
     read_guard_dir,
     tool_matches,
+    service_name,
 )
 from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
@@ -6868,10 +6869,11 @@ def check_updates(ws: Workspace) -> List[Finding]:
 
 
 def check_connector_tools(ws: Workspace) -> List[Finding]:
-    """A connector tool the session used that is on no list is not filtered, and says so here (#614). The read
-    guard notes the name of each such tool it sees, and nothing else about the call, in its own folder; a name on
-    `connector-tools` or `connector-tools-skip` in System/garrick-settings.json is not named. Where the guard has
-    seen no tool, there is nothing to say."""
+    """A connected service the session used that is on no list is not filtered, and says so here (#614), by its plain name
+    and the place in Settings where it is decided (#683): "Settings › Walls › Connected services: Weather is not decided".
+    The read guard notes the name of each such tool it sees, and nothing else about the call, in its own folder; a tool a
+    pattern on either list in the settings matches is not named. The tools of one service make one warning. Where the guard
+    has seen no tool, there is nothing to say."""
     try:
         seen = json.loads((read_guard_dir() / "tools-seen.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -6879,12 +6881,16 @@ def check_connector_tools(ws: Workspace) -> List[Finding]:
     if not isinstance(seen, dict):
         return []
     listed = connector_patterns(ws.root) + connector_skips(ws.root)
+    services: Dict[str, str] = {}
+    for name in sorted(seen):
+        if isinstance(name, str) and not tool_matches(listed, name):
+            service = service_name(name) or name
+            services.setdefault(service.casefold(), service)
     return [Finding(WARNING, "connectors", "System/garrick-settings.json",
-                    "the assistant used the connector tool %s, which is on no list of the read guard, so its results are "
-                    "not checked against the walls; add a pattern for it to `connector-tools`, or to "
-                    "`connector-tools-skip` if it returns nothing a party can label" % name,
-                    "a connector tool the assistant used is not checked against the walls", token=name)
-            for name in sorted(seen) if isinstance(name, str) and not tool_matches(listed, name)]
+                    "Settings › Walls › Connected services: %s is not decided, so its results are not checked against the "
+                    "walls. Choose Check it or Leave it there" % service,
+                    "a connected service the assistant used is not decided", token=service)
+            for service in services.values()]
 
 
 # --------------------------------------------------------------------------- machines (#612)

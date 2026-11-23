@@ -84,7 +84,8 @@ class TestOnlyTheApp(SettingsCase):
                               env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs), HOME=str(self.home)))
         return json.loads(done.stdout)
 
-    REQUESTS = ({"verb": "machine-role", "role": "server", "name": "mini"}, {"verb": "read-guard", "mode": "warn"})
+    REQUESTS = ({"verb": "machine-role", "role": "server", "name": "mini"}, {"verb": "read-guard", "mode": "warn"},
+                {"verb": "connected-service", "service": "Weather", "choice": "leave"})
 
     def test_a_session_and_a_command_line_that_says_page_are_refused_and_nothing_is_written(self):
         self.assistants()
@@ -99,7 +100,7 @@ class TestOnlyTheApp(SettingsCase):
         self.assertEqual({}, self.saved())
 
     def test_both_are_the_pages_own_verbs_and_declared(self):
-        for verb in ("machine-role", "read-guard"):
+        for verb in ("machine-role", "read-guard", "connected-service"):
             self.assertIn(verb, pa.PAGE_ONLY)
             self.assertIn(verb, pa.VERBS)
             self.assertIn(verb, pa.ops_lib(self.root).DECLARED)
@@ -382,6 +383,67 @@ class TestTheReadGuard(SettingsCase):
                 self.assertTrue(sentence.endswith("."))
                 for word in (".json", ".py", "--", "/", "System/"):
                     self.assertNotIn(word, sentence)
+
+
+class TestConnectedServices(SettingsCase):
+    """Settings › Walls › Connected services (#683): a service by its plain name; the page writes the patterns."""
+
+    def seen(self, *tools):
+        folder = self.jobs.parent / "garrick-read-guard"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "tools-seen.json").write_text(json.dumps({t: "2026-11-20" for t in tools}))
+
+    def findings(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_check_services_test", str(REPO / "template/System/tools/check.py"))
+        check = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = check
+        spec.loader.exec_module(check)
+        return check.check_connector_tools(mock.Mock(root=self.root))
+
+    def test_leave_it_for_weather_writes_its_pattern_to_the_skip_list_and_the_check_goes_quiet(self):
+        self.seen("mcp__claude_ai_Weather__forecast", "mcp__claude_ai_Gmail__search_threads")
+        self.assertEqual(["Settings › Walls › Connected services: Weather is not decided, so its results are not checked "
+                          "against the walls. Choose Check it or Leave it there"], [f.message for f in self.findings()])
+        out = self.go({"verb": "connected-service", "service": "Weather", "choice": "leave"})
+        self.assertTrue(out["ok"], out)
+        self.assertEqual("Weather is now Leave it.", out["say"])
+        self.assertEqual(["mcp__*Weather*"], self.saved()["connector-tools-skip"])
+        self.assertEqual(["mcp__*Gmail*", "mcp__*Calendar*"], self.saved()["connector-tools"])     # the defaults, kept
+        self.assertEqual([], self.findings())
+
+    def test_outlook_typed_in_add_a_service_is_checked(self):
+        out = self.go({"verb": "connected-service", "service": "Outlook", "choice": "check", "add": True})
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(["mcp__*Gmail*", "mcp__*Calendar*", "mcp__*Outlook*"], self.saved()["connector-tools"])
+        out = self.go({"verb": "connected-service", "service": "Google Calendar", "choice": "check", "add": True})
+        self.assertIn("mcp__*Google_Calendar*", self.saved()["connector-tools"])                   # spaces become underscores
+
+    def test_a_choice_moves_a_lines_own_pattern_a_hand_written_one_too(self):
+        self.settings_file.write_text(json.dumps({"connector-tools": ["mcp__*Gmail*", "mcp__acme_mail__*"]}))
+        self.go({"verb": "connected-service", "service": "acme mail", "choice": "leave"})
+        self.assertEqual({"connector-tools": ["mcp__*Gmail*"], "connector-tools-skip": ["mcp__acme_mail__*"]}, self.saved())
+        self.go({"verb": "connected-service", "service": "acme mail", "choice": "check"})
+        self.assertEqual({"connector-tools": ["mcp__*Gmail*", "mcp__acme_mail__*"], "connector-tools-skip": []}, self.saved())
+
+    def test_add_a_service_refuses_what_it_cannot_build_and_nothing_is_written(self):
+        self.settings_file.write_text(json.dumps({"connector-tools-skip": ["mcp__*Weather*"]}))
+        before = self.saved()
+        for bad in ("", " ", "*", "Mail*", "a/b", "a.b", "_x", "claude ai", "MCP", "x" * 61, 5, None):
+            with self.subTest(name=bad):
+                self.failed(self.go({"verb": "connected-service", "service": bad, "choice": "check", "add": True}), "guard-value")
+        out = self.go({"verb": "connected-service", "service": "Weather", "choice": "check", "add": True})
+        self.failed(out, "guard-value")                                                           # on the other list: not moved unasked
+        self.assertIn("on the list already", out["say"])
+        for req in ({"service": "Weather", "choice": "maybe"}, {"service": "Weather", "choice": "check", "add": "yes"}):
+            self.failed(self.go(dict(req, verb="connected-service")), "guard-value")
+        self.assertEqual(before, self.saved())
+
+    def test_the_mail_and_calendar_list_never_ends_empty(self):
+        self.settings_file.write_text(json.dumps({"connector-tools": ["mcp__*Gmail*"]}))
+        out = self.go({"verb": "connected-service", "service": "Gmail", "choice": "leave"})
+        self.failed(out, "guard-value")
+        self.assertEqual({"connector-tools": ["mcp__*Gmail*"]}, self.saved())
 
 
 class TestOnlyGarricksOwnHookFolder(SettingsCase):

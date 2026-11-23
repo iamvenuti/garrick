@@ -121,7 +121,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "hard questions."),
     (r'id="ch-ask-autonomy"', "ch-ask-autonomy", "Ask: how far it may go",
      "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
-     "anything leaves the computer. Full does what Act does, and also sends what you asked for without asking you first. "
+     "anything is sent, shared or deleted. Full does what Act does, and also sends what you asked for without asking you first. "
      "Pick Read until you trust it with more."),
     (r'id="ch-telegram-tier"', "ch-telegram-tier", "Telegram: model size",
      "How large a model answers in a Telegram chat. A larger size and more effort give fuller answers, and take longer and "
@@ -130,7 +130,7 @@ ROWS: List[Tuple[str, str, str, str]] = [
      "How much thought goes into an answer in a Telegram chat. More effort gives fuller answers, and takes longer and costs more."),
     (r'id="ch-telegram-autonomy"', "ch-telegram-autonomy", "Telegram: how far it may go",
      "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
-     "anything leaves the computer. Telegram never offers Full. Pick Read until you trust it with more."),
+     "anything is sent, shared or deleted. Telegram never offers Full. Pick Read until you trust it with more."),
     # Manage older material
     (r'data-mwikion="', "mem-wiki-%(wiki)s", "Let old pages become dormant",
      "Lets old pages of this wiki move out of everyday answers, then to the archive, so search stays on what matters. Turn it "

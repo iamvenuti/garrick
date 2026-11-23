@@ -214,7 +214,7 @@ class TestTheReadGuard(SettingsCase):
         self.assistants()
         out = self.go({"verb": "read-guard", "mode": "warn"})
         self.assertTrue(out["ok"], out)
-        self.assertEqual("The read guard is watch only, and its hook shows as registered.", out["say"])
+        self.assertEqual("The read guard is watch, and its hook shows as registered.", out["say"])
         self.assertEqual(["PostToolUse", "PreToolUse", "SessionStart"], self.hooked(self.hook()))
         self.assertEqual(["PreToolUse", "SessionStart"], self.hooked(self.hook(False)))
         self.assertEqual("warn", self.saved()["read-guard"])

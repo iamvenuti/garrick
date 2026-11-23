@@ -48,7 +48,10 @@ def would(lines):
     return sg.would_have_stopped(sorted(lines, key=lambda i: i["when"], reverse=True))
 
 
-def block(lines=(), mode="warn", shown=None, **kw):
+OPEN = {"walled": {"Work": False, "Personal": False, "Ventures": False}}          # every zone open: the list may name any file
+
+
+def block(lines=(), mode="warn", shown=OPEN, **kw):
     state = dict(STATE, mode=mode, would={z: [dict(i, when=i["when"].isoformat()) for i in items] for z, items in would(list(lines)).items()}, **kw)
     return rgs.guard_block(sg, state, False, button, text, "solo", **({"shown": shown} if shown is not None else {}))
 
@@ -165,7 +168,28 @@ class TestWhatAMailLineRecords(GuardCase):
             self.assertNotIn(word, self.log_text())
 
 
+class TestAMailTextIsNeverAFile(GuardCase):
+    def test_an_unparsed_result_that_is_a_workspace_path_is_logged_as_no_file(self):
+        self.settings(**{"read-guard": "warn", "connector-tools": ["mcp__fakemail__*"]})
+        self.start(self.acme)
+        path = str(self.birch / "Notes" / "secret.md")
+        self.run_hook({"session_id": "c1", "hook_event_name": "PostToolUse", "tool_name": "mcp__fakemail__search", "cwd": str(self.acme),
+                       "tool_input": {}, "tool_response": [{"type": "text", "text": path}]}, project_dir=self.acme)
+        lines = [l for l in self.log_lines() if l["tool"] == "mcp__fakemail__search"]
+        self.assertTrue(lines)
+        for l in lines:
+            self.assertNotIn("file", l)
+            self.assertNotIn("outside", l)
+        self.assertNotIn("secret.md", self.log_text())
+
+
 class TestTheList(unittest.TestCase):
+    def test_a_line_from_0780_for_a_connector_counts_as_a_result_not_a_file(self):
+        markup = block([line(5, tool="mcp__fakemail__search")])
+        said = " ".join(re.sub(r"<[^>]+>", " ", markup).split())
+        self.assertIn("1 mail or calendar result", said)
+        self.assertNotIn("1 file", said)
+
     def test_three_reads_of_one_file_in_one_session_fold_into_one_line_with_a_count(self):
         reads = [line(m, project="Acme", session="s1", file="Zones/Personal/Birch/Notes/secret.md", file_zone="Personal", part="Zones")
                  for m in (5, 30, 90)]
@@ -216,36 +240,42 @@ class TestTheList(unittest.TestCase):
 
 
 class TestTheWallsOfTheList(unittest.TestCase):
-    """The page is built for the whole workspace, so it already names every zone; where it is shown for fewer, a line about a file
-    of a walled zone outside them names neither the file nor the zone. Two walled zones and one open."""
+    """The page can be read from any session, so the list fails closed (#674 review W1, W2): a file is named, with its project, only when
+    it is in an open zone, in System/ or in Wikis/Knowledge. Two walled zones and one open."""
 
     LINES = [line(5, session="s1", project="Acme", file="Zones/Personal/Birch/Notes/secret.md", file_zone="Personal", part="Zones"),
              line(6, session="s1", project="Acme", file="Zones/Ventures/Cedar/Cedar.md", file_zone="Ventures", part="Zones"),
-             line(7, session="s1", project="Acme", file="Zones/Work/Acme/Acme.md", file_zone="Work", part="Zones")]
+             line(7, session="s1", project="Acme", file="Zones/Work/Acme/Acme.md", file_zone="Work", part="Zones"),
+             line(8, session="s1", project="Acme", file="System/notes.md", part="System"),
+             line(9, session="s1", project="Acme", file="Wikis/Knowledge/wiki/standard.md", part="Wikis"),
+             line(10, session="s1", project="Acme", file="Zones/Mystery/x.md", part="Zones"),
+             line(11, session="s1", project="Acme", file="Zones/Unknown/y.md", file_zone="Unknown", part="Zones")]
     WALLED = {"Work": True, "Personal": True, "Ventures": False}
 
-    def drawn(self, scope):
-        markup = block(self.LINES, shown={"scope": scope, "walled": self.WALLED})
-        return " ".join(re.sub(r"<[^>]+>", " ", markup).split())
+    def drawn(self):
+        import html
+        return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", block(self.LINES, shown={"walled": self.WALLED}))).split())
 
-    def test_on_the_whole_page_each_file_and_zone_is_named(self):
-        said = self.drawn(None)
-        for part in ("Zones/Personal/Birch/Notes/secret.md", "Zones/Ventures/Cedar/Cedar.md", "Zones/Work/Acme/Acme.md"):
-            self.assertIn(part, said)
+    def test_a_walled_zones_file_is_not_named_nor_its_zone_nor_the_project(self):
+        said = self.drawn()
+        for hidden in ("secret.md", "Acme.md", "Birch", "Zones/Mystery", "Zones/Unknown", "Unknown"):
+            self.assertNotIn(hidden, said)
+        self.assertEqual(4, said.count("a file behind another zone's wall"))        # two walled, one with no zone, one unknown
 
-    def test_for_one_zone_a_walled_zones_file_is_not_named_and_an_open_zones_is(self):
-        said = self.drawn({"Work"})
-        self.assertNotIn("secret.md", said)
-        self.assertNotIn("Personal", said)
-        self.assertIn("a file behind another zone", said)
-        self.assertIn("Zones/Ventures/Cedar/Cedar.md", said)                 # open
-        self.assertIn("Zones/Work/Acme/Acme.md", said)                       # the session's own
+    def test_an_open_zone_system_and_the_knowledge_wiki_are_named(self):
+        said = self.drawn()
+        for shown in ("Zones/Ventures/Cedar/Cedar.md", "System/notes.md", "Wikis/Knowledge/wiki/standard.md"):
+            self.assertIn(shown, said)
 
-    def test_a_scope_of_nothing_names_only_open_zones(self):
-        said = self.drawn(set())
-        self.assertNotIn("secret.md", said)
-        self.assertIn("Zones/Work/Acme/Acme.md", said)                       # the session's own zone is always named
-        self.assertIn("Cedar.md", said)
+    def test_with_no_flags_known_nothing_of_a_zone_is_named(self):
+        said = " ".join(re.sub(r"<[^>]+>", " ", block(self.LINES, shown={})).split())
+        self.assertNotIn("Cedar.md", said)
+        self.assertIn("System/notes.md", said)
+
+    def test_a_mail_line_names_the_held_zone_only_when_it_is_open(self):
+        for zone, named in (("Personal", False), ("Ventures", True)):
+            markup = block([line(5, tool="mcp__fakemail__search", session="s1", source="fakemail", held_zone=zone)], shown={"walled": self.WALLED})
+            self.assertEqual(named, ("held back from %s" % zone) in markup, zone)
 
 
 class TestTheSection(unittest.TestCase):
@@ -304,3 +334,4 @@ class TestTheSection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

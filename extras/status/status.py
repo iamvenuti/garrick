@@ -4569,7 +4569,7 @@ def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
 # the workspace with read tools only; Act adds the file tools and the named commands (notes, the inbox, Todo, threads, commits),
 # and holds anything that leaves the computer for your yes; Full, for Ask only, runs what Act would have held, without asking.
 LEVEL_SAID = {"read": "answers from your workspace, changes nothing",
-              "act": "may also make changes you would make by hand, and asks before anything leaves the computer",
+              "act": "may also make changes you would make by hand, and asks before anything is sent, shared or deleted",
               "full": "as Act, and also sends what you asked for without asking you first"}
 # What a larger model and more effort do (#675), from what the engine passes on: the model's size and the assistant's effort setting,
 # and, for one message that starts with deep:, the large size at high effort.

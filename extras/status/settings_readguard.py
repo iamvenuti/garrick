@@ -55,13 +55,13 @@ def as_time(value) -> dt.datetime:
 
 
 def kind_of(item: dict) -> str:
-    """What a line is about: a file of the workspace, a file outside it, a mail or calendar result, or a line 0.78.0 wrote, which
-    says none of these."""
+    """What a line is about: a file of the workspace, a file outside it, a mail or calendar result (also a line 0.78.0 wrote for an
+    mcp__ tool), or a line 0.78.0 wrote for anything else, which says none of these."""
     if item.get("file"):
         return "file"
     if item.get("outside"):
         return "outside"
-    if item.get("source"):
+    if item.get("source") or str(item.get("tool", "")).startswith("mcp__"):
         return "mail"
     return "old"
 
@@ -79,14 +79,20 @@ def fold(items: List[dict]) -> List[dict]:
     return list(groups.values())
 
 
-def may_name(zone: str, own: str, shown: Optional[dict]) -> bool:
-    """Whether the list may name a file or a result of `zone`, in a session of `own`: always on the page as it is built, for the
-    whole workspace; where it is shown for fewer zones (`scope`), only the zone's own, an open zone's, or one in scope. A zone
-    the page does not know is walled."""
-    scope = (shown or {}).get("scope")
-    if scope is None or not zone or zone == own or zone in scope:
+def may_name(item: dict, shown: Optional[dict]) -> bool:
+    """Whether the list may name this file: only a file of an open zone, in System/, or in Wikis/Knowledge. Any session can read the
+    page, so the list fails closed: a file of a walled zone, of a zone the page does not know, or with no zone is never named, nor its
+    project (#674 review W1, W2). `shown["walled"]` is each zone's flag."""
+    path = item.get("file") or ""
+    if item.get("part") == "System" or path.startswith("Wikis/Knowledge/"):
         return True
-    return (shown.get("walled") or {}).get(zone, True) is False
+    zone = item.get("file_zone") or ""
+    return bool(zone) and (shown or {}).get("walled", {}).get(zone, True) is False
+
+
+def may_name_zone(zone: str, shown: Optional[dict]) -> bool:
+    """Whether a held-back zone's name may be said: only an open zone's."""
+    return bool(zone) and (shown or {}).get("walled", {}).get(zone, True) is False
 
 
 def read_item(sg, g: dict, own: str, shown: Optional[dict]) -> str:
@@ -96,23 +102,22 @@ def read_item(sg, g: dict, own: str, shown: Optional[dict]) -> str:
     project = ("%s project" % i["project"]) if i.get("project") else "project %s" % NOT_RECORDED
     zone = ""
     if kind == "file":
-        owner = i.get("file_zone") or ""
-        if may_name(owner, own, shown):
+        if may_name(i, shown):
             what = i["file"]
-            zone = owner or i.get("part") or ""
+            zone = i.get("file_zone") or i.get("part") or ""
         else:
-            what = BEHIND
+            what, project = BEHIND, ""
     elif kind == "outside":
         what = "a file outside the workspace"
     elif kind == "mail":
-        what = "%s (%s), a mail or calendar result" % (i.get("tool", ""), i["source"])
+        what = "%s%s, a mail or calendar result" % (i.get("tool", ""), " (%s)" % i["source"] if i.get("source") else "")
         held = i.get("held_zone")
-        zone = ("held back from %s" % held if may_name(held, own, shown) else "behind another zone's wall") if held else "zone %s" % NOT_RECORDED
+        zone = ("held back from %s" % held if may_name_zone(held, shown) else "behind another zone's wall") if held else "zone %s" % NOT_RECORDED
     else:
         what = "%s: file %s" % (i.get("tool") or "a read", NOT_RECORDED)
     times = "%d times" % g["count"] if g["count"] > 1 else ""
-    return ('<li class="rgread"><span class="rgwhen">%s</span> <span class="rgproj">%s</span> <span class="rgwhat">%s</span>%s%s</li>'
-            % (sg.esc(g["when"].strftime("%d %b %H:%M")), sg.esc(project), sg.esc(what),
+    return ('<li class="rgread"><span class="rgwhen">%s</span> %s<span class="rgwhat">%s</span>%s%s</li>'
+            % (sg.esc(g["when"].strftime("%d %b %H:%M")), '<span class="rgproj">%s</span> ' % sg.esc(project) if project else "", sg.esc(what),
                ' <span class="rgzone">(%s)</span>' % sg.esc(zone) if zone else "", ' <span class="rgcount">%s</span>' % times if times else ""))
 
 
@@ -260,7 +265,9 @@ JS = r"""
 (function(){var rg=document.getElementById('readguard-settings');if(!rg)return;
 /* Across a wall shows only under On, and its line under Watch (#674): what belongs to a mode shows with it */
 function show(v){rg.querySelectorAll('[data-for]').forEach(function(e){e.hidden=e.dataset.for.split(' ').indexOf(v)<0})}
-rg.addEventListener('change',function(e){var i=e.target;if(i.matches('input[name="rg-mode"]'))show(i.value)});
+/* the parts show once the page's own handler has sent the change, and again if it is put back (the handler in settings_guard.py sends it on this same event) */
+rg.addEventListener('change',function(e){var i=e.target;if(!i.matches('input[name="rg-mode"]'))return;
+setTimeout(function(){var c=rg.querySelector('[data-rg="mode"] input:checked');if(c)show(c.value)},0)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){var r=prev?prev(q,out):undefined;
 if(q&&q.verb==='read-guard'&&!(out&&out.ok)){var m=rg.querySelector('[data-rg="mode"]');if(m)show(m.dataset.was)}return r};
 })();

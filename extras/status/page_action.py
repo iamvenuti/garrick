@@ -1892,7 +1892,7 @@ MACHINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
 TOOL_PATTERN = re.compile(r"[A-Za-z0-9_.*?-]{1,100}")        # a tool name or a pattern for one: never a path or a space
 GUARD_MODES = ("off", "warn", "enforce")
 GUARD_CROSS = ("deny", "ask")
-GUARD_WORDS = {"off": "Off", "warn": "Watch only", "enforce": "On"}
+GUARD_WORDS = {"off": "Off", "warn": "Watch", "enforce": "On"}
 GUARD_KEYS = {"warn": "warn", "enforce": "enforce", "off": "warn"}      # Off is no registration, and the mode stays warn
 MAX_PATTERNS = 40
 
@@ -2027,7 +2027,7 @@ def clean_patterns(value, what: str, needs_one: bool = False) -> list:
 
 def set_read_guard(ws: Path, req: dict) -> dict:
     """Settings › Walls › Read guard. `mode`: `off` takes the hook out of each assistant's settings and leaves the mode on
-    `warn`; `warn` (Watch only) and `enforce` (On) put it in, the way extras/hooks/README.md says, and set the mode. `cross`
+    `warn`; `warn` (Watch) and `enforce` (On) put it in, the way extras/hooks/README.md says, and set the mode. `cross`
     is `deny` (Refuse) or `ask` (Ask me). `tools` and `skip` are the two lists of tool name patterns. The settings go in
     System/garrick-settings.json through the page's own save (prefs). A registration is confirmed by `read_guard.py --check`
     before it is called done; anything less is a refusal, and nothing shows as saved."""

@@ -30,8 +30,10 @@ every other enforcement point asks.
 A session opened at the workspace root or in System/ keeps full read. Nothing
 is refused unless System/garrick-settings.json says `"read-guard": "enforce"`:
 by default the guard decides and logs, and lets every call through. The log
-holds the time, the tool, the decision, the scope's zone and a hash of the
-path: never a path, a party, a title or a count of what was held back. Any
+holds the time, the tool, the decision, the scope's zone and a hash of what
+it named, and for the list in Settings the session's project, a hash of the session, the file's path from the workspace and its zone
+(or only that it is outside the workspace), or for a mail or calendar result the connector and the zone held back: never a file's or a
+message's content, a party, a title, a count, or the path of anything outside the workspace. Any
 error lets the call through and logs that it did; a broken guard must not stop
 work. A scheduled job (GARRICK_HEADLESS=1) is logged and never refused.
 
@@ -89,7 +91,7 @@ LOGCTX = {}
 PARTS = ("System", "Wikis", "Zones")
 
 
-def session_fields(tool, what):
+def session_fields(tool, what, kind=""):
     """What a line says beyond when, the tool and the decision, so the list in Settings can name what was read: the session's
     project and a hash of the session (so reads of one file in one session fold into one line); for a file, its path from the
     workspace and the zone or part it belongs to, or only that it is outside the workspace; for a mail or calendar result, the
@@ -102,7 +104,9 @@ def session_fields(tool, what):
     if LOGCTX.get("session"):
         out["session"] = LOGCTX["session"]
     root, lib = LOGCTX.get("root"), LOGCTX.get("lib")
-    if isinstance(what, str) and os.path.isabs(what) and root:
+    is_mail = str(tool).startswith("mcp__")
+    # a mail or calendar result's text is never taken for a file, whatever it looks like (#674 review W3)
+    if isinstance(what, str) and os.path.isabs(what) and root and not is_mail and kind not in ("unparsed", "error"):
         names = zg.parts(root, what, zg.case_blind(root))
         if names is None:
             out["outside"] = True
@@ -118,7 +122,7 @@ def session_fields(tool, what):
                         out["file_zone"] = zone
             except Exception:
                 pass
-    elif str(tool).startswith("mcp__"):
+    elif is_mail:
         pieces = str(tool).split("__")
         if len(pieces) >= 3 and pieces[1]:
             out["source"] = pieces[1][:60]
@@ -145,7 +149,7 @@ def log(folder, tool, decision, zone, what, kind=""):
         if kind:
             line["kind"] = kind
         try:
-            line.update(session_fields(tool, what))
+            line.update(session_fields(tool, what, kind))
         except Exception:
             pass
         with open(path, "a", encoding="utf-8") as fh:

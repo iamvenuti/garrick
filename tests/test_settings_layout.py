@@ -242,7 +242,7 @@ class TestPlainWords(LayoutCase):
         dom, markup = self.dom()
         ask = Dom(markup.split('id="channels-ask"')[1].split("</section>")[0])
         said = " ".join(ask.text_of(n) for n in ask.find("ul", cls="chlevels"))
-        for phrase in ("answers from your workspace, changes nothing", "may also make changes you would make by hand, and asks before anything leaves the computer",
+        for phrase in ("answers from your workspace, changes nothing", "may also make changes you would make by hand, and asks before anything is sent, shared or deleted",
                        "as Act, and also sends what you asked for without asking you first", "Read", "Act", "Full"):
             self.assertIn(phrase, said)
         tg = Dom(markup.split('id="channels-telegram"')[1].split("</section>")[0])
@@ -252,7 +252,7 @@ class TestPlainWords(LayoutCase):
         self.assertNotIn("Full", said_tg)                                   # Telegram never offers it
         helps = {k: t for _, k, _, t in sh.ROWS}
         text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-ask-autonomy")
-        for part in ("answers from your workspace and changes nothing", "asks before anything leaves the computer", "without asking you first"):
+        for part in ("answers from your workspace and changes nothing", "asks before anything is sent, shared or deleted", "without asking you first"):
             self.assertIn(part, text)
 
     def test_model_size_and_effort_have_one_line_between_them(self):

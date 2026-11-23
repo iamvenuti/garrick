@@ -4,6 +4,37 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-11-23
+
+This release gives you less to answer and gives every session less to load. Nurture stops asking about moves it can try again on its own. The memory index stops growing. The names move works on older workspaces. And the App draws more of its cards from the core's view of the workspace.
+
+**Upgrading.**
+- A long note that the nightly run could not trim is tried again the next night and at the next wrap. The Checks card no longer asks you about it.
+- When wall findings come from an old note template, they are shown as one finding that says so.
+- The names move now works on a workspace whose older People and Aliases rows have no Learned cell.
+- Parking a thread takes its memory pointer out of every session until you wake it. If you install the optional hook, a request that may belong to a parked thread says so.
+- The App draws the Todo tab, the questions that wait for you, the Wikis and Repositories cards, Explore's graph and the worked example's marker from the view model. It looks the same.
+
+### Added
+
+- **Held moves are tried again** (#661). A long note whose older entries could not move tonight stays a fix Garrick makes itself, for example because a session was working in its folder or it had changes not yet committed. The next nightly run and the next wrap try again, and the Checks card asks nothing. Three causes do need you, and each gets its own question that names it: a history page with the quarter's name that belongs to another note, a history page with another heading, and a note with no dividing line under its *State of play*. None of them offers *Move older entries*. When one note is held seven nights in a row, the morning digest names it once, in one line per zone.
+- **The template hint** (#662). Sometimes one note repeats wording from four or more projects of another walled zone, and four or more notes of its own zone hold the same wording. Then Nurture shows one finding instead of one for each project. It says the wording may come from an old note template, and it gives only two counts and the other zone's name. Its two answers are *It is an old template*, which says how to put a copy in `System/templates.local/` or take the text out, and *Show me the findings one by one*. The wall check itself does not change.
+- **The parked pointer folder** (#664). Parking a thread moves its memory pointer to `parked/` in the same memory folder and takes its line out of `MEMORY.md`. Waking puts both back, the line exactly as it was. Nothing is ever deleted or overwritten. If a file of the same name is already there, the move is held, and you are told. With no `memory` setting, nothing moves.
+- **A budget for the memory index** (#664). `check.py` warns when `MEMORY.md` passes 8,000 characters or a line passes 160. Nurture offers to move out the pointers of parked or done threads, on your yes and never overnight.
+- **The parked-thread hint** (#664). This is an optional Claude Code hook, `extras/hooks/parked_hint.py`. A request can name a word of a parked thread's name, its party or one of the party's people. When it does, the hook adds one line that says which thread it may belong to and how to wake it. It names threads of the session's own zone and of open zones only, or of any zone at the workspace root. It never names a thread of another walled zone, and it writes nothing of the prompt anywhere. `extras/hooks/README.md` has the settings block.
+
+### Changed
+
+- The App draws the Todo tab, the questions in *Waiting on you now*, the Wikis and Repositories cards, Explore's graph and the worked example's marker from the view model, as it already did the Threads card, *Your work* and the inbox rows (#650, in part). The page looks the same. The scheduled jobs, this Mac's launchd agents, the waiting sessions, the settings and the check's last result are still read by the page itself.
+- When a name matches no thread, the threads skill names the nearest parked thread after the nearest live ones, with "parked" after it.
+- A wall finding for repeated wording now says to take the repeated wording out or move the file. It no longer says to take a link out.
+
+### Fixed
+
+- The move of People and Aliases to `System/names.md` refused a table whose older rows had no Learned cell. Now a short row is padded with empty cells, as Markdown shows it. A row with a cell too many still stops the move, and the message gives its line number and both cell counts, never the row's text (#663).
+- `history.py dry-run` no longer says that no note is over its limits when a note is over its limit but none of its entries is old enough to move.
+- A zone folder that is a link no longer shows another zone's actions, questions, repositories or notes under its own name. Neither does a note, folder, log or marker that links into another zone or a wiki.
+
 ## [0.77.0] - 2026-11-22
 
 In this release the App's data and its drawing come apart. The core builds one view of your workspace, and the App draws it. The App can also open a new session in the Claude or Codex desktop app, and every session loads a shorter `context.md`.

@@ -59,6 +59,10 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 
 Everything else in `System/rules.md`, and in your `System/rules.local.md`, is asked in the same way.
 
+## The memory index budget
+
+The memory index, `MEMORY.md` in the folder the `memory` setting names, is loaded whole by every session, so it has a budget, as `System/rules.md` has ([#664](https://github.com/iamvenuti/garrick/issues/664)). **Code reports** it as a warning, never an error, in `System/tools/check.py` (`check_memory_index`): the index over 8,000 characters, or a line over 160. One warning for each index names the longest lines by number and length, and the pointers of parked or done threads still in it. It reads the thread notes' status and nothing else of them, and without the setting, or with no index, it says nothing. What the check cannot do is tell what a pointer holds that its thread note does not: moving a pointer out of the index loses nothing only if the boundary it records is in the note too, and the threads skill's *Park* step asks for that. That part is **asked**.
+
 ## The read guard
 
 The optional read guard is one hook, `extras/hooks/read_guard.py`, that asks `garrick_lib.decide()` of the workspace it runs in. The other enforcement points ask the wall's rule in one of two ways. The todo skill's reading of a page calls `decide()` too. The commit hook (`check.py`), Recall and Nurture call `may_flow()` directly, the rule `decide()` itself is built on, with no read, hold or confirm step of their own: each asks only whether material from one zone may go to another. [The read guard](read-guard.md) says how to turn it on from Settings and how to use the first week; this section is the technical detail. It covers three things.

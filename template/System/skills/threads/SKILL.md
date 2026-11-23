@@ -128,8 +128,9 @@ dictation, so resolve before acting, and never guess.
    Acme and in Birch. Which one?" Never pick, and never pick between zones.
    Two threads heard the same way, by name or by `spoken:` form, are the same
    question.
-6. **None: say so, and name the nearest live threads.** "No thread called
-   roofing. The closest is roof repair, in House."
+6. **None: say so, and name the nearest live threads and the nearest parked
+   one**, marked "parked". "No thread called roofing. Closest: roofing
+   quotes; roof repair is parked."
 7. **Learn it.** When you had to ask what a heard name meant, add the heard form
    to the Aliases table once the user answers, with a Learned cell saying
    when and from whom: `| dana whitlaw | Dana Whitlock | 2026-10-16, user |`.

@@ -1432,6 +1432,49 @@ register(Kind("fade", "Fading", 1200, lambda ctx, item: False, gather=gather_fad
 
 
 # ---------------------------------------------------------------------------
+# The parked pointer kind (#664)
+# ---------------------------------------------------------------------------
+#
+# The memory index is loaded whole by every session. The pointer of a thread that is parked or done, and still in it,
+# has one right place: `parked/` in the same memory folder, which is what parking does. The fix is that move, through
+# garrick_lib's own, so nothing is deleted (only finishing a thread deletes its pointer, and it does that itself). The
+# memory folder is outside the workspace and outside every repository: the fix is not committed, and `apply()` runs
+# a fix marked `outside` on its own, with no journal. A long line is a judgment finding of check.py's, not this kind's.
+
+def gather_parked_pointers(ctx: Ctx) -> List[Item]:
+    from garrick_lib import memory_folders, memory_index_report, memory_pointers
+    out = []
+    for folder in memory_folders(ctx.root):
+        report = memory_index_report(ctx.root, folder) if folder.is_dir() else {}
+        by_name = {p["file"]: p for p in memory_pointers(ctx.root, folder)} if report else {}
+        for file, status in (report or {}).get("leaving", []):
+            if file in by_name:
+                item = Item("memory", "parked-pointer", ctx.rel(folder / file),
+                            "the pointer of a thread that is %s is still in the memory index" % status,
+                            "A pointer of a parked thread is in the memory index", kind="parked-pointer")
+                item.fix = {"op": "memory-pointer", "folder": str(folder), "file": file, "outside": True}
+                out.append(item)
+    return out
+
+
+def apply_parked_pointer(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    from garrick_lib import memory_move_out, memory_pointers
+    folder = Path(item.fix["folder"])
+    found = [p for p in memory_pointers(ctx.root, folder) if p["file"] == item.fix["file"]]
+    if len(found) != 1:
+        raise Held("the pointer is not in the index as one line any more")
+    if memory_move_out(folder, found[0]):
+        raise Held("a file of that name is already in parked/")
+    return "its pointer is in parked/ and its line is out of the memory index"
+
+
+register(Kind("parked-pointer", "Parked pointers", 22, lambda ctx, item: False, gather=gather_parked_pointers,
+              apply=apply_parked_pointer, unattended=False,
+              what="moved to parked/ on one yes, as parking does; nothing is deleted",
+              say=lambda item: "%s: %s" % (Path(item.path).name, item.message)))
+
+
+# ---------------------------------------------------------------------------
 # Applying: the journal, the safety checks, one commit per repository
 # ---------------------------------------------------------------------------
 
@@ -1564,8 +1607,16 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path, List[str
             seen.add(key)
             unique.append(i)
     done = {"fixed": [], "held": [], "commits": [], "refused": []}
+    for item in [i for i in unique if (i.fix or {}).get("outside")]:     # a fix outside every repository: made, not committed
+        unique.remove(item)
+        try:
+            item.said = KINDS[item.kind].apply(ctx, item, Journal())
+            done["fixed"].append(item)
+        except (Held, OSError, KeyError) as why:
+            item.held = str(why) if isinstance(why, Held) else "%s: %s" % (type(why).__name__, why)
+            done["held"].append(item)
     by_repo = hold_unsafe(ctx, unique)
-    done["held"] = [i for i in unique if i.held]
+    done["held"] += [i for i in unique if i.held]
     journal = Journal()
     for repo, group in sorted(by_repo.items()):
         start = journal.mark()

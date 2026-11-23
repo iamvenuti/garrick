@@ -239,6 +239,10 @@ The `setup` skill, the first run: "set up Garrick". It finds out what your Mac h
 
 How the assistant answers when you are listening: when you say so, or the request came in by voice. The answer comes first, in three sentences at most, with no tables, code, file paths or links read out, and numbers rounded. The detail is offered rather than given. See [Voice](../template/System/rules.md#voice) in the rules.
 
+### The parked pointer folder
+
+The `parked/` folder inside your assistant's memory folder, where a parked thread's memory pointer waits until the thread is woken ([#664](https://github.com/iamvenuti/garrick/issues/664)). Parking moves the pointer there and takes its line out of the memory index, which every session loads whole; waking moves both back; finishing deletes it. See [The memory index](context.md#the-memory-index).
+
 ## Checks and guards
 
 ### The check

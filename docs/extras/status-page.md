@@ -604,7 +604,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | *Undo* after a commit did not undo it | Waiting on you now | The commit was not undone. | *Show why* |
 | A follow-up could not be prepared | Waiting on you now, Follow-ups | The follow-up was not prepared, and nothing was sent. | *Show why*; the button is ready again |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
-| Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
+| Recall's index is old | Never: every search brings its index up to date before it reads, and a refresh that fails gives no results at all, never older ones, so no answer can rest on an old index | None | None: an *Index now* button would write, and none is added |
 
 Two Settings actions name their failure, since each leaves a place outside the workspace as it was when it fails: *Change…* on *This machine*, which sets the role of this computer, and the *Read guard* rows in Walls. Each failure says one of these sentences, with the one next step beside it, and the tool's own words under *Details*:
 

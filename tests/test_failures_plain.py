@@ -96,7 +96,9 @@ OUTSIDE = {
 # A failure on the issue's list that no code produces, and why.
 NOT_PRODUCED = {
     "recall-index-old": "Recall's search brings its index up to date before it reads (recall.py open_scope: Refresher(idx).run()), "
-                        "and nothing in the app reads the index's age, so no answer says it used old records and no button writes to the index.",
+                        "and a refresh that fails closes the index and returns None, which every search reads as no results, "
+                        "never as the rows it held before (#511's rest). So no index can be read stale, no answer says it used "
+                        "old records, and no button writes to the index.",
 }
 
 
@@ -134,6 +136,19 @@ class TestTheList(unittest.TestCase):
         self.assertIn("Refresher(idx).run()", recall)         # a search brings the index up to date before it reads
         for path in STATUS.glob("*.py"):
             self.assertNotRegex(path.read_text(encoding="utf-8"), r"(?i)indexed (yesterday|\d+ days)", path.name)
+
+    def test_a_refresh_that_fails_or_is_skipped_never_leaves_an_old_index_to_read(self):
+        """#511's rest: where an index could be stale, the age would show. Every reader of an index opens it through
+        open_scope, which refreshes it first; a refresh that fails gives no index, and every search reads that as nothing."""
+        recall = (REPO / "template" / "System" / "tools" / "recall.py").read_text(encoding="utf-8")
+        body = recall.split("def open_scope(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("Refresher(idx).run()\n    except sqlite3.Error:\n        idx.close()\n        return None", body)
+        self.assertEqual(3, recall.count("idx = open_scope("))
+        self.assertEqual(3, recall.count("if idx is None:\n        return"))
+        # the one other Index(...) is the index command, which refreshes and closes, and returns no rows
+        others = [part for part in recall.split("Index(base, ")[1:]]
+        self.assertEqual(1, len(others))
+        self.assertIn("Refresher(idx).run(rebuild=rebuild)", others[0].split("\n\n\n", 1)[0])
 
     def test_each_row_has_a_sentence_one_action_and_no_raw_text(self):
         for code, say, button, act, hint in pa.FAILURES:

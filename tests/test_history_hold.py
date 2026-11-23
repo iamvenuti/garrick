@@ -198,6 +198,26 @@ class TestSameDayRuns(Held):
         self.assertEqual("The note Freight has waited at least a week for its older entries to move.", nurture.hold_line(last))
 
 
+class TestOnlyTodaysOwnLines(Held):
+    run_day = TestSameDayRuns.run_day
+
+    def test_a_day_with_only_a_list_run_is_not_a_held_night(self):
+        first = datetime.date(2026, 10, 11)
+        for n in range(6):
+            self.run_day(first + datetime.timedelta(days=n), "nightly", busy=True)
+        seventh = first + datetime.timedelta(days=6)
+        self.run_day(seventh, "list")
+        self.assertEqual("", nurture.hold_line(nurture.Ctx(self.root, today=seventh)))
+
+    def test_a_list_run_then_a_held_nightly_for_seven_days_gives_the_line(self):
+        first = datetime.date(2026, 10, 11)
+        for n in range(7):
+            day = first + datetime.timedelta(days=n)
+            self.run_day(day, "list")
+            self.run_day(day, "nightly", busy=True)
+        self.assertIn("Freight", nurture.hold_line(nurture.Ctx(self.root, today=first + datetime.timedelta(days=6))))
+
+
 class TestReasonsThatNeverClear(Held):
     def test_only_transient_reasons_are_later(self):
         for why in ("Freight history 2026-Q3.md cannot be read (OSError)", "it cannot be read (OSError)", "Freight history 2026-Q3.md has carriage returns",

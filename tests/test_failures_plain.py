@@ -205,6 +205,15 @@ class TestAsk(unittest.TestCase):
         for code in ("ask-start", "ask-silent", "ask-stopped", "ask-failed"):
             self.assertIn('"%s")' % code, text)
 
+    def test_an_unexpected_error_offers_no_resend_but_a_bad_request_does(self):
+        text = (STATUS / "ask.py").read_text(encoding="utf-8")
+        branch = text.split("except Exception as e:  # a bug must still say so")[1].split("if out.get(")[0]
+        self.assertIn('"ask-stopped")', branch)
+        self.assertNotIn("ask-failed", branch)
+        bad = text.split("except Capped as e:")[1].split("except Exception as e:")[0]
+        self.assertIn('"ask-failed")', bad)
+        self.assertNotEqual("retry", pa.FAILURES[[r[0] for r in pa.FAILURES].index("ask-stopped")][3])
+
     def test_the_apps_own_rows_are_the_tables(self):
         for name, code in (("askNoStart", "ask-start"), ("askNoAnswer", "ask-stopped"), ("askNoReply", "ask-silent")):
             m = re.search(r'let %s: \[String: Any\] = \["code": "([^"]+)", "say": "([^"]+)", "next": "([^"]+)"\]' % name, SWIFT)

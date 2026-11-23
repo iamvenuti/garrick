@@ -323,6 +323,17 @@ class TestEveryControlStays(LayoutCase):
             self.assertNotIn('id="%s"' % ident, opening, ident)
 
 
+class TestOneRowForEachApp(LayoutCase):
+    def test_the_four_old_names_are_not_on_the_page(self):
+        """#682: one row for Claude and one for Codex, so none of 0.79.0's four names is on the page, script included."""
+        html = self.page(launchers=("finder", "cmux", "codex", "claude"))
+        for gone in ("Open in Claude", "New session in Claude", "Open in Codex", "New session in Codex"):
+            self.assertNotIn(gone, html)
+        dialog = self.section(html, "launcher-settings")
+        self.assertEqual(1, dialog.count('data-launcher="claude"'))
+        self.assertEqual(1, dialog.count('data-launcher="codex"'))
+
+
 class TestNotifications(LayoutCase):
     def test_the_list_holds_switches_only_and_a_summary_a_job_sends_moves_under_it_as_one_line(self):
         dom, markup = self.dom()                                            # the rich fixture: the todo sweep sends its own notice

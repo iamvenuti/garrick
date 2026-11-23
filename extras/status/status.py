@@ -43,16 +43,13 @@ lives in System/generated/, never committed and outside the wall check.
 **It offers what this machine has**, and asks at every build. Every link to
 a note, a file or a folder is a file link (#318), and nothing opens Obsidian
 unless it was chosen: in Garrick.app a project's hub or a thread's note opens
-as its row does, through the default Settings › Opening a thread picks, and
+as its row does, through the default Settings › Opening work picks, and
 anything else in the app macOS opens it in, a folder in Finder; in a browser the link is the browser's. In
 Garrick.app (see `app/`), projects and threads also offer Reveal in
-Finder and Open in Claude, Codex or cmux, for each one installed and switched
+Finder, cmux, and a new session in Claude or Codex, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
-does; `--no-cmux` leaves cmux out. Open in Claude on a thread hands it over
-as Continue does (#180), through page_action.py's
-`continue`, where this build finds Claude Code's command-line tool
-(handoff.py's find_claude()); without it, it falls back to the deep link,
-which leaves the question for you to send. A zone with no Todo.md gets no Open
+does; `--no-cmux` leaves cmux out. Claude and Codex open a new session in the
+work's folder with "open X" typed in, for you to send (#652, #682). A zone with no Todo.md gets no Open
 actions, and a workspace with none gets no card for them.
 A zone given a colour or an icon in Settings › Zones shows them wherever
 the page names it.
@@ -3950,20 +3947,20 @@ def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
 # The apps a project or thread can be opened in, in the order the page offers
 # them: key, label, bundle id, the names its .app may carry. The page offers
 # the ones installed here, Settings chooses among those, and only Garrick's
-# Status.app can open them; in a browser the page still only copies.
+# Status.app can open them; in a browser the page still only copies. Claude and
+# Codex have one row each (#682): a new session in the app's own window, in the
+# work's folder, with "open <name>" typed in and not sent (#652). It needs no
+# command-line tool, only an app that takes its URL scheme.
 LAUNCHERS = (("finder", "Finder", "com.apple.finder", ()),
              ("cmux", "cmux", "com.cmuxterm.app", ("cmux",)),
              ("codex", "Codex", "com.openai.codex", ("Codex", "ChatGPT")),
-             ("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)),
-             # A new session in the app's own window, in the work's folder, with "open <name>" typed in and not
-             # sent (#652). It needs no command-line tool, only an app that takes its URL scheme.
-             ("claude-new", "New session in Claude", "com.anthropic.claudefordesktop", ("Claude",)),
-             ("codex-new", "New session in Codex", "com.openai.codex", ("Codex", "ChatGPT")))
-VERB = {"finder": "Reveal in Finder", "cmux": "Open in cmux", "codex": "Open in Codex", "claude": "Open in Claude",
-        "claude-new": "New session in Claude", "codex-new": "New session in Codex"}
+             ("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)))
+VERB = {"finder": "Reveal in Finder", "cmux": "Open in cmux", "codex": "Codex", "claude": "Claude"}
 LABEL = {k: label for k, label, _, _ in LAUNCHERS}
 # The two that open a new session through the app's URL scheme (#652), and the scheme each app must register.
-NEW_SESSION = {"claude-new": ("claude", "Claude"), "codex-new": ("codex", "Codex")}
+NEW_SESSION = {"claude": ("claude", "Claude"), "codex": ("codex", "Codex")}
+# The line under each of them in Settings › Opening work (#682).
+NEW_SESSION_LINE = "Opens a new session on the thread. You press Enter."
 
 
 def url_schemes(app: Path) -> Tuple[str, ...]:
@@ -3990,16 +3987,10 @@ def bundle_id(app: Path) -> Optional[str]:
         return None
 
 
-# Codex opens a folder through its own launcher inside the app bundle, as
-# Garrick.app runs it. An app without one is
-# installed but cannot be opened into a folder, so the page does not offer it:
-# a launcher that cannot work is disabled with its reason on it, rather than
+# A launcher that cannot work is disabled with its reason on it, rather than
 # offered and refused after the click.
-CODEX_CLI = ("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-             "Contents/Resources/codex", "Contents/Resources/bin/codex")
 NOT_ON_A_MAC = "Opening an app is a Mac's own; this page was built elsewhere"
 NOT_INSTALLED = "Not installed on this Mac"
-NO_CODEX_CLI = "Installed, but its own launcher is missing: reinstall the Codex app"
 NO_NEW_SESSION = "Installed, but this version cannot open a new session: update the %s app"
 # Installed and able to work, but this build was told to leave it out (--no-cmux).
 LEFT_OUT = "Left out when this page was built"
@@ -4022,8 +4013,6 @@ def launcher_state(apps: Optional[List[Path]] = None) -> Dict[str, Optional[str]
                     if a is not None and bundle_id(a) in (bundle, None)), None)
         if app is None:
             state[key] = NOT_INSTALLED
-        elif key == "codex" and not any(os.access(app / rel, os.X_OK) for rel in CODEX_CLI):
-            state[key] = NO_CODEX_CLI
         elif key in NEW_SESSION and NEW_SESSION[key][0] not in url_schemes(app):
             state[key] = NO_NEW_SESSION % NEW_SESSION[key][1]
         else:
@@ -4284,11 +4273,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     project counts its threads'), and with `drive` what the desk opens
     (`dk`: zone, project, thread or ""), and `dk` on the whole menu too: the
     app then opens anything in cmux through the desk, the workspace root for
-    Process the Inbox and Ask included. A thread, and a project that is one
-    thread, gives its note (`oc`: zone, note from the zone): with `cli`, where
-    this build found Claude Code's command-line tool (`cli` on the whole menu),
-    the app's Open in Claude continues it through page_action.py, as the
-    page's does (#180). The app keeps the zone the graph shows;
+    Process the Inbox and Ask included. Claude and Codex open a new session
+    in the work's folder (#682), so a row carries no note for Claude Code's
+    command-line tool to continue, and `cli` is no longer read. The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -4296,10 +4283,8 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         for p in {r["project"] for r in data["rows"] + data["parked"]}:
             project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
 
-    def entry(name, say, note, dk, oc=None):
+    def entry(name, say, note, dk):
         e = {"n": name, "w": say, "u": link(note)}
-        if oc:
-            e["oc"] = oc
         if drive:
             e["dk"] = dk
         if folders:
@@ -4317,21 +4302,17 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         projects = []
         for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
             if len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]:          # its own thread
-                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"], [zone, project, ""],
-                                           [zone, rs[0]["rel"]]), t=[]))
+                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"], [zone, project, ""]), t=[]))
                 continue
             hub = rs[0]["hub"] or rs[0]["note"]
             say = project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else ""
-            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"], [zone, project, r["thread"]],
-                             [zone, r["rel"]])
+            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"], [zone, project, r["thread"]])
                        for r in sorted(rs, key=lambda r: r["thread"].casefold())]
             projects.append(dict(entry(project, say, hub, [zone, project, ""]), t=threads))
         zones.append({"z": zone, "p": projects})
     out = {"trouble": trouble, "zones": zones}
     if drive:
         out["dk"] = 1
-    if cli:
-        out["cli"] = 1
     return out
 
 
@@ -4834,8 +4815,8 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
     the menu's rows (menu_settings()), a part after the cards' rows that only the app shows."""
     why = launcher_state() if why is None else why
     rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
-    rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
-              LAUNCH_ICON % "var(--icon-%s)" % k.replace("-new", ""))
+    rows += [(k, VERB[k], k in installed, (E(NEW_SESSION_LINE) if k in NEW_SESSION else "") if k in installed else
+              E(why[k]) if why.get(k) else LEFT_OUT, LAUNCH_ICON % "var(--icon-%s)" % k)
              for k, _, _, _ in LAUNCHERS]
 
     def row(k: str, label: str, ok: bool, note: str, icon: str) -> str:
@@ -4988,7 +4969,9 @@ def shared_launchers(ws: Path) -> Optional[dict]:
     come before what a window remembers. None when there are none, or they do
     not read; an unknown key is dropped."""
     data = prefs().read(ws)
-    on = data.get("launchers")
+    merge = getattr(prefs(), "launchers_merged", None)
+    on, given = merge(data.get("launchers"), data.get("default")) if merge else (data.get("launchers"), data.get("default"))
+    data = dict(data, default=given)          # 0.79.0's two rows for an app read as one (#682)
     if isinstance(on, dict):                  # {"note": true, "cmux": false, ...}: a key left out is on
         chosen = [k for k in LAUNCH_KEYS if on.get(k, True) is True]
     elif isinstance(on, list):                # the names of those switched on
@@ -6168,25 +6151,25 @@ dialog.settings .shead{display:none}}
 # (`f`, there only where cmux is installed) also gets Open in cmux: a cmux tab
 # in that folder, with the phrase that resumes it on the clipboard. There, the app takes
 # the place of Copy "open X"; a browser, which can only copy, keeps it.
-# Open in Claude on a thread (`oc`, its note) is the one launcher that acts
-# (#180): where the build found Claude Code's command-line tool (the body's
-# data-cli), it sends Continue's request, page_action.py's
-# `continue`, and the working card says "Opening <thread> in Claude…" until
-# the desktop app has opened on Claude's answer, or the refusal stays there in
-# its own words. Without the tool, and for a project of several threads, it
-# is the deep link, which leaves "open X" typed in for you to send.
+# Claude and Codex each open a new session in the app's own window (#652, #682): the
+# button sends page_action.py's `session-url` with the key and the folder, and
+# the app opens the link it gets back, with "open X" typed in for you to send.
+# No route on the page or in the app runs Claude Code's command-line tool.
 PANEL_JS = r"""
 /* Which apps a card offers and what clicking a thread's name does. In the
    app, the settings saved for every viewer (#launch-settings, written by
    page_action.py from what Settings sends) come first; a browser keeps its own. */
 var GarrickPrefs=(function(){
-var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new'];
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','preview','finder','cmux','codex','claude'];
 var el=document.getElementById('launch-settings'),shared=null;if(host&&el){try{shared=JSON.parse(el.textContent)}catch(e){}}
 if(shared&&!Array.isArray(shared.launchers))shared=null;
 function local(k){try{return localStorage.getItem(k)}catch(e){return null}}
+/* 0.79.0's two rows for an app, kept by a window, read as one (#682): on when either is on, a Default of either the app's */
+var OLD={claude:'claude-new',codex:'codex-new'};
+function merged(o){if(!o||typeof o!=='object')return{};Object.keys(OLD).forEach(function(k){var x=OLD[k];if(x in o){o[k]=o[k]!==false||o[x]!==false;delete o[x]}});return o}
 function launchers(){if(shared){var o={};KEYS.forEach(function(k){o[k]=shared.launchers.indexOf(k)>=0});return o}
-try{return JSON.parse(local('garrick-launchers')||'{}')||{}}catch(e){return{}}}
-function def(){return(shared?shared['default']:local('garrick-default'))||'note'}
+try{return merged(JSON.parse(local('garrick-launchers')||'{}')||{})}catch(e){return{}}}
+function def(){var d=(shared?shared['default']:local('garrick-default'))||'note';return d==='claude-new'?'claude':d==='codex-new'?'codex':d}
 function set(on,d){if(shared)shared={launchers:KEYS.filter(function(k){return on[k]!==false}),'default':d||'note'};
 try{localStorage.setItem('garrick-launchers',JSON.stringify(on));localStorage.setItem('garrick-default',d||'note')}catch(e){}}
 function request(){var on=launchers();return{verb:'settings',launchers:KEYS.filter(function(k){return on[k]!==false}),'default':def()}}
@@ -6196,24 +6179,20 @@ var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHand
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
 var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
-/* New session in Claude or Codex (#652): the app's own window, the work's folder, "open <name>" typed in and not sent */
-var NS={'claude-new':'Claude','codex-new':'Codex'};
+/* Claude or Codex (#652, #682): a new session in the app's own window, the work's folder, "open <name>" typed in and not sent */
+var NS={claude:'Claude',codex:'Codex'};
 function prefs(){return GarrickPrefs.launchers()}
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
 function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
-/* Open in Claude on a thread, where the build found Claude Code's CLI: Continue's request (#180) */
-function cont(o){return o.oc&&document.body.dataset.cli?{verb:'continue',zone:o.oc[0],file:o.oc[1]}:null}
-function going(o){return'Opening '+o.n+' in Claude…'}
 /* What the page says the moment the button is pressed: that it is opening, never that it
    opened. The host says what opened, and only it can: a cold Claude is started and waited
    for, Codex and cmux say the clipboard now holds the phrase, Finder names the phrase it
    cannot take, and a failure says what is left to do. An app built before 0.28.0 says
    nothing back, and then this line is all there is. */
-function launch(k,o,pl){if(NS[k]&&o.f){var nl='New session in '+NS[k],nt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):nl,nm=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),nq={verb:'session-url',key:k,folder:o.f};
+function launch(k,o,pl){if(NS[k]){if(!o.f)return'';var nl='A new session in '+NS[k],nt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):NS[k],nm=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),nq={verb:'session-url',key:k,folder:o.f};
 return'<button class="'+(pl?'act ymi':'act')+'" type="button"'+nm+' title="'+(pl?pl.l:nl)+'" aria-label="'+(pl?pl.l:nl)+'" data-act="'+esc(JSON.stringify(nq))+'" data-say="'+esc('Opening a new session in '+NS[k]+'…')+'">'+nt+'</button>'}
 var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
 var l=pl?pl.l:k==='finder'?'Reveal in Finder':'Open in '+LABEL[k],txt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):l,mk=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),cls=pl?'act ymi':'act';
-var q=k==='claude'&&cont(o);if(q)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+esc(JSON.stringify(q))+'" data-say="'+esc(going(o))+'">'+txt+'</button>';
 if(k==='cmux'&&o.dk)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
 +(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+txt+'</button>';
 return'<button class="'+cls+'" type="button" data-launch="'+k+'"'+mk+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+txt+'</button>'}
@@ -6231,17 +6210,17 @@ if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="ga
 /* One way to resume, for a row of Your work (#523, #559): a text button, Resume, which runs Settings' Default, and beside it a
    menu of labelled rows, each with a 16 px icon, the default ticked: the ways that are on and installed, then a divider and the
    folder and the note. One way on: Resume alone. The rows carry no data-k, so the app never draws them as its icons. */
-var IC={cmux:'<path d="M3 4.5l3.5 3.5L3 11.5M8.5 12h4.5"/>',claude:'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>','claude-new':'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>','codex-new':'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',codex:'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',finder:'<path d="M2 4.5h4l1.2 1.5H14v6.5H2z"/>',note:'<path d="M4 2.5h5.5L12 5v8.5H4zM9.5 2.5V5H12"/>'};
+var IC={cmux:'<path d="M3 4.5l3.5 3.5L3 11.5M8.5 12h4.5"/>',claude:'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>',codex:'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',finder:'<path d="M2 4.5h4l1.2 1.5H14v6.5H2z"/>',note:'<path d="M4 2.5h5.5L12 5v8.5H4zM9.5 2.5V5H12"/>'};
 function ico(k){return'<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+IC[k]+'</svg>'}
 var TICK='<svg class="ytick" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>';
-var RESUME={cmux:'Resume in cmux',claude:'Resume in Claude',codex:'Resume in Codex','claude-new':'New session in Claude','codex-new':'New session in Codex',finder:'Open folder',note:'Open the note'};
+var RESUME={cmux:'Resume in cmux',claude:'Resume in Claude',codex:'Resume in Codex',finder:'Open folder',note:'Open the note'};
 function opener(o){var ways=(prefs().note===false?[]:['note']).concat(o.f&&host?chosen():[]),d=GarrickPrefs.def();
 if(!ways.length)ways=['note'];if(ways.indexOf(d)<0)d=ways[0];
 function one(k,pl){return k==='note'?noteLink(o,pl):launch(k,o,pl)}
 var main=one(d,{l:'Resume'});
 if(ways.length<2)return'<span class="ysplit">'+main+'</span>';
 function row(k){return one(k,{l:RESUME[k],i:ico(k),t:k===d}).replace(/^<(button|a) /,'<$1 role="menuitem" ')}
-var apps=['cmux','claude','codex','claude-new','codex-new'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
+var apps=['cmux','claude','codex'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
 var items=apps.map(row).join('')+(apps.length&&rest.length?'<hr class="ydiv" role="separator">':'')+rest.map(row).join('');
 return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" title="Other ways to resume" aria-label="Other ways to resume" aria-haspopup="menu">▾</summary><div class="ymenu" role="menu">'+items+'</div></details></span>'}
 /* The state, a chip beside the party's on line 1 (#633): Active or Parked, and a button that does what the menu's Park and Wake did, by
@@ -6286,7 +6265,6 @@ document.addEventListener('click',function(e){var a=e.target.closest&&e.target.c
 var d=GarrickPrefs.def();if(!d||d==='note'||chosen().indexOf(d)<0)return;
 var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
-var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;if(!(window.GarrickAct&&GarrickAct(q,going(o)))){host.postMessage({act:q});if(window.GarrickSay)GarrickSay(going(o))}return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
 return{esc:esc,acts:acts,head:head,menu:menu,card:card,opener:opener}})();
 """
@@ -8254,9 +8232,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     names the files where a managed setting may switch Claude's local
     sessions off (main() passes this Mac's); without it only the record
     Continue keeps is read, as a test needs. `cli` says whether Claude Code's
-    command-line tool is here (main() asks handoff.py's find_claude()): with
-    it, Open in Claude on a thread goes through Continue's request (#180);
-    without it, or unsaid, through the deep link. `page_at` is where the page
+    command-line tool is here (main() asks handoff.py's find_claude()); since
+    0.80.0 (#682) no launcher on the page uses it: Claude opens a new session
+    through its link. `page_at` is where the page
     goes (main() passes it): beside it the build keeps the check's result,
     which a build given `reuse_check` shows, whatever its age, instead of
     running the check (#382), and what the effort ledger read
@@ -8820,7 +8798,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls,
                  machine_said(ws))
-    md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
+    md = menu_data(T, names, link, cmux, trouble, S, DK)
     if qdata:
         md["questions"] = questions_mod().counts_of(qdata)       # the open count of each zone, for the menu's Questions row
     if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
@@ -8866,7 +8844,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS + SETGUARD_CSS,
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

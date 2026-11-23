@@ -46,20 +46,12 @@ ROWS: List[Tuple[str, str, str, str]] = [
     (r'id="desk-agent"', "launch-desk-agent", "A cmux tab starts",
      "Which assistant a new cmux tab starts: Claude Code or Codex. Pick the one you work with. A tab that is already open keeps "
      "the one it has."),
-    (r'data-launcher="codex"', "launch-codex", "Open in Codex",
-     "Adds Open in Codex to the cards. It opens the project's folder in the Codex app. Pick it if you work in Codex. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="claude"', "launch-claude", "Open in Claude",
-     "Adds Open in Claude to the cards. It opens the project's folder in the Claude app. Pick it if you work in Claude. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="claude-new"', "launch-claude-new", "New session in Claude",
-     "Adds New session in Claude to the cards. It starts a new session in the Claude app, in the project's folder, with the "
-     "first message typed in. You press Enter to send it. Pick it if you work in Claude. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="codex-new"', "launch-codex-new", "New session in Codex",
-     "Adds New session in Codex to the cards. It starts a new session in the Codex app, in the project's folder, with the "
-     "first message typed in. You press Enter to send it. Pick it if you work in Codex. "
-     "Default makes a click on a thread's name do it."),
+    (r'data-launcher="codex"', "launch-codex", "Codex",
+     "Adds Codex to the cards. It starts a new session in the Codex app, in the project's folder, with the first message "
+     "typed in. You press Enter to send it. Default makes a click on a thread's name do it."),
+    (r'data-launcher="claude"', "launch-claude", "Claude",
+     "Adds Claude to the cards. It starts a new session in the Claude app, in the project's folder, with the first message "
+     "typed in. You press Enter to send it. Default makes a click on a thread's name do it."),
     # Explore
     (r'id="graph-follow"', "follow", "Follow the zone in view",
      "On, the graph switches to the zone you are reading on the Threads card. Off, it stays on the zone you chose. "

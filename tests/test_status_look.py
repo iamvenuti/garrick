@@ -847,7 +847,7 @@ class OpeningAThread(unittest.TestCase):
         self.assertIn("r.disabled=!c||c.disabled||!c.checked", status.JS)          # unticked, uninstalled: no radio
         card = self.card()
         self.assertNotIn('data-launcher="preview"></label><label class="launcher-default"', card)   # Preview never had one
-        self.assertEqual(7, card.count('name="garrick-default"'))      # one for each way but Preview, the two new sessions included
+        self.assertEqual(5, card.count('name="garrick-default"'))      # one for each way but Preview, one row for each app (#682)
 
     def test_switching_off_the_default_row_moves_it_and_says_so(self):
         self.assertIn("GarrickPrefs.set(p,moved?'note':dpref())", status.JS)

@@ -519,11 +519,15 @@ def desk_ready(ws: Path) -> bool:
 
 
 def launcher_on(ws: Path, app: str) -> bool:
-    """Whether Settings › Opening a thread has this app switched on, read as
+    """Whether Settings › Opening work has this app switched on, read as
     status.py's shared_launchers() reads the choices the workspace keeps
     (prefs.FILE): {name: true or false}, a name left out being on, or a list
-    of the names on. Nothing saved, or nothing that reads: every app is on."""
+    of the names on, with 0.79.0's two rows for Claude or Codex read as one
+    (#682). Nothing saved, or nothing that reads: every app is on."""
     on = prefs().read(ws).get("launchers")
+    merge = getattr(prefs(), "launchers_merged", None)
+    if merge:
+        on = merge(on)[0]
     if isinstance(on, dict):
         return on.get(app, True) is True
     if isinstance(on, list):

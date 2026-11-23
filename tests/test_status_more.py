@@ -1179,12 +1179,12 @@ class TestSharedLauncherSettings(StatusCase):
         write(self.root / "System" / "garrick-settings.json",
               json.dumps({"launchers": {"note": True, "finder": False, "cmux": False, "codex": False}, "default": "cmux"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
-        self.assertEqual({"launchers": ["note", "preview", "claude", "claude-new", "codex-new"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
+        self.assertEqual({"launchers": ["note", "preview", "claude"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
         # Explore's Preview (#219): on in a choice saved before it had one, off once switched off, and never the default
         write(self.root / "System" / "garrick-settings.json",
               json.dumps({"launchers": {"note": True, "preview": False}, "default": "preview"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
-        self.assertEqual({"launchers": ["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"], "default": "note"}, json.loads(found.group(1)))
+        self.assertEqual({"launchers": ["note", "finder", "cmux", "codex", "claude"], "default": "note"}, json.loads(found.group(1)))
         write(self.root / "System" / "garrick-settings.json", json.dumps({"launchers": "all"}))
         self.assertNotIn('id="launch-settings"', self.page())
 
@@ -3225,8 +3225,9 @@ class TestWhatALaunchSays(StatusCase):
         desk_card = dict(cards(html)[("Acme Review", "Pricing")], dk=["Work", "Acme Review", "Pricing"])
         acts = panel(True, ("acts", desk_card), launchers="finder,cmux,codex,claude")[0]
         said = dict(re.findall(r'data-launch="(\w+)"[^>]*?data-say="([^"]*)"', acts))
-        self.assertEqual({"finder": "Showing Pricing in Finder…", "codex": "Opening Pricing in Codex…",
-                          "claude": "Opening Pricing in Claude…"}, said)
+        self.assertEqual({"finder": "Showing Pricing in Finder…"}, said)
+        for app in ("Claude", "Codex"):                                       # a new session through its link (#682)
+            self.assertIn('data-say="Opening a new session in %s…"' % app, acts)
         # cmux here goes through the cmux extra's desk, which has always said this
         self.assertIn('data-k="cmux"', acts)
         self.assertIn('data-say="Opening Pricing in cmux…"', acts)
@@ -3239,48 +3240,30 @@ class TestWhatALaunchSays(StatusCase):
         self.assertIn('data-say="Opening Pricing in cmux…"', plain)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_open_in_claude_on_a_thread_is_continue_where_the_cli_is_here(self):
-        """#180: where the build found Claude Code's command-line tool, Open
-        in Claude on a thread sends Continue's request, and
-        the working card says it is opening; without the tool it is the deep
-        link, as before, and so is a card with no note to continue."""
-        self.assertNotIn("data-cli", self.page(launchers=("claude",)))           # unsaid: the deep link
+    def test_claude_on_a_thread_opens_a_new_session_and_never_the_command_line_route(self):
+        """#682: one row for Claude, a new session in the work's folder through its link (#652). The command-line route of
+        Open in Claude (Continue's request, #180) left the cards, the graph, the menu and the panel."""
         html = self.page(launchers=("claude",), cli=True)
-        self.assertIn('data-cli="1"', html)
+        self.assertNotIn("data-cli", html)
         card = cards(html)[("Acme Review", "Pricing")]
-        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["oc"])
         acts = panel(True, ("acts", card), launchers="claude", cli=True)[0]
         q = re.search(r'data-k="claude"[^>]*data-act="(\{.*?\})" data-say="([^"]*)"', acts)
         self.assertIsNotNone(q, acts)
-        self.assertEqual({"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}, json.loads(q.group(1)))
-        self.assertEqual("Opening Pricing in Claude…", q.group(2))
-        self.assertNotIn('data-launch="claude"', acts)
+        self.assertEqual({"verb": "session-url", "key": "claude", "folder": card["f"]}, json.loads(q.group(1)))
+        self.assertEqual("Opening a new session in Claude…", q.group(2))
+        self.assertNotIn('"verb":"continue"', acts)
         self.assertNotIn("claude://", status.PANEL_JS)                          # the page never builds the link itself
-        # no tool here: the deep link, which leaves the phrase for you to send
-        plain = panel(True, ("acts", card), launchers="claude")[0]
-        self.assertIn('data-launch="claude"', plain)
-        self.assertIn('data-phrase="open Pricing"', plain)
-        self.assertNotIn('"verb":"continue"', plain)
-        # a project of several threads has no one note to continue
-        project = panel(True, ("acts", dict(card, oc=None, n="Acme Review")), launchers="claude", cli=True)[0]
-        self.assertIn('data-launch="claude"', project)
-        # clicking the thread's name, with Claude the default, sends the same request through the working card
-        self.assertIn("var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;"
-                      "if(!(window.GarrickAct&&GarrickAct(q,going(o))))", status.PANEL_JS)
-        self.assertIn("continue", status.ZONE_VERBS)                            # a zone verb: the working card shows it running
+        self.assertNotIn("cont(o)", status.PANEL_JS)
+        self.assertIn("continue", status.ZONE_VERBS)                            # the verb stays page_action.py's; nothing sends it
 
-    def test_the_apps_menu_and_panel_continue_a_thread_in_claude(self):
-        """#180: the app's menu and panel run a row's action through run(),
-        which continues a thread in Claude through page_action.py where the
-        page's menu says the tool is here, and keeps the deep link otherwise."""
+    def test_the_apps_menu_and_panel_open_claude_as_the_page_does(self):
         swift = self.swift()
         acts = swift[swift.index("func acts(_ r: [String: Any])"):swift.index("// The menu: a field")]
-        self.assertIn('let cli = (menuState?["data"] as? [String: Any])?["cli"] as? Int == 1', acts)
-        self.assertIn('if k == "claude", cli, let oc = r["oc"] as? [String], oc.count == 2 { a["oc"] = oc;', acts)
+        self.assertNotIn('["cli"]', acts)
+        self.assertNotIn('["oc"]', acts)
         run = swift[swift.index("func run(_ a: [String: Any])"):swift.index("// A row's icon, kept visible")]
-        self.assertIn('if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {', run)
-        self.assertIn('act(["verb": "continue", "zone": oc[0], "file": oc[1]])', run)
-        self.assertLess(run.index('act(["verb": "continue"'), run.index("launch(k, f,"))      # before the deep link
+        self.assertNotIn('"verb": "continue"', run)
+        self.assertIn("return launch(k, f, phrase:", run)
 
     def test_the_app_says_what_a_launcher_did_in_these_words(self):
         swift = self.swift()
@@ -3300,10 +3283,10 @@ class TestWhatALaunchSays(StatusCase):
 
     def test_a_cold_claude_is_started_and_waited_for(self):
         swift = self.swift()
-        claude = swift[swift.index('case "claude":'):swift.index('case "codex":')]
-        self.assertIn("if NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {", claude)
+        claude = swift[swift.index('case "claude", "codex":'):swift.index('case "cmux":\n\t\t\treturn openInCmux')]
+        self.assertIn('if app == "claude" && NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {', claude)
         self.assertIn("startClaude(url, name: name, phrase: phrase)", claude)
-        self.assertIn("sendToClaude(url, name: name, phrase: phrase, window: nil)", claude)   # running: at once, as before
+        self.assertIn('if app == "claude" { return sendToClaude(url, name: name, phrase: phrase, window: nil) }', claude)   # running: at once
         self.assertNotIn("return NSWorkspace.shared.open(url)", claude)                       # never the bare link again
         start = swift[swift.index("func startClaude("):swift.index("// Whether the page says the desk")]
         self.assertLess(start.index("let from = claudeLogSize()"), start.index("openApplication(at: app"))
@@ -3318,10 +3301,11 @@ class TestWhatALaunchSays(StatusCase):
     def test_the_clipboard_is_replaced_in_one_place_and_said(self):
         swift = self.swift()
         launch = swift[swift.index("func launch(_ app: String"):swift.index("func sendToClaude(")]
-        # Codex copies only once it has opened, and the toast beside it says so.
-        codex = launch[launch.index('case "codex":'):launch.index('case "cmux":')]
-        self.assertLess(codex.index("try p.run()"), codex.index("copyText(phrase)"))
-        self.assertIn('toast(opened("Codex", folder.lastPathComponent, phrase), alsoNotify: false)', codex)
+        # Codex copies only when its link was refused, through GarrickSession.open(), and the toast says so (#652, #682).
+        codex = launch[launch.index('case "claude", "codex":'):launch.index('case "cmux":')]
+        self.assertIn("let took = GarrickSession.open(url, prompt: phrase", codex)
+        self.assertIn("copy: { self.copyText($0) })", codex)
+        self.assertIn("the clipboard now holds “\\(phrase)”. Paste it into a new session.", codex)
         self.assertEqual(1, launch.count("copyText("))               # cmux copies in openInCmux(), after its open
         cmux = swift[swift.index("func openInCmux("):swift.index("// MARK: the menu bar")]
         self.assertLess(cmux.index("guard error == nil"), cmux.index("self.copyText(phrase)"))
@@ -3336,7 +3320,7 @@ class TestWhatALaunchSays(StatusCase):
         # Every arm of the switch reports, and so does every failure in it.
         swift = self.swift()
         launch = swift[swift.index("func launch(_ app: String"):swift.index("func sendToClaude(")]
-        for arm, says in (('case "codex":', ('notOpened("Codex"', 'opened("Codex"')),
+        for arm, says in (('case "claude", "codex":', ('opened("Codex"', "GarrickSession.make(key: app")),
                           ('case "cmux":', ("openInCmux(folder.path, phrase: phrase)",)),
                           ('case "finder":', ("showedInFinder(folder.lastPathComponent, phrase)",))):
             body = launch[launch.index(arm):]
@@ -3353,14 +3337,15 @@ class TestWhatALaunchSays(StatusCase):
         table = table[:table.index("\n\n", table.index("|"))]
         rows = [r.strip("| ").split(" | ") for r in table.splitlines() if r.startswith("| *") or r.startswith("| ")]
         states = {(r[0].strip(), r[1].strip()) for r in rows if len(r) >= 3}
-        for launcher in ("*Open in Claude*", "*Open in Codex*", "*Open in cmux*", "*Reveal in Finder*"):
-            self.assertTrue([s for s in states if s[0] == launcher], launcher)
-        # through Continue's request where the command-line tool is here (#180), the deep link where it is not
-        for state in ("The command-line tool is here", "The command-line tool is here, pressed again within twelve hours",
-                      "The command-line tool is here, but the call is refused", "No command-line tool, Claude running",
-                      "No command-line tool, Claude not running", "Not installed"):
-            self.assertIn(("*Open in Claude*", state), states, state)
-        self.assertIn(("*Open in Codex*", "Installed without its own launcher"), states)
+        for launcher in ("*Claude*", "*Codex*", "*Open in cmux*", "*Reveal in Finder*"):
+            self.assertTrue([s for s in states if launcher in s[0]], launcher)
+        # one row for each app since 0.80.0 (#682): a new session through its link, never the command-line route
+        for state in ("Installed, running, and its version takes the `claude` link", "Not running"):
+            self.assertIn(("*Claude*", state), states, state)
+        for state in ("The app does not take the link", "Installed, but too old to take the link", "Not installed"):
+            self.assertIn(("*Claude* or *Codex*", state), states, state)
+        self.assertNotIn("*Open in Claude*", table)
+        self.assertNotIn("*New session in", table)
         self.assertIn("boot: done", page)                      # the mark the wait watches for
         self.assertIn("forty seconds", page)                   # and the ceiling, in words
 

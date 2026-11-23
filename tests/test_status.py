@@ -1904,57 +1904,54 @@ class TestAnOldPageSaysSoPlainly(StatusCase):
 
 
 class TestLaunchers(StatusCase):
-    """Open in Claude, Codex or cmux: offered for what is installed, chosen in Settings."""
+    """Claude, Codex or cmux: offered for what is installed, chosen in Settings. Claude and Codex have one row each, a new
+    session through the app's link (#652, #682)."""
 
-    def app(self, folder, name, bundle=None, cli=None):
+    def app(self, folder, name, bundle=None, schemes=None):
         app = folder / (name + ".app")
         (app / "Contents").mkdir(parents=True)
         if bundle:
+            info = {"CFBundleIdentifier": bundle}
+            if schemes:                          # the link the app takes, as Claude's and Codex's own are
+                info["CFBundleURLTypes"] = [{"CFBundleURLSchemes": list(schemes)}]
             with (app / "Contents" / "Info.plist").open("wb") as f:
-                plistlib.dump({"CFBundleIdentifier": bundle}, f)
-        if cli:                                  # the launcher inside the bundle, as Codex's own is
-            (app / cli).parent.mkdir(parents=True, exist_ok=True)
-            (app / cli).write_text("#!/bin/sh\n")
-            (app / cli).chmod(0o755)
+                plistlib.dump(info, f)
         return app
 
     @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
     def test_known_by_bundle_id(self):
         apps = Path(self._tmp.name) / "Applications"
         self.app(apps, "ChatGPT", "com.openai.chat")                     # ChatGPT is not Codex
-        self.app(apps, "Claude", "com.anthropic.claudefordesktop")
+        self.app(apps, "Claude", "com.anthropic.claudefordesktop", ["claude"])
         self.app(apps, "cmux")                                           # no Info.plist: taken at its name
         self.assertEqual(("finder", "cmux", "claude"), status.launchers_installed([apps]))   # Finder: every Mac has it
-        self.app(apps, "Codex", "com.openai.codex", cli=status.CODEX_CLI[0])
+        self.app(apps, "Codex", "com.openai.codex", ["codex"])
         self.assertEqual(("finder", "cmux", "codex", "claude"), status.launchers_installed([apps]))
 
     @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
     def test_a_launcher_that_cannot_work_is_not_offered(self):
-        # Codex opens a folder through its own launcher inside the bundle. Without
-        # one it was offered, clicked, and only then refused; now it is never offered.
+        # Codex opens a new session through its link. An app too old to take it is never offered (#652, #682).
         apps = Path(self._tmp.name) / "Applications"
-        self.app(apps, "Codex", "com.openai.codex")                      # installed, no launcher in it
+        self.app(apps, "Codex", "com.openai.codex")                      # installed, no link it takes
         self.assertEqual(("finder",), status.launchers_installed([apps]))
-        self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_CODEX_CLI,
-                          "claude": status.NOT_INSTALLED, "claude-new": status.NOT_INSTALLED,
-                          "codex-new": status.NO_NEW_SESSION % "Codex"}, status.launcher_state([apps]))
-        for rel in status.CODEX_CLI:                                     # any of the three it may carry will do
-            shutil.rmtree(apps)
-            self.app(apps, "Codex", "com.openai.codex", cli=rel)
-            self.assertIsNone(status.launcher_state([apps])["codex"], rel)
+        self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_NEW_SESSION % "Codex",
+                          "claude": status.NOT_INSTALLED}, status.launcher_state([apps]))
+        shutil.rmtree(apps)
+        self.app(apps, "Codex", "com.openai.codex", ["codex"])
+        self.assertIsNone(status.launcher_state([apps])["codex"])
 
     def test_a_greyed_row_says_why_it_cannot_work(self):
         # The reason sits on the row, before any click rather than after it.
-        dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_CODEX_CLI,
+        dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_NEW_SESSION % "Codex",
                                                                    "cmux": status.NOT_INSTALLED})
         icon = lambda k: '<i class="lico" aria-hidden="true" style="--ic:var(--icon-%s)"></i>' % k
         self.assertIn('id="launch-codex" data-launcher="codex" disabled', dialog)
-        self.assertIn('for="launch-codex">%s<span>Open in Codex<small>%s</small>'
-                      % (icon("codex"), htmllib.escape(status.NO_CODEX_CLI, quote=False)), dialog)
+        self.assertIn('for="launch-codex">%s<span>Codex<small>%s</small>'
+                      % (icon("codex"), htmllib.escape(status.NO_NEW_SESSION % "Codex", quote=False)), dialog)
         self.assertIn('id="launch-cmux" data-launcher="cmux" disabled', dialog)
         self.assertIn('for="launch-cmux">%s<span>Open in cmux<small>%s</small>'
                       % (icon("cmux"), status.NOT_INSTALLED), dialog)
-        self.assertIn('for="launch-claude">%s<span>Open in Claude</span>' % icon("claude"), dialog)   # no line saying it is there
+        self.assertIn('for="launch-claude">%s<span>Claude<small>%s</small>' % (icon("claude"), status.NEW_SESSION_LINE), dialog)   # what it does
         self.assertIn('for="launch-finder">%s<span>Reveal in Finder</span>' % icon("finder"), dialog)
 
     def test_each_row_carries_its_card_icon(self):
@@ -1987,15 +1984,15 @@ class TestLaunchers(StatusCase):
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
         dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
-        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude"],
                          re.findall(r'data-launcher="([a-z-]+)"', dialog))
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
-        self.assertEqual(["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude"],
                          re.findall(r'name="garrick-default" value="([a-z-]+)"', dialog))
         self.assertIn('<div class="launcher-row srow apponly"><div class="slab"><label class="launcher-choice" for="launch-preview">'
                       '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
-        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new']", status.PANEL_JS)
-        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"), status.LAUNCH_KEYS)
+        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
+        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)
@@ -2172,13 +2169,12 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
         self.assertEqual("Solo", projects["Solo"]["w"])
         pricing = acme["t"][0]
-        self.assertEqual({"n", "w", "u", "oc"}, set(pricing))
+        self.assertEqual({"n", "w", "u"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
-        # the note Open in Claude continues (#180): a thread's, or the hub of a project that is its own thread
-        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], pricing["oc"])
-        self.assertEqual(["Work", "Solo/Solo.md"], projects["Solo"]["oc"])
-        self.assertNotIn("cli", menu)                                                       # no CLI said: the deep link
-        self.assertEqual(1, self.menu(self.page(cli=True))["cli"])
+        # no note for Claude Code's command-line tool to continue (#682): Claude opens a new session, as Codex does
+        self.assertNotIn("oc", projects["Solo"])
+        self.assertNotIn("cli", menu)
+        self.assertNotIn("cli", self.menu(self.page(cli=True)))
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
         self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])

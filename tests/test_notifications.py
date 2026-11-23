@@ -89,7 +89,7 @@ class TestSettings(Case):
         cfg = n.settings(self.ws)
         self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "context-summary": True,
                                     "job-failed": True, "release": True},
-                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)      # a fresh workspace: a job failing is on
+                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}, "morning": "each"}, cfg)      # a fresh workspace: a job failing is on
         self.assertEqual(["needs-you", "finished", "todo-summary", "context-summary", "job-failed", "release"], list(n.TELL_NAMES))
         self.assertEqual("hold", n.QUIET["release"])                       # a newer Garrick waits for the morning
         self.assertEqual({"needs-you": "send", "finished": "drop", "waiting": "send", "desk": "send"},       # a session that needs me gets through at night, as either event
@@ -143,7 +143,7 @@ class TestSettings(Case):
                "zones": {"Personal": {"to": ["telegram"], "chat": "777"}}}
         self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "context-summary": False,
                                     "job-failed": True, "release": True},
-                          "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}}, n.normal(old))
+                          "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}, "morning": "each"}, n.normal(old))
         self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "context-summary": False,
                           "job-failed": False, "release": False},
                          n.normal(dict(old, channels={"mac": False}))["tell"])        # this Mac switched off: every notice off
@@ -153,8 +153,55 @@ class TestSettings(Case):
         self.assertEqual(1, len(self.osascripts()))
         self.assertEqual([], self.run_.named("sh"))
         n.keep(self.ws, n.settings(self.ws))                                           # the next save drops what is gone
-        self.assertEqual({"tell", "after", "quiet"}, set(json.loads(
+        self.assertEqual({"tell", "after", "quiet", "morning"}, set(json.loads(
             (self.ws / "System" / "garrick-settings.json").read_text())["notifications"]))
+
+    # ---- the morning summaries (#686) ----
+
+    def test_no_morning_key_reads_one_summary_for_each_zone(self):
+        self.assertEqual("each", n.normal({})["morning"])
+        self.assertEqual("each", n.normal({"tell": {"todo-summary": True}, "after": 2})["morning"])     # a 0.79.0 file
+        self.assertEqual("all", n.normal({"morning": "all"})["morning"])
+        for bad in ("both", True, None, ["all"]):
+            self.assertEqual("each", n.normal({"morning": bad})["morning"], bad)
+
+    def test_clean_takes_the_morning_choice_and_refuses_anything_else(self):
+        self.assertEqual("all", n.clean({"morning": "all"})["morning"])
+        self.assertEqual("each", n.clean({"morning": "each"})["morning"])
+        self.assertNotIn("morning", n.clean({}))                       # a page that does not offer it saves none
+        for bad in ({"morning": "both"}, {"morning": True}, {"morning": None}, {"morning": ""},
+                    {"tell": {"morning-brief": True}}):                 # the brief has no switch of its own
+            with self.assertRaises(n.Invalid, msg=bad):
+                n.clean(bad)
+        n.keep(self.ws, {"morning": "all"})
+        self.assertEqual("all", n.settings(self.ws)["morning"])
+
+    def test_the_morning_brief_follows_the_todo_summary_row_and_waits_for_the_morning(self):
+        self.assertIn("morning-brief", n.EVENT_NAMES)
+        self.assertNotIn("morning-brief", n.TELL_NAMES)
+        self.assertEqual("hold", n.QUIET["morning-brief"])
+        self.assertEqual(n.QUIET["todo-summary"], n.QUIET["morning-brief"])
+        self.save({"tell": {"todo-summary": False}, "morning": "all"})
+        self.assertFalse(self.send("morning-brief"))
+        self.save({"tell": {"todo-summary": True}, "morning": "all"})
+        self.assertTrue(self.send("morning-brief"))
+        self.assertEqual(1, len(self.osascripts()))
+        self.assertTrue(self.send("morning-brief", now=NIGHT))         # held for the morning, not sent
+        self.assertEqual(1, len(self.osascripts()))
+
+    def test_which_zones_the_one_brief_covers(self):
+        zones = ["Work", "Personal", "Garden"]
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))           # no file: one for each zone
+        self.save({"tell": {"todo-summary": True}})                                       # a 0.79.0 file
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))
+        self.save({"morning": "each"})
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))
+        self.save({"morning": "all"})
+        self.assertEqual((zones, []), n.morning_zones(self.ws, zones, env={}))
+        for env in ({"GARRICK_NOTIFY": "1"}, {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"}):
+            self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env=env), env)   # the override keeps each its own
+        self.save({"morning": "all", "zones": {"personal": {"to": ["telegram"], "chat": "777"}}})
+        self.assertEqual((["Work", "Garden"], ["Personal"]), n.morning_zones(self.ws, zones, env={}))
 
 
 class TestSend(Case):

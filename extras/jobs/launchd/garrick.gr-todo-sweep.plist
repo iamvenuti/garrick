@@ -20,7 +20,9 @@
   The digest argument below sends each zone's morning summary as the Todo
   summary notice, to wherever Settings › Notifications sends it; remove it
   for none. Add a second zone with another pair of lines: the zone argument
-  and the zone's name.
+  and the zone's name. When Settings says one morning summary for all zones,
+  the same argument sends one morning brief instead, after every zone has
+  swept; add the brief-lines argument and a number to list other than 8.
   Whatever job.py cannot write to its own log, such as the error from a path
   left wrong, goes to gr-todo-sweep.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.

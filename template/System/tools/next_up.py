@@ -33,6 +33,14 @@ Each pick is {"id", "rule", "source", "say", "zone", "project", "thread",
 "note"}, with "tick", the request page_action.py takes on stdin to tick it,
 on a Todo line. Nothing is read from System/garrick-settings.json. Standard
 library only, Python 3.9 or later.
+
+**The morning brief** (#686) is the same ranking, said as one message: brief()
+takes the zones it covers and gives their picks in this order, each line a
+pick's own `say` (with ", in <zone>" where `say` does not name it), at most
+`lines` (8) of them, then "And N more in <zone>, M in <zone>." On a day with no
+pick it says "Nothing needs you today." A zone whose sweep did not finish
+opens it with a line saying its list is as it stood. The nightly todo sweep
+sends it; nothing here sends anything.
 """
 
 from __future__ import annotations
@@ -350,6 +358,53 @@ def next_up(root: Path, zone: Optional[str] = None, exclude: Optional[str] = Non
         out.append(p)
     return {"on": chosen["on"], "threshold": chosen["threshold"], "zone": zone, "same_zone": False,
             "exclude": exclude, "settings": chosen, "picks": out}
+
+
+# ---- the morning brief (#686) ---------------------------------------------------
+
+BRIEF_LINES = 8
+QUIET_DAY = "Nothing needs you today."
+MEETINGS_INBOX = "the Meetings inbox"
+SWEEP_FAILED = "%s: the sweep did not finish this morning; its list is as it stood."
+FOLLOW_FAILED = "%s: the sweep finished this morning. The follow-up did not."
+
+
+def brief_line(p: dict) -> str:
+    """A pick as a line of the brief: its own `say`, and its zone where `say` does not name it. Nothing else of the
+    note, the Todo line or a meeting is added."""
+    if p["source"] in ("back", "parked", "wrap") and p["zone"]:
+        return "%s, in %s" % (p["say"], p["zone"])
+    return p["say"]
+
+
+def brief_picks(root: Path, zones: List[str], today: Optional[datetime.date] = None) -> List[dict]:
+    """The picks of these zones, and the Meetings inbox's, in the band's order: the one ranking, with nothing left out
+    for the running turn."""
+    wanted = {z.casefold() for z in zones}
+    picks = next_up(root, today=today)["picks"]
+    return [p for p in picks if (p["zone"] is None and wanted) or (p["zone"] or "").casefold() in wanted]
+
+
+def brief(root: Path, zones: List[str], today: Optional[datetime.date] = None, lines: int = BRIEF_LINES,
+          failed: Optional[Dict[str, str]] = None) -> str:
+    """The morning brief for these zones, as plain text. `failed` maps a zone to "sweep" (its sweep did not finish)
+    or "follow-up" (only its follow-up did not); each such zone gets a line first."""
+    failed = failed or {}
+    head = [(SWEEP_FAILED if failed[z] == "sweep" else FOLLOW_FAILED) % z for z in zones if z in failed]
+    picks = brief_picks(root, zones, today)
+    if not picks:
+        return "\n".join(head + [QUIET_DAY])
+    lines = max(1, int(lines))
+    shown, rest = picks[:lines], picks[lines:]
+    out = head + ["- " + brief_line(p) for p in shown]
+    if rest:
+        counts: Dict[str, int] = {}
+        for p in rest:
+            name = p["zone"] or MEETINGS_INBOX
+            counts[name] = counts.get(name, 0) + 1
+        said = ["%d more in %s" % (n, z) if i == 0 else "%d in %s" % (n, z) for i, (z, n) in enumerate(counts.items())]
+        out.append("And %s." % ", ".join(said))
+    return "\n".join(out)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -676,6 +676,8 @@ class TestWorkOnThePage(StatusCase):
         # Settings' role (#621) is written outside the workspace, and the read guard registers a hook there and saves the
         # workspace's settings file: neither commits in a zone or takes its lock.
         unzoned |= {"machine-role", "read-guard"}
+        # A connected service's choice (#683) saves the read guard's two lists in the workspace's settings file: no zone, no lock.
+        unzoned |= {"connected-service"}
         # A new session in the Claude or Codex app (#652) only reads: it builds a link and commits nothing in any zone.
         unzoned |= {"session-url"}
         # A card opened (#651) adds one to a count under System/, outside every zone: no commit, no lock.

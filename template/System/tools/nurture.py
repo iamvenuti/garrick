@@ -1851,7 +1851,7 @@ def stored(item: Item) -> dict:
 def carry_holds(ctx: Ctx, rec: dict, left: List[dict]) -> None:
     """A run that applies nothing (a list, a fix without --yes, a Checks card build) did not try a history move, so it must not
     end the held state an earlier run of the day wrote: the held line of the same path is carried over (#661)."""
-    before = rec["standing"] if isinstance(rec.get("standing"), list) else earlier_standing(ctx)[0]
+    before = rec["standing"] if isinstance(rec.get("standing"), list) else []      # today's own lines only: an earlier day is no night held today
     held = {f.get("path"): f.get("line") for f in before if isinstance(f, dict) and held_history_line(f)}
     for f in left:
         old = held.get(f.get("path"))

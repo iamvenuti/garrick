@@ -1480,6 +1480,7 @@ def hook_path(word):
 def shown_path(word):
     """A hook path as the settings write it, with the home folder as `~` and a variable as its name, never its value (#670):
     `$HOME/x` and `${HOME}/x` show as `~/x`; a path under the home folder shows with `~`; any other word shows as written."""
+    word = "".join(c for c in word if c.isprintable())[:200]       # as settings_guard.named_hooks shows it
     for var in ("$HOME", "${HOME}"):
         if word == var or word.startswith(var + "/"):
             return "~" + word[len(var):]
@@ -1489,16 +1490,10 @@ def shown_path(word):
     return word
 
 
-def outside_copies(root):
-    """The extras that run from a Garrick kept outside the workspace, the zone
-    guard and the Garrick band, where the assistants' settings point at a copy
-    that differs from this Garrick's: [(what, path)]. Reads the settings for
-    those paths only."""
-    return [(what, path) for what, path, _ in outside_found(root)]
-
-
 def outside_found(root):
-    """`outside_copies` with the path as the settings write it, shown as `shown_path` says: [(what, path, shown)]."""
+    """The extras that run from a Garrick kept outside the workspace, the zone guard, the read guard and the Garrick band, where
+    the assistants' settings point at a copy that differs from this Garrick's: [(what, path, shown)]. `path` is the expanded
+    path, for reading files only; `shown` is the one to print: as the settings write it, a variable by its name."""
     found = []
     guard = REPO / "extras" / "hooks" / "zone_guard.py"
     band = REPO / "extras" / "mods" / "garrick-band"
@@ -1552,18 +1547,34 @@ NO_PROMPT = False       # --json: nobody is asked in the middle of the report
 
 
 def hook_words(root):
-    """Each Garrick hook path the assistants' settings name, as the settings write it: [(word, full path or None)], once each.
-    Reads the two settings files for those words only."""
+    """Each Garrick hook path the assistants' settings name in a hook `command`, as the settings write it: [(word, full path or
+    None)], once each. The settings are read as JSON and only the words of each hook `command` count, split as a shell splits
+    them, as settings_guard.hook_scripts does: a permission rule or a server entry that names a hook file is no hook."""
     out, seen = [], set()
+    name = re.compile(r".*(?:zone_guard|read_guard|parked_hint|waiting_hook)\.py", re.S)
+
+    def walk(node):
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                try:
+                    words = shlex.split(command)
+                except ValueError:
+                    words = command.split()
+                for word in words:
+                    if name.fullmatch(word) and word not in seen:
+                        seen.add(word)
+                        out.append((word, hook_path(word)))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
     for settings in (Path.home() / ".claude" / "settings.json", Path.home() / ".codex" / "hooks.json"):
         try:
-            text = settings.read_text(encoding="utf-8")
-        except OSError:
+            walk(json.loads(settings.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
             continue
-        for word in re.findall(r"[^\s\"']*(?:zone_guard|read_guard|parked_hint|waiting_hook)\.py", text):
-            if word not in seen:
-                seen.add(word)
-                out.append((word, hook_path(word)))
     return out
 
 
@@ -1571,7 +1582,7 @@ def hook_refresh(folder, root):
     """The names of Garrick's own hook files in `folder`, a Garrick download's `extras/hooks/` that the settings name, that
     differ from this Garrick's or are missing there: the files a refresh would copy (#672). None when no refresh is offered: the
     folder is not an `extras/hooks/` outside the workspace and the running Garrick, it is in a git clone or is, or is under, a
-    link, it lies outside the home folder, a file in it is a link, or nothing differs. Reads files only. A folder inside the
+    link, it lies outside the home folder, a file in it is a link or has another hard link, or nothing differs. Reads files only. A folder inside the
     workspace is never written."""
     folder = Path(os.path.abspath(str(folder)))
     ours = REPO / "extras" / "hooks"
@@ -1597,9 +1608,36 @@ def hook_refresh(folder, root):
         dest = folder / name
         if dest.is_symlink() or (dest.exists() and not dest.is_file()):
             return None
+        try:
+            if dest.exists() and dest.stat().st_nlink > 1:
+                return None              # a hard link: another name for a file that may be outside this folder
+        except OSError:
+            return None
         if read(dest) != read(source):
             names.append(name)
     return names or None
+
+
+def put_file(dest, data):
+    """Write `data` as `dest` through a temporary file in the same folder and `os.replace`: a link at `dest` is replaced, never
+    followed. The file keeps the mode `dest` had, else 0644."""
+    dest = Path(dest)
+    try:
+        mode = dest.stat().st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=".garrick-", dir=str(dest.parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, str(dest))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def refresh_hooks(root, folder, shown=None, tty=None):
@@ -1623,14 +1661,16 @@ def refresh_hooks(root, folder, shown=None, tty=None):
     if not yes:
         return ("Nothing was copied to the kept hooks at %s%s. The step offered: copy %s from this Garrick, on your yes at a "
                 "terminal. Your settings are not changed." % (shown, "" if tty else ": nobody could be asked", ", ".join(names)))
+    names = hook_refresh(folder, root)           # again, after the yes: a link or a clone that appeared meanwhile ends it
+    if not names:
+        return "The kept hooks at %s were left as they are: they are no longer a folder this update may write." % shown
     folder = Path(os.path.abspath(str(folder)))
     ours = REPO / "extras" / "hooks"
     before, wrote = {}, []
     try:
         for name in names:
-            dest = folder / name
-            before[name] = read(dest)
-            dest.write_bytes((ours / name).read_bytes())
+            before[name] = read(folder / name)
+            put_file(folder / name, (ours / name).read_bytes())
             wrote.append(name)
     except OSError as exc:
         for name in before:
@@ -1638,11 +1678,11 @@ def refresh_hooks(root, folder, shown=None, tty=None):
                 if before[name] is None:
                     (folder / name).unlink()
                 else:
-                    (folder / name).write_bytes(before[name])
+                    put_file(folder / name, before[name])
             except OSError:
                 pass
         return ("The kept hooks at %s were not refreshed: %s. Each file was put back as it was. Copy extras/hooks/ from this "
-                "Garrick over them by hand." % (shown, exc))
+                "Garrick over them by hand." % (shown, exc.strerror or type(exc).__name__))
     return "Kept hooks: %s now holds this Garrick's %s. Your settings are not changed." % (shown, ", ".join(wrote))
 
 

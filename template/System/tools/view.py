@@ -18,6 +18,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
      "today": "2026-11-22",                    # the day the Todo part counts as ticked today
      "wikis": [WIKI, ...],                     # each wiki's log: how many entries, and the newest (none in a scoped build)
      "repos": [REPO, ...],                     # the root, each zone, the wikis: what each has uncommitted
+     "example": "Example" | null,              # the zone the worked example is in, by its marker
      "system": [SYSTEM, ...],                  # the projects kept in System/, outside any zone
      "left": [...]}                            # what the page still reads for itself, by name
 
@@ -83,12 +84,13 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, the waiting sessions, the settings, the Explore graph, and the worked example's marker.
+check's kept result, the waiting sessions, the settings and the Explore graph.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
 """
 import datetime as dt
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -107,10 +109,10 @@ CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "call
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
         "the check's kept result", "waiting sessions", "settings",
-        "the Explore graph", "the worked example's marker")
+        "the Explore graph")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
-PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos")
+PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example")
 
 _MODS: dict = {}
 
@@ -751,6 +753,31 @@ def repo_records(root: Path, scope: Optional[set] = None) -> List[dict]:
     return out
 
 
+# The worked example's marker in its zone, as garrick_lib.EXAMPLE_MANIFEST names it.
+EXAMPLE_MANIFEST = ".example.json"
+
+
+def example_zone(root: Path, scope: Optional[set] = None) -> Optional[str]:
+    """The zone the worked example is in, or None: the first zone whose `.example.json` names it, read as
+    `System/tools/example.py`'s present() does. A zone folder that is a link is no zone, and a marker that is a link out of
+    its zone is not read."""
+    root = Path(root)
+    real = {z.name for z in _work().zones(root)}
+    for zone in _visible_dirs(root / "Zones"):
+        manifest = zone / EXAMPLE_MANIFEST
+        if zone.name not in real or (scope is not None and zone.name not in scope):
+            continue
+        if not manifest.is_file() or not _work()._within(manifest, zone.resolve()):
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("zone") == zone.name:
+            return zone.name
+    return None
+
+
 def system_lookup(projects: List[dict]) -> Dict[str, str]:
     """The notes of the projects kept in System/ by the names a Todo line's link may use: the path from the workspace
     without its suffix, and the note's own name, both lower-cased; the first note to claim a name keeps it."""
@@ -809,6 +836,8 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
         out["wikis"] = wiki_records(root) if wanted is None else []
     if "repos" in parts:
         out["repos"] = repo_records(root, wanted)
+    if "example" in parts:
+        out["example"] = example_zone(root, wanted)
     out["left"] = list(LEFT)
     return out
 

@@ -326,4 +326,24 @@ def repos(ws: Path) -> List[dict]:
     return out
 '''
 
-AREAS = {"SYSTEM": SYSTEM, "TODO": TODO, "QUESTIONS": QUESTIONS, "WIKIS": WIKIS, "REPOS": REPOS}
+EXAMPLE = r'''
+EXAMPLE_MANIFEST = ".example.json"
+
+def example_zone(ws: Path) -> Optional[str]:
+    """The zone the worked example is in, or None: the first zone whose
+    .example.json names it, read as System/tools/example.py's present() does."""
+    zones = ws / "Zones"
+    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
+        manifest = zone / EXAMPLE_MANIFEST
+        if not (zone.is_dir() and manifest.is_file()):
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("zone") == zone.name:
+            return zone.name
+    return None
+'''
+
+AREAS = {"EXAMPLE": EXAMPLE, "SYSTEM": SYSTEM, "TODO": TODO, "QUESTIONS": QUESTIONS, "WIKIS": WIKIS, "REPOS": REPOS}

@@ -431,7 +431,6 @@ class TestShadowManageData(Case):
 # is the list of what is left (#650 is `Part of`). A function that reads anew fails the test below, and one that stops
 # reading must leave the table, so the list never goes stale.
 LEFT = {
-    "example_zone": "the worked example's marker, .example.json",
     "graph": "Explore: the notes of one zone or one wiki, for the graph",
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
     "jobs": "the jobs folder's logs",
@@ -736,6 +735,38 @@ class TestShadowRepos(Case):
         porcelain = " M a.md\0?? b.md\0R  new.md\0old.md\0UU c.md\0"
         self.assertEqual(view.changed_files(porcelain), status.changed_files(porcelain))
         self.assertEqual(old_reads_0770(status, "REPOS")["changed_files"](porcelain), status.changed_files(porcelain))
+
+
+class TestShadowExample(Case):
+    """The worked example's marker (#650, 0.78.0): the view model names the zone it is in, as the page's old read did."""
+
+    def mark(self, zone, says=None):
+        write(self.root / "Zones" / zone / ".example.json", json.dumps({"zone": says or zone}))
+
+    def test_the_zone_is_the_one_the_old_read_names(self):
+        old = old_reads_0770(status, "EXAMPLE")["example_zone"]
+        self.assertIsNone(status.example_zone(self.root))
+        self.assertEqual(old(self.root), status.example_zone(self.root))
+        self.mark("Home")
+        self.assertEqual("Home", status.example_zone(self.root))
+        self.assertEqual(old(self.root), status.example_zone(self.root))
+
+    def test_a_marker_that_names_another_zone_is_not_the_example(self):
+        self.mark("Home", says="Work")
+        self.assertIsNone(status.example_zone(self.root))
+        self.assertIsNone(old_reads_0770(status, "EXAMPLE")["example_zone"](self.root))
+
+    def test_a_zone_that_is_a_link_is_never_the_example(self):
+        self.mark("Home")
+        self.assertEqual("Home", view.build(self.root, only=("example",))["example"])
+        (self.root / "Zones" / "Home" / ".example.json").unlink()
+        self.mark("Home", says="Linked")                       # Linked is a link to Home: its marker names it, and it is no zone
+        self.assertIsNone(view.build(self.root, only=("example",))["example"])
+
+    def test_a_scoped_build_names_the_example_only_among_its_zones(self):
+        self.mark("Home")
+        self.assertIsNone(view.build(self.root, scope=["Work"], only=("example",))["example"])
+        self.assertEqual("Home", view.build(self.root, scope=["Home"], only=("example",))["example"])
 
 
 class TestShadowInbox(Case):

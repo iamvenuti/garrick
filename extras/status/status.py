@@ -5636,10 +5636,6 @@ var x=document.getElementById('thought-close');if(x)x.onclick=function(){drop();
 """
 
 
-# The example's manifest in its zone, as garrick_lib.EXAMPLE_MANIFEST names it:
-# a zone is the example only with one that names it, as System/tools/example.py
-# reads it (present()), never by its name alone.
-EXAMPLE_MANIFEST = ".example.json"
 NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
 _HO = None
 
@@ -5819,20 +5815,9 @@ def work_name_for(r: dict) -> str:
 
 
 def example_zone(ws: Path) -> Optional[str]:
-    """The zone the worked example is in, or None: the first zone whose
-    .example.json names it, read as System/tools/example.py's present() does."""
-    zones = ws / "Zones"
-    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
-        manifest = zone / EXAMPLE_MANIFEST
-        if not (zone.is_dir() and manifest.is_file()):
-            continue
-        try:
-            data = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict) and data.get("zone") == zone.name:
-            return zone.name
-    return None
+    """The zone the worked example is in, or None: the first zone whose .example.json names it. The view model reads the
+    markers (view.example_zone)."""
+    return (view_model(ws, ("example",)) or {}).get("example")
 
 
 def work_id(name: str, key: str) -> str:

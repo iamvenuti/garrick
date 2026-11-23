@@ -579,7 +579,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | This Mac does not allow the Claude desktop app to open work | A managed setting, or the app's own refusal | The Claude desktop app does not open work on this Mac. | *Show why* |
 | Claude Code is not installed | `handoff.py`: the command-line tool is missing | Claude Code is not installed on this Mac. | *Show why*, which says how to install it |
 | A first look did not come back | The first look of a piece of work, before anything was written | Claude's first look did not come back, so nothing was written. | *Try again* |
-| *Open in Claude*, *Codex* or *cmux* from the menu or a card did not open | The Mac app's own launcher, before any request is sent | The app's name, then "did not open", then the thread's name | Say the phrase that resumes it, which the sentence names |
+| *Claude*, *Codex* or *Open in cmux* from the menu or a card did not open | The Mac app's own launcher, before any request is sent | The app's name, then "did not open", then the thread's name | Say the phrase that resumes it, which the sentence names |
 | Ask could not start its server | `ask.py`, shown in the Ask window | Ask did not start. | *Try again* under the answer, which sends the same request once more |
 | Ask lost its server before the answer | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*, which says what the server said; no second try is offered, since the request may have gone through |
 | Ask did not answer in time | `ask.py`, shown in the Ask window | Ask has not answered yet, and it may still finish. | *Details*, which says to look at the Todo list or the thread before asking again |
@@ -587,8 +587,8 @@ Every failure the app can show has one plain sentence and one next step. The too
 | Ask stopped on an unexpected error | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*; no second try is offered, since part of the request may have run |
 | The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
 | The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
-| *Check for updates* could not ask GitHub | Settings, About Garrick | Garrick could not ask GitHub for the newest release. Nothing was changed. | *Try again*, which asks once more |
-| The update *Update now* started did not finish | Settings, About Garrick | The update did not finish. | *Show why*, which opens *Details*; no second try is offered, since part of the update may have run |
+| *Check for updates* could not ask GitHub | Settings, About | Garrick could not ask GitHub for the newest release. Nothing was changed. | *Try again*, which asks once more |
+| The update *Update now* started did not finish | Settings, About | The update did not finish. | *Show why*, which opens *Details*; no second try is offered, since part of the update may have run |
 | Settings could not count what a change to Memory would do | Settings, Memory | Garrick could not count what these changes would do. They are not saved yet. | *Try again*, which counts once more and saves nothing |
 | A note's Preview could not show the note | Explore's Preview | This note could not be shown. | *Try again*, which reads it once more; none for a note that is no longer there |
 | *Open in default app* did not open the note | Explore's Preview | The note did not open in its app. | *Try again* |
@@ -601,7 +601,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Never: every search brings its index up to date before it reads, and a refresh that fails gives no results at all, never older ones, so no answer can rest on an old index | None | None: an *Index now* button would write, and none is added |
 
-Two Settings actions name their failure, since each leaves a place outside the workspace as it was when it fails: *Change…* on *This machine*, which sets the role of this computer, and the *Read guard* rows in Walls. Each failure says one of these sentences, with the one next step beside it, and the tool's own words under *Details*:
+Two Settings actions name their failure, since each leaves a place outside the workspace as it was when it fails: *Change…* on *This computer*, which sets the role of this computer, and the *Read guard* rows in Walls. Each failure says one of these sentences, with the one next step beside it, and the tool's own words under *Details*:
 
 | The sentence | The next step |
 |---|---|

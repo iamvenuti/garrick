@@ -1524,7 +1524,7 @@ def outside_found(root):
     for text in texts:
         try:
             env = (json.loads(text).get("env") or {})
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             continue
         value = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
         if isinstance(value, str):
@@ -1573,7 +1573,7 @@ def hook_words(root):
     for settings in (Path.home() / ".claude" / "settings.json", Path.home() / ".codex" / "hooks.json"):
         try:
             walk(json.loads(settings.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             continue
     return out
 

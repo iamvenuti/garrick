@@ -2022,7 +2022,7 @@ def set_read_guard(ws: Path, req: dict) -> dict:
     new = {}
     mode = req.get("mode")
     if mode is not None and mode not in GUARD_MODES:
-        raise fails("guard-value", "the read guard is off, watch only or on, not %r" % (mode,))
+        raise fails("guard-value", "the read guard is off, watch or on, not %r" % (mode,))
     if "cross" in req:
         if req["cross"] not in GUARD_CROSS:
             raise fails("guard-value", "across a wall is refuse or ask me, not %r" % (req["cross"],))

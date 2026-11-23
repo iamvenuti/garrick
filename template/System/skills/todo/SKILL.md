@@ -318,6 +318,24 @@ Read the zone's `Todo.md` and answer from it: the open `## Inbox` and
 `## Waiting on` lines, oldest chase date first, for what others owe. Offer a
 sweep when the list was last swept more than a week ago.
 
+## The morning summary
+
+The nightly sweep sends it, not this skill (the jobs extra, with `--digest`).
+`notifications.morning` in `System/garrick-settings.json` says which: `"each"`,
+or no key, is one Todo summary for each zone, as `todo.py digest` prints it;
+`"all"`, which only a new workspace's setup writes, is one morning brief after
+every zone has swept: what needs the user today across the zones, in the order
+`System/tools/next_up.py` ranks the band's picks, eight lines at most, then
+each zone's count of the rest, or "Nothing needs you today.". A line names
+zone, thread and what is due, as the band does; it never quotes a note or a
+meeting. A zone with a route of its own keeps its own summary and is not in the
+brief. To show what this morning's brief would say, with the jobs extra in:
+```sh
+python3 System/jobs/todo_sweep.py --workspace . --zone Work --zone Personal --print-brief
+```
+It sweeps nothing and sends nothing. Never change `notifications.morning` by
+hand for the user: it is Settings › Notifications, *Morning summary*.
+
 ## Listening mode
 
 As the `threads` skill's: the answer first, three sentences at most, no

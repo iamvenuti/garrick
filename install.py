@@ -634,6 +634,18 @@ def allowlist_files(root, zones):
              recorded: json.dumps(ours, indent=2) + "\n"}, rules, added)
 
 
+def first_settings(root):
+    """The workspace's settings file as a new workspace starts it: what is there (the commands allowed, with
+    --force whatever was kept), with one morning summary for all zones under "notifications" when nothing
+    there says otherwise."""
+    pl = lib()
+    recorded = "/".join(pl.SETTINGS)
+    ours = read_json_file(Path(root) / recorded, recorded)
+    if "notifications" not in ours:
+        ours["notifications"] = {"morning": "all"}
+    return json.dumps(ours, indent=2) + "\n"
+
+
 def allowed_lines(rules):
     """What to say about the rules just written, for either route in."""
     return [
@@ -791,6 +803,11 @@ def install(cfg, target, force=False, quiet=False):
         files, allowed, _ = allowlist_files(root, [z["name"] for z in cfg["zones"]])
         for rel, text in files.items():
             w.write(root / rel, text)
+
+    # A workspace made now gets one morning summary for all its zones (#686). An update never writes
+    # this, so a workspace made before keeps one for each zone; a settings file that already holds
+    # notification choices, as with --force over a workspace, is left as it is.
+    w.write(root.joinpath(*pl.SETTINGS), first_settings(root))
 
     # A workspace made now gets the Garrick App's page itself (#208): the extra in System/status, committed
     # and fingerprinted with the rest, as an update finds one copied in by hand.

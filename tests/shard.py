@@ -155,6 +155,13 @@ for _key in ("extras/hooks/read_guard.py", "tests/read_guard_case.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_read_guard_list"]
 TOUCH_MAP["tests/test_settings_layout.py"] = ["test_settings_layout"]
 TOUCH_MAP["tests/test_read_guard_list.py"] = ["test_read_guard_list"]
+# mornings-0800 (#686): one morning brief across the zones, from the band's ranking, sent by the todo sweep.
+for _key, _mods in (("template/System/tools/next_up.py", ["test_morning_brief"]),
+                    ("template/System/tools/notifications.py", ["test_morning_brief"]),
+                    ("extras/jobs/todo_sweep.py", ["test_morning_brief", "test_todo"]),
+                    ("install.py", ["test_morning_brief"]),
+                    ("tests/test_next_up.py", ["test_morning_brief"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

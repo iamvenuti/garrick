@@ -199,6 +199,10 @@ What "prep me for X" puts together before a meeting: the Meetings pages for that
 
 Each zone's one list of open actions, in Obsidian Tasks style. A line opens with its thread's link and ends with its dates: `📅` when it is due, or `#waiting` and `⏳` for the day to chase something you wait on. A thread note says where the work stands and is not a to-do list; the `todo` skill sweeps actions the records hold into the list's Inbox section and tidies the rest. The list holds actions, never records: a line is ticked as it was written, what came of it goes in the thread note's dated entry, and work that was never on the list gets no line. Lines ticked before today move to the zone's `archive/`, at the nightly sweep and at every wrap.
 
+### The morning brief
+
+One message after the nightly sweep that lists what needs you today across your zones, best first, in the order the band ranks its picks, so its first line is the band's first pick. It is the `morning-brief` event, the *Morning summary* notice, and it follows the switch of the morning Todo summary. It lists eight lines at most, then how many more each zone holds; a quiet day says "Nothing needs you today.", and a zone whose sweep did not finish says its list is as it stood. A line names the zone, the thread and what is due, as the band does, and never quotes a note or a meeting. `notifications.morning` in `System/garrick-settings.json` chooses it: `"all"` sends the one brief, `"each"` (or no key, as in a workspace made before 0.80.0) sends one Todo summary for each zone. Only a new workspace's setup writes `"all"`. A zone with a route of its own (`GARRICK_NOTIFY` or `GARRICK_NOTIFY_CMD` for the sweep, or an older file's per-zone choice) keeps its own summary and is never in the brief. See [Scheduled jobs](extras/scheduled-jobs.md).
+
 ## Instructions
 
 ### Garrick's rules, and yours

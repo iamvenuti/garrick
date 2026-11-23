@@ -865,6 +865,28 @@ class AllowlistTest(unittest.TestCase):
             self.assertNotIn("home", recorded_settings(target), name)
             self.assertEqual("", git(target, "status", "--porcelain"), name)
 
+    def test_a_new_workspace_has_one_morning_summary_for_all_zones(self):
+        """#686: only a workspace made by the setup says "all"; allowing the commands later adds nothing to it, and a
+        workspace whose settings file says nothing of it reads one summary for each zone."""
+        for name, config in (("allowed", None), ("declined", self.declined)):
+            target, r = self.box.install(name, **({"config": config} if config else {}))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual({"morning": "all"}, recorded_settings(target)["notifications"], name)
+            self.assertIn("System/garrick-settings.json", git(target, "ls-files").splitlines(), name)
+            self.assertEqual("", git(target, "status", "--porcelain"), name)
+        path = target / "System" / "garrick-settings.json"
+        path.write_text(json.dumps({}))                                  # a workspace made before 0.80.0
+        r = run([INSTALL, "--allowlist", target], self.box.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("notifications", recorded_settings(target))
+
+    def test_force_over_a_workspace_keeps_its_notification_choices(self):
+        target, r = self.box.install("kept", config=self.declined)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        kept = {"tell": {"todo-summary": False}, "after": 5}
+        (target / "System" / "garrick-settings.json").write_text(json.dumps({"notifications": kept}))
+        self.assertEqual(kept, json.loads(load_installer().first_settings(target))["notifications"])
+
     def test_a_config_that_declines_writes_nothing_about_permissions(self):
         target, r = self.box.install("declined", config=self.declined)
         self.assertEqual(r.returncode, 0, r.stderr)

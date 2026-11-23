@@ -18,8 +18,8 @@ v0.76.0 had them, and the view model are compared field by field. Every differen
 Since 0.78.0 the page's other reads are the view model's too (the Todo tab, the questions, the wikis' logs, the
 repositories, the worked example's marker, the graph, the projects kept in System/), each frozen in
 `old_status_reads_0770.py` as v0.77.0 had it and held to the same answer here. The only differences are the one wall: a zone folder that is a link is no zone and has no Todo list, questions, repository or graph notes; a note,
-folder, log or marker that is a link out of its zone or wiki is not read. The old reads followed such a link and showed
-another place's records under this one's name.
+folder, log or marker that is a link into another zone or a wiki is not read; a link to a file outside the workspace is read
+as it was. The old reads followed such a link and showed another place's records under this one's name.
 
 Nothing else differs: pieces, their order, their states, resume points, checkpoints, parties, dates and counts match the
 old reads exactly. The display rules (what "late" means, what a chip says) are the page's and are not in the view model.
@@ -882,6 +882,16 @@ class TestShadowGraph(Case):
         self.assertNotIn("Linked", {n["z"] for n in new["nodes"]})
         self.assertTrue(any(n["z"] == "Garden" and n["m"] == "Plot/Peek" for n in old["nodes"]))
         self.assertFalse(any(n["z"] == "Garden" and n["m"] == "Plot/Peek" for n in new["nodes"]))
+
+    def test_a_note_that_is_a_link_to_a_file_outside_the_workspace_stays(self):
+        outside = Path(self._tmp.name).resolve() / "Shared" / "Shared notes.md"
+        write(outside, "---\ntitle: Shared notes\n---\n\n- [ ] A line in a shared file\n")
+        os.symlink(str(outside), str(self.root / "Zones" / "Home" / "Cedar" / "Shared notes.md"))
+        paths = [n["path"] for n in view.build(self.root, only=("graph",))["graph"]["notes"]]
+        self.assertIn("Zones/Home/Cedar/Shared notes.md", paths)
+        tasks = view.build(self.root, only=("todo",), today=TODAY)["zones"]
+        home = next(z for z in tasks if z["name"] == "Home")["todo"]["tasks"]
+        self.assertIn("A line in a shared file", [t["text"] for t in home])
 
     def test_a_scoped_build_holds_the_notes_of_its_zones_and_no_wiki(self):
         scoped = view.build(self.root, scope=["Home"], only=("graph",))["graph"]

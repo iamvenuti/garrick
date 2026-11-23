@@ -12,8 +12,8 @@ chase). The tasks that count are every top-level `- [ ]` line in the zone's note
 those, a note the vault's Obsidian excludes (`userIgnoreFilters` in `.obsidian/app.json`) is left out too, and the
 zone's `Todo.md` always counts.
 
-Walls. A note that is a link whose real path is outside the zone is no note of the zone, so a line of another zone
-never shows through a link. A task carries its zone's name only through the zone record it sits in.
+Walls. A note that is a link whose real path is in another place of the workspace (another zone, a wiki) is no note of
+the zone, so a line of another zone never shows through a link; a link to a file outside the workspace is read as it was. A task carries its zone's name only through the zone record it sits in.
 """
 import hashlib
 import json
@@ -115,7 +115,7 @@ def ignored(rel: str, filters: list) -> bool:
 
 def notes(zone_dir, live_files: Callable, within: Callable) -> List[str]:
     """Every Markdown note of the zone, as the module's docstring says: through `live_files`, leaving out a vault's
-    excluded notes and any note that is a link out of the zone (`within(path, inside)`)."""
+    excluded notes and any note that is a link into another place (`within(path, inside)` is False)."""
     zone = Path(os.path.abspath(str(zone_dir)))
     ws = zone.parent.parent if zone.parent.name == "Zones" else None
     vault = vault_of(ws or zone, zone)

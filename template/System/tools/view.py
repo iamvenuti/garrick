@@ -102,7 +102,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 API = 1
 DONE = {"done", "closed", "archived", "complete", "completed"}
@@ -423,6 +423,24 @@ def actions_for(shown: str, state: str) -> List[str]:
     return [v for v in PIECE_VERBS if v in wanted and v in declared]
 
 
+def _allowed(root) -> "Callable[[Path, Path], bool]":
+    """A test of a path that may be a link, for the readers that take what a zone holds (#650, 0.78.0): `allowed(path,
+    inside)` is False where the path resolves to a place of this workspace other than `inside`, another zone's or a
+    wiki's file, which the zone's own record must never show. A link that leads outside the workspace altogether, to a
+    shared folder the user keeps beside it, crosses no wall and is read as it always was."""
+    top = Path(root).resolve()
+
+    def allowed(path: Path, inside: Path) -> bool:
+        try:
+            real = Path(path).resolve()
+        except (OSError, RuntimeError):
+            return False
+        if real == inside or inside in real.parents:
+            return True
+        return not (real == top or top in real.parents)
+    return allowed
+
+
 def _rel(path: Optional[Path], root: Path) -> Optional[str]:
     if path is None:
         return None
@@ -559,15 +577,15 @@ QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
 
 def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
     """The open questions in one piece of work's `Needs you` folder, and the ones put off whose day has come. One put
-    off to a later day, an answered one, a file with no bold line to ask, and a file that is a link out of the zone are
+    off to a later day, an answered one, a file with no bold line to ask, and a file that is a link into another zone or a wiki are
     left out. The zone's own box holds only what an inbox run asked (#634)."""
     out: List[dict] = []
     box = folder / QUESTION_BOX
     if not box.is_dir():
         return out
-    lib, inside = _lib(), zone.resolve()
+    lib, inside, within = _lib(), zone.resolve(), _allowed(zone.parent.parent)
     for f in sorted(box.glob("*.md")):
-        if f.name.startswith((".", "_")) or not _work()._within(f, inside):
+        if f.name.startswith((".", "_")) or not within(f, inside):
             continue
         fm = lib.parse_frontmatter(f) or {}
         if folder == zone and not as_text(fm.get("intake")).strip():
@@ -596,9 +614,9 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
 
 def zone_questions(zone: Path, today: dt.date) -> List[dict]:
     """Every open question of one zone, oldest first: the zone's own box, then each project's and each thread's. A project
-    or thread folder that is a link out of the zone is not read."""
+    or thread folder that is a link into another zone or a wiki is not read."""
     inside = zone.resolve()
-    within = _work()._within
+    within = _allowed(zone.parent.parent)
     found = questions_in(zone, zone, today)
     for project in _visible_dirs(zone):
         if not within(project, inside):
@@ -655,8 +673,8 @@ def log_entries(text: str) -> Tuple[List[tuple], bool]:
 def wiki_records(root: Path) -> List[dict]:
     """Per wiki: its log, how many entries it holds, and the newest entry's date and title. Nothing else from the line: not
     its zone, not its parties. An entry with a link opens its page, named from the wiki's real folder; a log whose entries
-    it cannot read at all says so (`unread`). A log that is a link out of its wiki is not read."""
-    within = _work()._within
+    it cannot read at all says so (`unread`). A log that is a link into another zone or wiki is not read."""
+    within = _allowed(root)
     out = []
     for w in _visible_dirs(Path(root) / "Wikis"):
         log = w / "wiki" / "log.md"
@@ -764,15 +782,15 @@ EXAMPLE_MANIFEST = ".example.json"
 
 def example_zone(root: Path, scope: Optional[set] = None) -> Optional[str]:
     """The zone the worked example is in, or None: the first zone whose `.example.json` names it, read as
-    `System/tools/example.py`'s present() does. A zone folder that is a link is no zone, and a marker that is a link out of
-    its zone is not read."""
+    `System/tools/example.py`'s present() does. A zone folder that is a link is no zone, and a marker that is a link into
+    another zone or a wiki is not read."""
     root = Path(root)
     real = {z.name for z in _work().zones(root)}
     for zone in _visible_dirs(root / "Zones"):
         manifest = zone / EXAMPLE_MANIFEST
         if zone.name not in real or (scope is not None and zone.name not in scope):
             continue
-        if not manifest.is_file() or not _work()._within(manifest, zone.resolve()):
+        if not manifest.is_file() or not _allowed(root)(manifest, zone.resolve()):
             continue
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -828,14 +846,15 @@ def graph_records(root: Path, scope: Optional[set] = None) -> dict:
     listed. A vault's ignore filters (.obsidian/app.json) leave notes out, as Obsidian's graph does. A link to a note is
     `[a, b]`, the indexes of two notes, once.
 
-    Walls. A zone folder that is a link is no zone, and a note that is a link whose real path is outside the place it sits
-    in is not listed, so a link never brings another place's notes onto the graph. A scope holds its zones' notes alone,
+    Walls. A zone folder that is a link is no zone, and a note that is a link whose real path is in another place of the
+    workspace is not listed, so a link never brings another place's notes onto the graph; a link to a file outside the
+    workspace altogether is listed, as it always was. A scope holds its zones' notes alone,
     and no wiki: a link names only a note the scope holds."""
     root = Path(root)
     vt = _todo()
     real = {z.name for z in _work().zones(root)}
     lib = _lib()
-    within = _work()._within
+    within = _allowed(root)
     places: List[Tuple[str, Path, bool]] = [(z.name, z, True) for z in _visible_dirs(root / "Zones")
                                             if z.name in real and (scope is None or z.name in scope)]
     if scope is None:
@@ -847,7 +866,7 @@ def graph_records(root: Path, scope: Optional[set] = None) -> dict:
         if vault is not None and vault not in vaults:
             vaults[vault] = vt.ignore_filters(vault) if vault is not None else []
         filters = vaults[vault] if vault is not None else []
-        inside = folder.resolve()
+        inside = folder.resolve() if in_zone else folder.parent.resolve()     # a wiki's own folder, raw records and all
         found_in = []                                 # (folder, files), in walk order
         # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
         left_out = git_ignored(folder) if in_zone else set()
@@ -945,7 +964,7 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
                 continue
             record = _zone_work(root, zone) if "work" in parts else {"name": zone.name, "linked": False}
             if "todo" in parts:
-                record["todo"] = _todo().zone_todo(zone, root, today, lookup, _lib().live_files, _work()._within)
+                record["todo"] = _todo().zone_todo(zone, root, today, lookup, _lib().live_files, _allowed(root))
             if "questions" in parts:
                 record["questions"] = zone_questions(zone, today)
             zones.append(record)

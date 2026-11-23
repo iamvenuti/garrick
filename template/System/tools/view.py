@@ -26,6 +26,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "projects": {"Acme": PROJECT},
             "open_links": [["Pricing"]],       # for each open Todo line that links a note, the notes it links
             "todo": TODO,                      # the zone's open actions (not for a zone that is a link)
+            "questions": [QUESTION, ...],      # what Garrick asked and waits on, oldest first (not for a zone that is a link)
             "work": [PIECE, ...]}              # live, then parked, then done, then hubs; each by name
 
     PROJECT {"status": "live" | "parked" | "done", "spoken": "", "own": false, "heading": false,
@@ -50,6 +51,9 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
 
     INBOX  {"place": "Work", "kind": "zone" | "wiki", "folder": "Zones/Work/Inbox", "count": 2}
 
+    QUESTION {"file": "Acme/Needs you/q.md", "zone": "Work", "ask": "Which one?", "options": ["Acme", "Birch"],
+              "asked": "2026-11-20" | null, "own": "", "work": "Acme", "intake": false}   # the work it blocks, and its file from the zone
+
     TODO   {"file": "Zones/Work/Todo.md" | null,    # null where the zone has no Todo.md
             "order": ["Inbox", "Soon"],           # its `## ` headings, in order
             "tasks": [TASK, ...],                 # every open line of the zone's notes, as a Todo.md and the thread notes hold them
@@ -69,7 +73,7 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, the waiting sessions, the settings, the wikis' logs and questions,
+check's kept result, the waiting sessions, the settings, the wikis' logs,
 the repositories, the Explore graph, and the worked example's marker.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
@@ -93,11 +97,11 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions", "settings", "wiki logs and questions", "repositories",
+        "the check's kept result", "waiting sessions", "settings", "wiki logs", "repositories",
         "the Explore graph", "the worked example's marker")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
-PARTS = ("work", "inbox", "system", "todo")
+PARTS = ("work", "inbox", "system", "todo", "questions")
 
 _MODS: dict = {}
 
@@ -531,6 +535,67 @@ def system_projects(root: Path) -> List[dict]:
     return out
 
 
+# ---- the questions that wait (#503, #634): a question Garrick asked is a file in the `Needs you` folder of the work it
+# blocks. Each is one zone's, and nothing here adds one zone to another.
+QUESTION_BOX = "Needs you"
+QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
+
+
+def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
+    """The open questions in one piece of work's `Needs you` folder, and the ones put off whose day has come. One put
+    off to a later day, an answered one, a file with no bold line to ask, and a file that is a link out of the zone are
+    left out. The zone's own box holds only what an inbox run asked (#634)."""
+    out: List[dict] = []
+    box = folder / QUESTION_BOX
+    if not box.is_dir():
+        return out
+    lib, inside = _lib(), zone.resolve()
+    for f in sorted(box.glob("*.md")):
+        if f.name.startswith((".", "_")) or not _work()._within(f, inside):
+            continue
+        fm = lib.parse_frontmatter(f) or {}
+        if folder == zone and not as_text(fm.get("intake")).strip():
+            continue
+        state = as_text(fm.get("status")).strip().lower() or "open"
+        later = as_date(fm.get("later"))
+        if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
+            continue
+        try:
+            body = re.sub(r"\A---\n.*?\n---\n", "", f.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)
+        except OSError:
+            continue
+        ask, opts = "", []
+        for line in body.splitlines():
+            m = QUESTION_OPTION.match(line)
+            if m:
+                opts.append(m.group(1).strip())
+            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
+                ask = line.strip().strip("*").strip()
+        if ask:
+            out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
+                        "asked": _iso(as_date(fm.get("asked"))), "own": as_text(fm.get("own")).strip(), "work": folder.name,
+                        "intake": bool(as_text(fm.get("intake")).strip()) and folder == zone})
+    return out
+
+
+def zone_questions(zone: Path, today: dt.date) -> List[dict]:
+    """Every open question of one zone, oldest first: the zone's own box, then each project's and each thread's. A project
+    or thread folder that is a link out of the zone is not read."""
+    inside = zone.resolve()
+    within = _work()._within
+    found = questions_in(zone, zone, today)
+    for project in _visible_dirs(zone):
+        if not within(project, inside):
+            continue
+        if (project / (project.name + ".md")).is_file():
+            found += questions_in(project, zone, today)
+        for thread in _visible_dirs(project / "Threads"):
+            if within(thread, inside) and (thread / (thread.name + ".md")).is_file():
+                found += questions_in(thread, zone, today)
+    found.sort(key=lambda q: (q["asked"] or "9999-12-31", q["file"]))
+    return found
+
+
 def system_lookup(projects: List[dict]) -> Dict[str, str]:
     """The notes of the projects kept in System/ by the names a Todo line's link may use: the path from the workspace
     without its suffix, and the note's own name, both lower-cased; the first note to claim a name keeps it."""
@@ -557,7 +622,7 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
     today = today or dt.date.today()
     system = system_projects(root) if wanted is None and parts & {"system", "todo"} else []
     lookup = system_lookup(system)
-    if parts & {"work", "inbox", "todo"}:
+    if parts & {"work", "inbox", "todo", "questions"}:
         for zone in _visible_dirs(base):
             if wanted is not None and zone.name not in wanted:
                 continue
@@ -568,6 +633,8 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
             record = _zone_work(root, zone) if "work" in parts else {"name": zone.name, "linked": False}
             if "todo" in parts:
                 record["todo"] = _todo().zone_todo(zone, root, today, lookup, _lib().live_files, _work()._within)
+            if "questions" in parts:
+                record["questions"] = zone_questions(zone, today)
             zones.append(record)
             if "inbox" in parts:
                 q = _queue_inbox(zone.name, "zone", zone / "Inbox", zone.resolve(), root)
@@ -579,7 +646,7 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
             if q:
                 inbox.append(q)
     out = {"api": API, "zones": zones, "queues": {"inbox": inbox}}
-    if "todo" in parts:
+    if parts & {"todo", "questions"}:
         out["today"] = today.isoformat()
     if "system" in parts:
         out["system"] = system

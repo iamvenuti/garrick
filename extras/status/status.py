@@ -7964,44 +7964,7 @@ def need_groups(needs: List[dict], view: Optional[str] = None, zones: Tuple[str,
 # A question Garrick asked is a file in the `Needs you` folder of the work it blocks. It is a row of Waiting on you now in
 # its own zone, with a button for each answer and *Not now*; both go through page_action.py's `answer` and `later`. Each
 # row is one zone's, and nothing here adds one zone to another.
-QUESTION_BOX = "Needs you"
-QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
 QUESTION_ASK = 200
-
-
-def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
-    """The open questions in one piece of work's `Needs you` folder, oldest first, and the ones put off whose day has
-    come. One put off to a later day, an answered one and a file with no bold line to ask are left out."""
-    out: List[dict] = []
-    box = folder / QUESTION_BOX
-    if not box.is_dir():
-        return out
-    for f in sorted(box.glob("*.md")):
-        if f.name.startswith((".", "_")):
-            continue
-        fm = frontmatter(f)
-        if folder == zone and not as_text(fm.get("intake")).strip():
-            continue                    # the zone's own box holds only what an inbox run asked (#634)
-        state = as_text(fm.get("status")).strip().lower() or "open"
-        later = as_date(fm.get("later"))
-        if state not in ("open", "later") or (state == "later" and not (later is not None and later <= today)):
-            continue
-        try:
-            body = re.sub(r"\A---\n.*?\n---\n", "", f.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)
-        except OSError:
-            continue
-        ask, opts = "", []
-        for line in body.splitlines():
-            m = QUESTION_OPTION.match(line)
-            if m:
-                opts.append(m.group(1).strip())
-            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
-                ask = line.strip().strip("*").strip()
-        if ask:
-            out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "options": opts,
-                        "asked": as_date(fm.get("asked")), "own": as_text(fm.get("own")).strip(), "work": folder.name,
-                        "intake": bool(as_text(fm.get("intake")).strip()) and folder == zone})
-    return out
 
 
 def question_need(q: dict, today: dt.date) -> dict:
@@ -8027,20 +7990,13 @@ def question_need(q: dict, today: dt.date) -> dict:
             "href": "#threads", "tz": "", "label": "Open the threads", "go": "Open the threads", "act": buttons, "q": q["file"]}
 
 
-def question_needs(ws: Path, today: dt.date) -> List[dict]:
-    """Every zone's open questions as rows, oldest first within the zone, zones in their order."""
+def question_needs(ws: Path, today: dt.date, model: Optional[dict] = None) -> List[dict]:
+    """Every zone's open questions as rows, oldest first within the zone, zones in their order. The view model finds
+    the questions (view.zone_questions); this draws each as a row."""
+    model = model or view_model(ws, ("questions",), today)
     out: List[dict] = []
-    for zone in visible_dirs(ws / "Zones"):
-        found: List[dict] = questions_in(zone, zone, today)      # the zone's own: what an inbox run asked (#634)
-        for project in visible_dirs(zone):
-            hub = project / (project.name + ".md")
-            if hub.is_file():
-                found += questions_in(project, zone, today)
-            for thread in visible_dirs(project / "Threads"):
-                if (thread / (thread.name + ".md")).is_file():
-                    found += questions_in(thread, zone, today)
-        found.sort(key=lambda q: (q["asked"] or dt.date.max, q["file"]))
-        out += [question_need(q, today) for q in found]
+    for z in (model or {}).get("zones", []):
+        out += [question_need(dict(q, asked=as_date(q["asked"])), today) for q in z.get("questions", [])]
     return out
 
 
@@ -9003,7 +8959,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date())  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
+    needs = needs_you(attn, lists, now.date(), detail, acting, followup_entries(ws, lists, link, now.date())) + question_needs(ws, now.date(), model)  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     zones_here = tuple(T)                                                          # the zones the picker can put in view; Work first, as the graph does
     view_zone = ("Work" if "Work" in zones_here else zones_here[0]) if zones_here else None
     lead = waiting_card(waiting_now or [], now, needs, view_zone, zones_here) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(

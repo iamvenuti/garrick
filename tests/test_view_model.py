@@ -96,6 +96,29 @@ def add_todo(root: Path) -> None:
     (garden / "Leak.md").symlink_to(home / "Todo.md")
 
 
+def question(ask="Which fence?", status="open", asked="2026-11-10", extra="", options=("Cedar", "Pine")) -> str:
+    return ("---\nstatus: %s\nasked: %s\n%s---\n\n%s\n\n%s\n"
+            % (status, asked, extra, "**%s**" % ask if ask else "No bold line here.", "".join("- [%s] Use %s\n" % (o, o) for o in options)))
+
+
+def add_questions(root: Path) -> None:
+    """Needs you files for the shadow test: the zone's own box (only what an inbox run asked), a project's, a thread's, one
+    put off to a day that has come, one put off to a day that has not, an answered one, one with nothing to ask; and, in
+    Garden, a project that is a link to Home's and a file that is a link to one of Home's."""
+    home = root / "Zones" / "Home"
+    write(home / "Needs you" / "inbox-run.md", question("File this mail?", extra="intake: true\nown: Other\n"))
+    write(home / "Needs you" / "stray.md", question("Not an inbox question"))
+    write(home / "Cedar" / "Needs you" / "q1.md", question())
+    write(home / "Cedar" / "Needs you" / "q2.md", question("Put off, due", status="later", extra="later: 2026-11-21\n", asked="2026-11-01"))
+    write(home / "Cedar" / "Needs you" / "q3.md", question("Put off, not due", status="later", extra="later: 2026-11-30\n"))
+    write(home / "Cedar" / "Needs you" / "q4.md", question("Answered", status="answered"))
+    write(home / "Cedar" / "Needs you" / "q5.md", question(""))
+    write(home / "Cedar" / "Threads" / "Fence" / "Needs you" / "t.md", question("Thread question", asked="2026-11-05"))
+    out = root / "Zones" / "Garden" / "Plot" / "Needs you"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "Out.md").symlink_to(home / "Cedar" / "Needs you" / "q1.md")
+
+
 def make_workspace(root: Path, tools: bool = True) -> Path:
     """Invented workspaces in one: the standard two zones, the reader's shapes in Work, and a third zone, Home, with
     parked work, a checkpoint, a done thread, a spoken name, a party list and an inbox; a zone that is a link; an Inbox that
@@ -134,6 +157,7 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     write(garden / "Twin" / "Threads" / "Copy" / "Copy.md", "---\ntitle: Copy\nstatus: active\n---\n\n# Copy\n")
     (garden / "Twin" / "Twin.md").symlink_to(home / "Maple" / "Maple.md")           # a hub note that is another zone's file
     add_todo(root)
+    add_questions(root)
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
     write(root / "System" / "Sys" / "Threads" / "Job" / "Job.md", thread_note("Sys", "Job", "sys"))
     write(root / "System" / "Sys" / "Threads" / "Bare" / "notes.md", "# no thread note\n")          # a thread folder with no note
@@ -392,8 +416,6 @@ LEFT = {
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
     "jobs": "the jobs folder's logs",
     "launchd_jobs": "this Mac's launchd agents",
-    "question_needs": "the wiki questions that wait, for Waiting on you now",
-    "questions_in": "a wiki's question files",
     "repos": "each repository's own state",
     "threads": "zone names only, while view.py is missing (a half-finished update)",
     "visible_dirs": "the helper the others list folders with",
@@ -446,7 +468,7 @@ class TestWhatThePageStillReads(unittest.TestCase):
 
     def test_the_sections_that_moved_read_no_folder(self):
         found = self.readers()
-        for name in ("todo_list", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
+        for name in ("todo_list", "question_needs", "questions_in", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
                      "mixed_papers", "files_in", "open_naming", "threads_card", "build"):
             self.assertNotIn(name, found, name)
 
@@ -562,6 +584,41 @@ class TestShadowTodo(Case):
             lists = status.todo_list(self.root, self.link, TODAY, model)
         self.assertEqual([], calls)
         self.assertEqual(self.new_list, lists)
+
+
+class TestShadowQuestions(Case):
+    """The questions that wait (#650, 0.78.0): the view model finds the files in each `Needs you` folder; the page draws a
+    row for each. Held to v0.77.0's own `question_needs`, frozen."""
+
+    def setUp(self):
+        super().setUp()
+        self.old_rows = old_reads_0770(status, "QUESTIONS")["question_needs"](self.root, TODAY)
+        self.new_rows = status.question_needs(self.root, TODAY)
+
+    def test_the_rows_are_the_old_rows_except_a_link_out_of_its_zone(self):
+        keep = lambda rows: [r for r in rows if r["zone"] not in ("Linked", "Garden")]  # noqa: E731
+        self.assertEqual(keep(self.old_rows), keep(self.new_rows))
+        self.assertEqual(["Home"], sorted({r["zone"] for r in self.new_rows}))
+
+    def test_the_fixture_covers_what_the_card_reads(self):
+        asks = [r["text"] for r in self.new_rows]
+        self.assertEqual(["Cedar: Put off, due", "Cedar: Which fence?", "Fence: Thread question", "File this mail?"], sorted(asks))
+        self.assertTrue(any("data-q=" in r["act"] and "intake-answer" in r["act"] for r in self.new_rows))
+
+    def test_a_linked_zone_and_a_linked_project_or_file_hold_none_of_another_zones_questions(self):
+        self.assertTrue({"Linked", "Garden"} <= {r["zone"] for r in self.old_rows})
+        self.assertNotIn("questions", self.zone("Linked"))
+        self.assertEqual([], self.zone("Garden")["questions"])
+
+    def test_a_scoped_build_holds_the_questions_of_its_zones_alone(self):
+        scoped = view.build(self.root, scope=["Work"], only=("questions",), today=TODAY)
+        self.assertEqual([[]], [z["questions"] for z in scoped["zones"]])
+        self.assertNotIn("fence", json.dumps(scoped).lower())
+
+    def test_the_page_draws_the_rows_from_one_build_of_the_view(self):
+        model = view.build(self.root, only=("questions",), today=TODAY)
+        with mock.patch.object(status, "view_model", side_effect=AssertionError("built again")):
+            self.assertEqual(self.new_rows, status.question_needs(self.root, TODAY, model))
 
 
 class TestShadowInbox(Case):

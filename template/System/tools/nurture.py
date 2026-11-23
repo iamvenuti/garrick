@@ -507,12 +507,13 @@ def group_templates(ctx: Ctx, items: List[Item]) -> List[Item]:
     grouped: List[Item] = []
     for path, hs in sorted(hints.items()):
         for h in hs:
-            mine = found.get(path, {}).get(h["zone"], [])
+            names = set(h.get("names") or ())
+            mine = [i for i in found.get(path, {}).get(h["zone"], []) if PROJECT_WORDING_RE.match(i.message).group(1) in names]
             if len(mine) != h["projects"]:
-                continue                      # the two counts disagree: leave them one by one
+                continue                      # the findings and the hint's projects disagree: leave them one by one
             drop.update(id(i) for i in mine)
             grouped.append(Item("check", "walls", path, "repeats wording from %d projects of the %s zone" % (h["projects"], h["zone"]),
-                                "A note repeats wording from %d projects of %s" % (h["projects"], h["zone"]), "error", hint=dict(h)))
+                                "A note repeats wording from %d projects of %s" % (h["projects"], h["zone"]), "error", hint={k: v for k, v in h.items() if k != "names"}))
     return [i for i in items if id(i) not in drop] + grouped
 
 
@@ -1792,6 +1793,17 @@ def stored(item: Item) -> dict:
     return d
 
 
+def carry_holds(ctx: Ctx, rec: dict, left: List[dict]) -> None:
+    """A run that applies nothing (a list, a fix without --yes, a Checks card build) did not try a history move, so it must not
+    end the held state an earlier run of the day wrote: the held line of the same path is carried over (#661)."""
+    before = rec["standing"] if isinstance(rec.get("standing"), list) else earlier_standing(ctx)[0]
+    held = {f.get("path"): f.get("line") for f in before if isinstance(f, dict) and held_history_line(f)}
+    for f in left:
+        old = held.get(f.get("path"))
+        if old and f.get("kind") == "mechanical" and f.get("check") in ("projects", "threads") and "(held:" not in str(f.get("line")):
+            f["line"] = old
+
+
 def record_run(ctx: Ctx, scopes: List[str], items: List[Item], done: Optional[dict] = None) -> Path:
     rec = read_record(ctx)
     rec["runs"].append({"at": datetime.datetime.now().strftime("%H:%M"), "scope": scope_key(scopes),
@@ -1802,6 +1814,8 @@ def record_run(ctx: Ctx, scopes: List[str], items: List[Item], done: Optional[di
                              "repo": repo_label(ctx, ctx.repo_of(ctx.root / item.path) or ctx.root)})
     fixed_ids = {id(i) for i in fixed}
     left = [stored(i) for i in items if id(i) not in fixed_ids]
+    if done is None:
+        carry_holds(ctx, rec, left)
     rec["left"][scope_key(scopes)] = left
     rec["failed"] = sorted(set(ctx.failed))        # the last run's: a source that runs again is not left named
     settle(ctx, rec, lambda s: in_scope(Item("", "", s["path"], ""), scopes), left, whole=not scopes)
@@ -2121,19 +2135,22 @@ def hold_line(ctx: Ctx, scopes: Optional[List[str]] = None) -> str:
         rec = json.loads(ctx.root.joinpath(*REPORTS).joinpath("%s.json" % ctx.today.isoformat()).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ""
-    names = []
+    zones: Dict[str, List[str]] = {}
     for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
         if isinstance(f, dict) and held_history_line(f) and in_scope(Item("", "", str(f.get("path") or ""), ""), scopes or []):
             n = held_nights(ctx.root, ctx.today, str(f["path"]))
             if n >= HELD_NIGHTS and n % HELD_NIGHTS == 0:
                 name = Path(str(f["path"])).stem
-                if name not in names:
-                    names.append(name)
-    if not names:
-        return ""
-    if len(names) == 1:
-        return "The note %s has waited at least a week for its older entries to move." % names[0]
-    return "These notes have waited at least a week for their older entries to move: %s." % ", ".join(sorted(names))
+                here = zones.setdefault(debt_scope(str(f["path"])), [])
+                if name not in here:
+                    here.append(name)
+    lines = []
+    for scope in sorted(zones):                    # one line for each zone: a name never stands in a line with another zone's
+        names = sorted(zones[scope])
+        said = ("The note %s has waited at least a week for its older entries to move." % names[0] if len(names) == 1 else
+                "These notes have waited at least a week for their older entries to move: %s." % ", ".join(names))
+        lines.append(said if len(zones) == 1 else "In %s: %s" % (scope_said(scope)[0], said))
+    return "\n".join(lines)
 
 
 def digest(ctx: Ctx, done: dict, items: List[Item]) -> str:

@@ -116,7 +116,7 @@ class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
         self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed", "attribution", "correction",
-                          "history-foreign", "history-heading", "history-rule", "wall-template"),
+                          "history-foreign", "history-heading", "history-rule", "wall-template", "parked-pointer"),
                          fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
@@ -222,7 +222,7 @@ class TestPlainWording(unittest.TestCase):
                           "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
                           "verdict": ("later",), "decision-review": ("later", "decision-holds"), "other": ("later", "keep", "unkeep", "fix-now", "undo-bounded"),
                           "attribution": ("later",), "correction": ("later", "finish", "undo-bounded"),
-                          "history-foreign": ("later",), "history-heading": ("later",), "history-rule": ("later",), "wall-template": ()}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "history-foreign": ("later",), "history-heading": ("later",), "history-rule": ("later",), "wall-template": (), "parked-pointer": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
@@ -1657,14 +1657,15 @@ class TestEveryQuestionNamesItsSubject(unittest.TestCase):
             "history-rule": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md",
                              NOTE_LINE + " (held: it has no `---` rule under `## State of play`)"),
             "wall-template": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", TEMPLATE_LINE),
+            "parked-pointer": ("System/memory/acme-one.md", "System/memory/acme-two.md", "%(p)s: a parked thread's pointer is in the index"),
         }
         self.assertEqual(set(fq.PLAIN_KINDS), set(pairs), "a kind with plain wording needs a pair here")
         for plain, (one, two, line) in pairs.items():
-            kind = {"wall": "wall", "wall-template": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "attribution": "attribution",
+            kind = {"wall": "wall", "wall-template": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical", "parked-pointer": "parked-pointer", "attribution": "attribution",
                     "correction": "correction"}.get(plain, "judgment")
             check = {"note-long": "projects", "resume-long": "resume", "todo-long": "todo", "meeting-long": "meetings",
                      "hooks-blocked": "zones", "wall": "", "fix-failed": "x", "attribution": "meetings", "correction": "",
-                     "history-foreign": "threads", "history-heading": "threads", "history-rule": "threads", "wall-template": ""}[plain]
+                     "history-foreign": "threads", "history-heading": "threads", "history-rule": "threads", "wall-template": "", "parked-pointer": "memory"}[plain]
             sentences = []
             for path in (one, two):
                 it = item(kind, check, path, line, **({"listed": True, "message": "%s: repeats eight or more words from Personal: '%s'" % (path, REPEATED)} if plain == "wall" else {}))

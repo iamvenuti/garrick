@@ -133,6 +133,7 @@ Each question has a small label (*Private material*, *Tidy up*, *Safety check*, 
 | A correction that is not finished | *Finish the correction with my assistant* (recommended; in the background when its values are known and every copy is in the zone), *Let me open it*, *Not now* |
 | A commit hook of yours in the way of the wall check | *Add the wall check to my hook* (recommended) |
 | A wall finding | *Take it out* (recommended), *Show me both texts* |
+| A parked thread's memory pointer still in the memory index | *Tidy it with my assistant* (recommended), *Not now* |
 | A note that repeats wording from four or more projects of one other zone, when its own zone holds the same wording in four or more notes | *It is an old template*, *Show me the findings one by one* (no answer is recommended, and there is no *Not now*) |
 | A wiki question | the field for your answer, *Record as a decision* (a Meetings question only), *Later* with its day, *Close* |
 | A proposed verdict | *Accept* (recommended), *Answer it myself*, *Not now* |

@@ -104,6 +104,10 @@ NOT_HISTORY = "%s exists and is not a history file of this note"
 HEADING_DIFFERS = "%s exists and its heading differs from the one this tool writes"
 NO_RULE = "it has no `---` rule under `## State of play`"
 SHAPE_REASONS = ("it has no `## State of play` section", "the note has carriage returns")   # a note no move can ever read
+# Reasons that never clear by themselves (#661): a file or a note that cannot be read, a carriage return, a page that holds text
+# that is not an entry or a date that does not parse, a move that could not be confirmed. Only these words, in a reason of this tool.
+SHAPE_MARKS = (" cannot be read (", "it cannot be read (", " has carriage returns", " holds text that is not an entry",
+               " holds an entry whose date does not parse")
 _HOLDS = (("foreign", re.compile("^" + re.escape(NOT_HISTORY).replace("%s", "(.+)") + "$")),
           ("heading", re.compile("^" + re.escape(HEADING_DIFFERS).replace("%s", "(.+)") + "$")),
           ("rule", re.compile("^" + re.escape(NO_RULE) + "$")))
@@ -113,13 +117,15 @@ def hold_kind(why: str) -> Tuple[str, str]:
     """(what a held move is, the file it names) for the reason `compute` gave: "foreign" (a file with the quarter's name that is
     not this note's history file), "heading" (a history file whose heading differs from the one this tool writes), "rule" (no
     `---` rule under `## State of play`), "shape" (a note this tool can never read: no State of play section, carriage
-    returns or a date that does not parse), or "later" for every other reason, which clears by itself or is not the user's to
-    settle. The file is "" for the last three."""
+    returns, a history page that cannot be read or holds what is not an entry, a move that could not be confirmed), or "later" for
+    every other reason, which clears by itself. The file is "" for the last three."""
     for code, rx in _HOLDS:
         m = rx.match(why or "")
         if m:
             return code, (m.group(1) if m.groups() else "")
-    if why in SHAPE_REASONS or str(why or "").startswith("an entry's date does not parse"):
+    why = str(why or "")
+    if (why in SHAPE_REASONS or why.startswith(("an entry's date does not parse", UNCONFIRMED, "its history folder is a link"))
+            or any(m in why for m in SHAPE_MARKS)):
         return "shape", ""
     return "later", ""
 

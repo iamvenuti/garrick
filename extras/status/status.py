@@ -4764,10 +4764,10 @@ def about_garrick(version: str, ws: Optional[Path] = None, data: Optional[dict] 
     rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b></a>'
                    % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label)) for label, path, tip in links)
     return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s%s%s'
-            '<div class="setlinks">%s</div>%s</section>'
+            '<div class="launcher-row srow setlinkrow"><div class="slab"><div class="setlinks">%s</div></div><div class="sctl"></div>%s</section>'
             % (set_head("About", None), "",
                E(version), stale_band_lines(ws, data), (release_controls(*release_choice(ws, data)) + usage_control(usage_on(ws, data))) if ws is not None else "",
-               machine, rows + help_button("Report a bug, Suggest a change", "about"), help_text("about", E(ABOUT_LINKS)) + preview))
+               machine, rows, help_button("Report a bug, Suggest a change", "about") + "</div>" + help_text("about", E(ABOUT_LINKS)) + preview))
 
 
 # The links' "?" (#681): where they go, and the one thing to know before you write there.
@@ -6127,7 +6127,7 @@ dialog.settings .hiddencards .gacts{margin:4px 0 0}#view-settings .hiddencards{m
 .setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:var(--fs-meta)}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
 .setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:var(--fs-meta);margin:6px 0}
-.setlinks>.qhelp{margin:6px 2px}.setfootsay{margin:18px 0 0;font-size:var(--fs-meta);color:var(--muted)}.setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:var(--fs-meta);font-weight:600}.setlink small{display:block;font-size:var(--fs-meta);color:var(--muted)}
+.setlinkrow{align-items:start}.setlinkrow>.qhelp{margin-top:12px!important}.setfold:not([open])>:not(summary){display:none}.setfootsay{margin:18px 0 0;font-size:var(--fs-meta);color:var(--muted)}.setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:var(--fs-meta);font-weight:600}.setlink small{display:block;font-size:var(--fs-meta);color:var(--muted)}
 /* Settings › Notifications: the notices as rows, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
 #notify-settings .nslab{margin:6px 0 2px;font-weight:560;color:var(--ink2)}

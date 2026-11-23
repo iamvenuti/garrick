@@ -2691,12 +2691,12 @@ sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
 })();
 """
 
-# Settings › Menu bar's controls, for any page that carries menu_settings():
-# shown only inside the app, which answers them. Shared with pages built
-# elsewhere, which send the menu's rows their own way.
+# Settings' menu rows (Opening work) and Ask box rows (Ask), for any page that carries menu_settings() and
+# askbox_settings() (#682): shown only inside the app, which answers them, and the Ask section with them. Shared with
+# pages built elsewhere, which send the menu's rows their own way.
 MENU_SETTINGS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
+var box=document.getElementById('menu-settings');if(!host||!box)return;['menu-settings','askbox-settings','ask-settings'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=false});
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var LOGIN='Starts the app when you log in, with the window as you left it',show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
 var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app',
@@ -4386,7 +4386,7 @@ SETRG_JS = getattr(settings_mod("settings_readguard"), "JS", "")
 
 
 def machine_settings(ws: Path, data: Optional[dict] = None) -> str:
-    """Settings › This machine (#621): the role of this computer in words, and *Change…* in the app."""
+    """Settings › About › This computer (#621, #682): one row, the role of this computer in words, and *Change…* in the app."""
     guard = settings_mod("settings_guard")
     if guard is None:
         return ""
@@ -4411,15 +4411,17 @@ def read_guard_block(ws: Path, data: Optional[dict] = None) -> str:
 
 
 def walls_settings(ws: Path, folder: Optional[Path] = None, data: Optional[dict] = None) -> str:
-    """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
-    "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
-    nothing and runs nothing: the assistant asks for the yes and runs scaffold.py. No command and no code on the row. Nothing without
-    zones. The note about flags read from the Parties and Zones tables moves here with the rows. The read guard is its own section,
-    after this one (#673)."""
-    data = _data(ws, data, "walls")
+    """Settings › Walls (#561, #682): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that
+    hands "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
+    nothing and runs nothing: the assistant asks for the yes and runs scaffold.py. No command and no code on the row. The
+    note about flags read from the Parties and Zones tables stays with the rows. The read guard is a part of this section,
+    under its own sub-heading after the zones (read_guard_block()). Nothing where there are neither zones nor a read guard;
+    with no zones the section is the app's only, since the read guard is."""
+    data = _data(ws, data, "walls", "guard", "machine")
     ctx = data.get("walls") or {}
     flags = ctx.get("flags") or {}
-    if not flags:
+    guard = read_guard_block(ws, data)
+    if not flags and not guard:
         return ""
     where = str(folder or ws)
     rows = ""
@@ -4431,14 +4433,15 @@ def walls_settings(ws: Path, folder: Optional[Path] = None, data: Optional[dict]
                     E("Hand “%s” to your assistant, which asks you before it changes anything" % ask), E("Change %s: ask my assistant to %s" % (z, ask[0].lower() + ask[1:]))))
     note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
             'accepted.</p>' if ctx.get("pending") else "")
-    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s</section>'
-            % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
-               help_text("walls", "<i>Change…</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note))
+    return ('<section class="setsec%s" id="walls-settings">%s%s%s%s%s</section>'
+            % ("" if flags else " apponly", set_head("Walls", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
+               help_text("walls", "<i>Change…</i> asks your assistant to make the change. It asks you first, then makes it."),
+               '<ul class="wallrows">%s</ul>' % rows if rows else "", note, guard))
 
 
 def read_guard_section(ws: Path, data: Optional[dict] = None) -> str:
-    """Settings › Read guard (#674): its own section, after Which zones are walled, so the list of sections names it (#673). In the
-    app only; empty where the read guard cannot be read."""
+    """Settings › Walls › Read guard (#674, #682): a part of Walls since 0.80.0, which walls_settings() draws. Kept for a
+    caller that asks for the part alone."""
     return read_guard_block(ws, data)
 
 
@@ -4463,11 +4466,9 @@ def hotkey_field(field: str, placeholder: str, name: str) -> str:
 
 
 def menu_settings() -> str:
-    """Settings › Menu bar, shown in Garrick.app
-    only: the icon or a panel at a screen edge, opening at login, the
-    shortcut that opens either, the one that opens the Ask box, whether it
-    answers, and the dictation the box starts once it opens. The app keeps
-    them all, so they hold when the window is closed."""
+    """Settings › Opening work's menu rows (#682), shown in Garrick.app only: the icon or a panel at a screen edge, opening at
+    login, the shortcut that opens either, and the Finder menu. The app keeps them all, so they hold when the window is
+    closed. A part of Opening work, after the cards' rows: in a browser the cards' rows show and these do not."""
     def R(label: str, control: str, hidden: bool = False) -> str:
         return set_row(label, control, attrs='style="display:none"' if hidden else "")
     rows = (
@@ -4478,23 +4479,30 @@ def menu_settings() -> str:
         R(row_label("Open at login", MENU_LOGIN, "menu-login", "menu-login-note"), '<input type="checkbox" id="menu-login">') +
         R(row_label("Hotkey", "Opens the menu or the panel from any app", "menu-hotkey", "menu-hotkey-note"),
           hotkey_field("menu-hotkey", "Click, then press keys", "Hotkey")) +
-        R(row_label("Answer in the Ask box", "Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel&#39;s field opens your assistant", "menu-ask"),
-          '<input type="checkbox" id="menu-ask">', True) +
-        R(row_label("Ask hotkey", "Opens the Ask box from any app", "menu-askkey", "menu-askkey-note"), hotkey_field("menu-askkey", "None", "Ask hotkey"), True) +
-        R('<span class="launcher-choice"><span>Close the Ask box with<small id="menu-askclose-note">One way always stays on</small></span></span>',
-          '<label class="sopt"><input type="checkbox" id="menu-askclose-esc"> Escape</label>'
-          '<label class="sopt"><input type="checkbox" id="menu-askclose-click"> A click outside it</label>', True) +
-        R(row_label("Then start dictation", "Once the Ask box opens, start dictation in it too", "menu-dictation", "menu-dictation-note"),
-          '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
-          '<option value="fn">Press Fn</option><option value="fn2">Press Fn twice</option><option value="key">Press a shortcut</option></select>', True) +
-        R(row_label("Dictation shortcut", "Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys", "menu-dictkey", "menu-dictkey-note"),
-          hotkey_field("menu-dictkey", "Click, then press keys", "Dictation shortcut"), True) +
         R(row_label("Finder menu", "Right-click a project or thread folder in Finder to open it from there", "menu-finder", "menu-finder-note"),
           '<button class="act sm" type="button" id="menu-finder">Open Login Items &amp; Extensions</button>', True))
-    return ('<section class="setsec apponly" id="menu-settings" hidden>' + set_head("Menu bar", "menu", 'Keep your live projects '
-            'one click away from any app: in the menu bar, or in a panel at the edge of the screen.') + help_text("menu", 'A menu of the live '
-            'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
-            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.') + rows + '</section>')
+    return '<div class="setpart menuset apponly" id="menu-settings" hidden>' + rows + '</div>'
+
+
+def askbox_settings() -> str:
+    """Settings › Ask's own rows (#682), shown in Garrick.app only: whether the Ask box answers, its shortcut, how it closes,
+    and the dictation it starts once it opens. They stood in Menu bar until 0.80.0; the controls are the same, so
+    MENU_SETTINGS_JS fills and saves them as it did."""
+    def R(label: str, control: str) -> str:
+        return set_row(label, control, attrs='style="display:none"')
+    rows = (
+        R(row_label("Answer in the Ask box", "Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel&#39;s field opens your assistant", "menu-ask"),
+          '<input type="checkbox" id="menu-ask">') +
+        R(row_label("Ask hotkey", "Opens the Ask box from any app", "menu-askkey", "menu-askkey-note"), hotkey_field("menu-askkey", "None", "Ask hotkey")) +
+        R('<span class="launcher-choice"><span>Close the Ask box with<small id="menu-askclose-note">One way always stays on</small></span></span>',
+          '<label class="sopt"><input type="checkbox" id="menu-askclose-esc"> Escape</label>'
+          '<label class="sopt"><input type="checkbox" id="menu-askclose-click"> A click outside it</label>') +
+        R(row_label("Then start dictation", "Once the Ask box opens, start dictation in it too", "menu-dictation", "menu-dictation-note"),
+          '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
+          '<option value="fn">Press Fn</option><option value="fn2">Press Fn twice</option><option value="key">Press a shortcut</option></select>') +
+        R(row_label("Dictation shortcut", "Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys", "menu-dictkey", "menu-dictkey-note"),
+          hotkey_field("menu-dictkey", "Click, then press keys", "Dictation shortcut")))
+    return '<div class="setpart menuset apponly" id="askbox-settings" hidden>' + rows + '</div>'
 
 
 # What Open at login says before the app has said that it cannot (#673): the way it works, never a refusal.
@@ -4533,21 +4541,27 @@ TIER_NAMES = {"haiku": "Small", "sonnet": "Medium", "opus": "Large"}
 NOT_SET_UP = "Set Telegram up first. Its choices apply once it runs."
 
 
+TELEGRAM_DOWN = "Telegram is not connected. Ask your assistant to connect it."
+
+
 def telegram_service_row(ws: Optional[Path] = None, data: Optional[dict] = None) -> Tuple[str, bool]:
-    """The Telegram receiver's state line, first in its block, and whether the channel is off. While it is off, a
-    *Set up Telegram* button hands the setup to the assistant, as Process the Inbox does (#581)."""
+    """The Telegram receiver's state line, first in its part, and whether the channel is off. The line shows only when
+    something is wrong (#682): while the receiver runs there is none. While it is off, a *Set up Telegram* button hands the
+    setup to the assistant, as Process the Inbox does (#581)."""
     row = ((_data(ws, data, "channels").get("channels") or {}) if ws is not None or data is not None else {}).get("telegram")
     if not row:
         return "", False
     off = row["state"] == "off"
+    if row["state"] == "running":
+        return "", off
     button = request_button("Set up Telegram", "set up Telegram", ws, "act sm") if ws is not None and row["state"] in ("off", "unpaired") else ""
-    return ('<p class="chnote" id="telegram-service" data-state="%s">%s%s</p>' % (E(row["state"]), E(row["said"]), (" " + button) if button else ""),
+    return ('<p class="chnote" id="telegram-service" data-state="%s">%s%s</p>' % (E(row["state"]), E(TELEGRAM_DOWN), (" " + button) if button else ""),
             off)
 
 
 def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
-    """The actions waiting for your yes, each with what it would do, where, and how long it has left. Its own heading,
-    outside both channels' blocks: the list covers Ask and Telegram."""
+    """The actions waiting for your yes, each with what it would do, where, and how long it has left. A part of Ask, after
+    Telegram: the list covers Ask and Telegram. Nothing at all when nothing waits (#682): it is a report, not a setting."""
     if ws is None and data is None:               # asked for by itself (a caller with no workspace): the hold module's own list
         try:
             rows = channel_mod("hold").listing()
@@ -4555,10 +4569,8 @@ def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
             return ""
     else:
         rows = (_data(ws, data, "channels").get("channels") or {}).get("held")
-    if rows is None:
-        return ""
     if not rows:
-        return '<div id="held-actions"><p class="chnote">Nothing is waiting for your yes.</p></div>'
+        return ""
     items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
                                                                        E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
                     for r in rows)
@@ -4578,9 +4590,9 @@ SIZE_SAID = ("A larger size and more effort give fuller answers, and take longer
 
 
 def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
-    """Settings › Channels (#571): the heading, then one section each for Ask, Telegram and what waits for your yes, so each has
-    its own entry in the list of sections (#673). Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections
-    that save are. Empty where the channels cannot be read."""
+    """Settings › Ask's channel parts (#571, #682): Ask's model size, effort and how far it may go, then a part headed
+    Telegram with its own, then what waits for your yes when something does. In the app only, as the sections that save
+    are. Empty where the channels cannot be read. ask_settings() puts them in one part, after the Ask box rows."""
     ch = _data(ws, data, "channels").get("channels")
     if not ch:
         return []
@@ -4604,33 +4616,46 @@ def channels_sections(ws: Path, data: Optional[dict] = None) -> List[str]:
         body += select(channel, "autonomy", ch["levels"][channel], LEVEL_NAMES, "How far it may go", off)
         body += '<ul class="chlevels" data-for="%s-levels">%s</ul>' % (
             channel, "".join("<li><b>%s</b> %s</li>" % (E(LEVEL_NAMES[v]), E(LEVEL_SAID[v])) for v in ch["levels"][channel]))
-        return ('<section class="setsec setsub apponly chsec" id="channels-%s" hidden><h3>%s</h3>%s</section>'
-                % (channel, E(CHANNEL_NAMES[channel]), body))
+        head = '<h4 class="setsubh">%s</h4>' % E(CHANNEL_NAMES[channel]) if channel != "ask" else ""
+        return '<div class="setpart chblock" id="channels-%s">%s%s</div>' % (channel, head, body)
     limit = ""
     if not cap.get("ok"):
         limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
                  % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
-    lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
     held = held_list(ws, {"channels": ch})
-    head = ('<section class="setsec apponly chsec" id="channels-settings" hidden>%s%s%s</section>'
-            % (set_head("Channels", "channels", lede),
-               help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking you first; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
-                         "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
-                         "walled zone sent to Telegram is held on Telegram&#39;s servers."), limit))
-    out = [head] + [block(c) for c in ch["names"]]
+    out = ([limit] if limit else []) + [block(c) for c in ch["names"]]
     if held:
-        out.append('<section class="setsec setsub apponly chsec" id="channels-held" hidden><h3>Waiting for your yes</h3>%s</section>' % held)
+        out.append('<div class="setpart" id="channels-held"><h4 class="setsubh">Waiting for your yes</h4>%s</div>' % held)
     return out
 
 
 def channels_settings(ws: Path, data: Optional[dict] = None) -> str:
-    """Settings › Channels, as one piece of markup: channels_sections() joined."""
-    return "".join(channels_sections(ws, data))
+    """Settings › Ask's channel parts, as one piece of markup: channels_sections() in their part, hidden until the app
+    shows it (CHANNELS_JS)."""
+    parts = channels_sections(ws, data)
+    return '<div class="setpart apponly chsec" id="channels-settings" hidden>%s</div>' % "".join(parts) if parts else ""
+
+
+# The line under Ask, and its "?": the channels' help, which covers the Ask box and Telegram alike.
+CHANNELS_HELP = ("Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking you first; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+                 "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
+                 "walled zone sent to Telegram is held on Telegram&#39;s servers.")
+
+
+def ask_settings(ws: Path, data: Optional[dict] = None) -> str:
+    """Settings › Ask (#682): one section for the Ask box and Telegram. The Ask box rows first (askbox_settings()), then
+    the channels' parts (channels_settings()): Ask's model size, effort and how far it may go, then a sub-heading
+    Telegram with its own, then what waits for your yes, only when something does. Every row needs the app, so the
+    section shows only there (MENU_SETTINGS_JS, CHANNELS_JS)."""
+    return ('<section class="setsec apponly" id="ask-settings" hidden>%s%s%s%s</section>'
+            % (set_head("Ask", "channels", "Ask Garrick a question from any app, or from a Telegram chat."),
+               help_text("channels", CHANNELS_HELP), askbox_settings(), channels_settings(ws, data)))
 
 
 CHANNELS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var boxes=document.querySelectorAll('.chsec');if(!host||!boxes.length)return;boxes.forEach(function(b){b.hidden=false});
+var ask=document.getElementById('ask-settings');if(ask)ask.hidden=false;
 function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
 host.postMessage({act:{verb:'settings',channels:o}})}
 document.querySelectorAll('.chsec select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
@@ -4740,8 +4765,9 @@ def stale_band_lines(ws: Optional[Path], data: Optional[dict] = None) -> str:
     return "".join('<p class="setver" id="band-stale">%s</p>' % E(line) for line in lines)
 
 
-def about_garrick(version: str, ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
-    """Settings › About Garrick (#227): the release this is, and three links
+def about_garrick(version: str, ws: Optional[Path] = None, data: Optional[dict] = None, machine: str = "", preview: str = "") -> str:
+    """Settings › About (#227, #682): the release this is, the check for updates, the count of cards, this computer's row
+    (`machine`), three links, and the preview features as a closed fold at the end (`preview`). The links go
     to Garrick's GitHub page, opened in the browser, where nothing is sent
     until you submit it yourself: the bug form, with the version filled in;
     an idea; and the release notes. A way past the wall check is reported
@@ -4755,13 +4781,14 @@ def about_garrick(version: str, ws: Optional[Path] = None, data: Optional[dict] 
              ("Release notes", "/releases", "")]
     rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b></a>'
                    % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label)) for label, path, tip in links)
-    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s%s'
-            '<div class="setlinks">%s</div></section>'
-            % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
+    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s%s%s'
+            '<div class="setlinks">%s</div>%s</section>'
+            % (set_head("About", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), stale_band_lines(ws, data), (release_controls(*release_choice(ws, data)) + usage_control(usage_on(ws, data))) if ws is not None else "", rows))
+               E(version), stale_band_lines(ws, data), (release_controls(*release_choice(ws, data)) + usage_control(usage_on(ws, data))) if ws is not None else "",
+               machine, rows, preview))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -4790,8 +4817,8 @@ def desk_agent(ws: Path, data: Optional[dict] = None) -> str:
 
 
 def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optional[str]]] = None,
-                     agent: Optional[str] = None) -> str:
-    """Settings › Opening a thread: the note's own link, *Open the note* in
+                     agent: Optional[str] = None, more: str = "") -> str:
+    """Settings › Opening work (#682): the note's own link, *Open the note* in
     the app macOS opens a .md file in, whatever is installed (#318), then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
     (what clicking a thread's name does), each with its card icon. Explore's
@@ -4803,7 +4830,8 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
     still writes nothing. `agent`, given where the desk can open cmux tabs,
     adds which assistant a tab starts under Open in cmux (#279); the app
     saves that one in System/desk.json when Settings closes. Each row is a name and, in the
-    control column, its checkbox and its radio, under the heads *Show on cards* and *Click a name to* (#673, #675)."""
+    control column, its checkbox and its radio, under the heads *Show on cards* and *Click a name to* (#673, #675). `more` is
+    the menu's rows (menu_settings()), a part after the cards' rows that only the app shows."""
     why = launcher_state() if why is None else why
     rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
     rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
@@ -4831,118 +4859,117 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
                                           for k, label in DESK_AGENTS), "apponly launcher-sub", 'id="desk-agent-row"'))
     head = ('<div class="srow shead" aria-hidden="true"><div class="slab"></div><div class="sctl"><span class="shcol">Show on cards</span>'
             '<span class="shcol">Click a name to</span></div></div>')
-    return ('<section class="setsec" id="launcher-settings">%s%s%s%s</section>'
-            % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
-                        "thread&#39;s name does."), help_text("launchers", 'Tick what project and thread cards offer; Default is what '
+    return ('<section class="setsec" id="launcher-settings">%s%s%s%s%s</section>'
+            % (set_head("Opening work", "launchers", "Where a project or thread opens when you click it."), help_text("launchers", 'Tick what project and thread cards offer; Default is what '
                'clicking a thread&#39;s name does. A greyed row says why it cannot work here. Preview reads the note without opening '
                'anything. Saved as you change it.'),
-               head, "".join(html)))
+               head, "".join(html), more))
 
 
 def follow_settings() -> str:
-    """Settings › Explore: whether the graph follows the zone you are reading
-    on the Threads card (#142, FOLLOW_JS), on until switched off. Kept in this
-    window, as the graph's other choices are, so it is not known when the page
-    is built; only on a page with the graph. Explore's colours are no switch
-    here: every place takes its kinds' colours (#292)."""
-    row = set_row(row_label("Follow the zone in view", "Explore shows the zone you are reading on the Threads card", "graph-follow"),
-                  '<input type="checkbox" id="graph-follow" checked>')
-    return ('<section class="setsec" id="follow-settings">%s%s%s</section>'
-            % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading."),
-               help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
-               'switches to it once it has filled the window for a moment. With the zones side by side, point at a column or open a '
-               'project or thread in it. The switch is for this page only: the zone you pick in Explore&#39;s drop-down still leads '
-               'the card and is what the page opens on. Picking a wiki pauses it until the page reloads. Kept in this window.'),
-               row))
+    """Settings › Look: whether the graph follows the zone you are reading on the Threads card (#142, FOLLOW_JS), one row
+    since 0.80.0 (#682), on until switched off. Kept in this window, as the graph's other choices are, so it is not known
+    when the page is built; only on a page with the graph."""
+    return ('<div class="setpart" id="follow-settings">%s</div>'
+            % set_row(row_label("Follow the zone in view", "Explore shows the zone you are reading on the Threads card", "graph-follow"),
+                      '<input type="checkbox" id="graph-follow" checked>'))
+
+
+PREVIEW_LINE = "Not released yet. Ask your assistant to switch one on."
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
-    """Settings › Preview features: each flag's name and whether it is on,
-    what it does as the row's tooltip (#227), since it is switched in a file. The file is named
-    behind the "?" and in the tooltip, not on the page (#675)."""
-    def chip(k: str, on: bool) -> str:
-        return "on" if on else "off"
+    """Settings › About › Preview features (#682): a closed fold at the end of About, with one line, each flag's name and
+    whether it is on, and what it does as the row's tooltip (#227). Where a flag is switched on is in the docs, not here."""
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
-                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
-    return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
-            % (set_head("Preview features", "preview", "Off until you ask your assistant to switch one on."), rows,
-               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Each is off until it is '
-               'switched on in <code>System/garrick-flags.json</code>: ask your assistant to switch one on, and it rebuilds the page. '
-               'Point at a feature for what it does.')))
+                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", "on" if on else "off") for k, on in flags.items())
+    return ('<details class="setfold" id="preview-settings"><summary>Preview features</summary><p class="setlede">%s</p>%s</details>'
+            % (E(PREVIEW_LINE), rows))
 
 
-# The foot of Settings, under the last section: the cards hidden in this
-# window, when there are any, then Reset view, its explanation as its tooltip
-# and behind its "?".
+# Reset view, the last row of Look (#682): the cards hidden in this window, when there are any, then Reset view, its
+# explanation as its tooltip and behind its "?".
 VIEW_HELP = "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."
-VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="hidden-cards" hidden></div>'
+VIEW = ('<div class="setpart" id="view-settings"><div class="hiddencards" id="hidden-cards" hidden></div>'
         '<div class="launcher-row srow"><div class="slab"><label class="launcher-choice" for="reset-view"><span>Reset view'
         '<small>Show every card again, in its first place</small></span></label></div><div class="sctl">'
-        '<button class="act lg" type="button" id="reset-view" title="%s">Reset view</button></div>%s</div>%s</div></div>'
+        '<button class="act lg" type="button" id="reset-view" title="%s">Reset view</button></div>%s</div>%s</div>'
         % (E(VIEW_HELP + " Reset view puts every card back in place and shown, in the order this Garrick builds, "
                          "folds, graph and filter as built."),
            help_button("Reset view", "view"), help_text("view", E(VIEW_HELP))))
 
 
-# Settings is one column of sections, read in order and grouped by what
-# people come for (#205), with the list of them beside it: a click there
-# brings a section into view, and the one being read is marked as the column
-# scrolls (JS). Each section is filed under a group's key in settings(). The group names are short, so each fits on one line of
-# the list (#673).
-SET_GROUPS = (("look", "Look and open"), ("tell", "Notices"), ("keep", "Older material"), ("walls", "Walls"), ("machine", "This computer"),
-              ("about", "About"))
-SET_SECTION = re.compile(r'<section class="setsec( setsub)?[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
+def look_settings(zones: str, follow: str, colours: str) -> str:
+    """Settings › Look (#682): a colour and an icon for each zone (zone_settings(), in the app only), whether the graph
+    follows the zone you read (follow_settings(), with the graph), the graph's colours as a closed fold
+    (graph_colour_settings(), in the app only), and Reset view last. Reset view is always there, so no host leaves the
+    section with a heading and no row."""
+    return ('<section class="setsec" id="look-settings">%s%s%s%s%s%s</section>'
+            % (set_head("Look", "zones", "Colours and icons, so you can tell zones apart."),
+               help_text("zones", 'A colour and an icon for each zone, '
+               'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
+               'Saved for every viewer when you close Settings, and kept with your workspace.'), zones, follow, colours, VIEW))
 
 
-def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
-    """The list of Settings' sections, by group, each a link named as the
-    section's heading: every section that has a heading, a part of one (Ask, Telegram, what waits for your yes, the read guard)
-    indented under the section it belongs to (#673). A section a host hides (.apponly in a
-    browser, Menu bar until the app answers) is taken out of the list by JS when Settings
-    opens, and a group with none left goes with it."""
-    out = ""
-    for key, title, secs in groups:
-        items = "".join('<li%s><a href="#%s" data-setgo="%s">%s</a></li>' % (' class="setsub"' if m.group(1) else "", m.group(2), m.group(2), m.group(3))
-                        for m in (SET_SECTION.match(h) for h in secs) if m)
-        if items:
-            out += ('<div class="setnavgrp"><p class="setnavh" id="sn-%s">%s</p><ul aria-labelledby="sn-%s">%s</ul></div>'
-                    % (key, E(title), key, items))
-    return '<nav class="setnav" aria-label="Settings sections">%s</nav>' % out
+# Settings is one column of seven sections (#682), in the order people come back to them, with the list of them beside it:
+# a click there brings a section into view, and the one being read is marked as the column scrolls (JS). No group
+# headings: each section is one entry. A part of a section (the menu's rows, the Ask box, Telegram, the read guard,
+# this computer) is a part, not a section, and has no entry of its own.
+SET_SECTIONS = (("launcher-settings", "Opening work"), ("ask-settings", "Ask"), ("notify-settings", "Notifications"),
+                ("memory-settings", "Older pages"), ("walls-settings", "Walls"), ("look-settings", "Look"), ("about-settings", "About"))
+SET_SECTION = re.compile(r'<section class="setsec[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
+# Every anchor that opened Settings at a section in 0.79.0 (and each section's own), to the section that holds those
+# rows now. The part keeps its old id where it is still there, so the page scrolls to the rows themselves (JS).
+SET_ANCHORS = {"launcher-settings": "launcher-settings", "menu-settings": "launcher-settings",
+               "ask-settings": "ask-settings", "askbox-settings": "ask-settings", "channels-settings": "ask-settings",
+               "channels-ask": "ask-settings", "channels-telegram": "ask-settings", "channels-held": "ask-settings",
+               "notify-settings": "notify-settings", "memory-settings": "memory-settings",
+               "walls-settings": "walls-settings", "readguard-settings": "walls-settings",
+               "look-settings": "look-settings", "zone-settings": "look-settings", "follow-settings": "look-settings",
+               "graph-colour-settings": "look-settings", "view-settings": "look-settings",
+               "about-settings": "about-settings", "release-settings": "about-settings", "usage-settings": "about-settings",
+               "machine-settings": "about-settings", "preview-settings": "about-settings"}
+
+
+def settings_nav(sections: List[str]) -> str:
+    """The list of Settings' sections, one link for each section that has a heading, named as its heading, and no group
+    heading (#682). A section a host hides (.apponly in a browser, Ask until the app answers) is taken out of the list by
+    JS when Settings opens."""
+    items = "".join('<li><a href="#%s" data-setgo="%s">%s</a></li>' % (m.group(1), m.group(1), m.group(2))
+                    for m in (SET_SECTION.match(h) for h in sections) if m)
+    return '<nav class="setnav" aria-label="Settings sections"><ul>%s</ul></nav>' % items
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              link: Optional["Links"] = None,
              kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
-    """The Settings dialog: which apps to open
-    projects in, whether Explore follows the zone in view (with the graph),
-    each zone's colour and icon, the colour of each kind of note Explore
-    draws (`kinds`, with the graph), the menu bar; which notices
-    this Mac shows; how older material fades (`link` opens the full list);
-    About Garrick, and the preview features with which are switched on;
-    Reset view at the foot. Each section shows its choices and one line at
-    most saying what they are for; how a feature works is behind its "?"
-    and in docs/extras/status-page.md (#227). Every setting row is one grid (#673)."""
+    """The Settings dialog, seven sections (#682): Opening work (the apps on each card, the default, and the menu's rows),
+    Ask (the Ask box, then Telegram, then what waits for your yes when something does), Notifications, Older pages (how
+    older material fades; `link` opens the full list), Walls (each zone, then the read guard), Look (each zone's colour
+    and icon, whether the graph follows the zone, the graph's colours with the graph, Reset view), and About (the release,
+    updates, the count of cards, this computer, the links, the preview features). Each section shows its choices and one
+    line at most saying what they are for; how a feature works is behind its "?" and in docs/extras/status-page.md
+    (#227). Every setting row is one grid (#673). SET_ANCHORS goes with the page, so an old link lands."""
     data = settings_data(ws)
     agent = desk_agent(ws, data) if "cmux" in installed and CMUXLIB.is_file() else None
-    filed = {"look": [launcher_choices(installed, agent=agent),
-                      follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
-                      graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
-             "tell": [notify_settings(ws, CMUXLIB.is_file(), data)] + channels_sections(ws, data),
-             "keep": [memory_settings(ws, link, data)],
-             "walls": [walls_settings(ws, None, data), read_guard_section(ws, data)],
-             "machine": [machine_settings(ws, data)],
-             "about": [about_garrick(release_number(ws, data), ws, data), preview_section(preview_flags(ws, data))]}
+    sections = [launcher_choices(installed, agent=agent, more=menu_settings()),
+                ask_settings(ws, data),
+                notify_settings(ws, CMUXLIB.is_file(), data),
+                memory_settings(ws, link, data),
+                walls_settings(ws, None, data),
+                look_settings(zone_settings(list(zones), styles or {}), follow_settings() if graph else "",
+                              graph_colour_settings(kinds or [], kind_styles or {}) if graph else ""),
+                about_garrick(release_number(ws, data), ws, data, machine_settings(ws, data), preview_section(preview_flags(ws, data)))]
     helper = settings_mod("settings_help")          # a "?" on each setting row, beside its section's (#621)
+    sections = [h for h in sections if h]
     if helper is not None:
-        filed = {key: [helper.with_row_help(h, help_button, help_text) for h in secs] for key, secs in filed.items()}
-    groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
-    main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
-                   % (key, key, E(title), "".join(secs)) for key, title, secs in groups if secs)
+        sections = [helper.with_row_help(h, help_button, help_text) for h in sections]
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title"><div class="sethead">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2></div><div class="setbody">%s'
-            '<div class="setmain" id="settings-main">%s%s</div></div></dialog>' % (settings_nav(groups), main, VIEW))
+            '<div class="setmain" id="settings-main">%s</div></div><script type="application/json" id="settings-anchors">%s</script></dialog>'
+            % (settings_nav(sections), "".join(sections), script_json(SET_ANCHORS)))
 
 
 # Explore's Preview (#219, NOTE_JS) is switched on and off beside them, in the
@@ -5117,7 +5144,7 @@ def swatch_pick(kind: str, label: str, owner: str, chosen: Optional[str], names,
 
 
 def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
-    """Settings › Zones: a row per zone, its name drawn as chosen, a colour
+    """Settings › Look's zones (#682): a row per zone, its name drawn as chosen, a colour
     and an icon. In the app only: what is chosen is saved for every viewer,
     and for the cmux desk, through page_action.py when Settings closes."""
     if not zones:
@@ -5130,12 +5157,8 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
                            pick("col", z, styles.get(z, {}).get("color")) + pick("ico", z, styles.get(z, {}).get("icon")),
                            "zrow", 'data-zone="%s"' % E(z))
                    for z in zones)
-    return ('<section class="setsec apponly" id="zone-settings">%s%s%s<script type="application/json" id="zone-icons">%s</script></section>'
-            % (set_head("Zones", "zones", "A colour and an icon for each zone, so you can tell them apart at a glance."),
-               help_text("zones", 'A colour and an icon for each zone, '
-               'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
-               'Saved for every viewer when you close Settings, and kept with your '
-               'workspace.'), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+    return ('<div class="setpart apponly" id="zone-settings">%s<script type="application/json" id="zone-icons">%s</script></div>'
+            % (rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
 
 
 # Settings › Graph colours (#291): a colour for each kind of note Explore
@@ -5169,7 +5192,7 @@ def graph_colours(keys: List[str], shipped: List[str], chosen: Dict[str, str]) -
 
 
 def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, str]) -> str:
-    """Settings › Graph colours (#291): a row for each kind the legend can
+    """Settings › Look › Graph colours (#291, #682), a closed fold: a row for each kind the legend can
     show, (key, as the legend says it, shipped colour), its dot drawn as
     chosen, and the palette Settings › Zones uses, Default first; Reset
     colours puts every kind back. In the app only: what is chosen is saved
@@ -5182,14 +5205,8 @@ def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, s
                            swatch_pick("col", "Colour", said, chosen.get(k), GRAPH_COLOURS, "Default", dot(c), zone_swatch),
                            "gkrow", 'data-kind="%s" data-def="%s"' % (E(k), E(c)))
                    for k, said, c in kinds)
-    return ('<section class="setsec apponly" id="graph-colour-settings">%s%s%s<div class="gacts">'
-            '<button class="act lg" type="button" id="graph-reset">Reset colours</button></div></section>'
-            % (set_head("Graph colours", "graphcol", "A colour for each kind of note in Explore."),
-               help_text("graphcol", 'Each kind of note in Explore&#39;s legend takes the colour chosen here, in its legend dot '
-               'and on the graph, with a shade for the light theme and one for the dark. <em>Default</em> keeps the colour Garrick '
-               'ships. Red, Crimson and Amber are not offered, since the rings for a late next action use them. Saved for every '
-               'viewer when you close Settings, and kept with your workspace.'),
-               rows))
+    return ('<details class="setfold apponly" id="graph-colour-settings"><summary>Graph colours</summary>%s<div class="gacts">'
+            '<button class="act lg" type="button" id="graph-reset">Reset colours</button></div></details>' % rows)
 
 
 def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -> str:
@@ -6051,11 +6068,11 @@ justify-content:center;font-size:var(--fs-h2);line-height:1;border:0;background:
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
 dialog.settings .setsec{margin-top:26px}dialog.settings .setsec:first-of-type{margin-top:0}
 .launcher-choice{display:flex;align-items:center;gap:12px;padding:3px 0;font-size:var(--fs-meta)}
-#menu-settings .menu-style{width:100%}#menu-settings .hotkey{position:relative;display:block;width:100%}
-#menu-settings .hotkey input{width:100%;box-sizing:border-box;padding-right:26px}
-#menu-settings .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
-#menu-settings .hotkey .act::after{content:"\00d7";font-size:var(--fs-body)}#menu-settings .hotkey .act:hover{background:var(--line);color:var(--ink)}
-#menu-settings .hotkey input:placeholder-shown+.act{display:none}
+.menuset .menu-style{width:100%}.menuset .hotkey{position:relative;display:block;width:100%}
+.menuset .hotkey input{width:100%;box-sizing:border-box;padding-right:26px}
+.menuset .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
+.menuset .hotkey .act::after{content:"\00d7";font-size:var(--fs-body)}.menuset .hotkey .act:hover{background:var(--line);color:var(--ink)}
+.menuset .hotkey input:placeholder-shown+.act{display:none}
 .launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.lico{display:none}
 .appicons .lico{display:inline-block;flex:none;width:20px;height:20px;margin-left:-4px;background:var(--ic) center/20px no-repeat}.appicons svg.lico{width:16px;height:16px;margin:0 2px 0 -2px;color:var(--ink2)}.launcher-choice small{display:block;font-size:var(--fs-meta);color:var(--muted)}
 .launcher-choice input:disabled~span{color:var(--muted)}
@@ -6074,26 +6091,30 @@ dialog.settings[open]{display:flex;flex-direction:column}
 .sethead{flex:none;padding:16px 56px 12px 24px;border-bottom:1px solid var(--line)}
 .setbody{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:212px minmax(0,1fr)}
 .setnav{position:relative;overflow:auto;padding:14px 12px 18px 16px;border-right:1px solid var(--line)}
-.setnavgrp+.setnavgrp{margin-top:14px}.setnavh{margin:0 0 4px 8px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .setnav ul{list-style:none;margin:0;padding:0}.setnav a{display:block;padding:5px 8px;border-radius:7px;font-size:var(--fs-meta);color:var(--ink2);text-decoration:none}
 .setnav a:hover{background:var(--wash);color:var(--ink)}.setnav a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.setnav li.setsub a{padding-left:22px}.setnav a[aria-current]{background:var(--wash);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
+.setnav a[aria-current]{background:var(--wash);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
 .setmain{position:relative;overflow:auto;overscroll-behavior:contain;padding:18px 32px 28px}.setmain>*{max-width:46rem}
-.setgroup+.setgroup{margin-top:30px;padding-top:16px;border-top:1px solid var(--line)}
-.setgrp{margin:0 0 12px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+/* a part of a section (#682): the menu's rows, the Ask box, Telegram, the read guard, this computer; a sub-heading for the
+   parts that have one, and a closed fold for Graph colours and Preview features */
+.setpart{margin-top:10px}.setpart[hidden]{display:none}.setpart:empty{display:none}
+dialog.settings .setsubh{display:flex;align-items:center;gap:var(--sgap);margin:16px 0 4px;font-size:var(--fs-body);font-weight:600}
+.setfold{margin-top:10px}.setfold>summary{display:block;list-style:none;cursor:pointer;font-size:var(--fs-meta);font-weight:560;color:var(--ink2);padding:5px 0}
+.setfold>summary::-webkit-details-marker{display:none}.setfold>summary::before{content:'\25B8';display:inline-block;width:14px}
+.setfold[open]>summary::before{content:'\25BE'}.setfold>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .wallrows{list-style:none;margin:8px 0 0;padding:0}.wallrow{display:flex;flex-wrap:wrap;align-items:center;gap:0 10px;padding:8px 0;border-top:1px solid var(--line)}
 .wallrow b{min-width:7em}
 dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.45;color:var(--ink2)}
 @media (max-width:759px){.setbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 .setnav{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;padding:6px 12px;border-right:0;border-bottom:1px solid var(--line)}
-.setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}.setnav li.setsub a{padding-left:8px}
+.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}
 .setnav a[aria-current]{box-shadow:inset 0 -2px 0 var(--accent)}.setmain{padding:14px 16px 22px}.sethead{padding:14px 52px 10px 16px}}
 /* a section's explanation, word for word, behind the "?" beside its heading; each row's own line always shows */
 .qhelp{position:relative;flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
 .qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings .sethelp{margin:2px 0 6px}
-.setfoot{margin-top:30px}dialog.settings .setsec:focus{outline:none}.setrule{padding-top:10px;border-top:1px solid var(--line)}
-dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hiddencards .gacts{margin:4px 0 0}.setfoot .hiddencards{margin:0 0 10px}
+.setsec:focus{outline:none}dialog.settings .setsec:focus{outline:none}
+dialog.settings .hiddencards .gacts{margin:4px 0 0}#view-settings .hiddencards{margin:0 0 10px}
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:var(--fs-meta)}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
@@ -6389,9 +6410,9 @@ if(uc){q['usage-counts']=U.request();U.saved()}
 lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
-/* Settings' list of sections (#205): a link brings its section to the top of the column and gives it the focus,
+/* Settings' list of sections (#205, #682): a link brings its section to the top of the column and gives it the focus,
    and the section being read is marked aria-current as the column scrolls. A section the host hides (.apponly in a
-   browser, Menu bar until the app answers) is taken out of the list, and a group with none left goes with it. */
+   browser, Ask until the app answers) is taken out of the list. */
 var sm=document.getElementById('settings-main'),snav=sd.querySelector('.setnav'),snHold=null,snWait=0;
 function snShown(s){return!!s&&!s.hidden&&getComputedStyle(s).display!=='none'}
 function snMark(id){snav.querySelectorAll('a[data-setgo]').forEach(function(a){if(a.dataset.setgo!==id){a.removeAttribute('aria-current');return}
@@ -6401,15 +6422,22 @@ if(a.offsetLeft<n.scrollLeft||a.offsetLeft+a.offsetWidth>n.scrollLeft+n.clientWi
 function snSpy(){if(snHold){snMark(snHold);return}var secs=[].filter.call(sm.querySelectorAll('.setsec'),snShown),top=sm.getBoundingClientRect().top+36,cur=secs[0];if(!cur)return;
 /* the section whose heading is nearest the top of the pane: the last heading at or above a line just under it (#673) */
 if(sm.scrollTop+sm.clientHeight>=sm.scrollHeight-2)cur=secs[secs.length-1];else secs.forEach(function(s){var h=s.querySelector('h3')||s;if(h.getBoundingClientRect().top<=top)cur=s});snMark(cur.id)}
-function snSync(){snav.querySelectorAll('a[data-setgo]').forEach(function(a){a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))});
-snav.querySelectorAll('.setnavgrp').forEach(function(g){g.hidden=!g.querySelector('li:not([hidden])')});
-sm.querySelectorAll('.setgroup').forEach(function(g){g.hidden=![].some.call(g.querySelectorAll('.setsec'),snShown)});snSpy()}
+function snSync(){snav.querySelectorAll('a[data-setgo]').forEach(function(a){a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))});snSpy()}
 sm.addEventListener('scroll',function(){if(!snWait)snWait=requestAnimationFrame(function(){snWait=0;snSpy()})},{passive:true});
 ['wheel','touchstart','pointerdown','keydown'].forEach(function(t){sm.addEventListener(t,function(){snHold=null},{passive:true})});
-snav.addEventListener('click',function(e){var a=e.target.closest('a[data-setgo]'),s=a&&document.getElementById(a.dataset.setgo);if(!s)return;e.preventDefault();
-snHold=s.id;sm.scrollTop=s.offsetTop-12;snMark(s.id);if(!s.hasAttribute('tabindex'))s.setAttribute('tabindex','-1');s.focus({preventScroll:true})});
-window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal();snHold=null;snSync()}};
-document.getElementById('open-settings').onclick=window.StatusSettings.open;
+function snGo(s,at){snHold=s.id;var t=at&&at!==s&&snShown(at)?at:s;if(t.tagName==='DETAILS')t.open=true;
+var y=0;for(var e=t;e&&e!==sm;e=e.offsetParent)y+=e.offsetTop;sm.scrollTop=y-12;snMark(s.id);if(!s.hasAttribute('tabindex'))s.setAttribute('tabindex','-1');s.focus({preventScroll:true})}
+snav.addEventListener('click',function(e){var a=e.target.closest('a[data-setgo]'),s=a&&document.getElementById(a.dataset.setgo);if(!s)return;e.preventDefault();snGo(s)});
+/* An anchor that opened Settings at a section in 0.79.0 (#zone-settings, #menu-settings, #machine-settings and the others)
+   opens the section that holds those rows now, and scrolls to the rows where their part is shown (#682): SET_ANCHORS. */
+var snAt={};try{snAt=JSON.parse(document.getElementById('settings-anchors').textContent)}catch(e){}
+function snFind(id){id=String(id||'').replace(/^#/,'');var s=snAt[id]&&document.getElementById(snAt[id]);return s?{s:s,at:document.getElementById(id)}:null}
+window.StatusSettings={open:function(at){var f=snFind(at);if(!sd.open){sd.appendChild(toast);sd.showModal();snHold=null;snSync()}
+if(f)snGo(f.s,f.at)},anchors:snAt};
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('[data-setopen],a[href^="#"]');if(!a||sd.contains(a))return;
+var id=a.dataset.setopen||a.getAttribute('href');if(!snFind(id))return;e.preventDefault();window.StatusSettings.open(id)});
+if(snFind(location.hash))setTimeout(function(){window.StatusSettings.open(location.hash)},0);
+document.getElementById('open-settings').onclick=function(){window.StatusSettings.open()};
 document.getElementById('close-settings').onclick=sdShut;
 function lprefs(){return GarrickPrefs.launchers()}
 function dpref(){return GarrickPrefs.def()}
@@ -6649,7 +6677,7 @@ def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dic
     if mem is None:
         return ""
     age = mem.get("age_said")
-    head = set_head("Manage older material", "memory", "Old meetings and reading move out of everyday answers after the months set here: %s." % GRADES_SAID) + help_text("memory", (
+    head = set_head("Older pages", "memory", "Old meetings and reading move out of everyday answers after the months set here: %s." % GRADES_SAID) + help_text("memory", (
         'A page older than its kind&#39;s months becomes dormant, and later archived. &#8220;What would fade&#8221; writes the full '
         'list; &#8220;fade the meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
         'Saved when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "")))

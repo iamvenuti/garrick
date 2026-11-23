@@ -140,9 +140,10 @@ class SettingsCase(StatusCase):
                                [("project", "Project", "Teal")], {})
 
     def section(self, markup, sid):
-        m = re.search(r'<section class="setsec[^"]*" id="%s".*?</section>' % sid, markup, re.S)
+        """A section of Settings, or a part of one (#682), by its id, whole."""
+        m = re.search(r'<(section|div|details) class="(?:setsec|setpart|setfold)[^"]*" id="%s"' % re.escape(sid), markup)
         self.assertIsNotNone(m, sid)
-        return m.group(0)
+        return markup[m.start():sh.find_close(markup, m.start(), m.group(1))]
 
 
 class TestThisMachine(SettingsCase):
@@ -185,27 +186,31 @@ class TestThisMachine(SettingsCase):
         self.assertIn("if(r==='roaming'&&!s){err.textContent='A laptop copy needs the name of the home server.'", sg.JS)
         self.assertLess(sg.JS.index("A laptop copy needs the name of the home server."), sg.JS.index("if(send(q))"))
 
-    def test_the_section_and_the_role_row_have_their_own_texts(self):
+    def test_the_row_has_one_text_and_says_the_role_once(self):
         sec = self.section(self.full(), "machine-settings")
         self.assertIn('id="help-machine"', sec)
         self.assertIn(htmllib.escape(ISSUE["machine"]), sec)
-        self.assertIn('id="help-machine-role"', sec)
+        self.assertNotIn('id="help-machine-role"', sec)
+        row = sec[:sec.index('id="role-dialog"')]
+        self.assertEqual(1, row.count(htmllib.escape(ISSUE["solo"])))            # the role's sentence, once (#681, #682)
 
-    def test_the_section_sits_in_the_list_of_sections(self):
+    def test_this_computer_is_a_row_in_about_with_no_entry_of_its_own(self):
         markup = self.full()
-        self.assertIn('data-setgo="machine-settings"', markup)
-        self.assertIn(">This machine<", markup)
+        self.assertNotIn('data-setgo="machine-settings"', markup)
+        about = self.section(markup, "about-settings")
+        self.assertIn('id="machine-settings"', about)
+        self.assertRegex(about, r'class="launcher-row srow mrole" id="machine-role"[^>]*><div class="slab"><span class="launcher-choice"><span>This computer<small')
 
 
 class TestReadGuardBlock(SettingsCase):
     def block(self, **kw):
-        return self.section(self.full(), "readguard-settings")        # its own section since 0.79.0 (#673)
+        return self.section(self.full(), "readguard-settings")        # a part of Walls since 0.80.0 (#682)
 
     def test_the_four_rows_and_their_defaults(self):
         self.assistants()
         sec = self.block()
         self.assertIn('id="readguard-settings"', sec)
-        self.assertRegex(sec, r'setsec apponly')
+        self.assertRegex(sec, r'setpart apponly')
         self.assertRegex(sec, r'<input type="radio" name="rg-mode" value="off" checked>')            # Off
         self.assertRegex(sec, r'<input type="radio" name="rg-cross" value="deny" checked>')          # Refuse
         for label in ("Off", "Watch", "On"):
@@ -366,9 +371,13 @@ class TestReadGuardBlock(SettingsCase):
         self.assertEqual(ISSUE["machine"], sg.MACHINE_TEXT)
         self.assertEqual(CODEX, sg.CODEX_LINE)
 
-    def test_the_block_works_in_the_app_only(self):
+    def test_the_block_works_in_the_app_only_and_is_a_part_of_walls(self):
         self.assistants()
-        self.assertRegex(self.block(), r'<section class="setsec apponly" id="readguard-settings" hidden')
+        self.assertRegex(self.block(), r'<div class="setpart apponly" id="readguard-settings" hidden')
+        walls = self.section(self.full(), "walls-settings")
+        self.assertIn('id="readguard-settings"', walls)
+        self.assertLess(walls.index('class="wallrows"'), walls.index('id="readguard-settings"'))      # after the zones
+        self.assertIn('<h4 class="setsubh">Read guard<button class="qhelp"', walls)
 
     def test_the_markup_sends_only_the_pages_own_verb_with_the_four_choices(self):
         self.assertIn("{verb:'read-guard'}", sg.JS)

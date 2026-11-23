@@ -2053,8 +2053,9 @@ class TestHotkeyFields(unittest.TestCase):
 
     def test_the_ask_switch_shows_the_app_state_and_saves_through_the_settings_verb(self):
         """#528: Answer in the Ask box; on unless the app says false; a change is the page's own settings request."""
-        self.assertIn('id="menu-ask"', status.menu_settings())
-        self.assertNotIn("preview", status.menu_settings())
+        self.assertIn('id="menu-ask"', status.askbox_settings())          # a row of Ask since 0.80.0 (#682)
+        self.assertNotIn('id="menu-ask"', status.menu_settings())
+        self.assertNotIn("preview", status.askbox_settings())
         out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "ask": True}, ("menu-ask", "change", {"checked": False}))
         self.assertEqual([{"act": {"verb": "settings", "ask": False}}], out["posted"])
         out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "ask": False}, ("menu-ask", "change", {"checked": True}))

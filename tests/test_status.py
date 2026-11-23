@@ -1719,32 +1719,32 @@ class TestSettings(StatusCase):
         dialog = self.dialog()
         about = dialog[dialog.index('id="about-settings"'):dialog.index("</section>", dialog.index('id="about-settings"'))]
         self.assertEqual(["Report a bug", "Suggest a change", "Release notes"], re.findall(r'class="setlink"[^>]*><b>([^<]+)</b>', about))
+        links = about[about.index('<div class="setlinks">'):]
+        links = links[:links.index("</div>")]
         for gone in ("Copy version", "Copy a report", "What&#x27;s new", "Report a wrong refusal", "Report a bypass", "Announcements",
-                     "Ask a question", "data-copy", "<small>"):
+                     "Ask a question", "data-copy"):
             self.assertNotIn(gone, about)
+        self.assertNotIn("<small>", links)
 
     def test_each_explanation_is_behind_a_question_mark(self):
         dialog = self.dialog()
-        for key, name in (("launchers", "Opening a thread"), ("zones", "Zones"), ("menu", "Menu bar"),
-                          ("about", "About Garrick"), ("preview", "Preview features")):
+        for key, name in (("launchers", "Opening work"), ("zones", "Look"), ("about", "About")):
             self.assertIn('<h3>%s<button class="qhelp" type="button" aria-expanded="false" aria-controls="help-%s" '
                           'aria-label="Explain %s"' % (name, key, name), dialog)      # a button, so the keyboard reaches it
-        for key in ("launchers", "zones", "menu", "about", "preview", "view"):
+        for key in ("launchers", "zones", "about", "view"):
             self.assertEqual(1, dialog.count('<p class="hint sethelp" id="help-%s" hidden>' % key), key)   # hidden until asked for
         self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
-        for key, lede in (("launchers", "Which apps a project or thread can open in"),
-                          ("preview", "Off until you ask your assistant to switch one on.")):
+        for key, lede in (("launchers", "Where a project or thread opens when you click it."),
+                          ("zones", "Colours and icons, so you can tell zones apart.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
         dialog = htmllib.unescape(self.dialog())
         for words in ("Tick what project and thread cards offer; Default is what clicking a thread's name does.",
                       "A colour and an icon for each zone, shown wherever the page names it.",
-                      "A menu of the live projects of the zone the graph shows, with their threads, kept at hand outside this window.",
                       "These open GitHub in your browser. Nothing is sent until you submit it there.",
-                      "In Garrick's source but not yet released, so they may still change.",
                       "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."):
             self.assertIn(words, dialog)
 
@@ -1761,10 +1761,10 @@ class TestSettings(StatusCase):
             self.assertRegex(dialog, r'<a class="setlink" [^>]*title="%s"><b>%s</b>' % (re.escape(warn), label))
         self.assertEqual(2, dialog.count('title="%s"' % warn))
 
-    def test_reset_view_is_a_button_at_the_foot(self):
+    def test_reset_view_is_the_last_row_of_look(self):
         dialog = self.dialog()
-        foot = dialog[dialog.index('<div class="setfoot">'):]
-        self.assertGreater(dialog.index('<div class="setfoot">'), dialog.index('id="help-preview"'))   # after the last section
+        look = dialog[dialog.index('id="look-settings"'):dialog.index("</section>", dialog.index('id="look-settings"'))]
+        foot = look[look.index('<div class="setpart" id="view-settings">'):]
         button = re.search(r'<button class="act lg" type="button" id="reset-view" title="([^"]*)">Reset view</button>', foot)
         self.assertIsNotNone(button)
         self.assertTrue(htmllib.unescape(button.group(1)).startswith(
@@ -1780,13 +1780,9 @@ class TestSettings(StatusCase):
 
 class TestSettingsLayout(StatusCase):
     """Settings as one column of sections, read in order, with the list of
-    them beside it (#205): a link per section, grouped by what people come
-    for, and the one being read marked."""
+    them beside it (#205): a link per section, seven sections and no group heading (#682), and the one being read marked."""
 
-    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "channels-settings", "channels-ask", "channels-telegram", "channels-held", "memory-settings", "allowed-settings", "walls-settings",
-             "readguard-settings", "machine-settings", "about-settings",
-             "preview-settings"]
+    ORDER = [k for k, _ in status.SET_SECTIONS]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -1800,23 +1796,23 @@ class TestSettingsLayout(StatusCase):
         built = re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"', dialog)
         self.assertEqual(built, listed)                                             # every section, once, in its order
         self.assertEqual([k for k in self.ORDER if k in built], built)
-        for must in ("launcher-settings", "zone-settings", "menu-settings", "notify-settings",
-                     "memory-settings", "about-settings", "preview-settings"):
+        for must in ("launcher-settings", "notify-settings", "memory-settings", "look-settings", "about-settings"):
             self.assertIn(must, built)
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
         self.assertEqual(heads, dict(re.findall(r'data-setgo="([a-z-]+)">([^<]+)</a>', nav)))   # named as its heading
-        self.assertEqual("Manage older material", heads["memory-settings"])
-        shown = [t for k, t in status.SET_GROUPS]                                   # the read guard is a section of its own now, so Walls always has one (#673)
-        self.assertEqual(shown, re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
-        self.assertEqual(shown, re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
+        self.assertEqual("Older pages", heads["memory-settings"])
+        self.assertEqual(dict(status.SET_SECTIONS), {k: v for k, v in dict(status.SET_SECTIONS).items() if k in heads} | heads)
+        self.assertNotIn("setnavh", nav)                                            # no group heading (#682)
+        self.assertNotIn("setgrp", dialog)
         main = dialog[dialog.index('<div class="setmain" id="settings-main">'):]
         self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
-        self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
+        self.assertGreater(main.index('id="preview-settings"'), main.index('id="about-settings"'))  # Preview features end About
+        self.assertLess(main.index('id="view-settings"'), main.index('id="about-settings"'))      # Reset view ends Look
         self.assertNotIn("setcols", dialog)
-        self.assertEqual(len(built) - 1 - dialog.count('class="setsec setsub'), dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
+        self.assertEqual(len(built) - 1, len(re.findall(r'</h3><p class="setlede">', dialog)))       # each opens with what it is for, About with nothing
         self.assertNotIn('id="catch-settings"', dialog)                            # nor does anything else (#226)
         for lede in re.findall(r'<p class="setlede">(.*?)</p>', dialog):
-            self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 0, lede)   # one sentence at most
+            self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 1, lede)   # two sentences at most
 
     def test_a_section_left_out_is_not_listed(self):
         dialog = self.dialog()                                                      # no fade.py here
@@ -1828,7 +1824,6 @@ class TestSettingsLayout(StatusCase):
         js = status.JS
         self.assertIn("function snShown(s){return!!s&&!s.hidden&&getComputedStyle(s).display!=='none'}", js)   # .apponly, Menu bar
         self.assertIn("a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))", js)
-        self.assertIn("g.hidden=!g.querySelector('li:not([hidden])')", js)                # a group with none left goes
         self.assertIn("a.setAttribute('aria-current','true')", js)
         self.assertIn("sd.showModal();snHold=null;snSync()", js)                         # checked each time it opens
         self.assertIn("s.focus({preventScroll:true})", js)                               # the keyboard lands on the section

@@ -26,6 +26,7 @@
   "test_extract": 3.3,
   "test_fade": 11.2,
   "test_failure_words": 4.0,
+  "test_failures_plain": 12.0,
   "test_fetch": 0.8,
   "test_finding_queue": 30.0,
   "test_history_hold": 90.0,

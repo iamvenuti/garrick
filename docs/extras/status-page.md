@@ -577,13 +577,18 @@ Every failure the app can show has one plain sentence and one next step. The too
 | A save the page heard nothing of | No reply for sixteen minutes, or the record has no entry for it | This page did not hear back, so we cannot tell whether this went through. | *Refresh* |
 | A change that was made but not recorded | The reply says it worked, but the record holds no outcome for an action it keeps | Garrick could not confirm this from its record. | *Refresh* |
 | A reply that failed with no outcome | The app could not run `page_action.py` (on the page), or the action has no record (on the notification line) | This was not saved: the action stopped before it finished. On the notification line: This did not finish. | *Try again* |
-| *Continue* did not open Claude | `handoff.py` and the app's bridge | Claude did not open. | *Try again* |
+| *Continue*, *Ask something* or a first look could not open Claude | `handoff.py` and the app's bridge | Claude did not open. | *Try again* |
+| The Claude desktop app took too long to say it had opened | `handoff.py`: the app may well have opened | Claude may have opened, so Garrick did not try again. | *Refresh*: no second window is ever opened for it |
+| This Mac does not allow the Claude desktop app to open work | A managed setting, or the app's own refusal | The Claude desktop app does not open work on this Mac. | *Show why* |
+| Claude Code is not installed | `handoff.py`: the command-line tool is missing | Claude Code is not installed on this Mac. | *Show why*, which says how to install it |
+| A first look did not come back | The first look of a piece of work, before anything was written | Claude's first look did not come back, so nothing was written. | *Try again* |
 | *Open in Claude*, *Codex* or *cmux* from the menu or a card did not open | The Mac app's own launcher, before any request is sent | The app's name, then "did not open", then the thread's name | Say the phrase that resumes it, which the sentence names |
-| Ask could not start its server, or lost it before the answer | `ask.py`, shown in the Ask box | The ask server did not start. or The ask server stopped before it answered. | Ask again |
-| Ask did not answer in time | `ask.py`, shown in the Ask box | Garrick did not answer in a few minutes, and the change may still be on its way | Look at the Todo list or the thread before asking again |
-| Ask stopped on an error | `ask.py`, shown in the Ask box | Something went wrong, or That did not work, then the reason | Ask again |
+| Ask could not start its server | `ask.py`, shown in the Ask window | Ask did not start. | *Try again* under the answer, which sends the same request once more |
+| Ask lost its server before the answer | `ask.py`, shown in the Ask window | Ask stopped before it answered. | *Details*, which says what the server said; no second try is offered, since the request may have gone through |
+| Ask did not answer in time | `ask.py`, shown in the Ask window | Ask has not answered yet, and it may still finish. | *Details*, which says to look at the Todo list or the thread before asking again |
+| Ask stopped on an error | `ask.py`, shown in the Ask window | Ask could not answer this. | *Try again* |
 | The page is old | The page itself, after thirty-six hours | This page is some hours old, so what it shows may have changed. | *Refresh*; the build time is under *Details* |
-| The page did not rebuild | The Mac app, after a build that failed | The window subtitle: Did not rebuild; showing the last build | *Refresh* |
+| The page did not rebuild | The Mac app, after a build that failed | The window subtitle: This page did not rebuild, so it may be old. | *Refresh*, from the page menu or the page's own banner |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Not shown today: no part of the app reads the age of the index | None | None: an *Index now* button would write, and none is added |
 

@@ -241,6 +241,16 @@ func askZoneNames() -> [String] {
 let askSourceLink = "garrick-ask-source:"
 // The link "And N more" carries under an actions list: the turn alone, whose reply holds the rest (#329).
 let askMoreLink = "garrick-ask-more:"
+// A failed turn says one plain sentence (page_action.py's FAILURES, as the reply's "plain"), the one next step, and the tool's own
+// words under Details, closed until clicked (#511). These two rows are the ones Ask says for what happens before ask.py answers:
+// it could not be run, or it ended with no reply. They are the table's rows "ask-start" and "ask-stopped", and a test holds them.
+// The window's subtitle when a rebuild failed or could not start (#511): the page shown is the last good one, so say it may be old.
+let pageDidNotRebuild = "This page did not rebuild, so it may be old."
+let askDetailLink = "garrick-ask-details:"
+let askTryLink = "garrick-ask-again:"
+let askNoStart: [String: Any] = ["code": "ask-start", "say": "Ask did not start.", "next": "Try again"]
+let askNoAnswer: [String: Any] = ["code": "ask-stopped", "say": "Ask stopped before it answered.", "next": "Show why"]
+let askNoReply: [String: Any] = ["code": "ask-silent", "say": "Ask has not answered yet, and it may still finish.", "next": "Show why"]
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
 let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
@@ -338,7 +348,7 @@ func askStream(_ args: [String], progress: @escaping (String) -> Void, done: @es
 					+ "an action that commits waits for the zone's wall check. Look at the Todo list, or the thread, "
 					+ "before you ask again, because asking again does it a second time."
 				let none: [String: Any] = r.stopped ? ["say": "Stopped.", "ok": false, "stopped": true]
-					: ["say": timedOut ? gaveUp : "No answer.", "ok": false, "failed": true]
+					: ["say": timedOut ? gaveUp : "No answer.", "ok": false, "failed": true, "plain": timedOut ? askNoReply : askNoAnswer]
 				DispatchQueue.main.async { done(final ?? none) }
 			}
 			return
@@ -357,7 +367,7 @@ func askStream(_ args: [String], progress: @escaping (String) -> Void, done: @es
 	}
 	do { try p.run() } catch {
 		out.fileHandleForReading.readabilityHandler = nil
-		done(["say": "Cannot run \(python)", "ok": false, "failed": true])
+		done(["say": "Cannot run \(python)", "ok": false, "failed": true, "plain": askNoStart])
 		return nil
 	}
 	DispatchQueue.global().asyncAfter(deadline: .now() + askWait, execute: late)
@@ -388,6 +398,9 @@ struct AskTurn {
 	var listed = false                  // an actions list: each item on a line of its own (#339)
 	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
 	var retry = ""                      // the question to send again in the zone a button picks
+	var detail = ""                     // a failure's own words, shown under "Details" once it is clicked (#511)
+	var next = ""                       // a failure's one next step: "Try again" or "Show why"
+	var detailOpen = false
 	var choices: [[String: Any]] = []   // a question back, or an action just made: a button each, with `label` and
 	                                    // either `request` to send as a new request or `act` to run as a button would (#345)
 }
@@ -948,7 +961,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		p.terminationHandler = { proc in
 			DispatchQueue.main.async {
 				self.rebuilding = false
-				self.window.subtitle = proc.terminationStatus == 0 ? "" : "Did not rebuild; showing the last build"
+				self.window.subtitle = proc.terminationStatus == 0 ? "" : pageDidNotRebuild
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
 				if self.again { self.again = false; self.rebuild() }
@@ -956,7 +969,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		do { try p.run() } catch {
 			rebuilding = false
-			window.subtitle = "Cannot run \(python)"
+			window.subtitle = pageDidNotRebuild
 		}
 	}
 
@@ -2570,6 +2583,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.refreshed = out["refreshed"] as? Bool == true
 			turn.zones = out["zones"] as? [[String: Any]] ?? []
 			turn.retry = out["retry"] as? String ?? ""
+			// A failure says the table's sentence; the words ask.py gave are the Details, and nothing is dropped (#511).
+			if out["ok"] as? Bool == false, !turn.stopped, out["capped"] as? Bool != true,
+			   let plain = out["plain"] as? [String: Any], let line = plain["say"] as? String, !line.isEmpty {
+				turn.detail = turn.reply == line ? "" : turn.reply
+				turn.reply = line
+				turn.next = plain["next"] as? String ?? ""
+				turn.failed = true
+				self.askExpanded = true
+			}
 			turn.choices = out["choices"] as? [[String: Any]] ?? []
 			// The zone the answer was read in: the selector follows it, with no new conversation, since
 			// ask.py started one itself when the zone changed (#317).
@@ -2844,6 +2866,20 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				out.append(askCited(turn, at: i, said: reply, aside: aside))
 			}
 			if turn.refreshed { out.append(NSAttributedString(string: askRefreshed + "\n\n", attributes: aside)) }
+			if !turn.detail.isEmpty || turn.next == "Try again" {
+				var link = aside
+				if turn.next == "Try again" {
+					link[.link] = URL(string: askTryLink + "\(i)")
+					out.append(NSAttributedString(string: "Try again", attributes: link))
+					out.append(NSAttributedString(string: "   ", attributes: aside))
+				}
+				if !turn.detail.isEmpty {
+					link[.link] = URL(string: askDetailLink + "\(i)")
+					out.append(NSAttributedString(string: turn.detailOpen ? "Hide details" : "Details", attributes: link))
+					if turn.detailOpen { out.append(NSAttributedString(string: "\n" + turn.detail, attributes: aside)) }
+				}
+				out.append(NSAttributedString(string: "\n\n", attributes: aside))
+			}
 		}
 		return out
 	}
@@ -2992,6 +3028,20 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let said = (link as? URL)?.absoluteString ?? link as? String ?? ""
 		if said.hasPrefix(askMoreLink) {
 			if let n = Int(said.dropFirst(askMoreLink.count)) { askOpenMore(n) }
+			return true
+		}
+		if said.hasPrefix(askDetailLink) {
+			if let n = Int(said.dropFirst(askDetailLink.count)), askTurns.indices.contains(n) {
+				askTurns[n].detailOpen.toggle()
+				askRender()
+			}
+			return true
+		}
+		if said.hasPrefix(askTryLink) {
+			// The same request, once more, when none is on its way and this is the last turn: an earlier one is history.
+			if let n = Int(said.dropFirst(askTryLink.count)), n == askTurns.count - 1, askRunning == nil, !askResetting {
+				askSend(askTurns[n].request)
+			}
 			return true
 		}
 		guard said.hasPrefix(askSourceLink) else { return false }

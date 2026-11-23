@@ -64,6 +64,38 @@ def snapshot(root: Path) -> dict:
     return out
 
 
+TODAY = dt.date(2026, 11, 22)
+HOME_TODO = (
+    "# Home: open actions\n\n## Inbox\n\n"
+    "- [ ] [[Fence]]: Order posts 📅 2026-11-20 #waiting ⏳ 2026-11-21\n"
+    "- [ ] Unplaced thing\n\n## Soon\n\n"
+    "- [ ] [[Sys/Job|Job]]: system one 📅 2026-11-25\n"
+    "- [ ] [[Cedar/Threads/Gate/Gate]]: link by path ⏫ #ask\n"
+    "- [ ] ⚠️ thread?: not sure of the thread · [src](x.md) (also in [A](a.md))\n"
+    "- [ ] <action> a template line\n"
+    "- [x] [[Fence]]: done today ✅ 2026-11-22\n"
+    "- [x] [[Fence]]: done long ago ✅ 2026-11-01\n"
+    "```\n- [ ] inside a fence\n```\n\n"
+    "## Active threads\n\n- [ ] [[Fence]]: a workstream\n\n"
+    "## Someday\n\n- [ ] Later thing\n")
+
+
+def add_todo(root: Path) -> None:
+    """Todo lines for the Todo shadow test: sections, links by name, by path and to a System project, a waiting line, an
+    unsure line, a template line, a fence, ticked lines, a line in a thread note, in a project note and in a note
+    beside the projects; and a note in the Garden zone that is a link to Home's Todo.md (a line of another zone)."""
+    home = root / "Zones" / "Home"
+    write(home / "Todo.md", HOME_TODO)
+    leaf = home / "Maple" / "Threads" / "Leaf" / "Leaf.md"
+    write(leaf, leaf.read_text(encoding="utf-8") + "\n- [ ] A line in the thread note 📅 2026-11-23\n")
+    write(home / "Cedar" / "Notes.md", "- [ ] A project-level line\n")
+    write(home / "Loose.md", "- [ ] A line in a note beside the projects\n")
+    write(root / "Zones" / "Work" / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] Work thing\n\n## Done\n")
+    garden = root / "Zones" / "Garden"
+    garden.mkdir(parents=True, exist_ok=True)
+    (garden / "Leak.md").symlink_to(home / "Todo.md")
+
+
 def make_workspace(root: Path, tools: bool = True) -> Path:
     """Invented workspaces in one: the standard two zones, the reader's shapes in Work, and a third zone, Home, with
     parked work, a checkpoint, a done thread, a spoken name, a party list and an inbox; a zone that is a link; an Inbox that
@@ -101,6 +133,7 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     (garden / "Borrowed").symlink_to(home / "Cedar", target_is_directory=True)      # a whole project of another zone, by a link
     write(garden / "Twin" / "Threads" / "Copy" / "Copy.md", "---\ntitle: Copy\nstatus: active\n---\n\n# Copy\n")
     (garden / "Twin" / "Twin.md").symlink_to(home / "Maple" / "Maple.md")           # a hub note that is another zone's file
+    add_todo(root)
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
     write(root / "System" / "Sys" / "Threads" / "Job" / "Job.md", thread_note("Sys", "Job", "sys"))
     write(root / "System" / "Sys" / "Threads" / "Bare" / "notes.md", "# no thread note\n")          # a thread folder with no note
@@ -363,8 +396,6 @@ LEFT = {
     "questions_in": "a wiki's question files",
     "repos": "each repository's own state",
     "threads": "zone names only, while view.py is missing (a half-finished update)",
-    "todo": "each zone's open-line counts (no caller is left)",
-    "todo_list": "the Todo tab: each zone's Todo.md and the action lines in thread notes",
     "visible_dirs": "the helper the others list folders with",
     "wikis": "each wiki's log",
 }
@@ -415,12 +446,12 @@ class TestWhatThePageStillReads(unittest.TestCase):
 
     def test_the_sections_that_moved_read_no_folder(self):
         found = self.readers()
-        for name in ("inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
+        for name in ("todo_list", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
                      "mixed_papers", "files_in", "open_naming", "threads_card", "build"):
             self.assertNotIn(name, found, name)
 
     def test_the_view_model_names_what_is_left_for_it(self):
-        for name in ("Todo lists", "waiting sessions", "settings", "operations journal", "the Explore graph", "repositories"):
+        for name in ("waiting sessions", "settings", "operations journal", "the Explore graph", "repositories"):
             self.assertIn(name, view.LEFT)
 
 
@@ -429,7 +460,7 @@ class TestShadowSystem(Case):
 
     def test_the_lookup_the_page_makes_is_the_old_reads(self):
         old = old_reads_0770(status, "SYSTEM")
-        got = status.system_notes(self.root)
+        got = {k: self.root / v for k, v in view.system_lookup(self.model["system"]).items()}
         self.assertEqual(old["system_notes"](self.root), got)
         self.assertEqual({"system/sys/sys", "sys", "system/sys/threads/job/job", "job"}, set(got))
 
@@ -446,6 +477,91 @@ class TestShadowSystem(Case):
         self.assertEqual([], part["zones"])
         self.assertEqual(1, len(part["system"]))
         self.assertNotIn("system", view.build(self.root, only=("work",)))
+
+
+class TestShadowTodo(Case):
+    """The Todo tab (#650, 0.78.0): the view model reads each zone's open actions and decides which note each line names;
+    the page decides what late means and how a row sorts. Held to v0.77.0's own `todo_list`, frozen."""
+
+    def setUp(self):
+        super().setUp()
+        self.link = status.Links(self.root)
+        self.old_list = old_reads_0770(status, "SYSTEM", "TODO")["todo_list"](self.root, self.link, TODAY)
+        self.new_list = status.todo_list(self.root, self.link, TODAY)
+
+    def by_zone(self, lists):
+        return {z["zone"]: z for z in lists}
+
+    def test_every_zone_the_old_read_listed_is_the_same_except_the_two_named_differences(self):
+        old, new = self.by_zone(self.old_list), self.by_zone(self.new_list)
+        self.assertEqual({"Home", "Work", "Linked", "Garden"} & set(old), {"Home", "Work", "Linked", "Garden"})
+        for name in ("Home", "Work"):
+            self.assertEqual(old[name], new[name], name)
+
+    def test_a_zone_that_is_a_link_has_no_todo_list(self):
+        # The old read gave the zone a link points at a second list, under the link's name: a wall defect.
+        self.assertIn("Linked", self.by_zone(self.old_list))
+        self.assertNotIn("Linked", self.by_zone(self.new_list))
+        self.assertNotIn("todo", self.zone("Linked"))
+
+    def test_a_note_that_is_a_link_out_of_its_zone_gives_that_zone_none_of_its_lines(self):
+        old = self.by_zone(self.old_list)["Garden"]
+        self.assertTrue(any(r["file"] == "Leak.md" for _, rows in old["groups"] for r in rows))
+        self.assertNotIn("Garden", self.by_zone(self.new_list))
+        self.assertEqual([], self.zone("Garden")["todo"]["tasks"])
+
+    def test_the_fixture_covers_what_the_card_reads(self):
+        home = self.by_zone(self.new_list)["Home"]
+        names = [g for g, _ in home["groups"]]
+        self.assertEqual(["Inbox", "Soon", "Someday", "In thread notes"], names[:3] + names[-1:])
+        rows = [r for _, rs in home["groups"] for r in rs]
+        self.assertTrue(any(r["waiting"] and r["late"] for r in rows))
+        self.assertTrue(any(r["unsure"] for r in rows))
+        self.assertTrue(any(r["project"] == "Sys" or r["label"] == "Job" and r["link"] for r in rows))
+        self.assertEqual(1, len(home["done"]))
+        self.assertFalse(any("fence" in r["text"] for r in rows))
+        self.assertFalse(any("template line" in r["text"] for r in rows))
+
+    def test_a_line_names_the_note_the_view_model_says(self):
+        tasks = {t["text"]: t for t in self.zone("Home")["todo"]["tasks"]}
+        self.assertEqual("Zones/Home/Cedar/Threads/Fence/Fence.md", tasks["Order posts"]["note"])
+        self.assertEqual(("Cedar", "Fence"), (tasks["Order posts"]["project"], tasks["Order posts"]["tname"]))
+        self.assertEqual("System/Sys/Threads/Job/Job.md", tasks["system one"]["note"])
+        self.assertEqual("Zones/Home/Maple/Threads/Leaf/Leaf.md", tasks["A line in the thread note"]["note"])
+        self.assertIsNone(tasks["Unplaced thing"]["note"])
+
+    def test_the_done_lines_are_those_ticked_on_the_day_given(self):
+        done = self.zone("Home")["todo"]["done"]
+        self.assertEqual([], done if self.model["today"] != "2026-11-22" else [])
+        again = view.build(self.root, only=("todo",), today=TODAY)
+        self.assertEqual(["done today"], [t["text"].split(":")[-1].strip() for t in next(z for z in again["zones"] if z["name"] == "Home")["todo"]["done"]])
+        self.assertEqual("2026-11-22", again["today"])
+
+    def test_the_reader_answers_as_the_pages_own_todo_lines_does(self):
+        # The extra keeps an editing copy of the reading half, so an update of one can never change what the other reads.
+        tl = status.todo_lines()
+        vt = view._todo()
+        lib = view._lib()
+        for name in ("Home", "Work"):
+            zone = self.root / "Zones" / name
+            paths = vt.notes(zone, lib.live_files, view._work()._within)
+            self.assertEqual(sorted(tl.notes(str(zone))), sorted(paths), name)
+            self.assertEqual(json.loads(json.dumps(tl.tasks(str(zone)))), json.loads(json.dumps(vt.tasks(zone, paths))), name)
+            self.assertEqual(json.loads(json.dumps(tl.done_on(str(zone), TODAY))), json.loads(json.dumps(vt.done_on(zone, paths, TODAY))), name)
+
+    def test_a_scoped_build_holds_the_todo_of_its_zones_alone(self):
+        scoped = view.build(self.root, scope=["Work"], only=("todo",), today=TODAY)
+        self.assertEqual(["Work"], [z["name"] for z in scoped["zones"]])
+        self.assertEqual(["Work thing"], [t["text"] for t in scoped["zones"][0]["todo"]["tasks"]])
+        self.assertNotIn("Order posts", json.dumps(scoped))
+
+    def test_the_page_draws_the_todo_from_one_build_of_the_view(self):
+        model = view.build(self.root, only=("todo",), today=TODAY)
+        calls = []
+        with mock.patch.object(status, "view_model", side_effect=lambda *a, **k: calls.append(1)):
+            lists = status.todo_list(self.root, self.link, TODAY, model)
+        self.assertEqual([], calls)
+        self.assertEqual(self.new_list, lists)
 
 
 class TestShadowInbox(Case):

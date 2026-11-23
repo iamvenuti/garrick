@@ -15,6 +15,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
     {"api": 1,
      "zones": [ZONE, ...],                     # by name, one per folder of Zones/
      "queues": {"inbox": [INBOX, ...]},        # the places that hold files waiting to be sorted
+     "today": "2026-11-22",                    # the day the Todo part counts as ticked today
      "system": [SYSTEM, ...],                  # the projects kept in System/, outside any zone
      "left": [...]}                            # what the page still reads for itself, by name
 
@@ -24,6 +25,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "held": ["Acme"],                  # projects parked as a whole
             "projects": {"Acme": PROJECT},
             "open_links": [["Pricing"]],       # for each open Todo line that links a note, the notes it links
+            "todo": TODO,                      # the zone's open actions (not for a zone that is a link)
             "work": [PIECE, ...]}              # live, then parked, then done, then hubs; each by name
 
     PROJECT {"status": "live" | "parked" | "done", "spoken": "", "own": false, "heading": false,
@@ -48,6 +50,16 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
 
     INBOX  {"place": "Work", "kind": "zone" | "wiki", "folder": "Zones/Work/Inbox", "count": 2}
 
+    TODO   {"file": "Zones/Work/Todo.md" | null,    # null where the zone has no Todo.md
+            "order": ["Inbox", "Soon"],           # its `## ` headings, in order
+            "tasks": [TASK, ...],                 # every open line of the zone's notes, as a Todo.md and the thread notes hold them
+            "done": [TASK, ...]}                  # the lines ticked today and still in the notes
+    TASK   {"file": "Todo.md" | "Acme/Threads/Pricing/Pricing.md", "section": "Soon" | null, "line": "- [ ] ...", "key": "0f3a...",
+            "text": "...", "thread": "Pricing" | null, "target": "Pricing" | null, "unsure": false, "src": null, "also": [],
+            "due": "2026-11-25" | null, "scheduled": null, "priority": null, "tags": [], "waiting": false,
+            "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md" | null,   # the note the line names or sits in
+            "label": "Pricing" | null, "project": "Acme", "tname": "Pricing"}
+
     SYSTEM {"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}   # the hub, then each thread note
 
 Walls. Every record carries its zone. A count is of one zone or one wiki; nothing here adds
@@ -57,7 +69,7 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-Todo lists, the check's kept result, the waiting sessions, the settings, the wikis' logs and questions,
+check's kept result, the waiting sessions, the settings, the wikis' logs and questions,
 the repositories, the Explore graph, and the worked example's marker.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
@@ -80,12 +92,12 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 # Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
-LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App", "Todo lists",
+LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
         "the check's kept result", "waiting sessions", "settings", "wiki logs and questions", "repositories",
         "the Explore graph", "the worked example's marker")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
-PARTS = ("work", "inbox", "system")
+PARTS = ("work", "inbox", "system", "todo")
 
 _MODS: dict = {}
 
@@ -117,6 +129,10 @@ def _operations():
 
 def _lib():
     return _work()._lib()
+
+
+def _todo():
+    return _sibling("view_todo.py", "garrick_view_todo")
 
 
 # --------------------------------------------------------------------------- small readers
@@ -515,11 +531,22 @@ def system_projects(root: Path) -> List[dict]:
     return out
 
 
-def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]] = None) -> dict:
+def system_lookup(projects: List[dict]) -> Dict[str, str]:
+    """The notes of the projects kept in System/ by the names a Todo line's link may use: the path from the workspace
+    without its suffix, and the note's own name, both lower-cased; the first note to claim a name keeps it."""
+    out: Dict[str, str] = {}
+    for project in projects:
+        for rel in project["notes"]:
+            out.setdefault(Path(rel).with_suffix("").as_posix().lower(), rel)
+            out.setdefault(Path(rel).stem.lower(), rel)
+    return out
+
+
+def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]] = None, today: Optional[dt.date] = None) -> dict:
     """The view model of the workspace at `root`. `scope` names the zones whose records may be shown: None is every
     zone and the Meetings wiki's inbox, a list is those zones alone and no wiki. `only` names the parts to build, from
     `PARTS`; None builds them all, and a part not named is left out of the document, so a caller that needs one part does
-    not pay for the rest. Reads; never writes."""
+    not pay for the rest. `today` is the day the Todo part counts as ticked today (the day it is run, by default). Reads; never writes."""
     root = Path(root)
     base = (root / "Zones")
     real = {z.name for z in _work().zones(root)}
@@ -527,7 +554,10 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
     parts = set(PARTS) if only is None else set(only)
     zones: List[dict] = []
     inbox: List[dict] = []
-    if parts & {"work", "inbox"}:
+    today = today or dt.date.today()
+    system = system_projects(root) if wanted is None and parts & {"system", "todo"} else []
+    lookup = system_lookup(system)
+    if parts & {"work", "inbox", "todo"}:
         for zone in _visible_dirs(base):
             if wanted is not None and zone.name not in wanted:
                 continue
@@ -535,7 +565,10 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
                 # A link is no zone: it has no work, and its Inbox would be another folder's.
                 zones.append({"name": zone.name, "linked": True, "done": 0, "held": [], "projects": {}, "open_links": [], "work": []})
                 continue
-            zones.append(_zone_work(root, zone) if "work" in parts else {"name": zone.name, "linked": False})
+            record = _zone_work(root, zone) if "work" in parts else {"name": zone.name, "linked": False}
+            if "todo" in parts:
+                record["todo"] = _todo().zone_todo(zone, root, today, lookup, _lib().live_files, _work()._within)
+            zones.append(record)
             if "inbox" in parts:
                 q = _queue_inbox(zone.name, "zone", zone / "Inbox", zone.resolve(), root)
                 if q:
@@ -546,8 +579,10 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
             if q:
                 inbox.append(q)
     out = {"api": API, "zones": zones, "queues": {"inbox": inbox}}
+    if "todo" in parts:
+        out["today"] = today.isoformat()
     if "system" in parts:
-        out["system"] = system_projects(root) if wanted is None else []
+        out["system"] = system
     out["left"] = list(LEFT)
     return out
 

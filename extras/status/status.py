@@ -124,7 +124,6 @@ EXIT = {0: "ok", 3: "answer incomplete", 4: "could not sign in", 6: "missing con
 OK_EXITS = (0, 75)
 # job.py's end-of-run line; a quiet exit ends with "  quiet" before the rule.
 LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)(  quiet)?|skipped)")
-TODO_ITEM = re.compile(r"^\s*-\s\[ \]\s")
 # Where Garrick lives, for Settings › About Garrick. The page loads nothing from
 # it: each link opens in your browser, and a report goes only when you submit
 # it there yourself.
@@ -604,12 +603,12 @@ def piece_row(ws: Path, p: dict) -> dict:
     return row
 
 
-def view_model(ws: Path, only=None) -> Optional[dict]:
+def view_model(ws: Path, only=None, today: Optional[dt.date] = None) -> Optional[dict]:
     """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet.
-    `only` names the parts to build (view.PARTS), for a caller that needs one."""
+    `only` names the parts to build (view.PARTS), for a caller that needs one; `today` is the day it counts as ticked."""
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
-        return view_reader(ws).build(ws, only=only)
+        return view_reader(ws).build(ws, only=only, today=today)
     except FileNotFoundError:
         return None
 
@@ -625,7 +624,7 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
     `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
     its own single thread (`own`). Nothing of a note's body is read here."""
-    model = model or view_model(ws)
+    model = model or view_model(ws, ("work",))
     if model is None:
         # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
@@ -641,22 +640,6 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
                                        for name, v in z["projects"].items()},
                           "open_links": [list(x) for x in z["open_links"]],
                           "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
-    return out
-
-
-def todo(ws: Path) -> Dict[str, dict]:
-    out = {}
-    for zone in visible_dirs(ws / "Zones"):
-        f = zone / "Todo.md"
-        if not f.is_file():
-            continue
-        counts, section = {}, None
-        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("## "):
-                section = line[3:].strip()
-            elif section and section.lower() != "done" and TODO_ITEM.match(line) and "<action>" not in line:
-                counts[section] = counts.get(section, 0) + 1
-        out[zone.name] = {"counts": counts, "file": f, "when": dt.datetime.fromtimestamp(f.stat().st_mtime)}
     return out
 
 
@@ -704,36 +687,6 @@ def todo_lines():
         _TL = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_TL)
     return _TL
-
-
-def system_notes(ws: Path, model: Optional[dict] = None) -> Dict[str, Path]:
-    """The hub and thread notes of every project kept in System/, by name and
-    by path from the workspace, lower-cased. Such a project has no Todo.md of
-    its own: its actions live in a zone's, opening with its thread's link.
-    The view model finds them (view.system_projects); this only names them."""
-    model = model or view_model(ws, ("system",))
-    out: Dict[str, Path] = {}
-    for project in (model or {}).get("system", []):
-        for rel in project["notes"]:
-            note = ws / rel
-            out.setdefault(note.relative_to(ws).with_suffix("").as_posix().lower(), note)
-            out.setdefault(note.stem.lower(), note)
-    return out
-
-
-def line_place(note: Path, zone: Path) -> Tuple[str, str]:
-    """The project and the thread a line belongs to, from the note it points at or sits in (#596): a thread's note,
-    or any file in its folder, gives both; a project's hub, or a file in the project and not in a thread, gives the
-    project alone. A note outside the zone's projects, or not placed, gives neither."""
-    try:
-        parts = Path(os.path.abspath(str(note))).relative_to(Path(os.path.abspath(str(zone)))).parts
-    except ValueError:
-        return "", ""
-    if len(parts) >= 4 and parts[1] == "Threads":
-        return parts[0], parts[2]
-    if len(parts) >= 2 and parts[0] not in ("Inbox", "archive") and not parts[0].startswith("."):
-        return parts[0], ""
-    return "", ""
 
 
 _OUTBOX = None
@@ -805,27 +758,22 @@ def held_block(held: List[dict]) -> str:
 
 
 def todo_list(ws: Path, link: "Links", today: dt.date, model: Optional[dict] = None) -> List[dict]:
-    """Preview: each zone's open actions, read from the notes, never written.
-    Per zone: the lines of Todo.md grouped under its `## ` headings in their
-    order, then the lines that sit in thread notes ("In thread notes"), then
-    what was ticked today, with counts of the open, the late and the
-    undated. An empty section is left out, but an empty Inbox is said. A
-    label names a note in the zone or, failing that, a project in System/."""
-    tl = todo_lines()
+    """Preview: each zone's open actions, never written. Per zone: the lines of Todo.md grouped under its `## `
+    headings in their order, then the lines that sit in thread notes ("In thread notes"), then what was ticked today,
+    with counts of the open, the late and the undated. An empty section is left out, but an empty Inbox is said. A
+    label names a note in the zone or, failing that, a project in System/. The view model reads the notes
+    (view.zone_todo) and decides which note each line names; this decides what late means and how a row is sorted."""
+    model = model or view_model(ws, ("todo",), today)
     out = []
-    system = system_notes(ws, model)
     role = machine_role(ws)
-    for zone in visible_dirs(ws / "Zones"):
-        todo_md = zone / "Todo.md"
-        waits = outbox_mod().pending_marks(ws, zone.name) if role == "roaming" else {}
-        held = [dict(h, role=role) for h in outbox_mod().held_requests(ws, zone.name)] if role in ("server", "roaming") else []
-        notes = {}
-        for n in tl.notes(str(zone)):
-            rel = Path(n).relative_to(zone).with_suffix("").as_posix()
-            notes.setdefault(rel.lower(), Path(n))
-            notes.setdefault(Path(n).stem.lower(), Path(n))
-        for name, n in system.items():
-            notes.setdefault(name, n)
+    for z in (model or {}).get("zones", []):
+        if "todo" not in z:
+            continue
+        data = z["todo"]
+        zname = z["name"]
+        todo_md = ws / data["file"] if data["file"] else None
+        waits = outbox_mod().pending_marks(ws, zname) if role == "roaming" else {}
+        held = [dict(h, role=role) for h in outbox_mod().held_requests(ws, zname)] if role in ("server", "roaming") else []
 
         def row(t, done=False):
             field = t["scheduled"] if t["waiting"] else t["due"]
@@ -834,39 +782,33 @@ def todo_list(ws: Path, link: "Links", today: dt.date, model: Optional[dict] = N
             except ValueError:
                 when = None
             late = bool(when and (when <= today if t["waiting"] else when < today)) and not done
-            if t["file"] != "Todo.md":
-                thread, note = Path(t["file"]).stem, zone / t["file"]
-            elif t["target"]:
-                thread, note = t["thread"], notes.get(t["target"].lower()) or notes.get(t["target"].rsplit("/", 1)[-1].lower())
-            else:
-                thread, note = None, None
-            project, tname = line_place(note, zone) if note and not t["unsure"] else ("", "")
-            return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread, waits=waits.get(t["key"], ""),
-                        project=project, tname=tname,
-                        link=link.attrs(note) if note else "", zone=zone.name,
-                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
+            note = ws / t["note"] if t["note"] else None
+            thread = t["label"]
+            plain = {k: v for k, v in t.items() if k != "note"}
+            plain["also"] = [tuple(a) for a in t["also"]]
+            return dict(plain, when=when, late=late, done=done, field=field if when else "", label=thread, waits=waits.get(t["key"], ""),
+                        project=t["project"], tname=t["tname"],
+                        link=link.attrs(note) if note else "", zone=zname,
+                        alpha=("%s\u0001%s" % (thread or ("￿" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
 
-        rows = [row(t) for t in tl.tasks(str(zone)) if t["text"] and "<action>" not in t["text"]]
-        if not rows and not todo_md.is_file():
+        rows = [row(t) for t in data["tasks"]]
+        if not rows and not todo_md:
             continue
-        order: List[str] = []
-        if todo_md.is_file():
-            order = [l[3:].strip() for l in todo_md.read_text(encoding="utf-8", errors="replace").splitlines() if l.startswith("## ")]
         groups = []
-        for name in order:
+        for name in data["order"]:
             if name in (g for g, _ in groups):
                 continue
             items = [r for r in rows if r["file"] == "Todo.md" and r["section"] == name]
             if items or name == "Inbox":
                 groups.append((name, sorted(items, key=lambda r: r["alpha"])))
-        loose = [r for r in rows if r["file"] == "Todo.md" and r["section"] not in order]
+        loose = [r for r in rows if r["file"] == "Todo.md" and r["section"] not in data["order"]]
         if loose:
             groups.append(("Not under a heading", sorted(loose, key=lambda r: r["alpha"])))
         elsewhere = [r for r in rows if r["file"] != "Todo.md"]
         if elsewhere:
             groups.append(("In thread notes", sorted(elsewhere, key=lambda r: (r["file"].lower(), r["alpha"]))))
-        done = [row(t, done=True) for t in tl.done_on(str(zone), today) if t["text"] and "<action>" not in t["text"]]
-        out.append(dict({"zone": zone.name, "file": todo_md if todo_md.is_file() else None, "groups": groups,
+        done = [row(t, done=True) for t in data["done"]]
+        out.append(dict({"zone": zname, "file": todo_md, "groups": groups,
                          "done": sorted(done, key=lambda r: r["alpha"]), "open": len(rows),
                          "late": sum(1 for r in rows if r["late"]), "undated": sum(1 for r in rows if r["when"] is None)},
                         **({"held": held} if held else {})))
@@ -2809,7 +2751,7 @@ var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function()
 def inboxes(ws: Path, model: Optional[dict] = None) -> List[Tuple[str, Path, int]]:
     """Files waiting to be filed: each zone's Inbox and the Meetings inbox, as the view model counts them (#650): one
     zone or one wiki per row, and none for a zone that is a link or an Inbox that leads out of its zone."""
-    model = model or view_model(ws)
+    model = model or view_model(ws, ("inbox",))
     if model is None:
         return []                 # a half-finished update: the Threads card says so
     return [(q["place"], ws / q["folder"], q["count"]) for q in model["queues"]["inbox"]]
@@ -8544,7 +8486,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws)
-    model = view_model(ws)                                 # the one document of the workspace this page draws from (#650)
+    model = view_model(ws, today=now.date())              # the one document of the workspace this page draws from (#650)
     T, IB, C, R, W = (threads(ws, model), inboxes(ws, model), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not

@@ -681,8 +681,8 @@ class TestContextTab(StatusCase):
         self.assertIn('<a href="#walls-settings" data-setgo="walls-settings">', html)
 
     def test_the_pending_update_note_is_in_settings(self):
-        with mock.patch.object(status, "workspace_context", lambda ws: {"zone_walled": {"Work": True}, "pending": True}):
-            self.assertIn("These flags are read from your Parties and Zones tables until the update to zone walls is accepted.", status.walls_settings(self.root))
+        # the fixture's Zones table has no Walled column: the flags are derived, and Settings says so (#650: read by view_settings.py)
+        self.assertIn("These flags are read from your Parties and Zones tables until the update to zone walls is accepted.", status.walls_settings(self.root))
 
 
 class TestAllowedByYou(StatusCase):
@@ -3961,18 +3961,15 @@ class TestMemorySettings(StatusCase):
 
     def test_left_out_without_fade_and_said_when_it_fails(self):
         os.remove(str(self.root / "System" / "tools" / "fade.py"))
-        status._FADE.pop(self.root, None)
         html = self.page()
         self.assertNotIn('id="memory-settings"', html)
         self.assertIn('id="settings"', html)
         write(self.root / "System" / "tools" / "fade.py", "def settings(root):\n    raise RuntimeError('no')\n"
                                                            "def counts(root, memory=None):\n    return {}\n")
-        status._FADE.pop(self.root, None)
         sec = self.section()
         self.assertIn("did not give its settings (RuntimeError)", sec)
         self.assertNotIn('id="m-prev"', sec)
         write(self.root / "System" / "tools" / "fade.py", "import nothing_by_this_name\n")
-        status._FADE.pop(self.root, None)
         self.assertNotIn('id="memory-settings"', self.page())
 
     def test_the_form_reads_back_into_fades_keys_and_counts_again(self):
@@ -4056,8 +4053,8 @@ class TestMemorySettings(StatusCase):
 
     def test_with_the_real_fade_it_says_its_own_rules_and_links_the_full_list(self):
         fixtures.write_fade(self.root)
-        status._FADE.pop(self.root, None)
-        fade = status.fade_lib(self.root)
+        import view_settings
+        fade = view_settings.fade_lib(self.root)
         sec = self.section()
         self.assertIn(status.said_html(fade.AGE_SAID), sec[sec.index('id="help-memory"'):])     # fade.py's words, behind the "?"
         advanced = sec[sec.index('<details class="madv">'):]

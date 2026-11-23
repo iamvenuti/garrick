@@ -557,9 +557,10 @@ def work_reader(ws: Path):
 _WORKS: dict = {}
 
 
-def view_reader(ws: Optional[Path] = None):
+def view_reader(ws: Optional[Path] = None, need: str = ""):
     """view.py, the view model (#650): the workspace's own copy in System/tools, else the one beside this extra (an
-    installed System/status sits next to System/tools), else the clone's template."""
+    installed System/status sits next to System/tools), else the clone's template. `need` names a function the copy must
+    have, so a workspace's older copy that lacks it is passed over."""
     homes = ([ws / "System" / "tools"] if ws is not None else []) + [
         Path(__file__).resolve().parent.parent / "tools", Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools"]
     for tools in homes:
@@ -569,7 +570,8 @@ def view_reader(ws: Optional[Path] = None):
                 spec = importlib.util.spec_from_file_location("garrick_view_status", str(src))
                 _VIEWS[src] = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(_VIEWS[src])
-            return _VIEWS[src]
+            if not need or callable(getattr(_VIEWS[src], need, None)):
+                return _VIEWS[src]
     raise FileNotFoundError("System/tools/view.py")
 
 
@@ -657,13 +659,31 @@ FLAGS = {
 }
 
 
-def preview_flags(ws: Path) -> Dict[str, bool]:
+def settings_data(ws: Path, only=None) -> dict:
+    """What Settings shows, as the core reads it (view_settings.py, through view.settings(), #650): the choices, the fade
+    settings, the notices, the channels, the read guard, the flags, this computer's role. `only` names the parts to read;
+    this file draws what comes back and reads none of it. {} where the core cannot read it: each section is then drawn as
+    it is when its own reader is missing."""
     try:
-        data = json.loads(ws.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    data = data if isinstance(data, dict) else {}
-    return {k: data.get(k) is True for k in FLAGS}
+        jobs = {}
+        if only is None or "notifications" in only:
+            try:
+                jobs = launchd_jobs()               # this Mac's agents: the page's own, so the notice rows can say who sends them
+            except Exception:
+                jobs = {}
+        return view_reader(ws, "settings").settings(ws, Path(__file__).resolve().parent, jobs, only)
+    except Exception:
+        return {}
+
+
+def _data(ws: Path, data: Optional[dict], *parts: str) -> dict:
+    """The Settings document a section draws from: the one it was given, else the parts it needs, read now."""
+    return data if data is not None else settings_data(ws, parts)
+
+
+def preview_flags(ws: Path, data: Optional[dict] = None) -> Dict[str, bool]:
+    flags = _data(ws, data, "flags").get("flags") or {}
+    return {k: flags.get(k) is True for k in FLAGS}
 
 
 _PREFS = None
@@ -4352,55 +4372,50 @@ def settings_mod(name: str):
     return _SETTINGS_MODS[name]
 
 
-def machine_record(ws: Path) -> Tuple[str, str, str]:
+def machine_record(ws: Path, data: Optional[dict] = None) -> Tuple[str, str, str]:
     """(role, this computer's name, the home server's name) of this computer, as machine.py reads them: one computer with
     no name where there is no role file."""
-    box = outbox_mod()
-    try:
-        mod = box._machine(ws) if box else None
-        rec = mod.read() if mod else {}
-        return str(rec.get("role") or "solo"), str(rec.get("name") or ""), str(rec.get("server") or "")
-    except Exception:
-        return "solo", "", ""
+    m = _data(ws, data, "machine").get("machine") or {}
+    return str(m.get("role") or "solo"), str(m.get("name") or ""), str(m.get("server") or "")
 
 
 SETGUARD_JS = getattr(settings_mod("settings_guard"), "JS", "")
 SETGUARD_CSS = getattr(settings_mod("settings_guard"), "CSS", "")
 
 
-def machine_settings(ws: Path) -> str:
+def machine_settings(ws: Path, data: Optional[dict] = None) -> str:
     """Settings › This machine (#621): the role of this computer in words, and *Change…* in the app."""
     guard = settings_mod("settings_guard")
     if guard is None:
         return ""
-    role, name, server = machine_record(ws)
+    role, name, server = machine_record(ws, data)
     return guard.machine_section(role, name, server, help_button, help_text)
 
 
-def read_guard_block(ws: Path) -> str:
+def read_guard_block(ws: Path, data: Optional[dict] = None) -> str:
     """The Read guard block of Settings › Walls: Off, Watch only or On, Refuse or Ask me, and the two tool lists (#621). In the
     app only. Empty where settings_guard.py is not there."""
     guard = settings_mod("settings_guard")
-    lib = prefs().lib(ws)
-    if guard is None or lib is None:
+    data = _data(ws, data, "guard", "machine")
+    read = data.get("read_guard")
+    if guard is None or not read:
         return ""
-    try:
-        codex = channels_mod().assistant() == "codex"
-    except Exception:
-        codex = False
-    return guard.guard_block(guard.read_state(ws, lib), codex, help_button, help_text, machine_record(ws)[0])
+    state = dict(read["state"], would={z: [dict(i, when=dt.datetime.fromisoformat(i["when"]) if isinstance(i.get("when"), str) else i.get("when"))
+                                           for i in items] for z, items in (read["state"].get("would") or {}).items()})
+    return guard.guard_block(state, bool(read.get("codex")), help_button, help_text, machine_record(ws, data)[0])
 
 
-def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
+def walls_settings(ws: Path, folder: Optional[Path] = None, data: Optional[dict] = None) -> str:
     """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
     "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
     nothing and runs nothing: the assistant asks for the yes and runs scaffold.py. No command and no code on the row. Nothing without
     zones. The note about flags read from the Parties and Zones tables moves here with the rows."""
-    ctx = workspace_context(ws)
-    flags = ctx.get("zone_walled") or {}
+    data = _data(ws, data, "walls", "guard", "machine")
+    ctx = data.get("walls") or {}
+    flags = ctx.get("flags") or {}
     if not flags:
         return ""
-    guard = read_guard_block(ws)
+    guard = read_guard_block(ws, data)
     where = str(folder or ws)
     rows = ""
     for z, walled in sorted(flags.items()):
@@ -4494,12 +4509,11 @@ TIER_NAMES = {"haiku": "Small", "sonnet": "Medium", "opus": "Large"}
 NOT_SET_UP = "Set Telegram up first. Its choices apply once it runs."
 
 
-def telegram_service_row(ws: Optional[Path] = None) -> Tuple[str, bool]:
+def telegram_service_row(ws: Optional[Path] = None, data: Optional[dict] = None) -> Tuple[str, bool]:
     """The Telegram receiver's state line, first in its block, and whether the channel is off. While it is off, a
     *Set up Telegram* button hands the setup to the assistant, as Process the Inbox does (#581)."""
-    try:
-        row = channel_mod("channel_state").row()
-    except Exception:
+    row = ((_data(ws, data, "channels").get("channels") or {}) if ws is not None or data is not None else {}).get("telegram")
+    if not row:
         return "", False
     off = row["state"] == "off"
     button = request_button("Set up Telegram", "set up Telegram", ws) if ws is not None and row["state"] in ("off", "unpaired") else ""
@@ -4507,12 +4521,11 @@ def telegram_service_row(ws: Optional[Path] = None) -> Tuple[str, bool]:
             off)
 
 
-def held_list() -> str:
+def held_list(ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
     """The actions waiting for your yes, each with what it would do, where, and how long it has left. Its own heading,
     outside both channels' blocks: the list covers Ask and Telegram."""
-    try:
-        rows = channel_mod("hold").listing()
-    except Exception:
+    rows = ((_data(ws, data, "channels").get("channels") or {}) if ws is not None or data is not None else {}).get("held")
+    if rows is None:
         return ""
     head = '<p class="chnote"><b>Waiting for your yes</b></p>'
     if not rows:
@@ -4523,14 +4536,12 @@ def held_list() -> str:
     return '<div id="held-actions">%s<p class="chnote">Nothing runs until you say so:</p><ul>%s</ul></div>' % (head, items)
 
 
-def channels_settings(ws: Path) -> str:
+def channels_settings(ws: Path, data: Optional[dict] = None) -> str:
     """Settings › Channels: Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections that save are."""
-    try:
-        ch = channels_mod()
-        cfg = ch.settings(ws)
-        cap = ch.kept() or {"ok": True}          # what the last check found; the page never runs one
-    except Exception:
+    ch = _data(ws, data, "channels").get("channels")
+    if not ch:
         return ""
+    cfg, cap = ch["settings"], ch["capability"]          # what the last check found; the page never runs one
 
     def select(channel: str, key: str, values, names, label: str, off: bool = False) -> str:
         opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
@@ -4540,15 +4551,15 @@ def channels_settings(ws: Path) -> str:
                 % (channel, key, E(label), channel, key, channel, key,
                    ' disabled title="%s"' % E(NOT_SET_UP) if off else "", opts))
     body = ""
-    for channel in ch.CHANNELS:
+    for channel in ch["names"]:
         body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
         off = False
         if channel == "telegram":
-            line, off = telegram_service_row(ws)
+            line, off = telegram_service_row(ws, {"channels": ch})
             body += line
-        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size", off)
-        body += select(channel, "effort", ch.EFFORTS, {}, "Effort", off)
-        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go", off)
+        body += select(channel, "tier", ch["tiers"], TIER_NAMES, "Model size", off)
+        body += select(channel, "effort", ch["efforts"], {}, "Effort", off)
+        body += select(channel, "autonomy", ch["levels"][channel], LEVEL_NAMES, "How far it may go", off)
     limit = ""
     if not cap.get("ok"):
         limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
@@ -4559,7 +4570,7 @@ def channels_settings(ws: Path) -> str:
                help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking you first; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
                          "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
                          "walled zone sent to Telegram is held on Telegram&#39;s servers."),
-               body, limit, held_list()))
+               body, limit, held_list(ws, {"channels": ch})))
 
 
 CHANNELS_JS = r"""
@@ -4610,30 +4621,22 @@ def md_inline(s: str) -> str:
     return guide_mod().inline(s)
 
 
-def release_number(ws: Path) -> str:
+def release_number(ws: Path, data: Optional[dict] = None) -> str:
     """"Garrick 0.43.0": the release the workspace runs, the newest in its
     copy of the release notes, through its own garrick_lib. A workspace
     whose tools cannot say it gets the sentence `check.py --version` gives."""
-    lib = workspace_lib(ws)
-    read = getattr(lib, "workspace_release", None)
-    try:
-        number = read(ws) if callable(read) else ""
-    except Exception:
-        number = ""
-    return "Garrick %s" % number if number else installed_version(ws)
+    rel = _data(ws, data, "release").get("release") or {}
+    return "Garrick %s" % rel["number"] if rel.get("number") else (rel.get("installed") or UNKNOWN)
 
 
-def release_choice(ws: Optional[Path]) -> Tuple[bool, int]:
+def release_choice(ws: Optional[Path], data: Optional[dict] = None) -> Tuple[bool, int]:
     """(whether the check for a newer Garrick is on, its cadence in days),
     from the settings file through the workspace's own garrick_lib. Off and
     daily where it cannot be read."""
-    lib = workspace_lib(ws)
-    on, every = getattr(lib, "release_notice_on", None), getattr(lib, "release_every", None)
-    try:
-        return (bool(on(ws)) if callable(on) else False,
-                7 if callable(every) and every(ws).days == 7 else 1)
-    except Exception:
+    if ws is None:
         return False, 1
+    rel = _data(ws, data, "release").get("release") or {}
+    return bool(rel.get("notice_on")), 7 if rel.get("notice_every") == 7 else 1
 
 
 def release_controls(on: bool, every: int) -> str:
@@ -4652,12 +4655,11 @@ def release_controls(on: bool, every: int) -> str:
             % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
-def usage_on(ws: Optional[Path]) -> bool:
+def usage_on(ws: Optional[Path], data: Optional[dict] = None) -> bool:
     """Whether the App counts which cards are opened (#651): on unless the settings say false."""
-    try:
-        return prefs().read(ws).get("usage-counts") is not False if ws is not None else True
-    except Exception:
+    if ws is None:
         return True
+    return _data(ws, data, "usage").get("usage_counts") is not False
 
 
 def usage_cards(ws: Optional[Path]) -> List[str]:
@@ -4676,19 +4678,15 @@ def usage_control(on: bool) -> str:
             '<span>Count which cards I open</span></label></p></div>' % (" checked" if on else ""))
 
 
-def stale_band_lines(ws: Optional[Path]) -> str:
+def stale_band_lines(ws: Optional[Path], data: Optional[dict] = None) -> str:
     """The band kept outside the workspace, when it is from another commit than
     the workspace runs: `check.py --version` says the same. Read through the
     workspace's own garrick_lib, and nothing when its tools cannot say."""
-    found = getattr(workspace_lib(ws), "stale_bands", None) if ws is not None else None
-    try:
-        lines = found(ws) if callable(found) else []
-    except Exception:
-        lines = []
+    lines = (_data(ws, data, "release").get("release") or {}).get("stale") or [] if ws is not None else []
     return "".join('<p class="setver" id="band-stale">%s</p>' % E(line) for line in lines)
 
 
-def about_garrick(version: str, ws: Optional[Path] = None) -> str:
+def about_garrick(version: str, ws: Optional[Path] = None, data: Optional[dict] = None) -> str:
     """Settings › About Garrick (#227): the release this is, and three links
     to Garrick's GitHub page, opened in the browser, where nothing is sent
     until you submit it yourself: the bug form, with the version filled in;
@@ -4709,7 +4707,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), stale_band_lines(ws), (release_controls(*release_choice(ws)) + usage_control(usage_on(ws))) if ws is not None else "", rows))
+               E(version), stale_band_lines(ws, data), (release_controls(*release_choice(ws, data)) + usage_control(usage_on(ws, data))) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -4729,15 +4727,11 @@ GLASS = ('<svg class="lico lglass" viewBox="0 0 16 16" aria-hidden="true"><circl
 DESK_AGENTS = (("claude", "Claude Code"), ("codex", "Codex"))
 
 
-def desk_agent(ws: Path) -> str:
+def desk_agent(ws: Path, data: Optional[dict] = None) -> str:
     """The assistant a new cmux tab starts, as the desk reads it: `agent` in
     System/desk.json, or the file GARRICK_DESK_CONFIG names; claude when it
     is not set or the file does not read."""
-    f = Path(os.environ.get("GARRICK_DESK_CONFIG") or ws / "System" / "desk.json").expanduser()
-    try:
-        agent = json.loads(f.read_text(encoding="utf-8")).get("agent")
-    except (OSError, ValueError, AttributeError):
-        agent = None
+    agent = _data(ws, data, "desk").get("desk_agent")
     return agent if agent in dict(DESK_AGENTS) else "claude"
 
 
@@ -4861,15 +4855,16 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     Reset view at the foot. Each section shows its choices and one line at
     most saying what they are for; how a feature works is behind its "?"
     and in docs/extras/status-page.md (#227)."""
-    agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
+    data = settings_data(ws)
+    agent = desk_agent(ws, data) if "cmux" in installed and CMUXLIB.is_file() else None
     filed = {"look": [launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
-             "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
-             "keep": [memory_settings(ws, link)],
-             "walls": [walls_settings(ws)],
-             "machine": [machine_settings(ws)],
-             "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
+             "tell": [notify_settings(ws, CMUXLIB.is_file(), data), channels_settings(ws, data)],
+             "keep": [memory_settings(ws, link, data)],
+             "walls": [walls_settings(ws, None, data)],
+             "machine": [machine_settings(ws, data)],
+             "about": [about_garrick(release_number(ws, data), ws, data), preview_section(preview_flags(ws, data))]}
     helper = settings_mod("settings_help")          # a "?" on each setting row, beside its section's (#621)
     if helper is not None:
         filed = {key: [helper.with_row_help(h, help_button, help_text) for h in secs] for key, secs in filed.items()}
@@ -5129,34 +5124,7 @@ def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, s
                rows))
 
 
-_NL: Dict[Path, object] = {}
-
-
-def notify_lib(ws: Path):
-    """System/tools/notifications.py, which keeps Settings › Notifications:
-    the workspace's own, else the one a step from this extra, else a Garrick
-    clone's template, as prefs.py finds garrick_lib. None when there is none."""
-    key = Path(ws)
-    if key not in _NL:
-        found = None
-        for src in (key / "System" / "tools" / "notifications.py", Path(__file__).resolve().parent.parent / "tools" / "notifications.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "notifications.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_status_notifications", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "settings", None)) and hasattr(mod, "EVENTS"):
-                found = mod
-                break
-        _NL[key] = found
-    return _NL[key]
-
-
-def notify_settings(ws: Path, desk: bool = False) -> str:
+def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -> str:
     """Settings › Notifications (#110, #227): notices go to this Mac and
     nowhere else, so the section is the six notices you can be told of,
     each on or off, the minutes a long task takes, and quiet hours, with
@@ -5166,15 +5134,15 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     extra is here, whose Desk replies also get through at night. A job
     whose plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its own way,
     which the explanation behind the "?" says, rather than a line of state."""
-    lib = notify_lib(ws)
-    if lib is None or not hasattr(lib, "TELL"):
+    note = _data(ws, data, "notifications").get("notifications")
+    if not note:
         return ""
-    cfg = lib.settings(ws)
-    own = notify_own_way(lib)
+    cfg = note["settings"]
+    own = note["own_way"]
     def box(attr, on, label=""):
         return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
     after = ('<input type="number" id="n-after" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
-             % (lib.AFTER_MAX, cfg["after"]))
+             % (note["after_max"], cfg["after"]))
     words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
 
     def row(e, label):
@@ -5183,7 +5151,7 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
             return ('<label class="nsown nsitem" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
                     % (E(said), box('data-nt="%s" disabled aria-disabled="true"' % e, cfg["tell"][e]), E(label), E(said)))
         return '<label class="nsitem">%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
-    tell = "".join(row(e, label) for e, label in lib.TELL)
+    tell = "".join(row(e, label) for e, label in note["tell"])
     q = cfg["quiet"]
     rule = ("At night only &#8220;a session needs me&#8221; gets through%s."
             % (", and so do cmux&#39;s notices about starting or closing the day" if desk else ""))
@@ -5201,30 +5169,6 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
             '</div><p class="hint" id="n-said" role="status" hidden></p></section>'
             % (set_head("Notifications", "notify", "Notices appear on this Mac."), help_text("notify", help_html),
                tell, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
-
-
-# The jobs that send a row's notice, by the name their plist runs them under (job.py <name>): the todo sweep's morning
-# summary, and the nightly job's Context digest.
-NOTIFY_JOBS = {"todo-summary": (("gr-todo-sweep", "todo-sweep"), "the todo sweep"), "context-summary": (("gr-nightly", "nightly"), "the nightly job")}
-
-
-def notify_own_way(lib) -> Dict[str, str]:
-    """Event -> a plain sentence, for each row whose job's launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD: that job
-    sends its notice its own way, past the switch, so the row says where it goes and its box is not in use."""
-    out: Dict[str, str] = {}
-    try:
-        jobs_ = launchd_jobs()
-        over = getattr(lib, "override", None)
-        for event, (names, said) in NOTIFY_JOBS.items():
-            job = next((jobs_[n] for n in names if n in jobs_), {})
-            env = {str(k): str(v) for k, v in (job.get("env") or {}).items()}
-            kinds = over(env) if callable(over) else ()
-            if kinds:
-                out[event] = ("Sent by %s to the command you set, not by this switch." if "GARRICK_NOTIFY_CMD" in kinds
-                              else "Sent by %s as its own Mac notice, not by this switch.") % said
-    except Exception:
-        return {}
-    return out
 
 
 def script_json(data) -> str:
@@ -6550,49 +6494,11 @@ window.GarrickUsage={changed:function(){return changed},request:function(){retur
 # the form as `memory` with the rest (JS's sdReq asks window.GarrickMemory),
 # and nothing moves until a pass is asked for. Without fade.py, or when it
 # fails, the section is left out or says why, and the page builds as before.
-_FADE: Dict[Path, object] = {}
 MEMORY_WIKIS = ("Meetings", "Knowledge")
 MEMORY_PINS = (("thread", "A live thread links it"), ("project", "A live project's notes link it"),
                ("todo", "An open action in a Todo list links it"), ("pinned", "Its frontmatter says pinned: true"))
 MEMORY_MONTHS = (1, 240)          # what the form offers; fade.py and page_action.py have the last word
 MEMORY_MIN = (1, 1000)
-
-
-@contextlib.contextmanager
-def tools_path(ws: Path):
-    """The workspace's System/tools/ first on the path while fade.py is
-    loaded or asked, as it would be run there; the path and the modules it
-    imported put back after, so nothing of one workspace stays for another."""
-    path, before = list(sys.path), set(sys.modules)
-    sys.path.insert(0, str(ws / "System" / "tools"))
-    try:
-        yield
-    finally:
-        sys.path[:] = path
-        for k in set(sys.modules) - before:
-            sys.modules.pop(k, None)
-
-
-def fade_lib(ws: Path):
-    """The workspace's own System/tools/fade.py, loaded once per workspace,
-    as nurture_lib() loads nurture.py; None when there is none, it does not
-    load, or it lacks settings() and counts()."""
-    if ws not in _FADE:
-        lib, src = None, ws / "System" / "tools" / "fade.py"
-        if src.is_file():
-            name = "garrick_status_fade"
-            try:
-                with tools_path(ws):
-                    spec = importlib.util.spec_from_file_location(name, str(src))
-                    mod = importlib.util.module_from_spec(spec)
-                    sys.modules[name] = mod             # its dataclasses look their module up by name
-                    spec.loader.exec_module(mod)
-                if callable(getattr(mod, "settings", None)) and callable(getattr(mod, "counts", None)):
-                    lib = mod
-            except Exception:
-                lib = None
-        _FADE[ws] = lib
-    return _FADE[ws]
 
 
 GRADES_SAID = ("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; "
@@ -6626,7 +6532,7 @@ def said_html(text: str) -> str:
     return re.sub(r"`([^`]+)`", r"<code>\1</code>", E(text))
 
 
-def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
+def memory_settings(ws: Path, link: Optional["Links"] = None, data: Optional[dict] = None) -> str:
     """Settings › Manage older material, the Memory section (#108), cut to
     its choices (#227): one line saying what it does; per wiki, the switch
     that lets old pages fade, each of its kinds' months, and one line of
@@ -6638,32 +6544,28 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
     are fade.py's own sentences (AGE_SAID, WAKE_SAID), shown as they are, so
     the page cannot promise what the code does not do. In the app only, as
     the other sections that save are."""
-    lib = fade_lib(ws)
-    if lib is None:
+    mem = _data(ws, data, "memory").get("memory")
+    if mem is None:
         return ""
-    age = getattr(lib, "AGE_SAID", None)
+    age = mem.get("age_said")
     head = set_head("Manage older material", "memory", "Old meetings and reading change grade after the months set here: %s." % GRADES_SAID) + help_text("memory", (
         'A page older than its kind&#39;s months becomes dormant, and later archived. &#8220;What would fade&#8221; writes the full '
         'list; &#8220;fade the meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
         'Saved when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "")))
-    try:
-        with tools_path(ws):
-            cfg = lib.settings(ws)
-            grades = lib.counts(ws)
-        wikis, kinds, pins = cfg["wikis"], cfg["kinds"], cfg["pins"]
-    except Exception as e:
+    if mem.get("error"):
         return ('<section class="setsec apponly" id="memory-settings">%s<p class="hint">Memory cannot be set here: '
                 '<code>System/tools/fade.py</code> did not give its settings (%s).</p></section>'
-                % (head, E(type(e).__name__)))
+                % (head, E(mem["error"])))
+    cfg, grades = mem["settings"], mem["counts"]
+    wikis, kinds, pins = cfg["wikis"], cfg["kinds"], cfg["pins"]
     box = lambda attr, on, label: '<input type="checkbox" %s%s aria-label="%s">' % (attr, " checked" if on else "", E(label))
     num = lambda attr, value, low, high, label, off=False: (
         '<input type="number" %s min="%d" max="%d" value="%s" aria-label="%s"%s>'
         % (attr, low, high, E(str(value)), E(label), " disabled" if off else ""))
 
     def full_list(w):
-        paths = getattr(lib, "proposal_paths", None)
-        path = paths(ws, w)[0] if callable(paths) else ws / "System" / "generated" / "fade" / ("%s.md" % w)
-        return (' <a class="mfull" href="%s">Full list</a>' % E(link(path))) if link is not None and path.is_file() else ""
+        path = mem["full_list"].get(w)
+        return (' <a class="mfull" href="%s">Full list</a>' % E(link(ws / path))) if link is not None and path else ""
 
     def review(w, c):
         """*Review the 12*, beside a count with something to move: hands "what would fade in Meetings" to the assistant, which
@@ -6699,7 +6601,7 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
                       if w in grades else ""))
     pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
                        for key, said in MEMORY_PINS)
-    wake = getattr(lib, "WAKE_SAID", None)
+    wake = mem.get("wake_said")
     nightly = cfg.get("nightly") or {}
     reach = cfg.get("reach", "dormant")
     return ('<section class="setsec apponly" id="memory-settings">%s<div class="mgrades" id="m-prev" aria-live="polite">%s</div>'

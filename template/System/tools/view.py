@@ -90,7 +90,8 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, the waiting sessions, and the settings.
+check's kept result, and the waiting sessions. The settings are read by `view_settings.py` (`settings()` below), not part of
+`build()`: Settings is the page's own and names every zone's walled flag.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
 """
@@ -114,7 +115,7 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions", "settings")
+        "the check's kept result", "waiting sessions")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
 PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example", "graph")
@@ -992,6 +993,17 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
         out["graph"] = graph_records(root, wanted)
     out["left"] = list(LEFT)
     return out
+
+
+def _settings():
+    return _sibling("view_settings.py", "garrick_view_settings")
+
+
+def settings(root, extras=None, jobs=None, only=None) -> dict:
+    """What the Settings dialog shows, as one document (`view_settings.read`): the choices, the fade settings, the notices,
+    the channels, the read guard, the preview flags, this computer's role. `extras` is the status extra's folder, `jobs`
+    this Mac's launchd agents as the page reads them, `only` the parts to read. Reads; never writes."""
+    return _settings().read(root, extras, jobs, only)
 
 
 def main(argv=None) -> int:

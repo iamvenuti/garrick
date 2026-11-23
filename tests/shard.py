@@ -129,6 +129,12 @@ for _key in ("template/System/tools/history.py", "extras/status/finding_queue.py
 # nurture-0780 (#662): wall findings that look like an old note template.
 for _key in ("template/System/tools/check.py", "template/System/tools/nurture.py", "extras/status/finding_queue.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_template_hint"]
+# settings-0790 (#650): Settings' data has a reader in the core.
+for _key, _mods in (("template/System/tools/view_settings.py", ["test_view_settings", "test_view_model", "test_status", "test_settings_ui"]),
+                    ("tests/golden/settings_0780/", ["test_view_settings"]), ("tests/test_view_settings.py", ["test_view_settings"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+for _key in ("template/System/tools/view.py", "extras/status/status.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_view_settings"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

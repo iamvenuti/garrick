@@ -16,6 +16,8 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
      "zones": [ZONE, ...],                     # by name, one per folder of Zones/
      "queues": {"inbox": [INBOX, ...]},        # the places that hold files waiting to be sorted
      "today": "2026-11-22",                    # the day the Todo part counts as ticked today
+     "wikis": [WIKI, ...],                     # each wiki's log: how many entries, and the newest (none in a scoped build)
+     "repos": [REPO, ...],                     # the root, each zone, the wikis: what each has uncommitted
      "system": [SYSTEM, ...],                  # the projects kept in System/, outside any zone
      "left": [...]}                            # what the page still reads for itself, by name
 
@@ -64,6 +66,14 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
             "note": "Zones/Work/Acme/Threads/Pricing/Pricing.md" | null,   # the note the line names or sits in
             "label": "Pricing" | null, "project": "Acme", "tname": "Pricing"}
 
+    WIKI   {"name": "Meetings", "folder": "Wikis/Meetings", "log": "Wikis/Meetings/wiki/log.md", "count": 12,
+            "when": "2026-11-20" | null, "title": "Weekly review", "markdown": false,  # the newest entry; `markdown`: the page reads the title as plain words
+            "page": "wiki/sources/review.md" | null,                                   # from the wiki's real folder
+            "unread": false}                                                           # the log has lines that look like entries and none read
+
+    REPO   {"name": "Work", "folder": "Zones/Work" | "", "dirty": 2, "changes": [["Acme/Acme.md", ["unstaged"]]],
+            "unread": false, "since": "2026-11-21T09:12:00" | null, "last": "2026-11-20T17:30:00" | null}
+
     SYSTEM {"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}   # the hub, then each thread note
 
 Walls. Every record carries its zone. A count is of one zone or one wiki; nothing here adds
@@ -73,8 +83,7 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, the waiting sessions, the settings, the wikis' logs,
-the repositories, the Explore graph, and the worked example's marker.
+check's kept result, the waiting sessions, the settings, the Explore graph, and the worked example's marker.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
 """
@@ -97,11 +106,11 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions", "settings", "wiki logs", "repositories",
+        "the check's kept result", "waiting sessions", "settings",
         "the Explore graph", "the worked example's marker")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
-PARTS = ("work", "inbox", "system", "todo", "questions")
+PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos")
 
 _MODS: dict = {}
 
@@ -596,6 +605,152 @@ def zone_questions(zone: Path, today: dt.date) -> List[dict]:
     return found
 
 
+# ---- the wikis' logs: one line per ingest in each wiki's log, `- 2026-09-24: [[wiki/sources/slug|Title]] (...)`.
+LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+# A dated line with no link first, as the knowledge skill wrote its log before 0.51.0: its title is its text up to the
+# first parenthesis or semicolon. And a dated `## ` heading, as a wiki whose schema.json says `"log": "section"` keeps it:
+# its title is the rest of the heading, or the first line under it (#322).
+LOG_DATED = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+(.*)$")
+LOG_SECTION = re.compile(r"^##\s+(\d{4}-\d\d-\d\d)\b[\s:·,—–-]*(.*)$")
+
+
+def log_entries(text: str) -> Tuple[List[tuple], bool]:
+    """(date, -line, title, page target or "", markdown) for every entry a wiki's log holds, in the three forms (#322);
+    and whether it holds lines that look like entries, a list item or a `## ` section, so a log that reads as none of them
+    says so rather than "nothing logged yet". `markdown` is True where the title is a line of Markdown the page reads as
+    plain words (the two forms with no link), and False where it is a link's alias or a page's name."""
+    lines = text.splitlines()
+    entries, tried = [], False
+    for n, line in enumerate(lines):
+        m = LOG_ENTRY.match(line)
+        if m:
+            when = as_date(m.group(1))
+            if when:
+                target = m.group(2).strip()
+                entries.append((when, -n, (m.group(3) or target.rsplit("/", 1)[-1]).strip(), target, False))
+                continue
+        m = LOG_DATED.match(line) or LOG_SECTION.match(line)
+        if m and as_date(m.group(1)):
+            rest = m.group(2).strip()
+            if not rest and line.startswith("##"):          # the section's first line says what it holds
+                rest = next((l.strip().lstrip("-* ").strip() for l in lines[n + 1:n + 6] if l.strip() and not l.startswith("#")), "")
+                k = LOG_ENTRY.match("- %s: %s" % (m.group(1), rest))
+                if k:
+                    target = k.group(2).strip()
+                    entries.append((as_date(m.group(1)), -n, (k.group(3) or target.rsplit("/", 1)[-1]).strip(), target, False))
+                    continue
+            entries.append((as_date(m.group(1)), -n, re.split(r"[(;]", rest, 1)[0], "", True))
+            continue
+        tried = tried or line.lstrip().startswith(("- ", "* ")) or line.startswith("## ")
+    return entries, tried
+
+
+def wiki_records(root: Path) -> List[dict]:
+    """Per wiki: its log, how many entries it holds, and the newest entry's date and title. Nothing else from the line: not
+    its zone, not its parties. An entry with a link opens its page, named from the wiki's real folder; a log whose entries
+    it cannot read at all says so (`unread`). A log that is a link out of its wiki is not read."""
+    within = _work()._within
+    out = []
+    for w in _visible_dirs(Path(root) / "Wikis"):
+        log = w / "wiki" / "log.md"
+        real = w.resolve()
+        if not log.is_file() or not within(log, real):
+            continue
+        try:
+            entries, tried = log_entries(log.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        row = {"name": w.name, "folder": _rel(w, root), "log": _rel(log, root), "count": len(entries), "when": None,
+               "title": "", "markdown": False, "page": None, "unread": tried and not entries}
+        if entries:
+            when, _, title, target, markdown = max(entries)   # the newest; on a tie, the line nearer the top
+            page = None
+            if target:
+                found = (w / (target if target.endswith(".md") else target + ".md")).resolve()
+                if str(found).startswith(str(real) + os.sep) and found.is_file():
+                    page = found.relative_to(real).as_posix()
+            row.update(when=_iso(when), title=title, markdown=markdown, page=page)
+        out.append(row)
+    return out
+
+
+# ---- the repositories: the root, each zone, the wikis' repository and any wiki with one of its own.
+# How `git status --porcelain` marks a file, as the Repositories card says it. A file staged and then edited again is
+# both staged and not staged.
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+
+def changed_files(porcelain: str) -> List[Tuple[str, Tuple[str, ...]]]:
+    """(path, kinds) for every file `git status --porcelain -z` lists: one entry per file, a rename under its new name. A
+    count of these is a count of files, never of commits."""
+    out, items = [], porcelain.split("\0")
+    i = 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if len(item) < 4:
+            continue
+        xy, path = item[:2], item[3:]
+        if "R" in xy or "C" in xy:
+            i += 1                              # the name it had before
+        if xy == "??":
+            kinds = ("untracked",)
+        elif xy in UNMERGED:
+            kinds = ("conflicted",)
+        else:
+            kinds = tuple(k for k, mark in (("staged", xy[0]), ("unstaged", xy[1])) if mark not in " ?!")
+        if kinds:
+            out.append((path, kinds))
+    return out
+
+
+def oldest_change(folder: Path, changes) -> Optional[dt.datetime]:
+    """When the longest-waiting uncommitted change was made: the oldest modification time among the changed files still
+    on disk. A deleted file has none and is passed over."""
+    times = []
+    for path, _ in changes:
+        try:
+            times.append((folder / path).stat().st_mtime)
+        except OSError:
+            continue
+    return dt.datetime.fromtimestamp(min(times)) if times else None
+
+
+def repo_records(root: Path, scope: Optional[set] = None) -> List[dict]:
+    """The root, each zone, and the wikis: the installer makes one repository at Wikis/ for both. A wiki with a repository
+    of its own is listed too. When git fails or runs out of time, the repository is `unread`, never clean: an empty answer
+    is not a count of nothing. A zone folder that is a link is no zone and has no repository here. A scope holds the
+    repositories of its zones alone: not the root's, and not the wikis'."""
+    root = Path(root)
+    real = {z.name for z in _work().zones(root)}
+    places: List[Tuple[str, Path]] = [] if scope is not None else [("Workspace", root)]
+    places += [(z.name, z) for z in _visible_dirs(root / "Zones") if z.name in real and (scope is None or z.name in scope)]
+    if scope is None:
+        places += [("Wikis", root / "Wikis")] + [(w.name, w) for w in _visible_dirs(root / "Wikis")]
+    out = []
+    for name, folder in places:
+        if not (folder / ".git").exists():
+            continue
+        # --no-optional-locks: the page only reads, so git status never takes index.lock to refresh the index, and a commit a
+        # session makes in the same moment never finds it held.
+        def git(*args):
+            try:
+                proc = subprocess.run(["git", "--no-optional-locks", "-C", str(folder), *args], capture_output=True,
+                                      text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            return proc.stdout if proc.returncode == 0 else None
+        porcelain = git("status", "--porcelain", "-z", "--untracked-files=all")
+        changes = changed_files(porcelain or "")
+        ct = (git("log", "-1", "--format=%ct") or "").strip()
+        since = oldest_change(folder, changes)
+        out.append({"name": name, "folder": "" if folder == root else _rel(folder, root), "dirty": len(changes),
+                    "changes": [[p, list(k)] for p, k in changes], "unread": porcelain is None,
+                    "since": since.isoformat() if since else None,
+                    "last": dt.datetime.fromtimestamp(int(ct)).isoformat() if ct.isdigit() else None})
+    return out
+
+
 def system_lookup(projects: List[dict]) -> Dict[str, str]:
     """The notes of the projects kept in System/ by the names a Todo line's link may use: the path from the workspace
     without its suffix, and the note's own name, both lower-cased; the first note to claim a name keeps it."""
@@ -650,6 +805,10 @@ def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]]
         out["today"] = today.isoformat()
     if "system" in parts:
         out["system"] = system
+    if "wikis" in parts:
+        out["wikis"] = wiki_records(root) if wanted is None else []
+    if "repos" in parts:
+        out["repos"] = repo_records(root, wanted)
     out["left"] = list(LEFT)
     return out
 

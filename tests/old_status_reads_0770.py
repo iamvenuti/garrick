@@ -192,4 +192,138 @@ def question_needs(ws: Path, today: dt.date) -> List[dict]:
     return out
 '''
 
-AREAS = {"SYSTEM": SYSTEM, "TODO": TODO, "QUESTIONS": QUESTIONS}
+WIKIS = r'''
+LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+
+LOG_DATED = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+(.*)$")
+
+LOG_SECTION = re.compile(r"^##\s+(\d{4}-\d\d-\d\d)\b[\s:·,—–-]*(.*)$")
+
+LOG_NOT_READ = "log not read"
+
+def log_entries(text: str) -> Tuple[List[Tuple[dt.date, int, str, str]], bool]:
+    """(date, -line, title, page target or "") for every entry a wiki's log
+    holds, in the three forms (#322); and whether it holds lines that look
+    like entries, a list item or a `## ` section, so a log that reads as none
+    of them says so rather than "nothing logged yet"."""
+    lines = text.splitlines()
+    entries, tried = [], False
+    for n, line in enumerate(lines):
+        m = LOG_ENTRY.match(line)
+        if m:
+            when = as_date(m.group(1))
+            if when:
+                target = m.group(2).strip()
+                entries.append((when, -n, (m.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                continue
+        m = LOG_DATED.match(line) or LOG_SECTION.match(line)
+        if m and as_date(m.group(1)):
+            rest = m.group(2).strip()
+            if not rest and line.startswith("##"):          # the section's first line says what it holds
+                rest = next((l.strip().lstrip("-* ").strip() for l in lines[n + 1:n + 6] if l.strip() and not l.startswith("#")), "")
+                k = LOG_ENTRY.match("- %s: %s" % (m.group(1), rest))
+                if k:
+                    target = k.group(2).strip()
+                    entries.append((as_date(m.group(1)), -n, (k.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                    continue
+            title = plain_text(re.split(r"[(;]", rest, 1)[0]).strip(" .,:") or "an entry"
+            entries.append((as_date(m.group(1)), -n, title, ""))
+            continue
+        tried = tried or line.lstrip().startswith(("- ", "* ")) or line.startswith("## ")
+    return entries, tried
+
+def wikis(ws: Path) -> List[dict]:
+    """Per wiki: its log, how many entries it holds, and the newest entry's
+    date and title. Nothing else from the line: not its zone, not its parties.
+    An entry with a link opens its page; a log whose entries it cannot read
+    at all says so (`unread`)."""
+    out = []
+    for w in visible_dirs(ws / "Wikis"):
+        log = w / "wiki" / "log.md"
+        if not log.is_file():
+            continue
+        entries, tried = log_entries(log.read_text(encoding="utf-8", errors="replace"))
+        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None,
+               "unread": tried and not entries}
+        if entries:
+            when, _, title, target = max(entries)   # the newest; on a tie, the line nearer the top
+            page = None
+            if target:
+                page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
+                if not (str(page).startswith(str(w.resolve()) + os.sep) and page.is_file()):
+                    page = None
+            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""), page=page)
+        out.append(row)
+    return out
+'''
+
+REPOS = r'''
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+def oldest_change(folder: Path, changes) -> Optional[dt.datetime]:
+    """When the longest-waiting uncommitted change was made: the oldest
+    modification time among the changed files still on disk. A deleted file
+    has none and is passed over."""
+    times = []
+    for path, _ in changes:
+        try:
+            times.append((folder / path).stat().st_mtime)
+        except OSError:
+            continue
+    return dt.datetime.fromtimestamp(min(times)) if times else None
+
+def changed_files(porcelain: str) -> List[Tuple[str, Tuple[str, ...]]]:
+    """(path, kinds) for every file `git status --porcelain -z` lists: one entry
+    per file, a rename under its new name. A count of these is a count of
+    files, never of commits."""
+    out, items = [], porcelain.split("\0")
+    i = 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if len(item) < 4:
+            continue
+        xy, path = item[:2], item[3:]
+        if "R" in xy or "C" in xy:
+            i += 1                              # the name it had before
+        if xy == "??":
+            kinds = ("untracked",)
+        elif xy in UNMERGED:
+            kinds = ("conflicted",)
+        else:
+            kinds = tuple(k for k, mark in (("staged", xy[0]), ("unstaged", xy[1])) if mark not in " ?!")
+        if kinds:
+            out.append((path, kinds))
+    return out
+
+def repos(ws: Path) -> List[dict]:
+    """The root, each zone, and the wikis: the installer makes one repository
+    at Wikis/ for both. A wiki with a repository of its own is listed too.
+    When git fails or runs out of time, the repository is `unread`, never
+    clean: an empty answer is not a count of nothing."""
+    places = [("Workspace", ws)] + [(z.name, z) for z in visible_dirs(ws / "Zones")] + \
+             [("Wikis", ws / "Wikis")] + [(w.name, w) for w in visible_dirs(ws / "Wikis")]
+    out = []
+    for name, folder in places:
+        if not (folder / ".git").exists():
+            continue
+        # --no-optional-locks: the page only reads, so git status never takes
+        # index.lock to refresh the index, and a commit a session makes in the
+        # same moment never finds it held.
+        def git(*args):
+            try:
+                proc = subprocess.run(["git", "--no-optional-locks", "-C", str(folder), *args], capture_output=True,
+                                      text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            return proc.stdout if proc.returncode == 0 else None
+        porcelain = git("status", "--porcelain", "-z", "--untracked-files=all")
+        changes = changed_files(porcelain or "")
+        ct = (git("log", "-1", "--format=%ct") or "").strip()
+        out.append({"name": name, "folder": folder, "dirty": len(changes), "changes": changes,
+                    "unread": porcelain is None, "since": oldest_change(folder, changes),
+                    "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
+    return out
+'''
+
+AREAS = {"SYSTEM": SYSTEM, "TODO": TODO, "QUESTIONS": QUESTIONS, "WIKIS": WIKIS, "REPOS": REPOS}

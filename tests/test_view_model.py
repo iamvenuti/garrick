@@ -28,6 +28,7 @@ import datetime as dt
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -119,6 +120,24 @@ def add_questions(root: Path) -> None:
     (out / "Out.md").symlink_to(home / "Cedar" / "Needs you" / "q1.md")
 
 
+def add_wikis(root: Path) -> None:
+    """Wiki logs for the shadow test: the three forms of an entry, a page that is there and one that is not, a log with
+    lines that read as none of them, one with no log, and a log that is a link out of its wiki."""
+    wikis = root / "Wikis"
+    write(wikis / "Meetings" / "wiki" / "log.md",
+          "# Log\n\n- 2026-11-18: [[wiki/sources/review|Weekly review]] (touched a)\n"
+          "- 2026-11-20: [[wiki/sources/gone|A page that is not there]]\n- 2026-11-19: [[wiki/sources/review]]\n")
+    write(wikis / "Meetings" / "wiki" / "sources" / "review.md", "# Review\n")
+    write(wikis / "Knowledge" / "wiki" / "log.md",
+          "# Log\n\n## 2026-11-15\n- [[wiki/sources/paper|Paper]]; touched b\n\n## 2026-11-12 · Older **entry** (x)\n"
+          "- 2026-11-10: A line with [a link](http://acme.example/x) in it; and more\n")
+    write(wikis / "Knowledge" / "wiki" / "sources" / "paper.md", "# Paper\n")
+    write(wikis / "Odd" / "wiki" / "log.md", "# Log\n\n- something happened\n- and again\n")
+    write(wikis / "Bare" / "wiki" / "index.md", "# Index\n")
+    (wikis / "Leaky" / "wiki").mkdir(parents=True, exist_ok=True)
+    (wikis / "Leaky" / "wiki" / "log.md").symlink_to(root / "Zones" / "Home" / "Todo.md")
+
+
 def make_workspace(root: Path, tools: bool = True) -> Path:
     """Invented workspaces in one: the standard two zones, the reader's shapes in Work, and a third zone, Home, with
     parked work, a checkpoint, a done thread, a spoken name, a party list and an inbox; a zone that is a link; an Inbox that
@@ -158,6 +177,7 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     (garden / "Twin" / "Twin.md").symlink_to(home / "Maple" / "Maple.md")           # a hub note that is another zone's file
     add_todo(root)
     add_questions(root)
+    add_wikis(root)
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
     write(root / "System" / "Sys" / "Threads" / "Job" / "Job.md", thread_note("Sys", "Job", "sys"))
     write(root / "System" / "Sys" / "Threads" / "Bare" / "notes.md", "# no thread note\n")          # a thread folder with no note
@@ -416,10 +436,8 @@ LEFT = {
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
     "jobs": "the jobs folder's logs",
     "launchd_jobs": "this Mac's launchd agents",
-    "repos": "each repository's own state",
     "threads": "zone names only, while view.py is missing (a half-finished update)",
     "visible_dirs": "the helper the others list folders with",
-    "wikis": "each wiki's log",
 }
 
 
@@ -468,12 +486,12 @@ class TestWhatThePageStillReads(unittest.TestCase):
 
     def test_the_sections_that_moved_read_no_folder(self):
         found = self.readers()
-        for name in ("todo_list", "question_needs", "questions_in", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
+        for name in ("todo_list", "question_needs", "questions_in", "wikis", "repos", "inboxes", "thread_row", "resume_read", "checkpoint_mark", "thread_card", "project_card", "layout_offers",
                      "mixed_papers", "files_in", "open_naming", "threads_card", "build"):
             self.assertNotIn(name, found, name)
 
     def test_the_view_model_names_what_is_left_for_it(self):
-        for name in ("waiting sessions", "settings", "operations journal", "the Explore graph", "repositories"):
+        for name in ("waiting sessions", "settings", "operations journal", "the Explore graph"):
             self.assertIn(name, view.LEFT)
 
 
@@ -619,6 +637,105 @@ class TestShadowQuestions(Case):
         model = view.build(self.root, only=("questions",), today=TODAY)
         with mock.patch.object(status, "view_model", side_effect=AssertionError("built again")):
             self.assertEqual(self.new_rows, status.question_needs(self.root, TODAY, model))
+
+
+class TestShadowWikis(Case):
+    """The wikis' logs (#650, 0.78.0): the view model reads each log; the page shortens a title and names a page. Held to
+    v0.77.0's own `wikis`, frozen. A wiki crosses every zone, as it did: a scoped build holds none."""
+
+    def setUp(self):
+        super().setUp()
+        self.old_w = old_reads_0770(status, "WIKIS")
+        self.old_rows = self.old_w["wikis"](self.root)
+        self.new_rows = status.wikis(self.root)
+
+    def test_the_rows_are_the_old_rows_except_a_log_that_is_a_link_out_of_its_wiki(self):
+        self.assertEqual([r for r in self.old_rows if r["name"] != "Leaky"], self.new_rows)
+        self.assertIn("Leaky", [r["name"] for r in self.old_rows])
+
+    def test_the_fixture_covers_what_the_card_reads(self):
+        by = {r["name"]: r for r in self.new_rows}
+        self.assertEqual(["Knowledge", "Meetings", "Odd"], sorted(by))
+        self.assertEqual(3, by["Meetings"]["count"])
+        self.assertEqual("A page that is not there", by["Meetings"]["title"])
+        self.assertIsNone(by["Meetings"]["page"])                       # the page is not there
+        self.assertEqual("Paper", by["Knowledge"]["title"])
+        self.assertTrue(by["Odd"]["unread"])
+        self.assertIsNone(by["Odd"]["when"])
+
+    def test_a_title_the_log_wrote_as_markdown_is_read_as_plain_words(self):
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "log.md", "- 2026-11-10: A **bold** line with `code`; and more\n")
+        row = next(r for r in status.wikis(self.root) if r["name"] == "Knowledge")
+        self.assertEqual("A bold line with code", row["title"])
+        self.assertEqual(next(r for r in self.old_w["wikis"](self.root) if r["name"] == "Knowledge"), row)
+
+    def test_the_entries_the_page_reads_are_the_old_ones(self):
+        text = (self.root / "Wikis" / "Knowledge" / "wiki" / "log.md").read_text(encoding="utf-8")
+        self.assertEqual(self.old_w["log_entries"](text), status.log_entries(text))
+
+    def test_a_scoped_build_holds_no_wiki(self):
+        self.assertEqual([], view.build(self.root, scope=["Home"], only=("wikis",))["wikis"])
+
+    def test_the_page_draws_the_rows_from_one_build_of_the_view(self):
+        model = view.build(self.root, only=("wikis",))
+        with mock.patch.object(status, "view_model", side_effect=AssertionError("built again")):
+            self.assertEqual(self.new_rows, status.wikis(self.root, model))
+
+
+class TestShadowRepos(Case):
+    """The repositories (#650, 0.78.0): the view model asks git; the page draws what it says. Held to v0.77.0's own `repos`,
+    frozen. Each repository is its own: nothing adds two."""
+
+    def setUp(self):
+        super().setUp()
+        from fixtures import commit_all, git_init
+        for place in (self.root, self.root / "Zones" / "Home", self.root / "Zones" / "Work", self.root / "Wikis"):
+            git_init(place)
+            commit_all(place)
+        write(self.root / "Zones" / "Home" / "Cedar" / "new.md", "x\n")
+        hub = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
+        hub.write_text(hub.read_text() + "\nEdited.\n")
+        self.old_rows = old_reads_0770(status, "REPOS")["repos"](self.root)
+        self.new_rows = status.repos(self.root)
+
+    def test_the_rows_are_the_old_rows_except_a_zone_that_is_a_link(self):
+        self.assertEqual([r for r in self.old_rows if r["name"] != "Linked"], self.new_rows)
+        self.assertIn("Linked", [r["name"] for r in self.old_rows])
+
+    def test_the_fixture_covers_what_the_card_reads(self):
+        by = {r["name"]: r for r in self.new_rows}
+        self.assertTrue({"Workspace", "Home", "Work", "Wikis"} <= set(by))
+        self.assertEqual(1, by["Home"]["dirty"])
+        self.assertEqual(("untracked",), by["Home"]["changes"][0][1])
+        self.assertIsNotNone(by["Work"]["since"])
+        self.assertIsNotNone(by["Work"]["last"])
+        self.assertEqual(self.root, by["Workspace"]["folder"])
+
+    def test_a_scoped_build_holds_the_repositories_of_its_zones_alone(self):
+        scoped = view.build(self.root, scope=["Work"], only=("repos",))["repos"]
+        self.assertEqual(["Work"], [r["name"] for r in scoped])
+        self.assertNotIn("new.md", json.dumps(scoped))
+
+    def test_a_git_that_fails_is_never_clean(self):
+        run = subprocess.run
+
+        def slow(cmd, *args, **kw):
+            if "status" in cmd:
+                raise subprocess.TimeoutExpired(cmd, 30)
+            return run(cmd, *args, **kw)
+        with mock.patch.object(subprocess, "run", slow):
+            rows = status.repos(self.root)
+        self.assertTrue(all(r["unread"] for r in rows))
+
+    def test_the_page_draws_the_rows_from_one_build_of_the_view(self):
+        model = view.build(self.root, only=("repos",))
+        with mock.patch.object(status, "view_model", side_effect=AssertionError("built again")):
+            self.assertEqual(self.new_rows, status.repos(self.root, model))
+
+    def test_the_helpers_the_tests_still_call_answer_as_the_view_does(self):
+        porcelain = " M a.md\0?? b.md\0R  new.md\0old.md\0UU c.md\0"
+        self.assertEqual(view.changed_files(porcelain), status.changed_files(porcelain))
+        self.assertEqual(old_reads_0770(status, "REPOS")["changed_files"](porcelain), status.changed_files(porcelain))
 
 
 class TestShadowInbox(Case):

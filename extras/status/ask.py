@@ -2801,7 +2801,7 @@ def serve_locked(ws: Path, path: Path) -> None:
                                   "ask-failed")
                 except Exception as e:  # a bug must still say so, and the server carry on
                     out = failing({"say": "Something went wrong: %s: %s." % (type(e).__name__, e), "done": [], "launch": [],
-                                   "ok": False, "failed": True}, "ask-failed")
+                                   "ok": False, "failed": True}, "ask-stopped")   # part of an action may have run: no resend
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
                 if op == "ask" and asker.afresh:

@@ -2556,7 +2556,7 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "connected-service", "count-card", "session-url"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "connected-service", "channel-answers", "count-card", "session-url"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
         # The wrap (#645) is a session's verb, documented in commands.md under Opening and wrapping, with its receipt.
         self.assertIn("System/tools/wrap.py", (REPO / "docs" / "commands.md").read_text(encoding="utf-8"))
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY and v != "wrap"), sorted(documented))

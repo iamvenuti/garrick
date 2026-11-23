@@ -109,13 +109,6 @@ class TestOneGrid(LayoutCase):
             if first is not None:
                 self.assertIn(first["tag"], ("input", "select", "button", "span", "label", "a", "textarea"), first)
 
-    def test_every_setting_row_has_its_question_mark_unless_it_is_the_head_of_a_column(self):
-        dom, _ = self.dom()
-        bare = [dom.text_of(n)[:50] for n in dom.walk() if "srow" in classes(n) and "launcher-row" in classes(n)
-                and not any("qhelp" in classes(k) for k in n["kids"])]
-        # a row the help table does not know is a row without one: the table names them, and these are all that is left
-        self.assertEqual([], [b for b in bare if not re.match(r"(Out of everyday|Kept only|Never archive|Page domains|Look for|Reset view|Close the Ask|Without being asked)", b)], bare)
-
     def test_the_grid_has_one_control_column_and_one_help_column(self):
         css = status.SETTINGS_CSS
         self.assertRegex(css, r"dialog\.settings \.srow\{display:grid;grid-template-columns:minmax\(0,1fr\) var\(--sctl\) var\(--sq\)")
@@ -178,24 +171,160 @@ class TestOneGrid(LayoutCase):
 
 
 class TestTheListOfSections(LayoutCase):
-    def test_every_section_with_a_heading_has_an_entry_and_the_group_names_fit_one_line(self):
-        dom, markup = self.dom()
-        entries = {a["a"]["data-setgo"] for a in dom.find("a") if "data-setgo" in a["a"]}
-        sections = [n for n in dom.find("section", cls="setsec") if any(k["tag"] == "h3" for k in n["kids"])]
-        self.assertGreaterEqual(len(sections), 16)
-        self.assertEqual([], [n["a"]["id"] for n in sections if n["a"]["id"] not in entries])
-        for key, title in status.SET_GROUPS:
-            self.assertLessEqual(len(title), 18, title)
+    SEVEN = ["Opening work", "Ask", "Notifications", "Older pages", "Walls", "Look", "About"]
 
-    def test_the_read_guard_ask_telegram_and_what_waits_are_sections_of_their_own(self):
-        dom, _ = self.dom()
-        ids = {n["a"].get("id") for n in dom.find("section")}
-        for ident in ("readguard-settings", "channels-ask", "channels-telegram", "channels-held"):
-            self.assertIn(ident, ids)
+    def test_seven_sections_seven_entries_and_no_group_heading_with_the_graph_on_or_off(self):
+        for graph in (True, False):
+            with self.subTest(graph=graph):
+                args = list(self.args())
+                args[4] = graph
+                markup = status.settings(*args)
+                dom = Dom(markup)
+                entries = [(a["a"]["data-setgo"], dom.text_of(a)) for a in dom.find("a") if "data-setgo" in a["a"]]
+                sections = [n for n in dom.find("section", cls="setsec")]
+                self.assertEqual(self.SEVEN, [t for _, t in entries])
+                self.assertEqual([i for i, _ in entries], [n["a"]["id"] for n in sections])
+                self.assertEqual([i for i, _ in status.SET_SECTIONS], [n["a"]["id"] for n in sections])
+                for gone in ("setgroup", "setgrp", "setnavgrp", "setnavh"):
+                    self.assertNotIn(gone, markup)
+
+    def test_the_read_guard_ask_telegram_and_what_waits_are_parts_with_no_entry(self):
+        _, markup = self.dom()
+        dom = Dom(markup)
+        entries = {a["a"]["data-setgo"] for a in dom.find("a") if "data-setgo" in a["a"]}
+        for ident in ("readguard-settings", "channels-ask", "channels-telegram", "menu-settings", "askbox-settings",
+                      "zone-settings", "machine-settings", "preview-settings", "graph-colour-settings"):
+            self.assertIn('id="%s"' % ident, markup, ident)
+            self.assertNotIn(ident, entries)
+        self.assertNotIn('id="channels-held"', markup)                    # nothing waits in the fixture
+        ask = self.section(markup, "ask-settings")
+        self.assertLess(ask.index('id="askbox-settings"'), ask.index('id="channels-ask"'))     # the Ask box rows first
+        self.assertIn('<h4 class="setsubh">Telegram<button class="qhelp"', ask)
+        self.assertNotIn("<h3>Telegram", markup)
 
     def test_the_highlight_follows_the_heading_nearest_the_top(self):
         self.assertIn("var h=s.querySelector('h3')||s;if(h.getBoundingClientRect().top<=top)cur=s", status.JS)
         self.assertIn("getBoundingClientRect().top+36", status.JS)
+
+
+class TestOldLinksLand(LayoutCase):
+    """#682: every anchor that opened Settings at a section in 0.79.0 opens the section that holds those rows now."""
+
+    OLD = ("launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "notify-settings",
+           "channels-settings", "channels-ask", "channels-telegram", "channels-held", "memory-settings", "walls-settings",
+           "readguard-settings", "machine-settings", "about-settings", "preview-settings")
+
+    def test_every_old_section_and_every_anchor_the_page_and_the_app_send_is_in_the_table(self):
+        sections = {k for k, _ in status.SET_SECTIONS}
+        self.assertEqual(sections, set(status.SET_ANCHORS.values()))
+        for old in self.OLD:
+            self.assertIn(old, status.SET_ANCHORS)
+        _, markup = self.dom()
+        ids = set(re.findall(r'\bid="([a-z-]+-settings)"', markup.split("</nav>", 1)[1])) - {"close-settings"}
+        sources = [status.__file__, str(REPO / "extras" / "status" / "page_action.py")] + \
+                  [str(f) for f in (REPO / "extras" / "status" / "app").glob("*.swift")] + \
+                  [str(f) for f in (REPO / "extras" / "status").glob("settings_*.py")]
+        said = set()
+        for src in sources:
+            said |= set(re.findall(r"#?([a-z][a-z-]*-settings)\b", open(src, encoding="utf-8").read()))
+        for anchor in said & (ids | set(self.OLD)):
+            self.assertIn(anchor, status.SET_ANCHORS, anchor)
+        for anchor in ids:
+            self.assertIn(anchor, status.SET_ANCHORS, anchor)
+
+    def test_each_anchor_is_inside_the_section_it_maps_to(self):
+        _, markup = self.dom()
+        for anchor, sec in status.SET_ANCHORS.items():
+            if 'id="%s"' % anchor not in markup:
+                continue                                    # a part this workspace does not have (nothing waits, say)
+            with self.subTest(anchor=anchor):
+                self.assertIn('id="%s"' % anchor, self.section(markup, sec))
+        for anchor in ("zone-settings", "menu-settings", "machine-settings"):     # the acceptance's three
+            self.assertIn('id="%s"' % anchor, markup)
+
+    def test_the_script_opens_the_section_scrolls_to_the_rows_and_focuses_the_heading(self):
+        js = status.JS
+        self.assertIn('<script type="application/json" id="settings-anchors">', self.bare())
+        self.assertIn("snAt=JSON.parse(document.getElementById('settings-anchors').textContent)", js)
+        self.assertIn("window.StatusSettings={open:function(at){var f=snFind(at);", js)
+        self.assertIn("if(t.tagName==='DETAILS')t.open=true;", js)               # a fold that holds the rows opens
+        self.assertIn("s.focus({preventScroll:true})", js[js.index("function snGo("):])
+        self.assertIn("closest('[data-setopen],a[href^=\"#\"]')", js)            # a link or button elsewhere on the page
+        self.assertIn("if(snFind(location.hash))", js)
+        self.assertIn("document.getElementById('open-settings').onclick=function(){window.StatusSettings.open()};", js)
+
+
+class TestInTheBrowser(LayoutCase):
+    """#682: in a browser the rows that need the app are not shown, and no section is left with a heading and no row."""
+
+    def test_every_section_a_browser_shows_has_a_row_a_browser_shows(self):
+        for name in ("bare", "rich"):
+            dom = Dom(getattr(self, name)())
+            for sec in dom.find("section", cls="setsec"):
+                if "apponly" in classes(sec) or "hidden" in sec["a"]:
+                    continue                                 # the whole section is the app's: a browser shows no heading
+                shown = []
+                stack = [(k, False) for k in sec["kids"]]
+                while stack:
+                    n, off = stack.pop()
+                    off = off or "apponly" in classes(n) or "hidden" in n["a"] or "display:none" in (n["a"].get("style") or "")
+                    if "srow" in classes(n) and "launcher-row" in classes(n) and not off:
+                        shown.append(n)
+                    stack.extend((k, off) for k in n["kids"])
+                with self.subTest(fixture=name, section=sec["a"]["id"]):
+                    self.assertTrue(shown)
+
+    def test_opening_work_shows_the_cards_rows_and_not_the_menu_rows(self):
+        markup = self.bare()
+        sec = self.section(markup, "launcher-settings")
+        self.assertRegex(sec, r'<div class="setpart menuset apponly" id="menu-settings" hidden>')
+        self.assertLess(sec.index('data-launcher="note"'), sec.index('id="menu-settings"'))
+        for ident in ("menu-show", "menu-login", "menu-hotkey", "menu-finder"):
+            self.assertIn('id="%s"' % ident, sec.split('id="menu-settings"')[1])
+
+
+class TestEveryControlStays(LayoutCase):
+    """#682: every control Settings had in 0.79.0 is still on the page, with the id or data- attribute the page's script reads
+    to save it, so each saves the same key with the same value. The Ask box's rows are all in Ask."""
+
+    IDS = ("launch-note", "launch-preview", "launch-finder", "launch-cmux", "launch-codex", "launch-claude", "desk-agent",
+           "graph-follow", "graph-reset", "menu-show", "menu-style", "menu-login", "menu-hotkey", "menu-finder", "menu-ask",
+           "menu-askkey", "menu-askclose-esc", "menu-askclose-click", "menu-dictation", "menu-dictkey", "n-after", "n-quiet",
+           "n-from", "n-to", "ch-ask-tier", "ch-ask-effort", "ch-ask-autonomy", "ch-telegram-tier", "ch-telegram-effort",
+           "ch-telegram-autonomy", "m-wake", "m-reach", "m-night", "m-min", "role-change", "rel-check", "rel-on", "rel-every",
+           "usage-on", "reset-view")
+    ATTRS = ('data-nt="needs-you"', 'data-nt="finished"', 'data-nt="job-failed"', 'data-nt="release"', 'data-mwikion="Meetings"',
+             'data-mk="dormant"', 'data-mk="archived"', 'data-mk="never"', 'data-mk="types"', 'data-mk="domains"', 'data-mpin="thread"',
+             'data-mpin="project"', 'data-mpin="todo"', 'data-mpin="pinned"', 'name="rg-mode"', 'name="rg-cross"', 'data-rg-add="tools"',
+             'data-rg-add="skip"', 'class="act sm wchange"', 'class="zcol"', 'class="zico"', 'name="garrick-default"')
+
+    def test_every_control_is_still_there(self):
+        self.rich()
+        self.role("solo")                                       # a laptop copy shows one line in place of the read guard's rows
+        markup = self.draw()
+        for ident in self.IDS:
+            self.assertIn('id="%s"' % ident, markup, ident)
+        for attr in self.ATTRS:
+            self.assertIn(attr, markup, attr)
+
+    def test_every_row_about_the_ask_box_is_in_ask_and_none_in_opening_work(self):
+        markup = self.rich()
+        ask, opening = self.section(markup, "ask-settings"), self.section(markup, "launcher-settings")
+        for ident in ("menu-ask", "menu-askkey", "menu-askclose-esc", "menu-askclose-click", "menu-dictation", "menu-dictkey",
+                      "ch-ask-tier", "ch-ask-effort", "ch-ask-autonomy", "ch-telegram-tier"):
+            self.assertIn('id="%s"' % ident, ask, ident)
+            self.assertNotIn('id="%s"' % ident, opening, ident)
+
+
+class TestOneRowForEachApp(LayoutCase):
+    def test_the_four_old_names_are_not_on_the_page(self):
+        """#682: one row for Claude and one for Codex, so none of 0.79.0's four names is on the page, script included."""
+        html = self.page(launchers=("finder", "cmux", "codex", "claude"))
+        for gone in ("Open in Claude", "New session in Claude", "Open in Codex", "New session in Codex"):
+            self.assertNotIn(gone, html)
+        dialog = self.section(html, "launcher-settings")
+        self.assertEqual(1, dialog.count('data-launcher="claude"'))
+        self.assertEqual(1, dialog.count('data-launcher="codex"'))
 
 
 class TestNotifications(LayoutCase):
@@ -208,8 +337,7 @@ class TestNotifications(LayoutCase):
         self.assertNotIn("nsown", markup.split('id="notify-settings"')[1].split("</section>")[0].replace('class="chnote nsown"', ""))
         self.assertEqual(1, len(list(dom.find("p", id="n-own"))))
         said = dom.text_of(next(dom.find("p", id="n-own")))
-        self.assertIn("The morning Todo summary is ready", said)
-        self.assertIn("Sent by the todo sweep to the command you set", said)
+        self.assertEqual("The morning summaries are set by your assistant. Ask it to change them.", said)     # #681
         self.assertEqual("todo-summary", next(dom.find("input", data_nt="todo-summary"))["a"]["data-nt"])      # kept, out of sight
         self.assertIn("hidden", next(dom.find("input", data_nt="todo-summary"))["a"])
 
@@ -233,7 +361,7 @@ class TestOpenAtLogin(unittest.TestCase):
         self.assertIn("a.said&&a.said.login", js)                           # the reason, only when the app gives one
 
     def test_before_an_answer_the_row_holds_its_own_line(self):
-        self.assertIn("Starts the app when you log in", status.MENU_LOGIN)
+        self.assertEqual("With the window as you left it.", status.MENU_LOGIN)      # #681
         self.assertIn(status.MENU_LOGIN, status.menu_settings())
 
 
@@ -250,27 +378,27 @@ class TestPlainWords(LayoutCase):
         self.assertIn("Read", said_tg)
         self.assertIn("Act", said_tg)
         self.assertNotIn("Full", said_tg)                                   # Telegram never offers it
-        helps = {k: t for _, k, _, t in sh.ROWS}
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-ask-autonomy")
-        for part in ("answers from your workspace and changes nothing", "asks before anything is sent, shared or deleted", "without asking you first"):
-            self.assertIn(part, text)
+        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-autonomy")
+        self.assertEqual("Start with Read. Choose Act when you trust the answers.", text)     # the choices carry their lines (#681)
 
     def test_model_size_and_effort_have_one_line_between_them(self):
         _, markup = self.dom()
         ask = markup.split('id="channels-ask"')[1].split("</section>")[0]
         self.assertEqual(1, ask.count('data-for="ask-size"'))
-        self.assertIn("A larger size and more effort give fuller answers, and take longer and cost more", ask)
-        text = " ".join(t for pat, k, n, t in sh.ROWS if k in ("ch-ask-tier", "ch-ask-effort"))
-        self.assertIn("take longer and cost more", text)
+        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", ask)       # #681
+        text = " ".join(t for pat, k, n, t in sh.ROWS if k == "ch-tier")
+        self.assertIn("deep:", text)
 
     def test_older_material_says_what_the_user_sees(self):
         _, markup = self.dom()
         sec = markup.split('id="memory-settings"')[1].split("</section>")[0]
-        for phrase in ("Out of everyday answers after", "Kept only in the archive after", "Never archive", "page would move", "Review them"):
+        for phrase in ("Dormant after", "Archived after", "Never archive", "page would move", "Review them", "let old pages become dormant",
+                       "You pinned it", "Suggest bringing a page back when new work links to it"):     # #681's words
             self.assertIn(phrase, sec)
         self.assertNotIn("would change grade", sec)
-        self.assertNotIn("dormant after", sec)
-        self.assertNotIn("archived after", sec)
+        seen = htmllib.unescape(re.sub(r"<[^>]+>", " ", sec.replace("<ROOT>", "ROOT")))   # the words shown
+        for old in ("Out of everyday answers after", "Kept only in the archive after", "fade", "pinned: true", "digest"):
+            self.assertNotIn(old, seen)
         self.assertNotIn("never archived</label>", sec)
 
     def test_the_count_line_in_the_page_and_in_the_script_say_it_the_same_way(self):
@@ -281,53 +409,43 @@ class TestPlainWords(LayoutCase):
         self.assertIn("' page'+(mv===1?'':'s')+' would move.'", status.MEMORY_JS)
         self.assertIn("No page would move.", status.MEMORY_JS)
 
-    def test_preview_features_say_how_to_switch_one_on_and_name_the_file_behind_the_question_mark(self):
+    def test_preview_features_are_a_closed_fold_at_the_end_of_about_with_one_line(self):
         _, markup = self.dom()
-        sec = markup.split('id="preview-settings"')[1].split("</section>")[0]
-        visible = re.sub(r'<p class="hint sethelp".*?</p>', "", sec, flags=re.S)
-        self.assertIn("Off until you ask your assistant to switch one on.", visible)
-        self.assertNotIn("garrick-flags.json", re.sub(r'title="[^"]*"', "", visible))
-        self.assertIn("System/garrick-flags.json", sec)                        # behind the "?"
-        self.assertIn("ask your assistant to switch one on", re.search(r'id="help-preview".*?</p>', sec, re.S).group(0))
+        about = self.section(markup, "about-settings")
+        fold = self.section(markup, "preview-settings")
+        self.assertTrue(about.endswith(fold + "</section>"))
+        self.assertTrue(fold.startswith('<details class="setfold" id="preview-settings"><summary>Preview features</summary>'))
+        self.assertIn("Not released yet. Ask your assistant to switch one on.", fold)
+        self.assertNotIn(" open", fold[:fold.index(">")])                 # closed when Settings opens
+        self.assertNotIn("garrick-flags.json", fold)                           # the docs page names it (#681, #682)
+        self.assertNotIn("qhelp", fold)
+
+    def test_graph_colours_are_a_closed_fold_in_look(self):
+        _, markup = self.dom()
+        look = self.section(markup, "look-settings")
+        fold = self.section(markup, "graph-colour-settings")
+        self.assertIn(fold, look)
+        self.assertTrue(fold.startswith('<details class="setfold apponly" id="graph-colour-settings"><summary>Graph colours</summary>'))
+        self.assertIn('id="graph-reset"', fold)
 
     def test_opening_a_thread_has_a_head_over_the_radio_column_and_reset_view_says_what_it_resets(self):
         _, markup = self.dom()
-        sec = markup.split('id="launcher-settings"')[1].split("</section>")[0]
-        self.assertIn('<span class="shcol">Click a name to</span>', sec)
-        self.assertIn("Show every card again, in its first place", markup.split('class="setfoot"')[1])
+        sec = self.section(markup, "launcher-settings")
+        self.assertIn('<span class="shcol">Default</span>', sec)
+        look = self.section(markup, "look-settings")
+        self.assertIn("Shows every card again, in its first place.", look.split('id="view-settings"')[1])
+        tail = look.split('id="view-settings"')[1]                          # Reset view is the last row of Look
+        self.assertNotRegex(tail, r'class="(setpart|setfold|launcher-row srow (?!>))')
+        self.assertEqual(1, tail.count("launcher-row srow"))
 
-    def test_a_word_of_the_tools_stands_in_a_label_only_with_a_line_that_explains_it(self):
-        """dormant, grade, effort and How far it may go: in a label only where the row, or the section's own line, explains it."""
-        banned = ("dormant", "grade", "effort", "how far it may go")
-        for name in ("rich", "bare"):
-            markup = getattr(self, name)()
-            dom = Dom(markup)
-            for section in dom.find("section", cls="setsec"):
-                lede = " ".join(dom.text_of(p) for p in section["kids"] if "setlede" in classes(p)).lower()
-                stack = list(section["kids"])
-                while stack:
-                    n = stack.pop()
-                    stack.extend(n["kids"])
-                    if "sethelp" in classes(n) or n["tag"] in ("script", "style", "option", "textarea"):
-                        continue
-                    labels = []
-                    if n["tag"] in ("label", "h3", "h4", "button", "legend", "summary") or "slab" in classes(n):
-                        labels.append(dom.text_of(n))
-                    for text in labels:
-                        for word in banned:
-                            if word in text.lower() and "explains" not in text.lower():
-                                row = n
-                                while row is not None and "srow" not in classes(row):
-                                    row = row["up"]
-                                row_text = dom.text_of(row).lower() if row is not None else ""
-                                after = ""
-                                if row is not None and row["up"] is not None:
-                                    sib = row["up"]["kids"]
-                                    at = sib.index(row)
-                                    nxt = [dom.text_of(s).lower() for s in sib[at + 1:at + 5] if "sethelp" not in classes(s) and (classes(s) or [""])[0] in ("schint", "chlevels")]
-                                    after = " ".join(nxt[:2])
-                                explained = (lede and word in lede) or len(row_text) > len(text) + 12 or (after and len(after) > 20)
-                                self.assertTrue(explained, "%s: %r has no line that explains it (%s)" % (name, text, section["a"].get("id")))
+
+    def test_a_word_that_needs_a_meaning_gets_it_behind_a_question_mark(self):
+        """#681 in place of #675's rule: dormant, effort and How far it may go are given their meaning behind a "?" or by the
+        choices' own lines, not by a line under every label."""
+        _, markup = self.dom()
+        self.assertIn("A dormant page is used only when a search reaches back.", markup)
+        self.assertIn("Larger and more effort: fuller answers, slower, and they cost more.", markup)
+        self.assertIn('class="chlevels"', markup)
 
 
 if __name__ == "__main__":

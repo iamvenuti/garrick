@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""settings_help.py: a "?" on every setting row of Settings, in plain words (#621).
+"""settings_help.py: one short help text per thing in Settings, and none where the label says it (#621, #681).
 
-Each Settings section has one "?" for the section. A choice such as *Refuse* or *Ask me* needs its own explanation,
-next to it. status.py builds each section's rows as it always did; `with_row_help()` then finds each row of a section,
-gives it a "?" built by status.py's own help_button(), and puts its text, made by help_text(), under it, hidden until the
-"?" is pressed. The button stands at the end of its row, inside a label too: a button in a label does not toggle its box.
+A section may have one "?" beside its heading, and a row may have one at its end. status.py builds each section's rows as
+it always did; `with_row_help()` then finds each row of a section that the table below knows, gives it a "?" built by
+status.py's own help_button(), and puts its text, made by help_text(), under it, hidden until the "?" is pressed. The
+button stands at the end of its row, inside a label too: a button in a label does not toggle its box.
 
-The rules every text keeps, and a test holds:
+The rule every text keeps, and a test holds:
 
-- It says what happens to the user, not how it is built: no file, no setting's name, no command, no issue number.
-- It is short enough to read in one look, about 60 words at most.
-- Where there are choices, it says when to pick each one.
+- A row has a "?" only when the user cannot guess something: a cost, something that leaves the computer or is kept,
+  something that cannot be undone, or a word that needs a meaning. A row the table does not know has none.
+- 30 words at most, two sentences at most.
+- No file name, key, code, pattern, field name or name of an internal part.
+- It does not repeat the label, the small line under the label, or the line under the section heading.
+- Rows that repeat share one "?", on the first row of the group: a key with no name in it is given once in a section.
+- A small line under a label has 10 words at most. The line under a section heading has 15 at most.
+- One term per thing: notification, shortcut, this computer, working, dormant and archived, morning summary.
 
-A row the table below does not know is left as it was, and a test names it, so a row added later cannot go without one.
-Standard library only.
+Saving is said once, at the foot of the dialog. Standard library only.
 """
 
 from __future__ import annotations
@@ -30,156 +34,44 @@ OPEN = re.compile(r'<(div|li|label|p)\b([^>]*)>')
 # (a pattern found in the row's own markup, the key, the row's name, its text), the first that matches wins. The text is
 # plain: `&` and quotes are escaped when it is put on the page.
 ROWS: List[Tuple[str, str, str, str]] = [
-    # Opening a thread
-    (r'data-launcher="note"', "launch-note", "Open the note",
-     "Adds Open the note to every project and thread card: it opens the thread's note in the app your Mac uses for notes. "
-     "Leave it on unless you never open notes from here. Default makes a click on a thread's name do it."),
-    (r'data-launcher="preview"', "launch-preview", "Preview",
-     "Lets Explore show a note's text over the graph. It opens nothing. Leave it on to read a note without leaving the page. "
-     "Switch it off if the graph feels crowded."),
-    (r'data-launcher="finder"', "launch-finder", "Reveal in Finder",
-     "Adds Reveal in Finder to the cards. Pick it when you also move files by hand. "
-     "Default makes a click on a thread's name show its folder."),
-    (r'data-launcher="cmux"', "launch-cmux", "Open in cmux",
-     "Adds Open in cmux to the cards. It opens the thread in a cmux tab, one tab for each thread. Pick it if you work in cmux. "
-     "Default makes a click on a thread's name do it."),
-    (r'id="desk-agent"', "launch-desk-agent", "A cmux tab starts",
-     "Which assistant a new cmux tab starts: Claude Code or Codex. Pick the one you work with. A tab that is already open keeps "
-     "the one it has."),
-    (r'data-launcher="codex"', "launch-codex", "Open in Codex",
-     "Adds Open in Codex to the cards. It opens the project's folder in the Codex app. Pick it if you work in Codex. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="claude"', "launch-claude", "Open in Claude",
-     "Adds Open in Claude to the cards. It opens the project's folder in the Claude app. Pick it if you work in Claude. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="claude-new"', "launch-claude-new", "New session in Claude",
-     "Adds New session in Claude to the cards. It starts a new session in the Claude app, in the project's folder, with the "
-     "first message typed in. You press Enter to send it. Pick it if you work in Claude. "
-     "Default makes a click on a thread's name do it."),
-    (r'data-launcher="codex-new"', "launch-codex-new", "New session in Codex",
-     "Adds New session in Codex to the cards. It starts a new session in the Codex app, in the project's folder, with the "
-     "first message typed in. You press Enter to send it. Pick it if you work in Codex. "
-     "Default makes a click on a thread's name do it."),
-    # Explore
-    (r'id="graph-follow"', "follow", "Follow the zone in view",
-     "On, the graph switches to the zone you are reading on the Threads card. Off, it stays on the zone you chose. "
-     "Turn it off if the graph moving about distracts you."),
-    # Menu bar
+    # Opening work
     (r'id="menu-show"', "menu-show", "Show the menu",
-     "Shows a menu of your live projects outside this window, so one click from any app opens a project. Turn it on if you "
-     "move between apps all day. Off keeps everything in this window."),
+     "The menu icon turns red when a check on the Status tab fails."),
     (r'id="menu-style"', "menu-style", "Shows as",
-     "Where the menu shows: as an icon in the menu bar, or as a panel that opens at the edge of the screen. Pick the icon if "
-     "you want it quiet, a panel if you want it large."),
-    (r'id="menu-login"', "menu-login", "Open at login",
-     "Starts Garrick when you log in to this Mac, with the window as you left it. Turn it on if you use Garrick every day."),
-    (r'id="menu-hotkey"', "menu-hotkey", "Hotkey",
-     "A key combination that opens the menu or the panel from any app. Click the box and press the keys. "
-     "Clear takes the key away."),
-    (r'id="menu-ask"', "menu-ask", "Answer in the Ask box",
-     "Lets the Ask box answer from your records. It keeps an assistant session ready, which spends model calls. Turn it off to "
-     "stop that: the panel's field then opens your assistant instead."),
-    (r'id="menu-askkey"', "menu-askkey", "Ask hotkey",
-     "A key combination that opens the Ask box from any app. Click the box and press the keys. Clear takes the key away."),
-    (r'id="menu-askclose-esc"', "menu-askclose", "Close the Ask box with",
-     "How the Ask box closes: the Escape key, a click outside it, or both. One way always stays on, so the box can always "
-     "be closed."),
-    (r'id="menu-dictation"', "menu-dictation", "Then start dictation",
-     "Starts dictation as the Ask box opens, so you can speak your question. Pick macOS Dictation, a press of Fn, or your own "
-     "tool's shortcut. Pick Off if you type."),
+     "A panel opens when the pointer rests at the top of that edge of the screen."),
+    (r'id="menu-finder"', "menu-finder", "Right-click menu in Finder",
+     "Adds Garrick to the right-click menu of a project folder. macOS asks you to switch it on, and the button opens that place."),
+    # Ask
+    (r'id="menu-ask"', "menu-ask", "Ask box",
+     "On, Garrick keeps an assistant ready, and that uses some of your assistant's allowance. Off, the box opens your assistant instead."),
     (r'id="menu-dictkey"', "menu-dictkey", "Dictation shortcut",
-     "The shortcut your own dictation tool starts on. Click the box and press it. Pause the tool first if it takes the keys."),
-    (r'id="menu-finder"', "menu-finder", "Finder menu",
-     "Adds Garrick to Finder's right-click menu on a project or thread folder. macOS asks you to switch it on in System "
-     "Settings, and this button opens that place. Pick it if you often start from Finder."),
+     "Press the shortcut that starts your dictation app. If the app takes the keys, pause it first."),
+    (r'id="ch-ask-tier"', "ch-tier", "Model size",
+     "Start a message with deep: to get one answer on the large size at high effort, without changing this choice."),
+    # choices-0800's one Answers choice (#683), Ask's and Telegram's sharing one "?": inert until it is in
+    (r'data-answers="', "ch-answers", "Answers",
+     "Start a message with deep: to get one Fuller answer without changing this choice."),
+    (r'id="ch-ask-autonomy"', "ch-autonomy", "How far it may go",
+     "Start with Read. Choose Act when you trust the answers."),
     # Notifications
-    (r'data-nt="needs-you"', "nt-needs-you", "A session needs me",
-     "A notice when a session waits for you: a permission, a question or an approval. It is sent once for each wait. Turn it "
-     "on if you leave sessions running while you work on something else."),
-    (r'data-nt="finished"', "nt-finished", "A long task finishes",
-     "A notice when a task that ran for at least the minutes you set is done. Raise the minutes to hear only about long ones."),
-    (r'data-nt="todo-summary"', "nt-todo", "The morning Todo summary",
-     "The morning notice with how many open actions each zone has. Turn it off if you read your lists on the page instead."),
-    (r'data-nt="context-summary"', "nt-context", "The morning Context summary",
-     "The morning notice with what the night's check fixed and what waits for you. Turn it off if you look at the Context "
-     "card each day anyway."),
-    (r'data-nt="job-failed"', "nt-job", "A scheduled job fails or recovers",
-     "A notice when a scheduled job fails or works again. Turn it on if you rely on the nightly jobs and want to hear when "
-     "one stops."),
-    (r'data-nt="release"', "nt-release", "A newer Garrick is out",
-     "A notice, once for each release, when a newer Garrick is out. It works only when the check for updates in About Garrick "
-     "is on."),
+    (r'data-nt="needs-you"', "nt-needs-you", "a session needs me",
+     "A session waits for your permission, your answer or your approval. You get one notification for each wait."),
     (r'id="n-quiet"', "nt-quiet", "Quiet hours",
-     "Holds notices between the two times you set, and sends them in the morning. At night only a session that needs you "
-     "gets through. Change the hours to fit your day."),
-    # Channels
-    (r'id="ch-ask-tier"', "ch-ask-tier", "Ask: model size",
-     "How large a model answers in the Ask box. A larger size and more effort give fuller answers, and take longer and cost "
-     "more. Pick Medium until an answer falls short."),
-    (r'id="ch-ask-effort"', "ch-ask-effort", "Ask: effort",
-     "How much thought goes into an answer. More effort gives fuller answers, and takes longer and costs more. Raise it for "
-     "hard questions."),
-    (r'id="ch-ask-autonomy"', "ch-ask-autonomy", "Ask: how far it may go",
-     "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
-     "anything is sent, shared or deleted. Full does what Act does, and also sends what you asked for without asking you first. "
-     "Pick Read until you trust it with more."),
-    (r'id="ch-telegram-tier"', "ch-telegram-tier", "Telegram: model size",
-     "How large a model answers in a Telegram chat. A larger size and more effort give fuller answers, and take longer and "
-     "cost more. Pick Medium until an answer falls short."),
-    (r'id="ch-telegram-effort"', "ch-telegram-effort", "Telegram: effort",
-     "How much thought goes into an answer in a Telegram chat. More effort gives fuller answers, and takes longer and costs more."),
-    (r'id="ch-telegram-autonomy"', "ch-telegram-autonomy", "Telegram: how far it may go",
-     "Read answers from your workspace and changes nothing. Act may also make changes you would make by hand, and asks before "
-     "anything is sent, shared or deleted. Telegram never offers Full. Pick Read until you trust it with more."),
-    # Manage older material
-    (r'data-mwikion="', "mem-wiki-%(wiki)s", "Let old pages become dormant",
-     "Lets old pages of this wiki move out of everyday answers, then to the archive, so search stays on what matters. Turn it "
-     "off to keep every page in everyday answers. Nothing is deleted either way."),
-    (r'class="mkind"', "mem-kind-%(kind)s", "Months for this kind of page",
-     "How many months a page of this kind stays in everyday answers, and how many before it is kept only in the archive. Tick "
-     "Never archive to stop it at the first step. Nothing is deleted."),
-    (r'class="mlists"', "mem-lists-%(kind)s", "Which pages belong to this kind",
-     "Which pages count as this kind: by page type or by domain, separated by commas. Change them only if a page ends up in "
-     "the wrong kind."),
-    (r'data-mpin="thread"', "mem-pin-thread", "A live thread links it",
-     "A page that a live thread links stays working, however old. Leave it on unless old pages stay working that you "
-     "would rather let go."),
-    (r'data-mpin="project"', "mem-pin-project", "A live project's notes link it",
-     "A page that the notes of a live project link stays working, however old. Leave it on unless you want such pages to age."),
-    (r'data-mpin="todo"', "mem-pin-todo", "An open action links it",
-     "A page that an open action in a Todo list links stays working, however old. Leave it on so a page you still need "
-     "never goes dormant."),
-    (r'data-mpin="pinned"', "mem-pin-pinned", "It says pinned",
-     "A page that says it is pinned stays working, however old. This is how you keep one page by hand."),
-    (r'id="m-wake"', "mem-wake", "Propose bringing a page back",
-     "When on, a page that has left everyday answers is proposed for coming back when active work links it again. Off, only a "
-     "page marked as pinned comes back."),
-    (r'id="m-reach"', "mem-reach", "How far search reaches",
-     "How far search reaches when you do not say. Working pages only is quicker and quieter. Working and dormant pages also "
-     "looks at older ones: pick it if you often look for old material."),
-    (r'id="m-night"', "mem-night", "Say it in the morning digest",
-     "Adds a line to the morning digest when enough pages would move. Turn it off if you do not read the digest."),
-    # Walls
-    (r'class="[^"]*\bwallrow\b', "wall-%(zone)s", "Walled or open",
-     "Walled keeps this zone's material in the zone. Open lets it go anywhere. Change asks your assistant to make the switch, "
-     "and it asks you first."),
-    # Zones, graph colours
-    (r'class="[^"]*\bzrow\b', "zone-%(zone)s", "A zone's colour and icon",
-     "A colour and an icon for this zone. They mark its name on every card, so you can tell zones apart at a glance. "
-     "Choose none to leave the zone plain."),
-    (r'class="[^"]*\bgkrow\b', "kind-%(kind)s", "A kind of note's colour",
-     "The colour of this kind of note in Explore's graph. Pick one that stands out from its neighbours, or leave it on its "
-     "default. Reset colours puts every kind back."),
+     "A session that needs you still gets through."),
+    # Older pages
+    (r'class="mkind"', "mem-kind", "Dormant after",
+     "The age of a page counts from the date of its meeting, or the date its reading came out. Opening a page does not make it newer."),
+    (r'data-mpin="', "mem-pin", "What keeps a page working",
+     "Pages about a person, an organisation or a topic never become dormant. To pin a page, ask your assistant."),
+    (r'id="m-wake"', "mem-wake", "Suggest bringing a page back",
+     "Garrick suggests it and waits for your yes. An archived page comes back only when you pin it."),
+    (r'id="m-reach"', "mem-reach", "Search",
+     "Working and dormant pages also finds older ones. Working pages only is quicker and stays on recent work."),
     # About
-    (r'id="rel-check"', "rel-check", "Check for updates",
-     "Looks now at Garrick's public release page to see whether a newer version is out, and shows the answer here. Nothing "
-     "about your work is sent. Press it when you want to know today, without waiting for the automatic check."),
-    (r'id="rel-on"', "rel-on", "Check for a newer Garrick",
-     "Looks once in a while at Garrick's public release page to see whether a newer version is out, and tells you. Nothing "
-     "about your work is sent. Turn it on if you want to hear about updates."),
+    (r'id="rel-on"', "rel-on", "Check for updates",
+     "Garrick looks at its public release page. It sends nothing about your work, and it never updates without you."),
     (r'id="usage-on"', "usage-on", "Count which cards I open",
-     "Keeps a count of which cards you open, and on which day, on this Mac only. Nothing else is kept: no name, no note, no "
-     "text, and nothing is sent anywhere. It helps decide which cards are worth their space. Turn it off and nothing is counted."),
+     "Counts which cards you open, on this computer only. No name or text is kept, and nothing is sent."),
 ]
 SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -246,10 +138,16 @@ def rows_of(section: str):
 
 
 def with_row_help(section: str, help_button: Callable[[str, str], str], help_text: Callable[[str, str], str]) -> str:
-    """The section with a "?" in each setting row and its text under it. Each button stands at the end of its row."""
+    """The section with a "?" in each setting row the table knows and its text under it, each key once: rows that repeat
+    share the "?" of the first of them (#681). Each button stands at the end of its row."""
+    first: Dict[str, int] = {}
+    for start, end, tag, row in rows_of(section):
+        known = lookup(row)
+        if known is not None and known[0] not in first:
+            first[known[0]] = start
     for start, end, tag, row in reversed(rows_of(section)):
         known = lookup(row)
-        if known is None:
+        if known is None or first.get(known[0]) != start:
             continue
         key, name, text = known
         close = row.rindex("</%s>" % tag)

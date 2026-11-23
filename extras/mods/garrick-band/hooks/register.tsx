@@ -243,7 +243,7 @@ async function liveThreads($: any, folder: string, root: string): Promise<Thread
   return out
 }
 
-// Settings › Opening a thread, as System/garrick-settings.json keeps it and
+// Settings › Opening work, as System/garrick-settings.json keeps it and
 // status.py's shared_launchers() reads it: "launchers" is {name: true or
 // false}, a name left out being on, or a list of the names switched on;
 // "default" is what clicking a thread does, "note" when it names no launcher.
@@ -282,7 +282,7 @@ const ALL_ON: Record<string, boolean> = Object.fromEntries(LAUNCH_KEYS.map(k => 
 
 // Finder wherever macOS's `open` is there; Obsidian when it is installed and a
 // folder from the note up to the workspace root is a vault (holds .obsidian).
-// Each only when Settings › Opening a thread has it switched on: Obsidian is
+// Each only when Settings › Opening work has it switched on: Obsidian is
 // the note's own launcher, `note`.
 async function openers($: any, chain: string[], folder: string, switched: Record<string, boolean> = ALL_ON): Promise<Pick<Note, 'finder' | 'obsidian'>> {
   const open: boolean = await $.fs.exists('/usr/bin/open')
@@ -302,7 +302,7 @@ async function openers($: any, chain: string[], folder: string, switched: Record
   return { finder: switched.finder !== false, obsidian: inVault }
 }
 
-export const switchedOff = (app: 'Finder' | 'Obsidian') => `${app} is switched off in Settings › Opening a thread.`
+export const switchedOff = (app: 'Finder' | 'Obsidian') => `${app} is switched off in Settings › Opening work.`
 
 export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIComponent(abs)
 

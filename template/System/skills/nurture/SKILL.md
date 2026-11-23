@@ -184,7 +184,7 @@ and `correct --yes` is refused with nobody watching.
 The guided review is the status page's **Context** tab. It lists what the
 nightly run leaves, in the order walls, attribution, then judgment: an
 attribution row is answered where it stands, *Later* puts a row off to a day,
-and a judgment row has *Open in Claude* (and *Open in Codex* where installed),
+and a judgment row has *Claude* (and *Codex* where installed),
 which hands that one finding to a session with its path, the check and its
 line. The day's report records each answer, so the next build knows.
 

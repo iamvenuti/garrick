@@ -847,7 +847,7 @@ class OpeningAThread(unittest.TestCase):
         self.assertIn("r.disabled=!c||c.disabled||!c.checked", status.JS)          # unticked, uninstalled: no radio
         card = self.card()
         self.assertNotIn('data-launcher="preview"></label><label class="launcher-default"', card)   # Preview never had one
-        self.assertEqual(7, card.count('name="garrick-default"'))      # one for each way but Preview, the two new sessions included
+        self.assertEqual(5, card.count('name="garrick-default"'))      # one for each way but Preview, one row for each app (#682)
 
     def test_switching_off_the_default_row_moves_it_and_says_so(self):
         self.assertIn("GarrickPrefs.set(p,moved?'note':dpref())", status.JS)
@@ -855,9 +855,10 @@ class OpeningAThread(unittest.TestCase):
 
 
 class ChannelsCard(unittest.TestCase):
-    """Settings > Channels: Telegram's state first, its menus greyed while it is off, the held list on its own (#581)."""
+    """Settings > Ask: Telegram's state first, only when something is wrong (#682), its menus greyed while it is off, the held
+    list in its own part, only when something waits (#581, #682)."""
 
-    def card(self, state=None):
+    def card(self, state=None, held=None):
         import json as _json
         import os as _os
         with tempfile.TemporaryDirectory() as tmp:
@@ -869,14 +870,18 @@ class ChannelsCard(unittest.TestCase):
             if state:
                 (jobs / "telegram-status.json").write_text(_json.dumps(state), encoding="utf-8")
             with mock.patch.dict(_os.environ, {"GARRICK_JOBS_DIR": str(jobs), "HOME": str(base)}):
-                return status.channels_settings(root)
+                data = status._data(root, None, "channels")
+                if held is not None and data.get("channels"):
+                    data["channels"]["held"] = held
+                return status.channels_settings(root, data)
 
     def telegram_block(self, html):
-        return html[html.index('<section class="setsec setsub apponly chsec" id="channels-telegram"'):html.index('<section class="setsec setsub apponly chsec" id="channels-held"')]
+        start = html.index('<div class="setpart chblock" id="channels-telegram">')
+        return html[start:html.index('id="channels-held"') if 'id="channels-held"' in html else len(html)]
 
     def test_off_the_state_line_comes_first_and_the_menus_are_greyed_with_a_button(self):
         block = self.telegram_block(self.card())
-        self.assertTrue(block.index("Telegram is not set up.") < block.index("<select"))
+        self.assertTrue(block.index(status.TELEGRAM_DOWN) < block.index("<select"))
         self.assertEqual(3, len(re.findall(r"<select[^>]* disabled ", block)))
         self.assertIn(status.NOT_SET_UP, block)
         self.assertRegex(block, r'<button class="act sm" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
@@ -887,19 +892,29 @@ class ChannelsCard(unittest.TestCase):
         block = self.telegram_block(self.card({"state": "running", "beat": _time.time(), "pid": 1, "last_received": None}))
         self.assertNotIn(" disabled", block)
         self.assertNotIn("Set up Telegram", block)
+        self.assertNotIn('id="telegram-service"', block)                    # all is well: no status line (#682)
+        self.assertNotIn("receiver is running", block)
 
-    def test_another_program_reading_the_bot_is_said_in_plain_words(self):
+    def test_a_receiver_that_is_not_connected_says_one_plain_sentence_first(self):
         why = "Another program is already reading this bot's messages."
-        block = self.telegram_block(self.card({"state": "conflict", "why": why, "beat": 1, "pid": 1}))
-        import html as _h
-        text = _h.unescape(block)
-        self.assertIn(why, text)
-        self.assertLess(text.index(why), text.index("<select"))
+        for state in ({"state": "conflict", "why": why, "beat": 1, "pid": 1}, {"state": "running", "beat": 1, "pid": 1}):
+            block = self.telegram_block(self.card(state))
+            import html as _h
+            text = _h.unescape(block)
+            self.assertIn(status.TELEGRAM_DOWN, text)
+            self.assertLess(text.index(status.TELEGRAM_DOWN), text.index("<select"))
+            self.assertNotIn(why, text)
 
-    def test_the_held_list_has_its_own_heading_outside_both_channels(self):
+    def test_the_held_list_shows_only_when_something_waits_after_telegram(self):
         html = self.card()
-        self.assertIn('<h3>Waiting for your yes</h3><div id="held-actions">', html)
-        self.assertLess(html.index("<h3>Telegram</h3>"), html.index("Waiting for your yes"))
+        self.assertNotIn("Waiting for your yes", html)                     # nothing waits: no heading, no sentence (#682)
+        self.assertNotIn("Nothing is waiting for your yes", html)
+        row = {"id": "h1", "what": "Send Dana the price sheet", "where": "dana@acme.example", "channel": "telegram", "zone": "Work",
+               "kind": "send", "detail": "", "hours_left": 5}
+        html = self.card(held=[row])
+        self.assertIn('<div class="setpart" id="channels-held"><h4 class="setsubh">Waiting for your yes</h4><div id="held-actions">', html)
+        self.assertIn("Send Dana the price sheet", html)
+        self.assertLess(html.index('<h4 class="setsubh">Telegram'), html.index("Waiting for your yes"))
         self.assertGreater(html.index("Waiting for your yes"), html.rindex('data-key="autonomy"'))
 
     def test_no_path_and_no_model_code_name_in_the_visible_text(self):
@@ -911,7 +926,7 @@ class ChannelsCard(unittest.TestCase):
         self.assertEqual(2, len(tiers))
         for t in tiers:
             self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
-        self.assertIn("changes that can be undone", html)
+        self.assertIn("Telegram keeps your messages and the answers on its servers.", status.TELEGRAM_HELP)   # Telegram's "?" (#681)
 
 
 def two_zones_one_late_each(root):

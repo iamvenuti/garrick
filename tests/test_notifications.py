@@ -624,15 +624,15 @@ class TestPageAndSettings(Case):
 
     def test_six_choices_and_quiet_hours_and_nothing_else(self):
         sec = self.section()
-        for words in ("Notices appear on this Mac.", "Tell me when", "a session needs me", "a long task finishes",
-                      "the morning Todo summary is ready", "the morning Context summary is ready", "a scheduled job fails or recovers",
-                      "a newer Garrick is out", "Quiet from"):
+        for words in ("What Garrick tells you about on this computer.", "Tell me when", "a session needs me", "a long task finishes",
+                      "the morning Todo summary is ready", "the morning Context summary is ready", "a nightly job fails or works again",
+                      "a newer Garrick is out", "Quiet hours", "Notifications wait until morning."):     # #681's words
             self.assertIn(words, sec)
         self.assertNotIn("a session is waiting on me", sec)                                    # one row for both events
         self.assertIn('<span class="nsafter">after <input type="number" id="n-after"', sec)
-        self.assertRegex(sec, r'<small>At night only &#8220;a session needs me&#8221; gets through(\.|, and so do cmux)')
+        self.assertIn("A session that needs you still gets through.", sec)                     # behind Quiet hours' "?"
         self.assertNotIn("desk", sec.lower())                                                  # the cmux extra's own name for itself
-        self.assertIn("With every choice off, Garrick sends nothing.", sec)                      # behind the "?"
+        self.assertIn("It never shows what a note or a meeting says.", sec)                        # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
                      "Send to", "Send a test", "custom", "data-naway", "nover"):
             self.assertNotIn(gone, sec)
@@ -650,8 +650,7 @@ class TestPageAndSettings(Case):
         start = html.index('<section class="setsec apponly" id="notify-settings"')
         sec = html[start:html.index("</section>", start)]
         self.assertNotIn("scheduled job sends", sec)
-        self.assertIn("A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way.",
-                      sec)                                                                      # said once, behind the "?"
+        self.assertNotIn("GARRICK_NOTIFY", sec)                                                 # on the docs page, not in Settings (#681)
 
     def test_a_row_a_job_sends_its_own_way_says_so_and_its_box_is_not_in_use(self):
         agents = self.base / "LaunchAgents"
@@ -667,10 +666,10 @@ class TestPageAndSettings(Case):
         # a notice a job sends its own way has no switch (#673): one line under the list says what sends it, and what is saved is kept, out of sight
         line = sec[sec.index('id="n-own"'):]
         line = line[:line.index("</p>")]
-        self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", line)
+        self.assertIn("The morning summaries are set by your assistant. Ask it to change them.", line)     # #681
         self.assertIn('data-nt="todo-summary" disabled hidden checked', sec)
         self.assertNotIn('class="nsown nsitem"', sec)
-        self.assertEqual(1, line.count("Sent by"))                                                  # the Context row has no job that does it
+        self.assertEqual(1, line.count("morning summaries"))
         self.assertNotIn("desk", re.sub(r"<[^>]+>", " ", sec).lower())                       # the card holds no word desk
 
     def test_switching_off_the_todo_row_stops_the_todo_digest_and_not_the_context_digest(self):
@@ -690,8 +689,9 @@ class TestPageAndSettings(Case):
 
     def test_the_script_reads_the_form_into_what_clean_takes(self):
         js = self.status.NOTIFY_JS
-        self.assertIn("return{tell:t,after:", js)
-        self.assertIn("quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'}}", js)
+        self.assertIn("var r={tell:t,after:", js)
+        self.assertIn("quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'}};", js)
+        self.assertIn("if(mo)r.morning=mo.value;return r}", js)                              # the morning summary with every save (#686)
         self.assertIn("if(n)q.notifications=N.request()", self.status.JS)                  # sent when Settings closes
         if shutil.which("node"):
             done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js,

@@ -244,7 +244,7 @@ zone's repository, as the skills would:
     note-open   that note opened in the app the Mac uses for a .md file:
                 {"path"}; the same checks, and nothing written
     session-url a new session in the Claude or Codex desktop app (#652):
-                {"key": "claude-new" or "codex-new", "folder"}. The folder only
+                {"key": "claude" or "codex", "folder"}. The folder only
                 names the project or thread, and is checked as an open by
                 folder is. The reply carries the link the app opens ("url"),
                 built here from the folder the workspace holds and "open
@@ -378,7 +378,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
-LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new")
+LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")     # one row for each app since 0.80.0 (#682)
 DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmuxlib's AGENTS
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
@@ -2205,8 +2205,8 @@ def cmux_folder(ws: Path, req: dict) -> tuple:
 
 # A new session in a desktop app (#652): the link each app takes. Neither route is documented by its vendor.
 # key: (scheme, the link's host and path, the query's name for the folder, for the prompt, the app as the page says it)
-NEW_SESSION = {"claude-new": ("claude", "code/new", "folder", "q", "Claude"),
-               "codex-new": ("codex", "threads/new", "path", "prompt", "Codex")}
+NEW_SESSION = {"claude": ("claude", "code/new", "folder", "q", "Claude"),
+               "codex": ("codex", "threads/new", "path", "prompt", "Codex")}
 
 
 def spoken_name(ws: Path, req: dict, long: str) -> str:

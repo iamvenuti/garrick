@@ -942,7 +942,7 @@ class TestTheButtonsVerbs(ReleaseCase):
         start = html.index('id="about-settings"')
         sec = html[start:html.index("</section>", start)]
         self.assertIn('id="rel-check">Check for updates</button>', sec)
-        self.assertIn("Check for a newer Garrick", sec)
+        self.assertIn("<span>Check for updates</span>", sec)                     # #681: one name for the check
         self.assertIn('<option value="7" selected>Weekly</option>', sec)
         self.assertIn('id="rel-on" checked', sec)
         self.assertIn("window.GarrickRelease", status.RELEASE_JS)

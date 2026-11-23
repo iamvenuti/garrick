@@ -39,6 +39,7 @@ sys.dont_write_bytecode = True
 import work_fixture  # noqa: E402
 from fixtures import build_workspace, thread_note, write  # noqa: E402
 from old_status_reads import old_reads  # noqa: E402
+from old_status_reads_0770 import old_reads as old_reads_0770  # noqa: E402
 from test_status import REPO, status  # noqa: E402
 
 TOOLS = REPO / "template" / "System" / "tools"
@@ -101,6 +102,10 @@ def make_workspace(root: Path, tools: bool = True) -> Path:
     write(garden / "Twin" / "Threads" / "Copy" / "Copy.md", "---\ntitle: Copy\nstatus: active\n---\n\n# Copy\n")
     (garden / "Twin" / "Twin.md").symlink_to(home / "Maple" / "Maple.md")           # a hub note that is another zone's file
     write(root / "System" / "Sys" / "Sys.md", "---\ntitle: Sys\ntype: project\nstatus: active\n---\n\n# Sys\n")
+    write(root / "System" / "Sys" / "Threads" / "Job" / "Job.md", thread_note("Sys", "Job", "sys"))
+    write(root / "System" / "Sys" / "Threads" / "Bare" / "notes.md", "# no thread note\n")          # a thread folder with no note
+    write(root / "System" / "Loose" / "Loose.md", "---\ntitle: Loose\ntype: thread\n---\n\n# Loose\n")   # not a project
+    write(root / "System" / "_hidden" / "_hidden.md", "---\ntype: project\n---\n")
     return root
 
 
@@ -357,7 +362,6 @@ LEFT = {
     "question_needs": "the wiki questions that wait, for Waiting on you now",
     "questions_in": "a wiki's question files",
     "repos": "each repository's own state",
-    "system_notes": "the projects kept in System/, which the work reader does not cover",
     "threads": "zone names only, while view.py is missing (a half-finished update)",
     "todo": "each zone's open-line counts (no caller is left)",
     "todo_list": "the Todo tab: each zone's Todo.md and the action lines in thread notes",
@@ -418,6 +422,30 @@ class TestWhatThePageStillReads(unittest.TestCase):
     def test_the_view_model_names_what_is_left_for_it(self):
         for name in ("Todo lists", "waiting sessions", "settings", "operations journal", "the Explore graph", "repositories"):
             self.assertIn(name, view.LEFT)
+
+
+class TestShadowSystem(Case):
+    """The projects kept in System/ (#650, 0.78.0): the view model names their notes, the page draws the lookup."""
+
+    def test_the_lookup_the_page_makes_is_the_old_reads(self):
+        old = old_reads_0770(status, "SYSTEM")
+        got = status.system_notes(self.root)
+        self.assertEqual(old["system_notes"](self.root), got)
+        self.assertEqual({"system/sys/sys", "sys", "system/sys/threads/job/job", "job"}, set(got))
+
+    def test_a_folder_that_is_no_project_and_a_thread_with_no_note_are_left_out(self):
+        notes = [n for p in self.model["system"] for n in p["notes"]]
+        self.assertEqual(["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"], notes)
+        self.assertEqual(["Sys"], [p["name"] for p in self.model["system"]])
+
+    def test_a_scoped_build_holds_none_of_system(self):
+        self.assertEqual([], view.build(self.root, scope=["Home"])["system"])
+
+    def test_only_builds_the_parts_named(self):
+        part = view.build(self.root, only=("system",))
+        self.assertEqual([], part["zones"])
+        self.assertEqual(1, len(part["system"]))
+        self.assertNotIn("system", view.build(self.root, only=("work",)))
 
 
 class TestShadowInbox(Case):

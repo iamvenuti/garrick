@@ -604,11 +604,12 @@ def piece_row(ws: Path, p: dict) -> dict:
     return row
 
 
-def view_model(ws: Path) -> Optional[dict]:
-    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet."""
+def view_model(ws: Path, only=None) -> Optional[dict]:
+    """The view model of the workspace, built once for a page (#650); None while the workspace has no view.py yet.
+    `only` names the parts to build (view.PARTS), for a caller that needs one."""
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
-        return view_reader(ws).build(ws)
+        return view_reader(ws).build(ws, only=only)
     except FileNotFoundError:
         return None
 
@@ -705,19 +706,18 @@ def todo_lines():
     return _TL
 
 
-def system_notes(ws: Path) -> Dict[str, Path]:
+def system_notes(ws: Path, model: Optional[dict] = None) -> Dict[str, Path]:
     """The hub and thread notes of every project kept in System/, by name and
     by path from the workspace, lower-cased. Such a project has no Todo.md of
-    its own: its actions live in a zone's, opening with its thread's link."""
+    its own: its actions live in a zone's, opening with its thread's link.
+    The view model finds them (view.system_projects); this only names them."""
+    model = model or view_model(ws, ("system",))
     out: Dict[str, Path] = {}
-    for project in visible_dirs(ws / "System"):
-        hub = project / (project.name + ".md")
-        if not hub.is_file() or as_text(frontmatter(hub, ws).get("type")).strip().lower() != "project":
-            continue
-        for note in [hub] + [t / (t.name + ".md") for t in visible_dirs(project / "Threads")]:
-            if note.is_file():
-                out.setdefault(note.relative_to(ws).with_suffix("").as_posix().lower(), note)
-                out.setdefault(note.stem.lower(), note)
+    for project in (model or {}).get("system", []):
+        for rel in project["notes"]:
+            note = ws / rel
+            out.setdefault(note.relative_to(ws).with_suffix("").as_posix().lower(), note)
+            out.setdefault(note.stem.lower(), note)
     return out
 
 
@@ -804,7 +804,7 @@ def held_block(held: List[dict]) -> str:
     return '<div class="tq">%s</div>' % out if out else ""
 
 
-def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
+def todo_list(ws: Path, link: "Links", today: dt.date, model: Optional[dict] = None) -> List[dict]:
     """Preview: each zone's open actions, read from the notes, never written.
     Per zone: the lines of Todo.md grouped under its `## ` headings in their
     order, then the lines that sit in thread notes ("In thread notes"), then
@@ -813,7 +813,7 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     label names a note in the zone or, failing that, a project in System/."""
     tl = todo_lines()
     out = []
-    system = system_notes(ws)
+    system = system_notes(ws, model)
     role = machine_role(ws)
     for zone in visible_dirs(ws / "Zones"):
         todo_md = zone / "Todo.md"
@@ -8656,7 +8656,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
     flags_on = preview_flags(ws)
     acting = True       # the buttons that act; only a host that carries them out (the app) shows them
-    lists = todo_list(ws, link, now.date())
+    lists = todo_list(ws, link, now.date(), model)
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
     GS = graph_styles(ws)       # each kind's colour, from Settings › Graph colours (#291)
     GK: List[Tuple[str, str, str]] = []

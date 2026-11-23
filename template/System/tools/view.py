@@ -15,6 +15,7 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
     {"api": 1,
      "zones": [ZONE, ...],                     # by name, one per folder of Zones/
      "queues": {"inbox": [INBOX, ...]},        # the places that hold files waiting to be sorted
+     "system": [SYSTEM, ...],                  # the projects kept in System/, outside any zone
      "left": [...]}                            # what the page still reads for itself, by name
 
     ZONE   {"name": "Work",
@@ -47,6 +48,8 @@ The shape (every field name is stable; `docs/architecture.md` has one example)
 
     INBOX  {"place": "Work", "kind": "zone" | "wiki", "folder": "Zones/Work/Inbox", "count": 2}
 
+    SYSTEM {"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}   # the hub, then each thread note
+
 Walls. Every record carries its zone. A count is of one zone or one wiki; nothing here adds
 two together. `build(root, scope=["Work"])` holds the records of those zones alone, and no
 wiki. A zone folder that is a link is no zone, and an Inbox or a note that resolves outside
@@ -55,7 +58,9 @@ the zone it sits in is left out, so a link into another zone shows none of that 
 `left` names what the page reads for itself because no core module owns it yet: the jobs
 folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
 Todo lists, the check's kept result, the waiting sessions, the settings, the wikis' logs and questions,
-the repositories, the Explore graph, the projects kept in `System/`, and the worked example's marker.
+the repositories, the Explore graph, and the worked example's marker.
+
+`build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
 """
 import datetime as dt
 import importlib.util
@@ -64,7 +69,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 API = 1
 DONE = {"done", "closed", "archived", "complete", "completed"}
@@ -77,7 +82,10 @@ CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "call
 # What the page reads for itself, by name, until a core module owns it.
 LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App", "Todo lists",
         "the check's kept result", "waiting sessions", "settings", "wiki logs and questions", "repositories",
-        "the Explore graph", "projects kept in System/", "the worked example's marker")
+        "the Explore graph", "the worked example's marker")
+
+# The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
+PARTS = ("work", "inbox", "system")
 
 _MODS: dict = {}
 
@@ -490,32 +498,58 @@ def _queue_inbox(place: str, kind: str, folder: Path, inside: Path, root: Path) 
     return {"place": place, "kind": kind, "folder": _rel(folder, root), "count": n}
 
 
-def build(root, scope: Optional[List[str]] = None) -> dict:
+def system_projects(root: Path) -> List[dict]:
+    """The projects kept in System/ (#650): each folder there whose hub note says `type: project`, with the paths, from
+    the workspace, of the hub and of every thread note under it, in the order the page matches a Todo line's label
+    against them. Such a project has no Todo.md of its own: its actions live in a zone's, opening with its thread's
+    link. A folder with no hub, or a hub that is not a project, is no project. System/ belongs to no zone: a scoped build
+    holds none of it."""
+    lib = _lib()
+    out: List[dict] = []
+    for project in _visible_dirs(Path(root) / "System"):
+        hub = project / (project.name + ".md")
+        if not hub.is_file() or as_text((lib.parse_frontmatter(hub) or {}).get("type")).strip().lower() != "project":
+            continue
+        notes = [hub] + [t / (t.name + ".md") for t in _visible_dirs(project / "Threads")]
+        out.append({"name": project.name, "notes": [_rel(n, root) for n in notes if n.is_file()]})
+    return out
+
+
+def build(root, scope: Optional[List[str]] = None, only: Optional[Iterable[str]] = None) -> dict:
     """The view model of the workspace at `root`. `scope` names the zones whose records may be shown: None is every
-    zone and the Meetings wiki's inbox, a list is those zones alone and no wiki. Reads; never writes."""
+    zone and the Meetings wiki's inbox, a list is those zones alone and no wiki. `only` names the parts to build, from
+    `PARTS`; None builds them all, and a part not named is left out of the document, so a caller that needs one part does
+    not pay for the rest. Reads; never writes."""
     root = Path(root)
     base = (root / "Zones")
     real = {z.name for z in _work().zones(root)}
     wanted = None if scope is None else set(scope)
+    parts = set(PARTS) if only is None else set(only)
     zones: List[dict] = []
     inbox: List[dict] = []
-    for zone in _visible_dirs(base):
-        if wanted is not None and zone.name not in wanted:
-            continue
-        if zone.name not in real:
-            # A link is no zone: it has no work, and its Inbox would be another folder's.
-            zones.append({"name": zone.name, "linked": True, "done": 0, "held": [], "projects": {}, "open_links": [], "work": []})
-            continue
-        zones.append(_zone_work(root, zone))
-        q = _queue_inbox(zone.name, "zone", zone / "Inbox", zone.resolve(), root)
-        if q:
-            inbox.append(q)
-    if wanted is None:
-        wiki = root / "Wikis" / "Meetings"
-        q = _queue_inbox("Meetings", "wiki", wiki / "raw" / "inbox", wiki.resolve(), root)
-        if q:
-            inbox.append(q)
-    return {"api": API, "zones": zones, "queues": {"inbox": inbox}, "left": list(LEFT)}
+    if parts & {"work", "inbox"}:
+        for zone in _visible_dirs(base):
+            if wanted is not None and zone.name not in wanted:
+                continue
+            if zone.name not in real:
+                # A link is no zone: it has no work, and its Inbox would be another folder's.
+                zones.append({"name": zone.name, "linked": True, "done": 0, "held": [], "projects": {}, "open_links": [], "work": []})
+                continue
+            zones.append(_zone_work(root, zone) if "work" in parts else {"name": zone.name, "linked": False})
+            if "inbox" in parts:
+                q = _queue_inbox(zone.name, "zone", zone / "Inbox", zone.resolve(), root)
+                if q:
+                    inbox.append(q)
+        if wanted is None and "inbox" in parts:
+            wiki = root / "Wikis" / "Meetings"
+            q = _queue_inbox("Meetings", "wiki", wiki / "raw" / "inbox", wiki.resolve(), root)
+            if q:
+                inbox.append(q)
+    out = {"api": API, "zones": zones, "queues": {"inbox": inbox}}
+    if "system" in parts:
+        out["system"] = system_projects(root) if wanted is None else []
+    out["left"] = list(LEFT)
+    return out
 
 
 def main(argv=None) -> int:

@@ -59,10 +59,11 @@ The shape, with one piece of work and one inbox:
                       "read": {"block": true, "date": "2026-11-02", "where": "Drafting.", "rows": {}, "entry": null, "about": ""},
                       "actions": ["park", "rename", "move", "delete", "continue", "open", "close"]}]}],
  "queues": {"inbox": [{"place": "Work", "kind": "zone", "folder": "Zones/Work/Inbox", "count": 2}]},
+ "system": [{"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}],
  "left": ["jobs folder state", "operations journal", "..."]}
 ```
 
-`files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. The field names are stable: the page, the tests and any later reader build on them.
+`files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. `system` lists the projects kept in `System/`, which belong to no zone: the hub note and each thread note, by path, so the page can match a Todo line's link to one; a build limited to some zones holds none of it. The field names are stable: the page, the tests and any later reader build on them.
 
 #### What the App counts
 

@@ -4,6 +4,28 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-11-24
+
+This release changes how the Garrick App gets what it shows. The core now reads almost everything on the page and the App draws it. In the Context queue, a failed Undo says what failed.
+
+**Upgrading.**
+- The App looks the same, and now only draws what the core gives it.
+- The Context queue's undo line says what failed and the next step.
+
+### Changed
+
+- **The App only draws** (#650). The core reads the scheduled jobs, this Mac's launchd agents, the files the App keeps in `System/` and the last result of the check. `status.py` has no read of its own of a zone, a wiki or a thread note. The sessions that wait for you are still read by the extra, because they are this Mac's and not the workspace's, and so are the files a card's own actions work on. `docs/architecture.md` has the shape of each new document, with an example. An update that stopped half way still opens the page, which says that Garrick needs updating.
+
+### Fixed
+
+- **The Context queue's Undo** (#511). When an Undo fails, the line says "The change was not undone." with *Show why*, and the tool's own words are under *Details*. It says *Undone* only when the undo is confirmed.
+- A job whose log is a folder, or whose lock cannot be read, no longer stops the page from being built, and neither do release notes that cannot be read as text (#650).
+
+### Tests
+
+- The acceptance run updates a 0.79.0 workspace and checks that it keeps one morning summary for each zone (#686).
+- The acceptance run's kept hooks case takes its download from the newest release whose hook files differ, so it still runs after a release that left the hooks alone (#672, #680).
+
 ## [0.80.0] - 2026-11-24
 
 This release makes Settings shorter. It has seven sections instead of fourteen, fewer and shorter help texts, and no choice that asks for a developer's word. It also changes what you meet each morning. Catch up reads every dated entry, a nightly check tells you when a guard hook is out of date, and one morning brief can cover every zone. The update can now refresh the hooks you keep, from an assistant session, on your yes.

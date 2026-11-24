@@ -110,6 +110,8 @@ class Machine(unittest.TestCase):
         mods = mock.patch.dict(sys.modules)            # the jobs extra's `job`, if another test loaded it, would decide a lock
         mods.start()
         sys.modules.pop("job", None)
+        for key in ("garrick_view_jobs", "garrick_view_app"):       # a copy another module loaded would hide a file a test removes
+            sys.modules.pop(key, None)
         self.addCleanup(mods.stop)
         self.addCleanup(self._tmp.cleanup)
 
@@ -350,6 +352,31 @@ class TestDocumentedJobs(Machine):
     def test_the_view_model_no_longer_names_them_as_left(self):
         self.assertNotIn("jobs folder state", view.LEFT)
         self.assertNotIn("launchd agents", view.LEFT)
+
+
+class TestABrokenReaderSaysSo(Machine):
+    """A core reader that is there but fails says so once on stderr, with its error's class alone; a missing one stays silent."""
+
+    def run_reader(self, error):
+        import io
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        status._SAID.clear()
+        with mock.patch.object(status, "view_reader", side_effect=error), redirect_stderr(err):
+            self.assertIsNone(status.jobs_reader())
+            self.assertIsNone(status.jobs_reader())
+            self.assertIsNone(status.app_reader())
+        return err.getvalue()
+
+    def test_a_broken_module_is_said_once_per_reader_without_its_words(self):
+        out = self.run_reader(SyntaxError("secret words in /private/path"))
+        self.assertEqual(2, len(out.splitlines()))
+        self.assertIn("SyntaxError", out)
+        self.assertNotIn("secret", out)
+        self.assertNotIn("/private", out)
+
+    def test_a_missing_file_stays_silent(self):
+        self.assertEqual("", self.run_reader(FileNotFoundError("System/tools/view.py")))
 
 
 class TestHalfUpdated(Machine):
@@ -857,7 +884,14 @@ class TestPageReadsNoWorkspaceNote(Workspace):
             return call
         _HOOKS.append(hook)
         try:
-            with mock.patch.object(os, "stat", watch("stat")), mock.patch.object(os, "lstat", watch("lstat")):
+            real_path_stat = Path.stat
+
+            def path_stat(self, *a, **k):          # Python 3.9 binds os.stat inside pathlib at import, so patching os alone misses it
+                if _RECORDING[0]:
+                    judge(os.fspath(self))
+                return real_path_stat(self, *a, **k)
+            with mock.patch.object(os, "stat", watch("stat")), mock.patch.object(os, "lstat", watch("lstat")), \
+                    mock.patch.object(Path, "stat", path_stat):
                 _RECORDING[0] = True
                 try:
                     build()

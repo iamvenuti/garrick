@@ -3206,12 +3206,26 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             "op": {place: sorted(ks) for place, ks in opens.items()}}
 
 
+_SAID: set = set()
+
+
+def say_once(reader: str, error: Exception) -> None:
+    """One line on stderr, once per build per reader, when a core reader cannot be used for a reason other than a missing file:
+    a fixed sentence and the error's class, never a path or the error's own words. The page is unchanged."""
+    if reader not in _SAID:
+        _SAID.add(reader)
+        print("status: the %s reader of the core could not be used (%s); its cards are empty." % (reader, type(error).__name__), file=sys.stderr)
+
+
 def jobs_reader():
     """view_jobs.py, the core's reader of the jobs folder and the launchd agents (#650), through view.py; None while the
     workspace has no copy of it (a half-finished update: the page then says it needs updating, and these cards are empty)."""
     try:
         return view_reader(None, "jobs_reader").jobs_reader()
-    except Exception:
+    except FileNotFoundError:
+        return None                          # not there yet: the page says it needs updating
+    except Exception as e:
+        say_once("jobs", e)
         return None
 
 
@@ -3220,7 +3234,10 @@ def app_reader():
     view.py; None while the workspace has no copy of it (a half-finished update: the page then says it needs updating)."""
     try:
         return view_reader(None, "app_reader").app_reader()
-    except Exception:
+    except FileNotFoundError:
+        return None                          # not there yet: the page says it needs updating
+    except Exception as e:
+        say_once("app", e)
         return None
 
 
@@ -8180,6 +8197,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     waiting_rows()); without it the Overview's card is empty, so a build never
     reads this Mac's transcripts by itself."""
     now = now or dt.datetime.now()
+    _SAID.clear()
     _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it

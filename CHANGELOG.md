@@ -4,6 +4,48 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-11-24
+
+This release makes Settings shorter. It has seven sections instead of fourteen, fewer and shorter help texts, and no choice that asks for a developer's word. It also changes what you meet each morning. Catch up reads every dated entry, a nightly check tells you when a guard hook is out of date, and one morning brief can cover every zone. The update can now refresh the hooks you keep, from an assistant session, on your yes.
+
+**Upgrading.**
+- Settings has seven sections and short help texts, with a `?` only where you need one.
+- Each assistant app has one row, which opens a new session on the thread.
+- The read guard lists your connected services by name.
+- Ask and Telegram offer Faster, Balanced or Fuller answers.
+- Older pages asks for nothing technical.
+- The update can refresh the hooks you keep, from an assistant session.
+- The nightly check says when a guard hook is out of date.
+- Catch up reads every dated entry.
+- One morning brief can cover every zone. A workspace made before this release keeps one summary for each zone until you switch, under Settings › Notifications, *Morning summary*.
+- More failures say what failed and the next step.
+
+### Added
+
+- **One morning brief across your zones** (#686). Choose one morning summary for all zones, and the nightly sweep sends one message after every zone has swept. It lists what needs you today, best first, in the order the band ranks its picks, so its first line is the band's first pick. It shows eight lines at most, then how many more each zone has. A quiet day says "Nothing needs you today.", and a zone whose sweep did not finish says its list is as it stood. A line names zone, thread and what is due, and never quotes a note or a meeting. A new workspace starts with one summary for all zones. A zone with a route of its own, or a sweep whose job sends its notifications its own way, keeps one summary for each zone. The sweep's `--brief-lines` sets the number of lines, and `--print-brief` shows what the brief would say without sending it.
+- **A check for the guard hooks** (#685). The nightly check warns when a guard hook your assistant runs is not this release's, sits inside the workspace, names a file that is not there, or is not a full path. Each warning gives one step to fix it. It shows the hook's path as your settings write it, with your home folder as `~`, and nothing else from the settings. With no guard registered, it says nothing.
+- **The kept hooks refresh from a session** (#680). `--apply --refresh-hooks` is the yes to the update's refresh of the hook files you keep outside the workspace. When you update through your assistant, it names the folder and the files and asks you in the session, and passes the flag only on your yes there. Without the flag and with nobody to ask, nothing is copied, and the report names the flag. The folder checks are as before: outside the workspace, in your home folder, not a clone, not a link.
+- **Morning summary** in Settings › Notifications: one for all zones, or one for each zone.
+
+### Changed
+
+- **Settings has seven sections** (#682): Opening work, Ask, Notifications, Older pages, Walls, Look and About, with no group headings. The Ask box and Telegram are one section. The read guard is part of Walls. The zones' colours, the graph and Reset view are in Look. This computer and Preview features are in About. *Waiting for your yes* shows only when something waits, and the Telegram line only when Telegram is not connected. A link that opened Settings at a section still lands on those rows.
+- **One row for each assistant app** (#682). Claude and Codex each have one row, which opens a new session in the app, in the folder of the work, with the first message typed in and not sent. When the app does not take the link, the App opens it and copies the prompt. A settings file from 0.79.0 keeps your choice: the row is on when either old row was on, and the old keys go the next time Settings saves.
+- **One short help text per thing** (#681). Settings has at most 25 help texts, each 30 words or fewer, and a `?` only where the label cannot say it. One word is used for each thing, a condition shows only when it applies, and saving is said once, at the foot. What left the page is in the status page docs.
+- **Connected services by name** (#683). In Settings › Walls, under Watch and On, the Connected services fold shows each service as Check it, Leave it or Not decided, and its name says how many are not decided. *Add a service* takes a plain name such as Outlook. A pattern Garrick writes for you matches that service's own tools only. No pattern shows on the page. The weekly check names a service that is not decided and says where to decide it.
+- **Answers** (#683). Ask and Telegram offer Faster, Balanced or Fuller in place of a model size and an effort. A pair your assistant set shows as Custom until you pick one. A pick never changes how far the channel may go.
+- **Older pages** (#683). Page types and page domains leave the page, and your assistant can still change them. The fold is named More choices. "You pinned it" replaces the old field row, a tick box says whether a search also reads dormant pages, and the morning row is one sentence.
+- *Across a wall* shows under On only, and each choice says what it does (#683).
+- **More failures say what failed** (#511). Check for updates, the update, the Memory count, the note preview, the Context queue's answers and wall question, Commit these, Undo, Follow-ups, a refused connected service and the App's new session each give one plain sentence and one next step. The tool's own words are under *Details*. Where a request writes, no second try is offered.
+
+### Removed
+
+- The route of Open in Claude through Claude Code's command-line tool, and the folder-only route of Open in Codex (#682). A session already running is reached through cmux.
+
+### Fixed
+
+- Catch up missed every dated entry whose heading had words after the date, such as `**25 October 2026: wrapped.**`, and added older ones to the newer entry's text. An entry is now any line that opens with a bold date (#684).
+
 ## [0.79.0] - 2026-11-23
 
 This release fixes how Garrick finds the guard hooks you keep outside the workspace. It now reads their paths the way your assistants do and trusts only its own files. When it cannot use them, it tells you which path is wrong. Settings, the App's failure messages and the context docs are also rewritten, so you can act on them without knowing how Garrick is built.

@@ -1,5 +1,5 @@
 """The read guard in Settings, for a business user (#674): one heading, three choices each with its consequence, a list that names
-what would have been stopped, Across a wall only under On, and the tool patterns under a closed Advanced.
+what would have been stopped, Across a wall only under On, and the connected services by name in a closed fold of their own (#683).
 
     cd tests && python3 -m unittest test_read_guard_list
 
@@ -209,12 +209,14 @@ class TestTheList(unittest.TestCase):
         self.assertIn("3 files across 2 sessions in Work", re.sub(r"<[^>]+>", "", markup))
 
     def test_a_mail_line_shows_the_tool_and_the_zone_held_back_and_nothing_else(self):
-        markup = block([line(5, tool="mcp__fakemail__search", session="s1", project="Acme", source="fakemail", held_zone="Personal")])
+        markup = block([line(5, tool="mcp__claude_ai_Acmemail__search", service="Acmemail", session="s1", project="Acme", held_zone="Personal")])
         item = re.search(r"<li class=\"rgread\".*?</li>", markup, re.S).group(0)
         said = " ".join(re.sub(r"<[^>]+>", " ", item).split())
-        self.assertIn("mcp__fakemail__search", said)
+        self.assertIn("Acmemail, a mail or calendar result", said)                   # the service by its plain name (#683)
+        self.assertNotIn("mcp__", said)
         self.assertIn("Personal", said)
-        self.assertIn("mail or calendar", said)
+        markup = block([line(5, tool="mcp__claude_ai_Acmemail__search", session="s1", project="Acme", held_zone="Personal")])
+        self.assertNotIn("mcp__", markup)                                             # a line with no name says "a connected service"
 
     def test_a_line_written_by_0780_still_shows_with_not_recorded_in_place_of_the_file(self):
         markup = block([line(5, tool="Bash")])
@@ -289,8 +291,7 @@ class TestTheSection(unittest.TestCase):
         self.assertEqual(1, len(visible_buttons))
 
     def test_one_sentence_says_what_it_protects(self):
-        self.assertIn("In a session for one project, the assistant does not open notes, meetings or mail that sit behind another zone's wall.",
-                      visible_text(block([])).replace("&#39;", "'"))
+        self.assertIn("The assistant does not read what sits behind the wall of another zone.", visible_text(block([])))      # #681
 
     def test_three_choices_each_with_its_consequence(self):
         markup = block([], mode="off")
@@ -305,31 +306,39 @@ class TestTheSection(unittest.TestCase):
 
     def test_how_it_is_installed_is_behind_the_question_mark(self):
         markup = block([])
-        self.assertIn("add the read guard to your assistant", re.search(r'id="help-readguard".*?</p>', markup, re.S).group(0).replace("&#x27;", "'"))
-        self.assertNotIn("add the read guard to your assistant", visible_text(markup).replace("&#x27;", "'"))
+        self.assertIn(rgs.HELP_TEXT, re.search(r'id="help-readguard".*?</p>', markup, re.S).group(0))        # #681's text, behind the "?"
+        self.assertNotIn(rgs.HELP_TEXT, visible_text(markup))
 
-    def test_across_a_wall_shows_only_under_on_and_says_what_it_will_do_under_watch(self):
+    def test_across_a_wall_is_on_the_page_only_under_on_with_a_line_for_each_choice(self):
         for mode, shown in (("off", False), ("warn", False), ("enforce", True)):
             markup = block([], mode=mode)
-            row = re.search(r'<div class="[^"]*" data-rg="cross"[^>]*>', markup).group(0)
-            self.assertEqual(not shown, " hidden" in row, (mode, row))
-            if mode != "warn":                                       # under Watch a line names Refuse, to say what it will do
-                self.assertEqual(shown, "Refuse" in visible_text(markup), mode)
-        watch = block([], mode="warn")
-        self.assertIn("Once you choose On", visible_text(watch))
-        self.assertNotIn("Once you choose On", visible_text(block([], mode="enforce")))
+            self.assertEqual(shown, 'data-rg="cross"' in markup, mode)                # not drawn at all under Off and Watch (#683)
+            self.assertEqual(shown, "Across a wall" in markup, mode)
+            self.assertNotIn("Once you choose On", markup)
+        on = block([], mode="enforce")
+        self.assertIn("<b>Refuse</b><small>Every read across a wall is stopped.</small>", on)
+        self.assertIn("<b>Ask me</b><small>You decide each time, for one session.</small>", on)
+        self.assertRegex(on, r'name="rg-cross" value="deny" checked')
 
-    def test_the_tool_patterns_are_under_a_closed_advanced_fold_with_a_plain_label(self):
-        markup = block([])
-        fold = re.search(r"<details class=\"rgadv\"(?P<open>[^>]*)>(?P<body>.*?)</details>", markup, re.S)
-        self.assertIsNotNone(fold)
-        self.assertNotIn("open", fold.group("open"))
-        self.assertIn("Advanced", fold.group("body"))
-        self.assertIn("Which connected tools are checked", fold.group("body"))
-        self.assertIn("mcp__*Gmail*", fold.group("body"))
-        outside = markup.replace(fold.group(0), "")
-        self.assertNotIn("mcp__*Gmail*", re.sub(r'data-tools="[^"]*"', "", outside))
-        self.assertNotIn("mcp__*Mail*", visible_text(markup))
+    def test_the_connected_services_are_in_a_closed_fold_named_for_them_under_watch_and_on(self):
+        services = [{"name": "Gmail", "choice": "check", "patterns": ["mcp__*Gmail*"], "unmatched": False},
+                    {"name": "Weather", "choice": "", "patterns": [], "unmatched": True}]
+        for mode in ("warn", "enforce"):
+            markup = block([], mode=mode, services=services)
+            fold = re.search(r'<details class="rgadv rgsvcs"(?P<open>[^>]*)>(?P<body>.*?)</details>', markup, re.S)
+            self.assertIsNotNone(fold, mode)
+            self.assertNotIn(" open", fold.group("open"))
+            self.assertIn('<span id="rg-services-name">Connected services (1 not decided)</span>', fold.group("body"))
+            self.assertNotIn("Advanced", markup)
+            self.assertNotRegex(markup, r"mcp__|\*")                                 # no pattern, no tool name, anywhere
+        self.assertNotIn("rg-services", block([], mode="off", services=services))   # not on the page under Off
+        self.assertNotIn("not decided", block([], mode="warn", services=services[:1]))
+
+    def test_codex_keeps_its_one_line_in_place_of_the_services(self):
+        state = dict(STATE, services=[{"name": "Gmail", "choice": "check", "patterns": ["mcp__*Gmail*"], "unmatched": False}])
+        markup = rgs.guard_block(sg, state, True, button, text, "solo", OPEN)
+        self.assertIn(sg.CODEX_LINE, markup)
+        self.assertNotIn("rg-services", markup)
 
 
 if __name__ == "__main__":

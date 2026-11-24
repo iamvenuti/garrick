@@ -85,7 +85,7 @@ class SettingsRouteDocs(unittest.TestCase):
         setup = page[page.index("## Set it up"):page.index("## What you cannot do on the laptop")]
         self.assertLess(setup.index("Settings"), setup.index("python3 System/tools/machine.py set"))
         self.assertLess(setup.index("*Change…*"), setup.index("If you cannot use the app"))
-        self.assertIn("In a browser, *This machine* shows the role and says it is changed in Garrick.app", page)
+        self.assertIn("In a browser, the row *This computer* shows the role and says it is changed in Garrick.app", page)   # About › This computer (#682)
 
     def test_each_role_has_its_bracket_name_once_and_its_plain_name_used_after(self):
         page = text("docs/machines.md")
@@ -106,8 +106,9 @@ class SettingsRouteDocs(unittest.TestCase):
     def test_the_read_guard_page_uses_the_settings_names(self):
         page = text("docs/read-guard.md")
         for word in ("**Off**", "**Watch**", "**On**", "**Refuse**", "**Ask me**", "Settings, then Walls, then *Read guard*",
-                     "In the last 7 days it would have stopped 3 files across 2 sessions in Work", "*Show*", "*Across a wall*", "*Mail and calendar tools*",
-                     "*Tools with nothing to check*"):
+                     "In the last 7 days it would have stopped 3 files across 2 sessions in Work", "*Show*", "*Across a wall*", "*Connected services*",
+                     "**Check it**", "**Leave it**", "*Not decided*", "*Add a service*",
+                     "Settings › Walls › Connected services: Weather is not decided"):
             self.assertIn(word, page, word)
         for old in (r"\benforce\b", r"warn-only", r"\bEnforce\b"):
             self.assertIsNone(re.search(old, page), old)
@@ -145,7 +146,7 @@ class SettingsRouteDocs(unittest.TestCase):
     def test_the_setup_skill_leads_with_settings_and_says_the_plain_names(self):
         skill = text("template/System/skills/setup/SKILL.md")
         section = skill[skill.index('## "The workspace is on more than one machine"'):skill.index("## Never")]
-        self.assertLess(section.index("Settings, *This machine*, *Change"), section.index("python3 System/tools/machine.py set"))
+        self.assertLess(section.index("Settings, *About*, *This computer*, *Change"), section.index("python3 System/tools/machine.py set"))   # #682
         for word in ("One computer", "Home server", "Laptop copy", "System/garrick-docs/machines.md"):
             self.assertIn(word, section)
 

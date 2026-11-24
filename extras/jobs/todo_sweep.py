@@ -32,7 +32,22 @@ digest`) as the "Todo summary" notice: both through System/tools/
 notifications.py, to this Mac when Settings › Notifications has them on
 (a GARRICK_NOTIFY_CMD command runs in the zone's folder with GARRICK_ZONE set).
 The summary goes also when the zone's call failed, opening with a line that
-says so, since a silent morning reads like a clear one. A Waiting on line
+says so, since a silent morning reads like a clear one.
+
+**One morning brief** (#686). When Settings › Notifications says one morning
+summary for all zones (`notifications.morning` is "all", which only a new
+workspace's setup writes), --digest sends one "Morning summary" notice instead,
+after every zone has swept: what needs you today across the zones, best first,
+by System/tools/next_up.py's ranking, so its first line is the band's first
+pick; at most --brief-lines lines (8), then each zone's count of the rest;
+"Nothing needs you today." on a quiet day; a line for each zone whose sweep did
+not finish. It names zone, thread and what is due, as the band does, and
+never quotes a note or a meeting. A zone with a route of its own under an older
+settings file's `notifications.zones` is left out of it and keeps its own Todo
+summary. With GARRICK_NOTIFY or GARRICK_NOTIFY_CMD set for the sweep, which is
+told each zone, every zone keeps its own summary, as before. With "each", or
+no key, nothing changes. --print-brief sweeps nothing and sends nothing: it
+prints what the brief would say now, and which zones keep their own summary. A Waiting on line
 gets a ⏳ day `todo-chase-days` ahead when its source gives none (7, or 0
 for none).
 
@@ -301,6 +316,61 @@ def send_digest(workspace: Path, zone: Path, failed: bool, follow_failed: bool =
     job.notify("digest", "Todo", text, zone=zone, event="todo-summary")
 
 
+def next_up_lib(workspace: Path):
+    """next_up.py, the one ranking: the workspace's own, else the one beside these jobs, else the clone's template."""
+    for tools in (workspace / "System" / "tools", HERE.parent / "tools", HERE.parent.parent / "template" / "System" / "tools"):
+        src = tools / "next_up.py"
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("garrick_next_up_sweep", str(src))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if callable(getattr(module, "brief", None)):
+                return module
+    return None
+
+
+def notifications_lib(workspace: Path):
+    """notifications.py, which keeps the morning choice: the workspace's own, else the one beside these jobs."""
+    for tools in (workspace / "System" / "tools", HERE.parent / "tools", HERE.parent.parent / "template" / "System" / "tools"):
+        src = tools / "notifications.py"
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("garrick_notifications_sweep", str(src))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if callable(getattr(module, "morning_zones", None)):
+                return module
+    return None
+
+
+def morning_plan(workspace: Path, zones: List[Path]) -> Tuple[List[Path], List[Path]]:
+    """(zones in the one morning brief, zones that keep their own Todo summary). Every zone keeps its own when the
+    choice cannot be read, or next_up.py has no brief: the summaries as they were before #686."""
+    lib = notifications_lib(workspace)
+    if lib is None or next_up_lib(workspace) is None:
+        return [], list(zones)
+    try:
+        together, alone = lib.morning_zones(workspace, [z.name for z in zones])
+    except Exception:
+        return [], list(zones)
+    by = {z.name: z for z in zones}
+    return [by[n] for n in together], [by[n] for n in alone]
+
+
+def brief_text(workspace: Path, zones: List[Path], failed: dict, lines: int, today: Optional[datetime.date] = None) -> str:
+    """What the morning brief says, for these zones: next_up.py's brief()."""
+    return next_up_lib(workspace).brief(workspace, [z.name for z in zones], today=today, lines=lines, failed=failed)
+
+
+def send_brief(workspace: Path, zones: List[Path], failed: dict, lines: int) -> None:
+    """The one morning brief, the "Morning summary" notice. A brief that cannot be built says so, in one line."""
+    import job
+    try:
+        text = brief_text(workspace, zones, failed, lines)
+    except Exception as e:
+        text = "The morning summary could not be built: %s" % (str(e)[-200:] or type(e).__name__)
+    job.notify("brief", "Morning summary", text, event="morning-brief")
+
+
 def send_refreshed(zone: Path, said: str) -> None:
     """The "Todo refreshed" notice: what the sweep did to the zone's list, in counts."""
     import job
@@ -357,7 +427,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--zone", action="append", required=True, help="a zone to sweep; repeat for more")
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
     ap.add_argument("--followup-tier", default=FOLLOW_TIER, choices=agent.TIERS, help="the tier of the Follow up call (default: the small one)")
-    ap.add_argument("--digest", action="store_true", help="then send each zone's morning summary as the Todo summary notice")
+    ap.add_argument("--digest", action="store_true", help="then send each zone's morning summary as the Todo summary notice, "
+                    "or the one morning brief when Settings says one for all zones")
+    ap.add_argument("--brief-lines", type=int, default=8, help="the lines the one morning brief lists at most (default 8)")
+    ap.add_argument("--print-brief", action="store_true", help="sweep nothing and send nothing: print what the morning "
+                    "brief would say now, and which zones keep their own summary")
     args = ap.parse_args(argv)
     workspace = Path(args.workspace).expanduser().resolve()
     if not (workspace / "System" / "skills" / "todo" / "todo.py").is_file():
@@ -370,8 +444,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("todo_sweep: there is no zone %s with a Todo.md in %s" % (name, workspace), file=sys.stderr)
             return agent.EXIT_USAGE
         zones.append(zone)
+    if args.brief_lines < 1:
+        print("todo_sweep: --brief-lines is 1 or more", file=sys.stderr)
+        return agent.EXIT_USAGE
+    together, alone = morning_plan(workspace, zones)
+    if args.print_brief:
+        print(brief_text(workspace, together, {}, args.brief_lines) if together else "No morning brief: each zone gets its own summary.")
+        for zone in alone if together else []:
+            print("%s keeps its own summary." % zone.name)
+        return 0
     today = datetime.date.today().isoformat()
     worst, sweep_worst, total = 0, 0, 0
+    failed = {}
     for zone in zones:
         code, changed, said = sweep_zone(workspace, zone, args.tier, today)
         print(said)
@@ -382,11 +466,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as e:           # a follow-up that fails never stops the digest or the next zone
             follow_code, follow_said = 1, "%s: follow-up failed: %s" % (zone.name, e)
         print(follow_said)
-        if args.digest:
+        if code != 0 or follow_code != 0:
+            failed[zone.name] = "sweep" if code != 0 else "follow-up"
+        if args.digest and zone not in together:
             send_digest(workspace, zone, failed=code != 0, follow_failed=follow_code != 0)
         total += changed
         sweep_worst = sweep_worst or code
         worst = worst or code or follow_code     # the job still exits non-zero when a Follow up failed, so it is seen
+    if args.digest and together:          # after every zone has swept
+        send_brief(workspace, together, {z: why for z, why in failed.items() if z in {t.name for t in together}},
+                   args.brief_lines)
     if sweep_worst == 0:
         agent.report_items(total)
     return worst

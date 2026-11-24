@@ -12,7 +12,24 @@ It is optional, and it starts by only watching. You turn it on in Garrick.app: o
 | **Watch** | Every read goes through. The guard keeps a list of what it would have stopped. |
 | **On** | A read across a wall is stopped, or you are asked, as *Across a wall* says. |
 
-*Across a wall* is **Refuse** (stop every such read, with no question) or **Ask me** (ask you each time, so you can allow one read for one session). *Mail and calendar tools* lists the services whose results are checked, and *Tools with nothing to check* lists those Garrick leaves alone and does not warn about. The first list cannot be empty, and a name that is only wildcards, such as `*`, is refused in both: it would match every tool.
+*Across a wall* shows under **On** only. It is **Refuse** ("Every read across a wall is stopped.") or **Ask me** ("You decide each time, for one session.").
+
+### Connected services
+
+Under **Watch** and **On**, a closed fold named *Connected services* lists each service your assistant is connected to, by its plain name: Gmail, Calendar, Weather. It holds each service Garrick already checks or leaves alone, and each one the read guard has seen your assistant use. When some are not decided yet, the fold's name says how many, as in "Connected services (1 not decided)", so you see there is something to do without opening it. Under **Off** the fold is not on the page.
+
+Each service has two choices:
+
+| Choice | Pick it when |
+|---|---|
+| **Check it** | It returns mail, events or messages. Garrick takes out what sits behind another wall before your assistant sees it. |
+| **Leave it** | It returns nothing about people. Garrick does not check it and does not warn about it. |
+
+A service with neither choice says *Not decided*. Its results are not checked. *Add a service* takes a service you have not used yet: type its name, such as Outlook, and press *Add*, and it shows as **Check it**. A name is letters and numbers, with spaces, dashes or underscores, at least three of them. A name that would take in every service, or also a service you have used under another name, is refused, and so is a name already on the list as **Leave it**: choose for it on its own line. At least one service stays on **Check it**.
+
+The page writes what each choice means into the settings for you, held to the service's whole name, so Leave it on "mail" or "Chat" never takes in Gmail or Google Chat, even before your assistant has used them: Check it adds the service to the list of tools the guard checks, Leave it to the list it leaves alone, and the settings file keeps the format it had. A list an older Garrick wrote, or one written by hand, still shows: each entry is a line named from it.
+
+The weekly check names each service your sessions used that is not decided, where you decide it: "Settings › Walls › Connected services: Weather is not decided". It warns about these services and no others.
 
 ## One read
 
@@ -34,7 +51,7 @@ A search over a whole wiki, or over a folder that holds several zones, is stoppe
 
 A mail or calendar search can return messages from every part of your life in one list. Before your assistant sees the list, Garrick matches each message's addresses against your list of parties, as the `intake` skill matches a mail, and takes out what belongs behind another wall. The assistant sees the rest, and the wall sentence once if anything was taken out, with no count. Your own addresses and personal webmail decide nothing. A message that no party claims has no zone, so the guard treats it as behind a wall.
 
-This works in Claude Code. Codex cannot have a tool's result replaced, so the mail and calendar rows do not apply to it: Settings says so, and only the instructions keep its mail results apart. Add a tool to *Mail and calendar tools* when you connect a new mail or calendar service. The weekly check, not Settings, names a tool your sessions used that is on neither list, so you can place it.
+This works in Claude Code. Codex cannot have a tool's result replaced, so *Connected services* does not apply to it: Settings shows one line that says so in its place, and only the instructions keep its mail results apart. Choose **Check it** for a new mail or calendar service when you connect it, or add it under *Add a service*.
 
 If Garrick cannot read the list of parties, or the part of Garrick that matches addresses is missing, the filter cannot tell which message belongs where. Settings says so on the *Read guard* row. While the guard is **On**, every result from a listed tool is taken out and the wall sentence stands alone. Under **Watch**, nothing is taken out and the log notes that it could not decide.
 
@@ -42,7 +59,7 @@ If Garrick cannot read the list of parties, or the part of Garrick that matches 
 
 Start with **Watch** and use Garrick as you always do. Under the choice, Settings says what the log holds for the last seven days: "In the last 7 days it would have stopped 3 files across 2 sessions in Work": files and sessions, not reads (a file read three times in one session counts once). If sessions of more than one zone are in the log, it says it once for each zone, never as one sum. *Show* opens the list.
 
-The list shows, for each file, when it was read, the project of the session, the file's path from the workspace and the zone it belongs to, and how many times; reads of one file in one session are one line, and count once. The page can be read from any session, so it names a file only when the file is in an open zone, in System, or in the Knowledge wiki; for a file of a walled zone it says "a file behind another zone's wall", naming neither the file nor the project. A mail or calendar result shows the tool and the zone of what was held back, never the message. A file outside the workspace shows only that it is outside, and a line from an older Garrick says "not recorded". It never shows what a file or a message says. So read it against your own week. A read at a time you were asking the assistant to work across zones is a read you needed.
+The list shows, for each file, when it was read, the project of the session, the file's path from the workspace and the zone it belongs to, and how many times; reads of one file in one session are one line, and count once. The page can be read from any session, so it names a file only when the file is in an open zone, in System, or in the Knowledge wiki; for a file of a walled zone it says "a file behind another zone's wall", naming neither the file nor the project. A mail or calendar result shows the service's name and the zone of what was held back, never the message. A file outside the workspace shows only that it is outside, and a line from an older Garrick says "not recorded". It never shows what a file or a message says. So read it against your own week. A read at a time you were asking the assistant to work across zones is a read you needed.
 
 - **The list holds nothing you needed.** Choose **On**. Those reads are stopped from then on.
 - **The list holds reads you needed, because you asked for work across zones.** Choose **On** with **Ask me**. It asks you each time, so you can allow one read for one session.
@@ -54,7 +71,7 @@ The read guard narrows a gap. It does not close it, so do not rely on it for mor
 
 - **Shell commands it cannot follow.** It reads the plain path words in a command. A command with a variable, a substitution or an unbalanced quote is allowed and noted as unread. A command that changes folder first is read as best it can be.
 - **Codex.** It is checked on its shell commands only, not on mail and calendar results, and it cannot ask you: it refuses once. It also skips a hook until you trust it in `/hooks`, and again after any change to it.
-- **Tools that are not on the list.** Only the tools on *Mail and calendar tools* are filtered.
+- **Services that are not checked.** Only the services on **Check it** are filtered. A service that is *Not decided* is not.
 - **What a name says.** A client's name typed into a note of another zone is not caught. The guard decides by where a file is, not by what it says.
 - **A broken guard.** An error while it checks a read lets that read through, and the log says so. An error while it filters a mail result removes the result when the guard is On, even when Garrick's own tools cannot be loaded: it then reads the setting from the settings file itself. A settings file that is there and does not read counts as On for the mail and calendar check, and Settings shows On with a line that says the file does not read. Two limits remain. The assistant stops a hook that runs past its time limit, and the result then goes through. And when no workspace is found from the folder the session was opened in, the guard cannot tell what to protect, so the result goes through.
 - **Scheduled jobs.** They are logged and never refused, since nobody is there to ask.

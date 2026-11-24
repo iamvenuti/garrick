@@ -41,6 +41,7 @@ import marshal
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -161,6 +162,7 @@ from garrick_lib import (  # noqa: E402
     connector_skips,
     read_guard_dir,
     tool_matches,
+    service_name,
 )
 from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
@@ -206,6 +208,7 @@ CHECKS = [
     ("review", "Review record"),
     ("updates", "Updates to merge"),
     ("connectors", "Connector tools"),
+    ("guard-hooks", "Guard hooks"),
     ("machines", "Machines"),
     ("home", "Home setting"),
 ]
@@ -245,6 +248,7 @@ EAR_GROUP = {
     "preferences": "{n} of the choices you keep are not in the workspace history",
     "review": "the review record has {n} entries outside its fixed form",
     "connectors": "{n} connector tools the assistant used are on no list of the read guard",
+    "guard-hooks": "{n} guard hooks your assistants run are not this release's",
     "machines": "{n} things need fixing for the machines the workspace lives on",
     "home": "the check settings still hold a Home setting the Garrick App no longer reads",
 }
@@ -6868,10 +6872,11 @@ def check_updates(ws: Workspace) -> List[Finding]:
 
 
 def check_connector_tools(ws: Workspace) -> List[Finding]:
-    """A connector tool the session used that is on no list is not filtered, and says so here (#614). The read
-    guard notes the name of each such tool it sees, and nothing else about the call, in its own folder; a name on
-    `connector-tools` or `connector-tools-skip` in System/garrick-settings.json is not named. Where the guard has
-    seen no tool, there is nothing to say."""
+    """A connected service the session used that is on no list is not filtered, and says so here (#614), by its plain name
+    and the place in Settings where it is decided (#683): "Settings › Walls › Connected services: Weather is not decided".
+    The read guard notes the name of each such tool it sees, and nothing else about the call, in its own folder; a tool a
+    pattern on either list in the settings matches is not named. The tools of one service make one warning. Where the guard
+    has seen no tool, there is nothing to say."""
     try:
         seen = json.loads((read_guard_dir() / "tools-seen.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -6879,12 +6884,148 @@ def check_connector_tools(ws: Workspace) -> List[Finding]:
     if not isinstance(seen, dict):
         return []
     listed = connector_patterns(ws.root) + connector_skips(ws.root)
+    services: Dict[str, str] = {}
+    for name in sorted(seen):
+        if isinstance(name, str) and not tool_matches(listed, name):
+            service = service_name(name) or name
+            services.setdefault(service.casefold(), service)
     return [Finding(WARNING, "connectors", "System/garrick-settings.json",
-                    "the assistant used the connector tool %s, which is on no list of the read guard, so its results are "
-                    "not checked against the walls; add a pattern for it to `connector-tools`, or to "
-                    "`connector-tools-skip` if it returns nothing a party can label" % name,
-                    "a connector tool the assistant used is not checked against the walls", token=name)
-            for name in sorted(seen) if isinstance(name, str) and not tool_matches(listed, name)]
+                    "Settings › Walls › Connected services: %s is not decided, so its results are not checked against the "
+                    "walls. Choose Check it or Leave it there" % service,
+                    "a connected service the assistant used is not decided", token=service)
+            for service in services.values()]
+
+
+# --------------------------------------------------------------------------- guard hooks (#685)
+
+# The SHA-256 of the two guard hooks as this release ships them, the same digests as RELEASE_HOOKS in the status page's
+# settings_guard.py. An installed workspace has no extras/hooks/ of its own (the hooks run from a Garrick download kept
+# outside it), so the check compares with these. `tests/test_guard_hooks_check.py` fails when a release changes a hook file
+# and leaves its digest here behind.
+GUARD_RELEASE = {
+    "zone_guard.py": "c78a9f7a3a602dc7aaefc46d448397323897629ce2b6a9374c0cffc1563ef799",
+    "read_guard.py": "6ef6c9d5bd54e6701e86fdf22e85980b4f28d8a47a72408f76633da026b00eae",
+}
+GUARD_NAMES = {"zone_guard.py": "the zone guard", "read_guard.py": "the read guard"}
+GUARD_SETTINGS = (".claude/settings.json", ".codex/hooks.json")
+GUARD_FIX_REPLACE = "Replace the Garrick download you keep with this release's"
+GUARD_FIX_POINT = "Point the hook at the Garrick download you keep, as the hooks page says"
+
+
+def hook_path(word: str) -> Optional[str]:
+    """The full path a hook command word names, or None. One reader of a hook path, written alike in settings_guard.py,
+    update.py, read_guard.py and here (the hooks stay self-contained: #670, #685): the shell's `$HOME`, `${HOME}` and `~`
+    expand, any other variable the same way, and a word that is still not a full path is dropped."""
+    path = os.path.expanduser(os.path.expandvars(word))
+    return path if os.path.isabs(path) else None
+
+
+def hook_word(word: str) -> Optional[str]:
+    """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
+    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
+    same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
+    settings_guard.py and update.py."""
+    pieces = word.split()
+    for w in (word, pieces[-1] if pieces else ""):
+        if not w or "=" in w.split("/", 1)[0]:
+            continue
+        if any(c.isspace() for c in w):
+            full = hook_path(w)
+            if not (full and os.path.isfile(full)):
+                continue
+        return w
+    return None
+
+
+def guard_shown(word: str) -> str:
+    """A hook path as the settings write it, with the home folder as `~` and a variable by its name, never its value: as
+    settings_guard.shown_path and update.shown_path show it, printable and at most 200 characters."""
+    word = "".join(c for c in word if c.isprintable())
+    for var in ("$HOME", "${HOME}"):
+        if word == var or word.startswith(var + "/"):
+            return ("~" + word[len(var):])[:200]
+    home = str(Path.home())
+    if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
+        return ("~" + word[len(home):])[:200]
+    return word[:200]
+
+
+def guard_words(home: Path) -> List[str]:
+    """The words of each hook `command` in the assistants' settings that name the zone guard or the read guard, once each, in
+    the order found. Only a hook's command names a hook; a settings file that does not read names none."""
+    out: List[str] = []
+
+    def walk(node, depth=0):
+        if depth > 64:
+            return
+        if isinstance(node, dict):
+            command = node.get("command")
+            if isinstance(command, str):
+                try:
+                    words = shlex.split(command)
+                except ValueError:
+                    words = command.split()
+                for w in words:
+                    w = hook_word(w) if posixpath.basename(w) in GUARD_NAMES else None
+                    if w and posixpath.basename(w) in GUARD_NAMES and w not in out:
+                        out.append(w)
+            for value in node.values():
+                walk(value, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, depth + 1)
+
+    for rel_ in GUARD_SETTINGS:
+        try:
+            walk(json.loads((home / rel_).read_text(encoding="utf-8")))
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            continue
+    return out
+
+
+def check_guard_hooks(ws: Workspace) -> List[Finding]:
+    """Each guard hook the assistants' settings name, the zone guard or the read guard, that is not this release's (#685): a
+    file with other bytes ("another version"), a path inside the workspace, which the update never refreshes, and a path
+    that does not exist, where the assistant runs no guard at all. Quiet when no assistant registers a guard: the guard is
+    optional. Names each path as the settings write it, with the home folder as `~`, and nothing else from the settings."""
+    out: List[Finding] = []
+    root = Path(os.path.abspath(str(ws.root)))
+    for word in guard_words(Path.home()):
+        name = posixpath.basename(word)
+        what, shown = GUARD_NAMES[name], guard_shown(word)
+        full = hook_path(word)
+        path = Path(os.path.abspath(full)) if full else None
+        if path is not None and (path == root or root in path.parents):
+            out.append(Finding(WARNING, "guard-hooks", shown,
+                               "your assistant runs %s from %s, inside the workspace, where the update never refreshes it. %s"
+                               % (what, shown, GUARD_FIX_POINT),
+                               "%s runs from inside the workspace" % what.capitalize()))
+            continue
+        if path is None:
+            out.append(Finding(WARNING, "guard-hooks", shown,
+                               "your assistant names %s as %s, which is not a full path, so the check cannot tell which file "
+                               "it runs. %s" % (what, shown, GUARD_FIX_POINT),
+                               "%s your assistant names is not a full path" % what.capitalize()))
+            continue
+        data = None
+        if path is not None:
+            try:
+                data = path.read_bytes() if path.is_file() else None
+            except OSError:
+                data = None
+        if data is None:
+            out.append(Finding(WARNING, "guard-hooks", shown,
+                               "your assistant names %s at %s, a path that does not exist, so it runs no guard at all. %s"
+                               % (what, shown, GUARD_FIX_POINT),
+                               "%s your assistant names is not there" % what.capitalize()))
+            continue
+        if hashlib.sha256(data).hexdigest() != GUARD_RELEASE[name]:
+            out.append(Finding(WARNING, "guard-hooks", shown,
+                               "your assistant runs %s from %s, another version than this release's. %s"
+                               % (what, shown, GUARD_FIX_REPLACE),
+                               "%s your assistant runs is another version" % what.capitalize()))
+    return out
 
 
 # --------------------------------------------------------------------------- machines (#612)
@@ -7032,6 +7173,7 @@ ALL_CHECKS = [
     check_skills, check_names, check_projects, check_mixed_papers, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates, check_connector_tools,
+    check_guard_hooks,
     check_machines,
     check_home_setting,
 ]

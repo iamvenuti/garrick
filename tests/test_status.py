@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(29, html.count("</script>"))         # (#674: the read guard section's mode script; #651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(30, html.count("</script>"))         # (#682: Settings' table of old anchors; #674: the read guard section's mode script; #651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -480,7 +480,7 @@ class TestGraph(StatusCase):
         # loading, a refusal in the host's words, and no Open for a note that is not there
         self.assertIn("said('Reading the note…')", js)
         self.assertIn("if(out&&out.missing)el('[data-nv=\"open\"]').hidden=true;", js)
-        self.assertIn("else said((out&&out.say)||'That note could not be read.',true)}", js)
+        self.assertIn("failed('note-read',out,'That note could not be read.',function(){read(cur.path,t,b)})", js)   # #511
         self.assertIn("if(!cur||!dlg.open||q.path!==cur.path)return;", js)     # a reply for a note no longer shown
         self.assertIn("if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}", js)
         self.assertIn("if(prev)return prev(q,out)};", js)
@@ -1719,32 +1719,33 @@ class TestSettings(StatusCase):
         dialog = self.dialog()
         about = dialog[dialog.index('id="about-settings"'):dialog.index("</section>", dialog.index('id="about-settings"'))]
         self.assertEqual(["Report a bug", "Suggest a change", "Release notes"], re.findall(r'class="setlink"[^>]*><b>([^<]+)</b>', about))
+        links = about[about.index('<div class="setlinks">'):]
+        links = links[:links.index("</div>")]
         for gone in ("Copy version", "Copy a report", "What&#x27;s new", "Report a wrong refusal", "Report a bypass", "Announcements",
-                     "Ask a question", "data-copy", "<small>"):
+                     "Ask a question", "data-copy"):
             self.assertNotIn(gone, about)
+        self.assertNotIn("<small>", links)
 
     def test_each_explanation_is_behind_a_question_mark(self):
         dialog = self.dialog()
-        for key, name in (("launchers", "Opening a thread"), ("zones", "Zones"), ("menu", "Menu bar"),
-                          ("about", "About Garrick"), ("preview", "Preview features")):
+        for key, name in (("launchers", "Opening work"), ("zones", "Look")):
             self.assertIn('<h3>%s<button class="qhelp" type="button" aria-expanded="false" aria-controls="help-%s" '
                           'aria-label="Explain %s"' % (name, key, name), dialog)      # a button, so the keyboard reaches it
-        for key in ("launchers", "zones", "menu", "about", "preview", "view"):
+        self.assertIn('<h3>About</h3>', dialog)                                       # About has none of its own: the links do (#681)
+        for key in ("launchers", "zones", "about"):
             self.assertEqual(1, dialog.count('<p class="hint sethelp" id="help-%s" hidden>' % key), key)   # hidden until asked for
         self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
-        for key, lede in (("launchers", "Which apps a project or thread can open in"),
-                          ("preview", "Off until you ask your assistant to switch one on.")):
+        for key, lede in (("launchers", "Where a project or thread opens when you click it."),
+                          ("zones", "Colours and icons, so you can tell zones apart.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
         dialog = htmllib.unescape(self.dialog())
-        for words in ("Tick what project and thread cards offer; Default is what clicking a thread's name does.",
-                      "A colour and an icon for each zone, shown wherever the page names it.",
-                      "A menu of the live projects of the zone the graph shows, with their threads, kept at hand outside this window.",
-                      "These open GitHub in your browser. Nothing is sent until you submit it there.",
-                      "In Garrick's source but not yet released, so they may still change.",
+        for words in ("Tick the apps you want on each card. Default is the app that opens when you click a name.",       # #681's texts
+                      "With cmux, the tab of a zone takes the same colour.",
+                      "These links open GitHub in your browser. Use made-up names there, never the name of a real client.",
                       "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."):
             self.assertIn(words, dialog)
 
@@ -1761,15 +1762,15 @@ class TestSettings(StatusCase):
             self.assertRegex(dialog, r'<a class="setlink" [^>]*title="%s"><b>%s</b>' % (re.escape(warn), label))
         self.assertEqual(2, dialog.count('title="%s"' % warn))
 
-    def test_reset_view_is_a_button_at_the_foot(self):
+    def test_reset_view_is_the_last_row_of_look(self):
         dialog = self.dialog()
-        foot = dialog[dialog.index('<div class="setfoot">'):]
-        self.assertGreater(dialog.index('<div class="setfoot">'), dialog.index('id="help-preview"'))   # after the last section
+        look = dialog[dialog.index('id="look-settings"'):dialog.index("</section>", dialog.index('id="look-settings"'))]
+        foot = look[look.index('<div class="setpart" id="view-settings">'):]
         button = re.search(r'<button class="act lg" type="button" id="reset-view" title="([^"]*)">Reset view</button>', foot)
         self.assertIsNotNone(button)
         self.assertTrue(htmllib.unescape(button.group(1)).startswith(
             "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."))
-        self.assertIn('aria-controls="help-view" aria-label="Explain Reset view"', foot)
+        self.assertNotIn('aria-controls="help-view"', foot)                            # its line says it: no "?" (#681)
         self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', foot)
 
     def test_the_app_opens_it(self):
@@ -1780,13 +1781,9 @@ class TestSettings(StatusCase):
 
 class TestSettingsLayout(StatusCase):
     """Settings as one column of sections, read in order, with the list of
-    them beside it (#205): a link per section, grouped by what people come
-    for, and the one being read marked."""
+    them beside it (#205): a link per section, seven sections and no group heading (#682), and the one being read marked."""
 
-    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "channels-settings", "channels-ask", "channels-telegram", "channels-held", "memory-settings", "allowed-settings", "walls-settings",
-             "readguard-settings", "machine-settings", "about-settings",
-             "preview-settings"]
+    ORDER = [k for k, _ in status.SET_SECTIONS]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -1800,23 +1797,23 @@ class TestSettingsLayout(StatusCase):
         built = re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"', dialog)
         self.assertEqual(built, listed)                                             # every section, once, in its order
         self.assertEqual([k for k in self.ORDER if k in built], built)
-        for must in ("launcher-settings", "zone-settings", "menu-settings", "notify-settings",
-                     "memory-settings", "about-settings", "preview-settings"):
+        for must in ("launcher-settings", "notify-settings", "memory-settings", "look-settings", "about-settings"):
             self.assertIn(must, built)
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
         self.assertEqual(heads, dict(re.findall(r'data-setgo="([a-z-]+)">([^<]+)</a>', nav)))   # named as its heading
-        self.assertEqual("Manage older material", heads["memory-settings"])
-        shown = [t for k, t in status.SET_GROUPS]                                   # the read guard is a section of its own now, so Walls always has one (#673)
-        self.assertEqual(shown, re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
-        self.assertEqual(shown, re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
+        self.assertEqual("Older pages", heads["memory-settings"])
+        self.assertEqual(dict(status.SET_SECTIONS), {k: v for k, v in dict(status.SET_SECTIONS).items() if k in heads} | heads)
+        self.assertNotIn("setnavh", nav)                                            # no group heading (#682)
+        self.assertNotIn("setgrp", dialog)
         main = dialog[dialog.index('<div class="setmain" id="settings-main">'):]
         self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
-        self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
+        self.assertGreater(main.index('id="preview-settings"'), main.index('id="about-settings"'))  # Preview features end About
+        self.assertLess(main.index('id="view-settings"'), main.index('id="about-settings"'))      # Reset view ends Look
         self.assertNotIn("setcols", dialog)
-        self.assertEqual(len(built) - 1 - dialog.count('class="setsec setsub'), dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
+        self.assertEqual(len(built) - 1, len(re.findall(r'</h3><p class="setlede">', dialog)))       # each opens with what it is for, About with nothing
         self.assertNotIn('id="catch-settings"', dialog)                            # nor does anything else (#226)
         for lede in re.findall(r'<p class="setlede">(.*?)</p>', dialog):
-            self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 0, lede)   # one sentence at most
+            self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 1, lede)   # two sentences at most
 
     def test_a_section_left_out_is_not_listed(self):
         dialog = self.dialog()                                                      # no fade.py here
@@ -1828,7 +1825,6 @@ class TestSettingsLayout(StatusCase):
         js = status.JS
         self.assertIn("function snShown(s){return!!s&&!s.hidden&&getComputedStyle(s).display!=='none'}", js)   # .apponly, Menu bar
         self.assertIn("a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))", js)
-        self.assertIn("g.hidden=!g.querySelector('li:not([hidden])')", js)                # a group with none left goes
         self.assertIn("a.setAttribute('aria-current','true')", js)
         self.assertIn("sd.showModal();snHold=null;snSync()", js)                         # checked each time it opens
         self.assertIn("s.focus({preventScroll:true})", js)                               # the keyboard lands on the section
@@ -1909,57 +1905,54 @@ class TestAnOldPageSaysSoPlainly(StatusCase):
 
 
 class TestLaunchers(StatusCase):
-    """Open in Claude, Codex or cmux: offered for what is installed, chosen in Settings."""
+    """Claude, Codex or cmux: offered for what is installed, chosen in Settings. Claude and Codex have one row each, a new
+    session through the app's link (#652, #682)."""
 
-    def app(self, folder, name, bundle=None, cli=None):
+    def app(self, folder, name, bundle=None, schemes=None):
         app = folder / (name + ".app")
         (app / "Contents").mkdir(parents=True)
         if bundle:
+            info = {"CFBundleIdentifier": bundle}
+            if schemes:                          # the link the app takes, as Claude's and Codex's own are
+                info["CFBundleURLTypes"] = [{"CFBundleURLSchemes": list(schemes)}]
             with (app / "Contents" / "Info.plist").open("wb") as f:
-                plistlib.dump({"CFBundleIdentifier": bundle}, f)
-        if cli:                                  # the launcher inside the bundle, as Codex's own is
-            (app / cli).parent.mkdir(parents=True, exist_ok=True)
-            (app / cli).write_text("#!/bin/sh\n")
-            (app / cli).chmod(0o755)
+                plistlib.dump(info, f)
         return app
 
     @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
     def test_known_by_bundle_id(self):
         apps = Path(self._tmp.name) / "Applications"
         self.app(apps, "ChatGPT", "com.openai.chat")                     # ChatGPT is not Codex
-        self.app(apps, "Claude", "com.anthropic.claudefordesktop")
+        self.app(apps, "Claude", "com.anthropic.claudefordesktop", ["claude"])
         self.app(apps, "cmux")                                           # no Info.plist: taken at its name
         self.assertEqual(("finder", "cmux", "claude"), status.launchers_installed([apps]))   # Finder: every Mac has it
-        self.app(apps, "Codex", "com.openai.codex", cli=status.CODEX_CLI[0])
+        self.app(apps, "Codex", "com.openai.codex", ["codex"])
         self.assertEqual(("finder", "cmux", "codex", "claude"), status.launchers_installed([apps]))
 
     @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
     def test_a_launcher_that_cannot_work_is_not_offered(self):
-        # Codex opens a folder through its own launcher inside the bundle. Without
-        # one it was offered, clicked, and only then refused; now it is never offered.
+        # Codex opens a new session through its link. An app too old to take it is never offered (#652, #682).
         apps = Path(self._tmp.name) / "Applications"
-        self.app(apps, "Codex", "com.openai.codex")                      # installed, no launcher in it
+        self.app(apps, "Codex", "com.openai.codex")                      # installed, no link it takes
         self.assertEqual(("finder",), status.launchers_installed([apps]))
-        self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_CODEX_CLI,
-                          "claude": status.NOT_INSTALLED, "claude-new": status.NOT_INSTALLED,
-                          "codex-new": status.NO_NEW_SESSION % "Codex"}, status.launcher_state([apps]))
-        for rel in status.CODEX_CLI:                                     # any of the three it may carry will do
-            shutil.rmtree(apps)
-            self.app(apps, "Codex", "com.openai.codex", cli=rel)
-            self.assertIsNone(status.launcher_state([apps])["codex"], rel)
+        self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_NEW_SESSION % "Codex",
+                          "claude": status.NOT_INSTALLED}, status.launcher_state([apps]))
+        shutil.rmtree(apps)
+        self.app(apps, "Codex", "com.openai.codex", ["codex"])
+        self.assertIsNone(status.launcher_state([apps])["codex"])
 
     def test_a_greyed_row_says_why_it_cannot_work(self):
         # The reason sits on the row, before any click rather than after it.
-        dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_CODEX_CLI,
+        dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_NEW_SESSION % "Codex",
                                                                    "cmux": status.NOT_INSTALLED})
         icon = lambda k: '<i class="lico" aria-hidden="true" style="--ic:var(--icon-%s)"></i>' % k
         self.assertIn('id="launch-codex" data-launcher="codex" disabled', dialog)
-        self.assertIn('for="launch-codex">%s<span>Open in Codex<small>%s</small>'
-                      % (icon("codex"), htmllib.escape(status.NO_CODEX_CLI, quote=False)), dialog)
+        self.assertIn('for="launch-codex">%s<span>Codex<small>%s</small>'
+                      % (icon("codex"), htmllib.escape(status.NO_NEW_SESSION % "Codex", quote=False)), dialog)
         self.assertIn('id="launch-cmux" data-launcher="cmux" disabled', dialog)
         self.assertIn('for="launch-cmux">%s<span>Open in cmux<small>%s</small>'
                       % (icon("cmux"), status.NOT_INSTALLED), dialog)
-        self.assertIn('for="launch-claude">%s<span>Open in Claude</span>' % icon("claude"), dialog)   # no line saying it is there
+        self.assertIn('for="launch-claude">%s<span>Claude<small>%s</small>' % (icon("claude"), status.NEW_SESSION_LINE), dialog)   # what it does
         self.assertIn('for="launch-finder">%s<span>Reveal in Finder</span>' % icon("finder"), dialog)
 
     def test_each_row_carries_its_card_icon(self):
@@ -1992,15 +1985,15 @@ class TestLaunchers(StatusCase):
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
         dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
-        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude"],
                          re.findall(r'data-launcher="([a-z-]+)"', dialog))
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
-        self.assertEqual(["note", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"],
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude"],
                          re.findall(r'name="garrick-default" value="([a-z-]+)"', dialog))
         self.assertIn('<div class="launcher-row srow apponly"><div class="slab"><label class="launcher-choice" for="launch-preview">'
                       '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
-        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude','claude-new','codex-new']", status.PANEL_JS)
-        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new"), status.LAUNCH_KEYS)
+        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
+        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)
@@ -2060,13 +2053,13 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
-        self.assertIn("ask your assistant to switch one on", html)          # no file or setting is named in a help text (#621)
+        self.assertEqual(["Time and cost per thread"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertIn("Not released yet. Ask your assistant to switch one on.", html)   # no file or setting is named on the page (#621, #682)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])
         write(self.root / "System" / "garrick-flags.json", json.dumps({"effort": True}))
-        self.assertRegex(self.page(), r'Effort</b><span class="chip on">on</span>')
+        self.assertRegex(self.page(), r'Time and cost per thread</b><span class="chip on">on</span>')
 
     def test_a_released_flag_left_behind_changes_nothing(self):
         self.todo()
@@ -2148,8 +2141,9 @@ class TestPreviewFeatures(StatusCase):
         html = self.page()
         self.assertIsNotNone(self.menu(html))
         self.assertIn("host.postMessage({menu:data&&", status.MENU_JS)       # a page with none takes the icon away
-        self.assertIn('<section class="setsec apponly" id="menu-settings" hidden>', html)   # until the app answers
-        self.assertIn("if(!host||!box)return;box.hidden=false", status.MENU_SETTINGS_JS)
+        self.assertIn('<div class="setpart menuset apponly" id="menu-settings" hidden>', html)   # a part of Opening work (#682), until the app answers
+        self.assertIn("if(!host||!box)return;['menu-settings','askbox-settings','ask-settings'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=false});",
+                      status.MENU_SETTINGS_JS)
         for control in ('id="menu-show"', 'id="menu-style"', 'id="menu-login"', 'id="menu-hotkey"'):   # the four settings
             self.assertIn(control, html)
         for edge in ("left", "right", "top"):
@@ -2177,13 +2171,12 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
         self.assertEqual("Solo", projects["Solo"]["w"])
         pricing = acme["t"][0]
-        self.assertEqual({"n", "w", "u", "oc"}, set(pricing))
+        self.assertEqual({"n", "w", "u"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
-        # the note Open in Claude continues (#180): a thread's, or the hub of a project that is its own thread
-        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], pricing["oc"])
-        self.assertEqual(["Work", "Solo/Solo.md"], projects["Solo"]["oc"])
-        self.assertNotIn("cli", menu)                                                       # no CLI said: the deep link
-        self.assertEqual(1, self.menu(self.page(cli=True))["cli"])
+        # no note for Claude Code's command-line tool to continue (#682): Claude opens a new session, as Codex does
+        self.assertNotIn("oc", projects["Solo"])
+        self.assertNotIn("cli", menu)
+        self.assertNotIn("cli", self.menu(self.page(cli=True)))
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
         self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])
@@ -3226,14 +3219,17 @@ class TestApp(unittest.TestCase):
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "Garrick.swift").read_text()
         # It only looks, but for what it last filled its menu with, in the jobs folder, outside the workspace.
-        # contentsOfDirectory lists the zones for the Ask window's selector (#317).
-        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile", "createDirectory", "contentsOfDirectory"},
+        # contentsOfDirectory lists the zones for the Ask window's selector (#317). Codex opens through its link since 0.80.0 (#682),
+        # so the app no longer looks for its command-line launcher (isExecutableFile).
+        self.assertEqual({"attributesOfItem", "fileExists", "createDirectory", "contentsOfDirectory"},
                          set(re.findall(r"FileManager\.default\.(\w+)", swift)))
         self.assertEqual(["try? FileManager.default.createDirectory(at: jobsDir,"], re.findall(r"try\? FileManager\.default\.createDirectory\(at: \w+,", swift))
         self.assertEqual(["write(to: menuReport,"], re.findall(r"write\(to: \w+,", swift))
         self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
-        for bundle in ("claudeBundle", "codexBundle"):
-            self.assertIn("withBundleIdentifier: %s" % bundle, swift)
+        self.assertIn("withBundleIdentifier: claudeBundle", swift)
+        # Claude and Codex share one launcher since 0.80.0 (#682): each still found through Launch Services by its bundle id
+        self.assertIn('let (bundle, label) = app == "claude" ? (claudeBundle, "Claude") : (codexBundle, "Codex")', swift)
+        self.assertIn("NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)", swift)
         self.assertIn("guard let folder = inWorkspace(path)", swift)          # only a folder of this workspace
 
     def test_the_menu_bar(self):
@@ -3933,13 +3929,12 @@ class TestMemorySettings(StatusCase):
         reference = sec[sec.index('data-mkind="reference"'):]
         self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
-        advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
-        self.assertIn('<div class="mlists" data-mkl="meetings"><p class="mkname">Meetings</p>', advanced)
-        self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
+        advanced = sec[sec.index('<details class="madv"><summary>More choices</summary>'):]
+        self.assertIn('data-mtypes="[&quot;meeting&quot;, &quot;email&quot;]"', meetings)      # each kind's lists, kept off the page (#683)
+        self.assertNotIn("textarea", sec)
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
-        self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
-                      'work links again">', advanced)
-        self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
+        self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Suggest bringing a page back when new work links to it">', advanced)
+        self.assertIn('<input type="checkbox" id="m-reach" checked aria-label="A search also reads dormant pages">', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
         self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived. 7 pages would move.'
@@ -3954,9 +3949,9 @@ class TestMemorySettings(StatusCase):
                                           "dormant": 12, "archived": None}}}}))
         sec = self.section()
         self.assertEqual(["board meetings"], re.findall(r'data-mkind="([^"]+)"', sec))      # whatever kinds fade.py returns
-        self.assertIn('>board.example</textarea>', sec)
+        self.assertIn('data-mdomains="[&quot;board.example&quot;]"', sec)
         self.assertIn('<input type="checkbox" data-mwikion="Knowledge" aria-label', sec)
-        self.assertIn('<option value="working" selected>', sec)
+        self.assertIn('<input type="checkbox" id="m-reach" aria-label', sec)                # working only: not ticked
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
         self.assertIn("2 pages would move.</span>", sec)                                   # 24 // 12, never archived, no waking
@@ -3981,7 +3976,8 @@ class TestMemorySettings(StatusCase):
         self.assertIn("window.GarrickMemory=", status.MEMORY_JS)
         self.assertIn("host.postMessage({act:{verb:'memory-preview',memory:request()}})", status.MEMORY_JS)
         self.assertIn("window.GarrickReadsMemory", status.MEMORY_JS)          # only where the host answers it
-        self.assertIn("sec.querySelector('[data-mkl=\"'+f.dataset.mkind+'\"]')", status.MEMORY_JS)   # the lists, from Advanced
+        self.assertIn("types:kept(f,'mtypes'),domains:kept(f,'mdomains')", status.MEMORY_JS)   # the lists, sent back as they were (#683)
+        self.assertIn("reach:document.getElementById('m-reach').checked?'dormant':'working'", status.MEMORY_JS)
         self.assertIn("if(m){q.memory=M.request();M.saved()}", status.JS)     # sent with the rest when Settings closes
         page = self.page()
         self.assertIn(status.MEMORY_CSS.strip()[:60], page)
@@ -4001,7 +3997,7 @@ class TestMemorySettings(StatusCase):
 
     def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        self.assertIn('<p class="setlede">Old meetings and reading move out of everyday answers after the months set here: %s.</p>' % status.GRADES_SAID, sec)
+        self.assertIn('<p class="setlede">Old pages leave everyday answers when you approve it. Nothing is deleted.</p>', sec)   # #681
         shown = sec[:sec.index('<details class="madv">')]
         for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
                      "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
@@ -4009,17 +4005,17 @@ class TestMemorySettings(StatusCase):
             self.assertNotIn(gone, shown)                                       # in the docs, or under Advanced
         self.assertEqual(1, sec.count('<details class="madv">'))                # one Advanced, closed
         self.assertNotIn('<details class="madv" open', sec)
-        order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', 'Meetings: ', 'data-mwikion="Knowledge"',
+        order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', '<p class="mcount">', 'data-mwikion="Knowledge"',
                                         '<details class="madv">', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
         self.assertEqual(sorted(order), order)
 
     def test_one_word_for_each_grade_said_once_and_no_other_words_for_them(self):
         sec = htmllib.unescape(self.section())
         visible = re.sub(r"<[^>]+>", " ", sec[:sec.index('id="help-memory"')] + sec[sec.index("</p>", sec.index('id="help-memory"')):])
-        self.assertEqual(1, visible.count("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; nothing is deleted"))
+        self.assertEqual(1, visible.count("Old pages leave everyday answers when you approve it. Nothing is deleted."))   # #681
         for old in ("leave the index", "next pass moves", "nothing to move", "Put aside"):
             self.assertNotIn(old, sec)
-        self.assertIn("Let old Meetings pages fade", sec)
+        self.assertIn("Meetings: let old pages become dormant", sec)
 
     def test_a_count_with_something_to_move_has_a_review_button_and_one_without_has_none(self):
         sec = self.section()
@@ -4032,21 +4028,78 @@ class TestMemorySettings(StatusCase):
         self.assertIn("review(!changed)", status.MEMORY_JS)                             # an unsaved change hides it, an undone or saved one shows it: the list is the saved one
         self.assertNotIn("host.postMessage({act:{verb:'fade", status.MEMORY_JS)         # it never fades anything itself
 
-    def test_the_kind_rules_are_inside_a_closed_advanced_with_plain_labels_and_fields_that_wrap(self):
+    def test_more_choices_holds_the_four_rows_under_one_line_and_asks_for_nothing_technical(self):
         sec = self.section()
-        adv = sec.index('<details class="madv">')
-        self.assertLess(adv, sec.index("Which pages each kind takes"))
-        self.assertNotIn('<details class="madv" open', sec)                              # closed, so its content is hidden
-        advanced = sec[adv:]
-        self.assertIn("Page types", advanced)
-        self.assertIn("Page domains", advanced)
-        self.assertNotIn("<code>type</code>", advanced)
-        self.assertNotIn('<input type="text" data-mk=', sec)
-        self.assertIn(".mlist textarea{width:100%", status.MEMORY_CSS)                    # a row of its own, the width of the section
-        self.assertIn("overflow-wrap:break-word", status.MEMORY_CSS)
-        self.assertNotIn("text-overflow", status.MEMORY_CSS)                              # a list wraps, it is never cut
-        self.assertIn("if(adv.open)adv.querySelectorAll('textarea').forEach(fit)", status.MEMORY_JS)
-        self.assertIn('title="meeting, email"', advanced)                                 # the whole list on hover as well
+        self.assertNotIn('<details class="madv" open', sec)                              # closed
+        more = htmllib.unescape(sec[sec.index('<details class="madv">'):])
+        self.assertIn("<summary>More choices</summary>", more)
+        self.assertIn("A page stays working, however old, while:", more)
+        labels = re.findall(r'<label class="launcher-choice"[^>]*><span>([^<]+)</span></label>', more)
+        self.assertEqual(["a live thread links to it", "the notes of a live project link to it", "an open action links to it",
+                          "you pinned it", "Suggest bringing a page back when new work links to it", "A search also reads dormant pages"], labels)
+        self.assertRegex(more, r'Tell me in the morning summary when <input type="number" id="m-min"[^>]*value="10"[^>]*> or more pages are due')
+        for word in ("Page types", "Page domains", "frontmatter", "Advanced", "pinned: true", "Which pages each kind takes"):
+            self.assertNotIn(word, sec)
+
+    def form(self, sec, reach_ticked=None):
+        """What MEMORY_JS sends from this markup when Settings closes, run in node with each kind's row as the page drew it."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        kinds = []
+        for part in sec.split('<div class="mkind" ')[1:]:
+            m = re.match(r'data-mkind="([^"]+)" data-mwiki="([^"]+)" data-mtypes="([^"]*)" data-mdomains="([^"]*)">', part)
+            body = part                                         # up to the next kind's row: its own fields come first
+            kinds.append({"mkind": htmllib.unescape(m.group(1)), "mwiki": m.group(2), "mtypes": htmllib.unescape(m.group(3)),
+                          "mdomains": htmllib.unescape(m.group(4)),
+                          "d": re.search(r'data-mk="dormant"[^>]*value="(\d+)"', body).group(1),
+                          "a": re.search(r'data-mk="archived"[^>]*value="(\d+)"', body).group(1),
+                          "n": bool(re.search(r'data-mk="never" checked', body))})
+        ticked = ('id="m-reach" checked' in sec) if reach_ticked is None else reach_ticked
+        harness = r"""
+const kinds=JSON.parse(process.argv[3]),ticked=process.argv[4]==='1';
+const field=(o)=>Object.assign({value:'',checked:false,defaultValue:'',min:'1',max:'240',dataset:{},matches:()=>false,querySelector:()=>null,querySelectorAll:()=>[]},o||{});
+const rows=kinds.map(k=>{const f={dormant:field({value:k.d}),archived:field({value:k.a}),never:field({checked:k.n})};
+return field({dataset:k,querySelector:(q)=>f[(q.match(/data-mk="([a-z]+)"/)||[])[1]]||null})});
+const els={'m-wake':field({checked:true}),'m-reach':field({checked:ticked}),'m-night':field({checked:true}),'m-min':field({value:'10',max:'1000'}),'m-prevsaid':field(),'m-prev':field()};
+const sec={querySelector:(q)=>q==='#m-prev'?els['m-prev']:null,querySelectorAll:(q)=>q==='.mkind'?rows:[],addEventListener:()=>{}};
+global.document={getElementById:(id)=>id==='memory-settings'?sec:els[id]||null};global.window={};
+new Function(require('fs').readFileSync(process.argv[2],'utf8'))();
+console.log(JSON.stringify(window.GarrickMemory.request()));
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            script, js = Path(tmp) / "h.js", Path(tmp) / "m.js"
+            script.write_text(harness, encoding="utf-8")
+            js.write_text(status.MEMORY_JS, encoding="utf-8")
+            out = subprocess.run([node, str(script), str(js), json.dumps(kinds), "1" if ticked else "0"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, out.returncode, out.stderr)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_page_types_and_domains_set_by_hand_come_back_unchanged_and_build_the_same_lists(self):
+        fixtures.write_fade(self.root)
+        import view_settings
+        fade = view_settings.fade_lib(self.root)
+        hand = {"board meetings": {"wiki": "Meetings", "types": ["meeting", "board"], "domains": ["board.example", "acme.example"],
+                                   "dormant": 6, "archived": 18}}
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"kinds": hand}}))
+        before = (fade.settings(self.root)["kinds"], fade.counts(self.root))
+        sent = self.form(self.section())
+        self.assertEqual(["meeting", "board"], sent["kinds"]["board meetings"]["types"])
+        self.assertEqual(["board.example", "acme.example"], sent["kinds"]["board meetings"]["domains"])
+        spec = importlib.util.spec_from_file_location("page_action_for_memory", REPO / "extras" / "status" / "page_action.py")
+        page_action = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(page_action)
+        saved = page_action.clean_memory(sent)
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": saved}))
+        self.assertEqual(before, (fade.settings(self.root)["kinds"], fade.counts(self.root)))
+
+    def test_the_search_tick_box_stores_the_two_values_the_list_stored(self):
+        sec = self.section()
+        self.assertEqual("dormant", self.form(sec, True)["reach"])
+        self.assertEqual("working", self.form(sec, False)["reach"])
+        for reach, ticked in (("working", False), ("dormant", True)):
+            write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"reach": reach}}))
+            self.assertEqual(ticked, 'id="m-reach" checked' in self.section(), reach)
 
     def test_advanced_is_indented_with_a_chevron_that_shows_its_state(self):
         css = status.MEMORY_CSS
@@ -4059,10 +4112,11 @@ class TestMemorySettings(StatusCase):
         import view_settings
         fade = view_settings.fade_lib(self.root)
         sec = self.section()
-        self.assertIn(status.said_html(fade.AGE_SAID), sec[sec.index('id="help-memory"'):])     # fade.py's words, behind the "?"
-        advanced = sec[sec.index('<details class="madv">'):]
-        self.assertIn('<p class="hint msaid">%s</p>' % status.said_html(fade.WAKE_SAID), advanced)
-        self.assertIn("<code>pinned: true</code>", status.said_html(fade.WAKE_SAID))
+        self.assertNotIn(status.said_html(fade.AGE_SAID), sec)                                  # fade.py's words are on the docs page (#681)
+        self.assertNotIn("msaid", sec)
+        docs = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
+        self.assertIn("How age is counted", docs)
+        self.assertIn("This is how waking works", docs)
         self.assertNotIn("Full list", sec)
         self.assertFalse((self.root / "System" / "generated").exists())             # building the page writes nothing
         fade.propose(self.root, "Meetings")

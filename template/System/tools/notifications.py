@@ -16,7 +16,8 @@ the workspace:
     {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "context-summary": true, "job-failed": true,
               "release": true},
      "after": 2,
-     "quiet": {"on": true, "from": "22:00", "to": "07:00"}}
+     "quiet": {"on": true, "from": "22:00", "to": "07:00"},
+     "morning": "all"}
 
 **Events** (EVENTS) are what happened. Settings offers six of them (TELL),
 each on or off, and the minutes a turn must run before Finished is sent.
@@ -41,6 +42,18 @@ merged row on. `waiting` is never written back.
 digest, `context-summary` the Context digest the nurture sweep sends. A
 settings file that has no `context-summary` yet gives it the value
 `todo-summary` has, so an update loses no digest.
+
+**One morning brief** (#686). `morning` says how the morning summaries come:
+"all" is one `morning-brief` notice after the sweep, for every zone it
+covers, ranked as the band ranks; "each" is one `todo-summary` for each zone.
+A file with no `morning`, as every one before 0.80.0, reads "each"; only a new
+workspace's setup writes "all". The brief has no row of its own: it follows
+the `todo-summary` row, and is held through quiet hours as that is.
+morning_zones() says which zones it covers: none while the override below is
+set for the sender, since that command is told each zone, and never a zone an
+older file gave a route of its own under `zones`. clean() takes `morning`
+from the page, "all" or "each" and nothing else, and leaves it out when the
+page sends none.
 
 A notice from a session running in cmux lands on that session's own tab,
 through cmux's own notification; anything else, or a cmux that will not
@@ -113,6 +126,8 @@ EVENTS = (
     ("waiting", "Waiting on you", "A session has stopped on a question or an approval; sent once for each wait. Follows the needs-you row"),
     ("todo-refreshed", "Todo refreshed", "The nightly sweep has run: lines added, folded, expired"),
     ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: what is late and what is due today"),
+    ("morning-brief", "Morning summary", "One message after the sweep: what needs you today across the zones it covers, "
+                                         "best first. Follows the todo-summary row"),
     ("context-summary", "Context summary", "The nurture sweep's morning digest: what it fixed and what waits for you"),
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
     ("job-idle", "Job idle", "A job has run cleanly but done nothing for days"),
@@ -128,16 +143,24 @@ TELL = (("needs-you", "a session needs me"), ("finished", "a long task finishes"
         ("job-failed", "a scheduled job fails or recovers"), ("release", "a newer Garrick is out"))
 TELL_NAMES = tuple(e for e, _ in TELL)
 # An event with no row of its own is sent by the row of another: a session waiting is a session that needs you.
-FOLDED = {"waiting": "needs-you"}
+FOLDED = {"waiting": "needs-you", "morning-brief": "todo-summary"}
+# The folded events an older page may still send in `tell`: read, never written. A newer folded event is refused.
+OLDER_ROWS = ("waiting",)
 # A row an older settings file filled under another name: the value that name had.
 INHERITS = {"context-summary": "todo-summary"}
 FOLLOW = ("job-idle", "desk")                    # sent while any of TELL is on
 QUIET_CHOICES = ("send", "hold", "drop")
 QUIET = {"needs-you": "send", "finished": "drop", "waiting": "send", "todo-refreshed": "hold", "todo-summary": "hold",
-         "context-summary": "hold", "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold"}
+         "context-summary": "hold", "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold",
+         "morning-brief": "hold"}
 # job.py's kinds, as GARRICK_NOTIFY_KIND has always carried them, and the event each is.
 KINDS = {"failed": "job-failed", "recovered": "job-failed", "message": "job-failed", "idle": "job-idle",
          "digest": "todo-summary", "refreshed": "todo-refreshed"}
+# The morning summaries (#686): "all", one brief for every zone the sweep covers, or "each", one Todo summary for each
+# zone. A file with no `morning` reads "each", so an existing workspace keeps what it had; only a new one says "all".
+MORNING = ("all", "each")
+MORNING_DEFAULT = "each"
+MORNING_NEW = "all"
 AFTER = 2
 AFTER_MAX = 240
 CLOCK = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -235,7 +258,8 @@ def normal(raw) -> dict:
     quiet = {"on": q.get("on", True) is not False,
              "from": q.get("from") if isinstance(q.get("from"), str) and CLOCK.match(q["from"]) else "22:00",
              "to": q.get("to") if isinstance(q.get("to"), str) and CLOCK.match(q["to"]) else "07:00"}
-    return {"tell": tell, "after": after, "quiet": quiet}
+    morning = raw.get("morning") if raw.get("morning") in MORNING else MORNING_DEFAULT
+    return {"tell": tell, "after": after, "quiet": quiet, "morning": morning}
 
 
 def _merged(given: dict) -> bool:
@@ -253,11 +277,11 @@ def clean(given) -> dict:
     they are saved in. Raises Invalid with the reason."""
     if not isinstance(given, dict):
         raise Invalid("not a set of notification settings")
-    unknown = sorted(set(given) - {"tell", "after", "quiet"})
+    unknown = sorted(set(given) - {"tell", "after", "quiet", "morning"})
     if unknown:
         raise Invalid("not a notification setting: %s" % ", ".join(unknown))
     tell = given.get("tell", {})
-    if not isinstance(tell, dict) or set(tell) - set(TELL_NAMES) - set(FOLDED) or not all(isinstance(v, bool) for v in tell.values()):
+    if not isinstance(tell, dict) or set(tell) - set(TELL_NAMES) - set(OLDER_ROWS) or not all(isinstance(v, bool) for v in tell.values()):
         raise Invalid("not a set of notices, each on or off")
     after = given.get("after", AFTER)
     if not _minutes_ok(after):
@@ -270,13 +294,18 @@ def clean(given) -> dict:
     for k in ("from", "to"):
         if k in q and not (isinstance(q[k], str) and CLOCK.match(q[k])):
             raise Invalid("quiet hours are times such as 22:00")
+    if "morning" in given and given["morning"] not in MORNING:
+        raise Invalid("the morning summary is one for all zones or one for each zone")
     kept = {e: tell.get(e, True) for e in TELL_NAMES}
     kept["needs-you"] = _merged(tell)                      # `waiting` from an older page is read, never written
     for new, old in INHERITS.items():
         if new not in tell:
             kept[new] = tell.get(old, True)
-    return {"tell": kept, "after": after,
-            "quiet": {"on": q.get("on", True), "from": q.get("from", "22:00"), "to": q.get("to", "07:00")}}
+    out = {"tell": kept, "after": after,
+           "quiet": {"on": q.get("on", True), "from": q.get("from", "22:00"), "to": q.get("to", "07:00")}}
+    if "morning" in given:                      # left out when not sent: a page that does not offer it saves none
+        out["morning"] = given["morning"]
+    return out
 
 
 def _garrick_lib(ws: Path):
@@ -298,6 +327,26 @@ def keep(ws: Path, cfg: dict) -> dict:
     out = clean(cfg)
     _garrick_lib(ws).save_preferences(ws, {KEY: out})
     return out
+
+
+def routed(raw) -> Tuple[str, ...]:
+    """The zones an older settings file gave a route of their own, under `zones` (another chat, another channel).
+    Nothing writes one now, but a file that still holds one keeps that zone out of the combined morning brief."""
+    zones = raw.get("zones") if isinstance(raw, dict) and isinstance(raw.get("zones"), dict) else {}
+    return tuple(str(z) for z in zones)
+
+
+def morning_zones(ws: Path, zones: List[str], env=None) -> Tuple[List[str], List[str]]:
+    """(the zones the combined morning brief covers, the zones that keep a Todo summary of their own), for the zones
+    a sweep ran over, in their order. With "each", or with the override in the sender's environment (which is told
+    each zone and so keeps a message per zone), every zone keeps its own summary, as before #686. With "all", a zone
+    with a route of its own under an older file's `zones` keeps its own; the rest are in the brief."""
+    zones = list(zones)
+    raw = saved(ws)
+    if override(env) or normal(raw)["morning"] != "all":
+        return [], zones
+    own = {z.casefold() for z in routed(raw)}
+    return [z for z in zones if z.casefold() not in own], [z for z in zones if z.casefold() in own]
 
 
 def wanted(cfg: dict, event: str) -> bool:

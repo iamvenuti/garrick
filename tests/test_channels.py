@@ -126,6 +126,56 @@ class TestSettings(EngineCase):
             self.assertFalse(self.channels.wants_action(text), text)
 
 
+class TestAnswers(EngineCase):
+    """Answers (#683): Faster, Balanced or Fuller, each kept as the tier and effort it stands for; the stored keys do not change."""
+
+    def answers(self, channel, answers, via="page"):
+        return self.pa.perform(self.root, {"verb": "channel-answers", "channel": channel, "answers": answers},
+                               self.pa.ops_lib(self.root), via=via)[0]
+
+    def test_each_choice_stores_its_pair_and_keeps_the_autonomy(self):
+        self.settings(ask={"autonomy": "full"})
+        for answers, pair in (("fuller", ("opus", "high")), ("faster", ("haiku", "low")), ("balanced", ("sonnet", "medium"))):
+            with self.subTest(answers=answers):
+                out = self.answers("ask", answers)
+                self.assertTrue(out["ok"], out)
+                got = self.channels.settings(self.root)["ask"]
+                self.assertEqual(pair + ("full",), (got["tier"], got["effort"], got["autonomy"]))
+        self.assertTrue(self.answers("telegram", "fuller")["ok"])
+        self.assertEqual({"tier": "opus", "effort": "high", "autonomy": "act"}, self.channels.settings(self.root)["telegram"])
+
+    def test_a_pair_that_is_none_of_the_three_reads_as_custom(self):
+        self.assertEqual("custom", self.channels.answers_of("opus", "low"))
+        self.assertEqual("fuller", self.channels.answers_of("opus", "high"))
+        self.assertEqual("balanced", self.channels.answers_of(*self.channels.ANSWERS["balanced"]))
+
+    def test_custom_and_anything_else_is_refused_and_nothing_is_written(self):
+        self.settings(ask={"tier": "opus", "effort": "low"})
+        for channel, answers in (("ask", "custom"), ("ask", "large"), ("ask", None), ("email", "faster")):
+            with self.subTest(channel=channel, answers=answers):
+                self.assertFalse(self.answers(channel, answers)["ok"])
+        self.assertEqual(("opus", "low"), tuple(self.channels.settings(self.root)["ask"][k] for k in ("tier", "effort")))
+
+    def test_a_level_that_reads_as_read_is_never_raised_by_a_pick(self):
+        # review S3: a stored Full for Telegram, or a value that is no level, runs as Read, and a pick keeps it at Read
+        path = self.root / "System" / "garrick-settings.json"
+        for bad in ("full", "bogus"):
+            with self.subTest(autonomy=bad):
+                write(path, json.dumps({"channels": {"telegram": {"autonomy": bad}, "ask": {"autonomy": "bogus"}}}))
+                self.assertEqual("read", self.channels.settings(self.root)["telegram"]["autonomy"])
+                self.assertTrue(self.answers("telegram", "fuller")["ok"])
+                self.assertTrue(self.answers("ask", "faster")["ok"])
+                got = self.channels.settings(self.root)
+                self.assertEqual(("opus", "high", "read"), tuple(got["telegram"][k] for k in ("tier", "effort", "autonomy")))
+                self.assertEqual("read", got["ask"]["autonomy"])
+
+    def test_it_is_the_pages_own_verb(self):
+        self.assertIn("channel-answers", self.pa.PAGE_ONLY)
+        self.assertIn("channel-answers", self.pa.ops_lib(self.root).DECLARED)
+        self.assertFalse(self.answers("ask", "fuller", via="ask")["ok"])
+        self.assertEqual("sonnet", self.channels.settings(self.root)["ask"]["tier"])
+
+
 class TestCapability(EngineCase):
     def test_an_assistant_that_can_do_the_three_things_passes(self):
         self.assertEqual((True, []), (self.cap_ok["ok"], self.cap_ok["failed"]))
@@ -1298,9 +1348,8 @@ class TestASendIsHeld(EngineCase):
         self.assertEqual([held["id"]], [r["id"] for r in self.hold.pending()])
 
     def test_settings_and_the_docs_say_full_sends_without_asking_you_first(self):
-        sh = load("settings_help")
-        [row] = [r for r in sh.ROWS if r[1] == "ch-ask-autonomy"]
-        self.assertIn("also sends what you asked for without asking you first.", row[3])
+        status = load("status")
+        self.assertIn("also sends what you asked for without asking you first", status.LEVEL_SAID["full"])     # the choice's own line (#681)
         docs = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
         self.assertIn("Full sends without asking you first", docs)
 

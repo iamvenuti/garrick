@@ -1625,9 +1625,8 @@ class TestFlag(unittest.TestCase):
             write(Path(tmp) / "System" / "garrick-flags.json", json.dumps({"ask": True}))
             self.assertNotIn("ask", status.preview_flags(Path(tmp)))
             html = status.preview_section(status.preview_flags(Path(tmp)))
-            self.assertNotIn("Ask", html)
-            self.assertIn("Off until you ask your assistant to switch one on.", html)
-            self.assertNotIn("not released yet", html)
+            self.assertNotIn("Ask:", html)
+            self.assertIn("Not released yet. Ask your assistant to switch one on.", html)     # #682's one line
 
     def test_on_with_no_settings_and_with_nothing_that_reads(self):
         with tempfile.TemporaryDirectory() as tmp:

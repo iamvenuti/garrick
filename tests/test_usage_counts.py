@@ -227,9 +227,8 @@ class TestOff(Case):
         self.off()
         html = status.build(self.root, now=dt.datetime.now(), folder=self.jobs)
         self.assertRegex(html, r'id="usage-on"(?! checked)')
-        self.assertIn("on this Mac only", html)
-        self.assertIn("Nothing else is kept", html)
-        self.assertIn("Turn it off and nothing is counted", html)
+        # #681's text: what is kept, where, and that nothing is sent
+        self.assertIn("Counts which cards you open, on this computer only. No name or text is kept, and nothing is sent.", html)
 
 
 NODE = shutil.which("node")

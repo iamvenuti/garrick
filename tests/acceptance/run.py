@@ -28,9 +28,9 @@ and says so, when that one failed:
               tables have a Learned column that the older rows do not fill, so those rows are one cell short:
               each is padded in names.md to the header's cells (#663)
     hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of the previous release:
-              the update report names the guard as another version's and offers to refresh the kept hooks; without a
-              yes nothing is copied, and on a yes the folder holds this release's hook files and the settings are
-              unchanged (#670, #672)
+              the update report names the guard as another version's and offers to refresh the kept hooks; with stdin
+              closed and no flag nothing is copied and the flag is named, and with --refresh-hooks and stdin closed
+              the folder holds this release's hook files and the settings are unchanged (#670, #672, #680)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
 
@@ -615,7 +615,8 @@ class Run:
     def step_hooks(self, s):
         """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download of the previous release
         kept in the home folder. The update's report names each guard that differs and offers the refresh; an apply with nobody
-        to ask copies nothing; a yes copies Garrick's own hook files, and the settings file is the same bytes afterwards."""
+        to ask copies nothing and names `--refresh-hooks`; an apply with the flag and stdin closed copies Garrick's own hook
+        files (#680), and the settings file is the same bytes afterwards."""
         tag = self.previous_tag()
         old = self.tag_tree(tag, "hooks-previous")
         kept = self.home / "kept-garrick"
@@ -638,30 +639,35 @@ class Run:
             line = "runs from ~/kept-garrick/extras/hooks/%s, which differs from this Garrick's" % name
             if line not in said:
                 raise Fail("the update report does not name %s as another version's: %s" % (name, said.strip()[-300:]))
-        if "Refresh the kept hooks at ~/kept-garrick/extras/hooks" not in said:
+        # Both guards may be this release's and another hook file not (#672): the report then offers the refresh in its
+        # second form, "The kept hooks at ... differ from this Garrick's in ...".
+        offers = [o for o in ("Refresh the kept hooks at ~/kept-garrick/extras/hooks",
+                              "The kept hooks at ~/kept-garrick/extras/hooks differ from this Garrick's in") if o in said]
+        if not offers:
             raise Fail("the update report does not offer to refresh the kept hooks")
-        if str(self.home) in said.split("Refresh the kept hooks", 1)[1]:
+        if str(self.home) in said.split(offers[0], 1)[1]:
             raise Fail("the update report shows the home folder, not ~")
-        sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand, timeout=900, stdin="")
+        applied = sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand,
+                     timeout=900, stdin="").stdout
         if any((folder / n).read_bytes() == (self.cand / "extras" / "hooks" / n).read_bytes() for n in differing):
             raise Fail("the update copied hook files with nobody to ask")
-        # A yes at a terminal, stood in for: input() answers y and both streams say they are terminals.
-        script = ("import sys, builtins\nfrom pathlib import Path\nsys.path.insert(0, %r)\nimport update\n"
-                  "class T:\n    def isatty(self): return True\n    def write(self, x): pass\n    def flush(self): pass\n"
-                  "sys.stdin, sys.stdout = T(), T()\nbuiltins.input = lambda q='': 'y'\n"
-                  "r = update.refresh_hooks(Path(%r), Path(%r), '~/kept-garrick/extras/hooks')\nsys.stderr.write(r)\n"
-                  % (str(self.cand), str(target), str(folder)))
-        r = sh([sys.executable, "-c", script], env=self.env, cwd=self.cand, timeout=300, check=False)
-        if r.returncode != 0 or "now holds this Garrick's" not in r.stderr:
-            raise Fail("the refresh on a yes said: %s" % (r.stderr or r.stdout).strip()[-200:])
+        if "--refresh-hooks" not in applied:
+            raise Fail("with nobody to ask and no flag, the update does not name --refresh-hooks: %s" % applied.strip()[-300:])
+        # The yes an assistant's session passes (#680): stdin closed, and --refresh-hooks on the apply.
+        r = sh([sys.executable, self.cand / "update.py", "--apply", "--yes", "--refresh-hooks", target], env=self.env,
+               cwd=self.cand, timeout=900, stdin="", check=False)
+        if "now holds this Garrick's" not in r.stdout:
+            raise Fail("the refresh with --refresh-hooks said: %s" % (r.stdout or r.stderr).strip()[-300:])
         for n in differing:
             if (folder / n).read_bytes() != (self.cand / "extras" / "hooks" / n).read_bytes():
                 raise Fail("%s in the kept folder is not this release's after the refresh" % n)
         if settings.read_bytes() != before:
             raise Fail("the refresh changed the assistant's settings")
         s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s: the report names %s as "
-               "another version's and offers the refresh; with nobody to ask nothing was copied; on a yes %d hook file(s) match "
-               "this release and the settings are unchanged" % (tag, ", ".join(n for n in differing if n.endswith("_guard.py")), len(differing)))
+               "another version's and offers the refresh; with stdin closed and no flag nothing was copied and the flag was named; with "
+               "--refresh-hooks and stdin closed %d hook file(s) match "
+               "this release and the settings are unchanged" % (tag, ", ".join(n for n in differing if n.endswith("_guard.py")) or "no guard (another hook file differs)",
+                       len(differing)))
 
     def step_refused(self, s):
         root = self.demo

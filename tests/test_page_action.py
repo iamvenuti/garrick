@@ -750,8 +750,7 @@ class TestSettings(ActionCase):
 
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
-        self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True,
-                                        "claude-new": False, "codex-new": False},
+        self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True},
                           "default": "claude"}, json.loads(self.path().read_text()))
         self.act(verb="settings", launchers=[])
         self.assertEqual("note", json.loads(self.path().read_text())["default"])
@@ -777,9 +776,21 @@ class TestSettings(ActionCase):
         self.act(verb="settings", launchers=["note", "preview", "cmux"], default="cmux")
         self.assertTrue(json.loads(self.path().read_text())["launchers"]["preview"])
         self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
-        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": False,
-                          "claude-new": False, "codex-new": False},
+        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": False},
                          json.loads(self.path().read_text())["launchers"])
+
+    def test_a_save_drops_the_old_keys_of_a_0790_file(self):
+        # 0.79.0 wrote two rows for each app; the next save writes one, and the old keys go (#682)
+        self.path().parent.mkdir(parents=True, exist_ok=True)
+        self.path().write_text(json.dumps({"launchers": {"note": True, "claude": False, "claude-new": True, "codex-new": False},
+                                           "default": "claude-new"}))
+        with self.assertRaises(pa.Refused):
+            self.act(verb="settings", launchers=["note", "claude-new"], default="claude-new")     # an old key is not a launcher
+        self.assertIn("claude-new", json.loads(self.path().read_text())["launchers"])               # never dropped before a save
+        self.act(verb="settings", launchers=["note", "claude"], default="claude")
+        saved = json.loads(self.path().read_text())
+        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": False, "codex": False, "claude": True}, saved["launchers"])
+        self.assertEqual("claude", saved["default"])
 
 
 class TestNoWaitSettings(ActionCase):
@@ -2556,7 +2567,7 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "count-card", "session-url"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "connected-service", "channel-answers", "count-card", "session-url"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
         # The wrap (#645) is a session's verb, documented in commands.md under Opening and wrapping, with its receipt.
         self.assertIn("System/tools/wrap.py", (REPO / "docs" / "commands.md").read_text(encoding="utf-8"))
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY and v != "wrap"), sorted(documented))

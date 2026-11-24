@@ -676,6 +676,10 @@ class TestWorkOnThePage(StatusCase):
         # Settings' role (#621) is written outside the workspace, and the read guard registers a hook there and saves the
         # workspace's settings file: neither commits in a zone or takes its lock.
         unzoned |= {"machine-role", "read-guard"}
+        # A connected service's choice (#683) saves the read guard's two lists in the workspace's settings file: no zone, no lock.
+        unzoned |= {"connected-service"}
+        # Answers (#683) saves a channel's tier and effort in the workspace's settings file, as Settings does: no zone, no lock.
+        unzoned |= {"channel-answers"}
         # A new session in the Claude or Codex app (#652) only reads: it builds a link and commits nothing in any zone.
         unzoned |= {"session-url"}
         # A card opened (#651) adds one to a count under System/, outside every zone: no commit, no lock.
@@ -815,6 +819,11 @@ class TestFailuresInPlainWords(NodeCase):
 
     RAW = re.compile(r"(?i)(/\w|\.py\b|\bgit\b|traceback|\bexit \d|--\w|wall check)")
 
+    # The rows a panel of its own draws with GarrickFail (#511's rest): their replies do not reach the box, so the test names
+    # the row as a reply that carries it would; test_failures_plain draws each in its panel.
+    PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow",
+              "commit-files", "commit-undo", "chase")
+
     def test_every_row_of_the_table_shows_its_sentence_and_its_button(self):
         """#511: one test per row of page_action's FAILURES, read by the page as FW. The sentence and the button show; the
         tool's text, command and path do not, until Details is opened; and Details is closed."""
@@ -827,8 +836,9 @@ class TestFailuresInPlainWords(NodeCase):
                 reply = {"ok": False, "say": tool}
                 if code in ("refused", "crashed", "unknown", "lost"):
                     reply["outcome"] = code
-                elif code.startswith(("role-", "guard-", "handoff-", "ask-")):
-                    reply["plain"] = {"code": code}                          # a refusal that names its own row: Settings (#621), a hand-off, Ask
+                elif code.startswith(("role-", "guard-", "handoff-", "ask-")) or code in self.PANELS:
+                    reply["plain"] = {"code": code}                          # a refusal that names its own row: Settings (#621), a hand-off, Ask,
+                                                                             # or a panel's row (#511), drawn the same if it reaches the box
                 elif code not in ("handoff", "noreply"):
                     reply["outcome"] = "never-heard-of"                      # a row the page does not name: the fallback
                 box = self.run_js(("act", 0, q, "Working…"), ("reply", 3, q, reply))[1]["box"]

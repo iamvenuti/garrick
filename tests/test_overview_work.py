@@ -430,11 +430,12 @@ class TestTheWayToOpen(unittest.TestCase):
         html = self.opener("cmux", ("finder", "cmux", "codex", "claude"), installed=("finder", "cmux", "claude"))
         self.assertNotIn("Resume in Codex", html)
 
-    def test_with_the_default_claude_the_request_is_the_continue_hand_off(self):
+    def test_with_the_default_claude_the_request_is_a_new_session(self):
+        # #682: Claude's one row opens a new session through its link; the command-line route (Continue) left the cards
         html = self.opener("claude", ("finder", "cmux", "claude"))
         main = html.split("<details")[0]
         act = json.loads(htmllib.unescape(re.search(r'data-act="([^"]+)"', main).group(1)))
-        self.assertEqual({"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}, act)
+        self.assertEqual({"verb": "session-url", "key": "claude", "folder": "/x/Acme Review/Threads/Pricing"}, act)
         self.assertIn(">Resume<", main)
 
     def test_the_cmux_button_is_the_desks(self):

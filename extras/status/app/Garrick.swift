@@ -26,15 +26,15 @@
 //   - an icon in the menu bar listing the live
 //     threads of the zone the graph shows, each opening a session, with a red
 //     dot when the Status tab has one, and Keep awake: for a time, until
-//     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
+//     turned off, or while an assistant is working (agents_working.py). Settings › Opening work switches it on,
 //     opens the app at login and sets a hotkey for the menu; the app keeps
 //     those three in its own defaults, as it keeps the menu between launches.
 //     A field at the top of the menu finds a project or thread, and only finds;
 //   - instead of the icon, the same menu as a panel that slides out from the
 //     left or right edge of the screen, or down from under the notch, when the
-//     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
+//     pointer rests there or the hotkey is pressed (Settings › Opening work › Shows as);
 //     its projects start folded, and it remembers the ones you unfold;
-//   - with Ask on (Settings › Menu bar › Answer in the Ask box, on unless switched off), the window the Ask hotkey opens from any app
+//   - with Ask on (Settings › Ask › Answer in the Ask box, on unless switched off), the window the Ask hotkey opens from any app
 //     (⌘G until Settings sets another) answers a request in plain words through
 //     ask.py, beside status.py, and runs what it proposes; it is the one place
 //     that asks, and the fields of the menu and the panel only find (#310).
@@ -159,7 +159,7 @@ let agentsCheck = builder.deletingLastPathComponent().appendingPathComponent("ag
 let deskScript = builder.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("cmux/desk.py")
 // ask.py, beside status.py: a warm assistant session that answers a request and acts on it.
 let asker = builder.deletingLastPathComponent().appendingPathComponent("ask.py")
-// Settings › Menu bar › Answer in the Ask box, `"ask": false` in the workspace's settings: Ask is on
+// Settings › Ask › Answer in the Ask box, `"ask": false` in the workspace's settings: Ask is on
 // unless the file says false (a missing or unreadable file leaves it on, as ask.py's flag_on() does).
 // The flags file is not read. Read at each use, so switching it on or off needs no restart.
 let settingsFile = workspace.appendingPathComponent("System/garrick-settings.json")
@@ -197,7 +197,7 @@ let didNotFinish = "This did not finish."
 // workspace: a question about meetings or a thread is answered inside one zone, the one its names live in or
 // this one. Changing it starts a new conversation, with the divider a wall reset draws.
 let kAskZone = "askZone"
-// How the Ask box closes (#411), from Settings › Menu bar › Ask hotkey, kept in the app's own defaults: "escape"
+// How the Ask box closes (#411), from Settings › Ask › Ask hotkey, kept in the app's own defaults: "escape"
 // (the default), "click" (a mouse-down outside the window) or "both". Never none: one way always stays on.
 let kAskClose = "askClose"
 func savedAskClose() -> (escape: Bool, click: Bool) {
@@ -266,15 +266,23 @@ let askWait = 510.0
 // server within LEASE; a test holds the two apart.
 let askKeepEvery = 120.0
 
-// Settings › Opening a thread, from the choices the workspace keeps, as
+// Settings › Opening work, from the choices the workspace keeps, as
 // status.py's shared_launchers() reads them (garrick_lib's PREFERENCES_FILE,
 // committed with the workspace): {name: true or false}, a name left out being
 // on, or a list of those on. Nothing saved, or nothing that reads: every way is on.
+// 0.79.0's two rows for Claude or Codex are read as one (#682): a file that
+// holds the old key has the app on when either is on (prefs.py's launchers_merged).
+let mergedLaunchers = ["claude": "claude-new", "codex": "codex-new"]
 func launcherOn(_ k: String) -> Bool {
 	guard let data = try? Data(contentsOf: workspace.appendingPathComponent("System/garrick-settings.json")),
 	      let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return true }
-	if let on = saved["launchers"] as? [String: Any] { return on[k] == nil || on[k] as? Bool == true }
-	if let on = saved["launchers"] as? [String] { return on.contains(k) }
+	let old = mergedLaunchers[k]
+	if let on = saved["launchers"] as? [String: Any] {
+		let mine = on[k] == nil || on[k] as? Bool == true
+		guard let old, on[old] != nil else { return mine }
+		return mine || on[old] as? Bool != false
+	}
+	if let on = saved["launchers"] as? [String] { return on.contains(k) || (old.map { on.contains($0) } ?? false) }
 	return true
 }
 
@@ -786,7 +794,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		let name = link.app == "cmux" ? "cmux" : link.app.capitalized
 		guard launcherOn(link.app) else {
-			return toast("\(name) is switched off in Settings, under Opening a thread. Nothing was opened.")
+			return toast("\(name) is switched off in Settings, under Opening work. Nothing was opened.")
 		}
 		guard openerInstalled(link.app) else {
 			return toast("\(name) is not installed here. Nothing was opened.")
@@ -1108,7 +1116,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// so, and Finder, which can take nothing, names it.
 	func opened(_ app: String, _ name: String, _ phrase: String) -> String {
 		if phrase.isEmpty { return "Opened \(app) in \(name)." }
-		if app == "Claude" { return "Opened Claude in \(name) with “\(phrase)” typed in. Press Enter to send it." }
+		if app == "Claude" || app == "Codex" { return "Opened \(app) in \(name) with “\(phrase)” typed in. Press Enter to send it." }
 		return "Opened \(app) in \(name). The clipboard now holds “\(phrase)”; paste it to resume."
 	}
 
@@ -1159,51 +1167,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return false
 		}
 		switch app {
-		case "claude":
-			guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) != nil else {
-				toast("Claude is not installed here any more. Rebuilding the page without it.")
+		case "claude", "codex":
+			// One row for each app (#682): a new session in its own window, in the folder, with the phrase typed in and
+			// not sent, through the link page_action.py's session-url also builds. A cold Claude is started first.
+			let (bundle, label) = app == "claude" ? (claudeBundle, "Claude") : (codexBundle, "Codex")
+			guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
+				toast("\(label) is not installed here any more. Rebuilding the page without it.")
 				freshen(force: true)
 				return false
 			}
-			var c = URLComponents()
-			c.scheme = "claude"; c.host = "code"; c.path = "/new"
-			c.queryItems = [URLQueryItem(name: "folder", value: folder.path)] + (phrase.isEmpty ? [] : [URLQueryItem(name: "q", value: phrase)])
-			guard let url = c.url else { return false }
+			guard let url = GarrickSession.make(key: app, folder: folder.path, prompt: phrase) else { return false }
 			let name = folder.lastPathComponent
-			// A running Claude takes the link at once, as it always has. A cold
-			// one would drop it while its window loads, so it is started first.
-			if NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {
+			if app == "claude" && NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {
 				startClaude(url, name: name, phrase: phrase)
 				return true
 			}
-			return sendToClaude(url, name: name, phrase: phrase, window: nil)
-		case "codex":
-			guard let codex = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexBundle) else {
-				toast("Codex is not installed here any more. Rebuilding the page without it.")
-				freshen(force: true)
-				return false
-			}
-			let cli = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"]
-				.map { codex.appendingPathComponent($0) }
-				.first { FileManager.default.isExecutableFile(atPath: $0.path) }
-			guard let cli else {
-				// Each build checks for this launcher, so the page does not
-				// offer Codex without it; a page built before it went missing still can.
-				toast("Codex's own launcher is missing; reinstall the Codex app. Rebuilding the page without it.")
-				freshen(force: true)
-				return false
-			}
-			let p = Process()
-			p.executableURL = cli
-			p.arguments = ["app", folder.path]
-			p.standardOutput = FileHandle.nullDevice
-			p.standardError = FileHandle.nullDevice
-			do { try p.run() } catch {
-				toast(notOpened("Codex", folder.lastPathComponent, phrase))
-				return false
-			}
-			copyText(phrase)                 // it opened: the phrase goes over, and the toast says so
-			toast(opened("Codex", folder.lastPathComponent, phrase), alsoNotify: false)
+			if app == "claude" { return sendToClaude(url, name: name, phrase: phrase, window: nil) }
+			let took = GarrickSession.open(url, prompt: phrase, opener: { NSWorkspace.shared.open($0) },
+				openApp: { NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, _ in } },
+				copy: { self.copyText($0) })
+			toast(took ? opened("Codex", name, phrase) : "Codex did not open a new session. Opened Codex instead; the clipboard now holds “\(phrase)”. Paste it into a new session.",
+			      alsoNotify: !took)
 			return true
 		case "cmux":
 			return openInCmux(folder.path, phrase: phrase)
@@ -1263,9 +1247,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func openNewSession(_ request: [String: Any], _ said: [String: Any]) {
 		menuActed = true
 		guard said["ok"] as? Bool == true else {
-			return toast(said["say"] as? String ?? "That did not work.")
+			let line = bandLine(said)            // the plain sentence, the tool's own words as its detail (#511)
+			return toast(line.sentence, detail: line.detail)
 		}
-		let apps = ["claude-new": (claudeBundle, "Claude"), "codex-new": (codexBundle, "Codex")]
+		let apps = ["claude": (claudeBundle, "Claude"), "codex": (codexBundle, "Codex")]
 		guard let key = request["key"] as? String, let (bundle, app) = apps[key],
 		      let url = GarrickSession.link(key: key, text: said["url"] as? String ?? "") else {
 			return toast("That did not open a new session. Nothing was opened.")
@@ -1351,7 +1336,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The page asking what is running (page_action.py's "operations"), how
 	// far a copy or a move of a work's files has got ("files-progress"), what
 	// Settings › Memory's unsaved values would do ("memory-preview"), or a note
-	// for Explore's Preview ("note-read", #206), or Settings › About Garrick's
+	// for Explore's Preview ("note-read", #206), or Settings › About's
 	// Check for updates and the update it starts ("release-check", "release-update",
 	// #410, which show their reply in the section), or the wall question's look at a finding ("walls-look", #548), only reads: the reply goes to
 	// the page, with no toast and no rebuild, or asking would rebuild the page
@@ -1437,7 +1422,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// MARK: the menu bar
 
-	// Settings › Menu bar shows the app's own values: they are put in the page
+	// Settings › Opening work and Ask show the app's own values: they are put in the page
 	// before it runs, and again whenever one changes.
 	func appState() -> [String: Any] {
 		var login: Any = NSNull()             // null: this macOS cannot add a login item this way
@@ -1781,18 +1766,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// A row's actions, as its card offers them: the note's own link, then each
 	// app switched on in Settings that can open its folder. The one Settings
 	// picks for clicking a thread is the default, and the note where it is not
-	// on offer. Claude on a thread, where the page found Claude Code's
-	// command-line tool (the menu's `cli`), carries the thread's note (`oc`),
-	// which run() continues as the page's Open in Claude does (#180).
+	// on offer. Claude and Codex open a new session in the folder (#682).
 	func acts(_ r: [String: Any]) -> [[String: Any]] {
 		var out: [[String: Any]] = []
 		if menuState?["note"] as? Bool != false, let u = r["u"] as? String { out.append(["k": "note", "u": u]) }
-		let cli = (menuState?["data"] as? [String: Any])?["cli"] as? Int == 1
 		if let f = r["f"] as? String {
 			for k in menuState?["launchers"] as? [String] ?? [] {
 				var a: [String: Any] = ["k": k, "f": f, "w": r["w"] as? String ?? ""]
 				if k == "cmux", let dk = r["dk"] { a["dk"] = dk }      // the cmux extra's desk opens it
-				if k == "claude", cli, let oc = r["oc"] as? [String], oc.count == 2 { a["oc"] = oc; a["n"] = r["n"] as? String ?? "" }
 				out.append(a)
 			}
 		}
@@ -1933,10 +1914,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// An action: the note's link to macOS, or the folder to an app, as the
-	// card's button opens it. Claude on a thread with its note (`oc`) is the
-	// Continue (#180): page_action.py primes a session that
-	// asks where the thread stands and opens the desktop app on its answer,
-	// and its reply, or its refusal, is the toast that follows.
+	// card's button opens it. Claude and Codex open a new session in the
+	// folder (#682); no action runs Claude Code's command-line tool.
 	@discardableResult
 	func run(_ a: [String: Any]) -> Bool {
 		let k = a["k"] as? String ?? ""
@@ -1944,12 +1923,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking {
 			heard.append("menu:" + k)
 			return false
-		}
-		if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {
-			let name = a["n"] as? String ?? "it"
-			toast("Opening \(name) in Claude…", alsoNotify: false)
-			act(["verb": "continue", "zone": oc[0], "file": oc[1]])
-			return true
 		}
 		if k == "note" {             // only a note of this workspace, by the one check every link goes through (#318)
 			guard let u = a["u"] as? String, let url = URL(string: u),
@@ -1976,7 +1949,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return find(zones.flatMap { $0["p"] as? [[String: Any]] ?? [] })
 	}
 
-	// An open with no app (#307): the default Settings › Opening a thread picks
+	// An open with no app (#307): the default Settings › Opening work picks
 	// for clicking a thread, whatever it is, Finder and the note included, or,
 	// where it is switched off, what the row falls back to: acts() decides, as
 	// it does for the row. A thread the menu does not list, a parked one, is
@@ -1988,13 +1961,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if place.isEmpty {
 			let name = item["name"] as? String ?? ""
 			place = ["n": name, "w": name, "f": folder]
-			if let oc = item["oc"] as? [String], oc.count == 2 { place["oc"] = oc }
 			if item["dk"] != nil { place["dk"] = 1 }
 		}
 		if place["u"] == nil, let note = item["note"] as? String { place["u"] = URL(fileURLWithPath: note).absoluteString }
 		let offered = acts(place)
 		guard let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first else {
-			toast("Switch on a way to open threads in Settings › Opening a thread.")
+			toast("Switch on a way to open threads in Settings › Opening work.")
 			return false
 		}
 		return run(a)
@@ -2068,7 +2040,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let title = (row["n"] as? String ?? "Process the Inbox") + " · \(n) waiting"
 		guard let app = assistant() else {
 			return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: nil,
-			                why: "Switch on Claude, Codex or cmux in Settings › Opening a thread to process it from here")
+			                why: "Switch on Claude, Codex or cmux in Settings › Opening work to process it from here")
 		}
 		let name = label(["k": app]).replacingOccurrences(of: "Open in ", with: "")
 		let said = "Files what settles in the background and asks you about the rest. Where it cannot, "

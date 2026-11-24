@@ -244,7 +244,7 @@ zone's repository, as the skills would:
     note-open   that note opened in the app the Mac uses for a .md file:
                 {"path"}; the same checks, and nothing written
     session-url a new session in the Claude or Codex desktop app (#652):
-                {"key": "claude-new" or "codex-new", "folder"}. The folder only
+                {"key": "claude" or "codex", "folder"}. The folder only
                 names the project or thread, and is checked as an open by
                 folder is. The reply carries the link the app opens ("url"),
                 built here from the folder the workspace holds and "open
@@ -373,12 +373,13 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "outbox-drop",
          "inbox-run", "intake-answer",
          "machine-role", "read-guard",
+         "connected-service", "channel-answers",
          "count-card",
          "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
-LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude", "claude-new", "codex-new")
+LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")     # one row for each app since 0.80.0 (#682)
 DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmuxlib's AGENTS
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
@@ -2082,6 +2083,88 @@ def set_read_guard(ws: Path, req: dict) -> dict:
     return {"say": " ".join(bits), "logged": " ".join(bits)}
 
 
+def guard_settings():
+    """settings_guard.py, beside this file: the lines of Connected services and what a choice does to the two lists."""
+    spec = importlib.util.spec_from_file_location("garrick_settings_guard", str(HERE / "settings_guard.py"))
+    found = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(found)
+    return found
+
+
+def set_connected_service(ws: Path, req: dict) -> dict:
+    """Settings › Walls › Connected services (#683): `service`, a plain name, takes `choice`, `check` (Check it) or `leave`
+    (Leave it). The page sends no pattern: this writes them, `mcp__<Service>__*` and `mcp__claude_ai_<Service>__*` for a service that has none, and moves a line's
+    own patterns, a hand-written one too, to the list chosen. `add` is *Add a service*: it refuses a name a pattern cannot be
+    built from, or would match every tool, and one whose pattern is already on the other list. The two lists are checked as
+    the read-guard verb checks them, and saved in the settings file through the page's own save (prefs). Nothing else changes."""
+    add = req.get("add", False)
+    if not isinstance(add, bool):
+        raise fails("guard-value", "add is true or false, not %r" % (add,))
+    if not isinstance(req.get("service"), str) or len(req["service"]) > 100:
+        raise fails("guard-value", "a connected service is given by its name")
+    keep = prefs()
+    lib = keep.lib(ws)
+
+    def too_old(why: str):
+        """A Garrick older than its page: no write failed, so it is never `guard-save` (review C2)."""
+        return fails("guard-old", why) if "guard-old" in FAILURE_CODES else Refused("%s; update Garrick" % why)
+    if lib is None or not callable(getattr(lib, "service_name", None)):
+        raise too_old("this workspace's garrick_lib names no connected service")
+    try:
+        sg = guard_settings()
+    except Exception as e:
+        raise too_old("settings_guard.py did not load: %s" % type(e).__name__)
+    try:
+        tools, skip = list(lib.connector_patterns(ws)), list(lib.connector_skips(ws))
+        new_tools, new_skip = sg.service_choice(tools, skip, sg.seen_tools(lib), req["service"], req.get("choice"), add,
+                                                lib.service_name, lib.tool_matches)
+    except sg.ServiceRefused as e:                      # its own row; the refusal's sentence is what Show why shows (review C2)
+        raise fails("guard-service", str(e))
+    new = {"connector-tools": clean_patterns(new_tools, "the mail and calendar tools", needs_one=True),
+           "connector-tools-skip": clean_patterns(new_skip, "the tools with nothing to check")}
+    if new["connector-tools"] == tools and new["connector-tools-skip"] == skip:
+        return {"say": "Nothing changed.", "logged": "Connected services: nothing changed."}
+    try:
+        keep.migrate(ws)
+        keep.save(ws, new)
+    except (OSError, ValueError, keep.NoAccessor) as e:
+        raise fails("guard-save", "%s: %s" % (type(e).__name__, e))
+    name = " ".join(req["service"].split()) or sg.EVERY_SERVICE
+    said = "%s is now %s." % (name, "Check it" if req["choice"] == "check" else "Leave it")
+    return {"say": said, "logged": "Connected services: %s" % said}
+
+
+ANSWER_WORDS = {"faster": "Faster", "balanced": "Balanced", "fuller": "Fuller"}
+
+
+def set_channel_answers(ws: Path, req: dict) -> str:
+    """Settings › Ask and Telegram › Answers (#683): `channel`, `ask` or `telegram`, takes `answers`, `faster`, `balanced` or
+    `fuller`, saved as the tier and effort channels.ANSWERS gives it, through the same check and save as Settings' channels.
+    The channel's autonomy stays as kept. Custom is no choice to send: it is only what another stored pair shows as."""
+    lib = channels_lib()
+    channel, answers = req.get("channel"), req.get("answers")
+    if channel not in lib.CHANNELS:
+        raise Refused("there is no channel called %r" % (channel,))
+    if answers not in lib.ANSWERS:
+        raise Refused("answers are %s, not %r" % (", ".join(ANSWER_WORDS[k] for k in lib.ANSWERS), answers))
+    tier, effort = lib.ANSWERS[answers]
+    try:
+        kept = prefs().read(ws).get("channels")
+        merged = dict(kept) if isinstance(kept, dict) else {}
+        # the autonomy the channel runs at now goes with it, so a stored value that reads as Read is kept at Read, never raised
+        autonomy = lib.settings(ws)[channel]["autonomy"]
+        merged.update(lib.clean({channel: {"tier": tier, "effort": effort, "autonomy": autonomy}}, merged))
+    except ValueError as e:
+        raise Refused(str(e))
+    keep = prefs()
+    keep.migrate(ws)
+    try:
+        keep.save(ws, {"channels": merged})
+    except ValueError as e:
+        raise Refused("%s; update Garrick to keep it" % e)
+    return "Answers for %s: %s" % ("Ask" if channel == "ask" else "Telegram", ANSWER_WORDS[answers])
+
+
 _CHANNELS = None
 
 
@@ -2205,8 +2288,8 @@ def cmux_folder(ws: Path, req: dict) -> tuple:
 
 # A new session in a desktop app (#652): the link each app takes. Neither route is documented by its vendor.
 # key: (scheme, the link's host and path, the query's name for the folder, for the prompt, the app as the page says it)
-NEW_SESSION = {"claude-new": ("claude", "code/new", "folder", "q", "Claude"),
-               "codex-new": ("codex", "threads/new", "path", "prompt", "Codex")}
+NEW_SESSION = {"claude": ("claude", "code/new", "folder", "q", "Claude"),
+               "codex": ("codex", "threads/new", "path", "prompt", "Codex")}
 
 
 def spoken_name(ws: Path, req: dict, long: str) -> str:
@@ -6339,6 +6422,10 @@ def act(ws: Path, req, today=None, now=None):
         return set_machine_role(ws, req)
     if req["verb"] == "read-guard":
         return set_read_guard(ws, req)
+    if req["verb"] == "connected-service":
+        return set_connected_service(ws, req)
+    if req["verb"] == "channel-answers":
+        return set_channel_answers(ws, req)
     if req["verb"] == "wrap":
         return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
@@ -6367,6 +6454,7 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "machine-role", "read-guard",
+         "connected-service", "channel-answers",
                "rename", "move", "delete", "undo",
                "layout",
                "todo-edit",
@@ -6382,6 +6470,7 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "outbox-drop",
              "inbox-run", "intake-answer",
              "machine-role", "read-guard",
+         "connected-service", "channel-answers",
              "count-card",
              "session-url")
 
@@ -6516,8 +6605,24 @@ FAILURES = (
      "Open Settings and choose Try again."),
     ("guard-check", "The read guard was not changed: it did not show as registered afterwards.", "Try again", "retry",
      "Open Settings and choose Try again."),
+    ("guard-service", "That service was not changed.", "Show why", "why", "Open Settings and choose Show why."),
     ("guard-save", "The read guard's setting was not saved: the workspace's settings could not be written.", "Try again", "retry",
      "Open Settings and choose Try again."),
+    # Panels that showed a failed reply's own text (#511): Settings' Check for updates and the update it
+    # starts, and the panels after them. A row whose request writes offers Show why, never a second try.
+    ("release-check", "Garrick could not ask GitHub for the newest release. Nothing was changed.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("release-update", "The update did not finish.", "Show why", "why", "Open Settings and choose Show why."),
+    ("count", "Garrick could not count what these changes would do. They are not saved yet.", "Try again", "retry",
+     "Open Settings and choose Try again."),
+    ("note-read", "This note could not be shown.", "Try again", "retry", "Open the preview and choose Try again."),
+    ("note-open", "The note did not open in its app.", "Try again", "retry", "Open the preview and choose Try again."),
+    ("finding", "This answer was not taken.", "Show why", "why", "Open the question and choose Show why."),
+    ("walls-look", "Garrick could not look at this file.", "Try again", "retry", "Open the question and choose Try again."),
+    ("walls-allow", "The words were not marked as yours.", "Show why", "why", "Open the question and choose Show why."),
+    ("commit-files", "These files were not committed.", "Show why", "why", "Open the page and choose Show why."),
+    ("commit-undo", "The commit was not undone.", "Show why", "why", "Open the page and choose Show why."),
+    ("chase", "The follow-up was not prepared, and nothing was sent.", "Show why", "why", "Open the page and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

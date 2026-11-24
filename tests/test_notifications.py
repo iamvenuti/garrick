@@ -89,7 +89,7 @@ class TestSettings(Case):
         cfg = n.settings(self.ws)
         self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "context-summary": True,
                                     "job-failed": True, "release": True},
-                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)      # a fresh workspace: a job failing is on
+                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}, "morning": "each"}, cfg)      # a fresh workspace: a job failing is on
         self.assertEqual(["needs-you", "finished", "todo-summary", "context-summary", "job-failed", "release"], list(n.TELL_NAMES))
         self.assertEqual("hold", n.QUIET["release"])                       # a newer Garrick waits for the morning
         self.assertEqual({"needs-you": "send", "finished": "drop", "waiting": "send", "desk": "send"},       # a session that needs me gets through at night, as either event
@@ -143,7 +143,7 @@ class TestSettings(Case):
                "zones": {"Personal": {"to": ["telegram"], "chat": "777"}}}
         self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "context-summary": False,
                                     "job-failed": True, "release": True},
-                          "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}}, n.normal(old))
+                          "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}, "morning": "each"}, n.normal(old))
         self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "context-summary": False,
                           "job-failed": False, "release": False},
                          n.normal(dict(old, channels={"mac": False}))["tell"])        # this Mac switched off: every notice off
@@ -153,8 +153,55 @@ class TestSettings(Case):
         self.assertEqual(1, len(self.osascripts()))
         self.assertEqual([], self.run_.named("sh"))
         n.keep(self.ws, n.settings(self.ws))                                           # the next save drops what is gone
-        self.assertEqual({"tell", "after", "quiet"}, set(json.loads(
+        self.assertEqual({"tell", "after", "quiet", "morning"}, set(json.loads(
             (self.ws / "System" / "garrick-settings.json").read_text())["notifications"]))
+
+    # ---- the morning summaries (#686) ----
+
+    def test_no_morning_key_reads_one_summary_for_each_zone(self):
+        self.assertEqual("each", n.normal({})["morning"])
+        self.assertEqual("each", n.normal({"tell": {"todo-summary": True}, "after": 2})["morning"])     # a 0.79.0 file
+        self.assertEqual("all", n.normal({"morning": "all"})["morning"])
+        for bad in ("both", True, None, ["all"]):
+            self.assertEqual("each", n.normal({"morning": bad})["morning"], bad)
+
+    def test_clean_takes_the_morning_choice_and_refuses_anything_else(self):
+        self.assertEqual("all", n.clean({"morning": "all"})["morning"])
+        self.assertEqual("each", n.clean({"morning": "each"})["morning"])
+        self.assertNotIn("morning", n.clean({}))                       # a page that does not offer it saves none
+        for bad in ({"morning": "both"}, {"morning": True}, {"morning": None}, {"morning": ""},
+                    {"tell": {"morning-brief": True}}):                 # the brief has no switch of its own
+            with self.assertRaises(n.Invalid, msg=bad):
+                n.clean(bad)
+        n.keep(self.ws, {"morning": "all"})
+        self.assertEqual("all", n.settings(self.ws)["morning"])
+
+    def test_the_morning_brief_follows_the_todo_summary_row_and_waits_for_the_morning(self):
+        self.assertIn("morning-brief", n.EVENT_NAMES)
+        self.assertNotIn("morning-brief", n.TELL_NAMES)
+        self.assertEqual("hold", n.QUIET["morning-brief"])
+        self.assertEqual(n.QUIET["todo-summary"], n.QUIET["morning-brief"])
+        self.save({"tell": {"todo-summary": False}, "morning": "all"})
+        self.assertFalse(self.send("morning-brief"))
+        self.save({"tell": {"todo-summary": True}, "morning": "all"})
+        self.assertTrue(self.send("morning-brief"))
+        self.assertEqual(1, len(self.osascripts()))
+        self.assertTrue(self.send("morning-brief", now=NIGHT))         # held for the morning, not sent
+        self.assertEqual(1, len(self.osascripts()))
+
+    def test_which_zones_the_one_brief_covers(self):
+        zones = ["Work", "Personal", "Garden"]
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))           # no file: one for each zone
+        self.save({"tell": {"todo-summary": True}})                                       # a 0.79.0 file
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))
+        self.save({"morning": "each"})
+        self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env={}))
+        self.save({"morning": "all"})
+        self.assertEqual((zones, []), n.morning_zones(self.ws, zones, env={}))
+        for env in ({"GARRICK_NOTIFY": "1"}, {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"}):
+            self.assertEqual(([], zones), n.morning_zones(self.ws, zones, env=env), env)   # the override keeps each its own
+        self.save({"morning": "all", "zones": {"personal": {"to": ["telegram"], "chat": "777"}}})
+        self.assertEqual((["Work", "Garden"], ["Personal"]), n.morning_zones(self.ws, zones, env={}))
 
 
 class TestSend(Case):
@@ -577,15 +624,15 @@ class TestPageAndSettings(Case):
 
     def test_six_choices_and_quiet_hours_and_nothing_else(self):
         sec = self.section()
-        for words in ("Notices appear on this Mac.", "Tell me when", "a session needs me", "a long task finishes",
-                      "the morning Todo summary is ready", "the morning Context summary is ready", "a scheduled job fails or recovers",
-                      "a newer Garrick is out", "Quiet from"):
+        for words in ("What Garrick tells you about on this computer.", "Tell me when", "a session needs me", "a long task finishes",
+                      "the morning Todo summary is ready", "the morning Context summary is ready", "a nightly job fails or works again",
+                      "a newer Garrick is out", "Quiet hours", "Notifications wait until morning."):     # #681's words
             self.assertIn(words, sec)
         self.assertNotIn("a session is waiting on me", sec)                                    # one row for both events
         self.assertIn('<span class="nsafter">after <input type="number" id="n-after"', sec)
-        self.assertRegex(sec, r'<small>At night only &#8220;a session needs me&#8221; gets through(\.|, and so do cmux)')
+        self.assertIn("A session that needs you still gets through.", sec)                     # behind Quiet hours' "?"
         self.assertNotIn("desk", sec.lower())                                                  # the cmux extra's own name for itself
-        self.assertIn("With every choice off, Garrick sends nothing.", sec)                      # behind the "?"
+        self.assertIn("It never shows what a note or a meeting says.", sec)                        # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
                      "Send to", "Send a test", "custom", "data-naway", "nover"):
             self.assertNotIn(gone, sec)
@@ -603,8 +650,7 @@ class TestPageAndSettings(Case):
         start = html.index('<section class="setsec apponly" id="notify-settings"')
         sec = html[start:html.index("</section>", start)]
         self.assertNotIn("scheduled job sends", sec)
-        self.assertIn("A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way.",
-                      sec)                                                                      # said once, behind the "?"
+        self.assertNotIn("GARRICK_NOTIFY", sec)                                                 # on the docs page, not in Settings (#681)
 
     def test_a_row_a_job_sends_its_own_way_says_so_and_its_box_is_not_in_use(self):
         agents = self.base / "LaunchAgents"
@@ -620,10 +666,10 @@ class TestPageAndSettings(Case):
         # a notice a job sends its own way has no switch (#673): one line under the list says what sends it, and what is saved is kept, out of sight
         line = sec[sec.index('id="n-own"'):]
         line = line[:line.index("</p>")]
-        self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", line)
+        self.assertIn("The morning summaries are set by your assistant. Ask it to change them.", line)     # #681
         self.assertIn('data-nt="todo-summary" disabled hidden checked', sec)
         self.assertNotIn('class="nsown nsitem"', sec)
-        self.assertEqual(1, line.count("Sent by"))                                                  # the Context row has no job that does it
+        self.assertEqual(1, line.count("morning summaries"))
         self.assertNotIn("desk", re.sub(r"<[^>]+>", " ", sec).lower())                       # the card holds no word desk
 
     def test_switching_off_the_todo_row_stops_the_todo_digest_and_not_the_context_digest(self):
@@ -643,8 +689,9 @@ class TestPageAndSettings(Case):
 
     def test_the_script_reads_the_form_into_what_clean_takes(self):
         js = self.status.NOTIFY_JS
-        self.assertIn("return{tell:t,after:", js)
-        self.assertIn("quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'}}", js)
+        self.assertIn("var r={tell:t,after:", js)
+        self.assertIn("quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'}};", js)
+        self.assertIn("if(mo)r.morning=mo.value;return r}", js)                              # the morning summary with every save (#686)
         self.assertIn("if(n)q.notifications=N.request()", self.status.JS)                  # sent when Settings closes
         if shutil.which("node"):
             done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js,

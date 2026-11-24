@@ -370,8 +370,17 @@ class ToolsSeen(FilterCase):
         found = self.findings()
         self.assertEqual(1, len(found))
         self.assertEqual("warning", found[0].severity)
-        self.assertIn(OTHER, found[0].message)
+        self.assertIn("Settings › Walls › Connected services: fakedrive is not decided", found[0].message)    # by its plain name (#683)
+        self.assertNotIn(OTHER, found[0].message)
         self.assertNotIn(TOOL, found[0].message)
+        self.assertNotRegex(found[0].message, r"connector-tools|mcp__|\*")                                 # no key, no pattern
+
+    def test_the_tools_of_one_service_make_one_warning(self):
+        self.after(response("x", as_text=False), tool=OTHER)
+        self.after(response("x", as_text=False), tool="mcp__fakedrive__read")
+        found = self.findings()
+        self.assertEqual(1, len(found))
+        self.assertEqual("fakedrive", found[0].token)
 
     def test_a_pattern_on_either_list_silences_it(self):
         self.after(response("x", as_text=False), tool=OTHER)

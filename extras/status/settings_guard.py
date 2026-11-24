@@ -68,6 +68,8 @@ GUARD_TEXT = {
                 "Add one when you connect a new mail or calendar service.",
     "rg-skip": "Tools that return nothing tied to a person or a company, such as a weather service. Garrick does not check "
                "them and does not warn you about them.",
+    "rg-services": "A mail or calendar search can return messages from every zone. Garrick takes out what sits behind another "
+                   "wall before your assistant sees it.",
 }
 CODEX_LINE = "Codex cannot have its mail and calendar results checked. Only the instructions keep them apart."
 UNREADABLE = ("Garrick cannot read your settings file. The mail and calendar check treats the read guard as On until it reads "
@@ -88,6 +90,113 @@ CANNOT_NEXT = {
 
 def esc(text) -> str:
     return html.escape(str(text), quote=True)
+
+
+# ---------------------------------------------------------------------------------------------------- connected services (#683)
+# One line for each connected service, by its plain name: each service on either list, and each one the assistant used that
+# is on neither. The page never shows a pattern: Check it puts `mcp__<Service>__*` and `mcp__claude_ai_<Service>__*` on `connector-tools`, Leave it on
+# `connector-tools-skip`, and a pattern written by hand keeps its own line, named from it. The settings keep their format.
+SERVICE_CHOICES = (("check", "Check it", "It returns mail, events or messages."),
+                   ("leave", "Leave it", "It returns nothing about people."))
+NOT_DECIDED = "Not decided"
+EVERY_SERVICE = "Every connected service"          # the line of a pattern that names no service, such as one of wildcards only
+SERVICE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,59}")
+# Names whose pattern would match every connected tool, or every tool of one assistant: refused, as a list refuses `*`.
+TOO_WIDE = {"mcp", "claude", "claudeai", "claude ai", "ai"}
+
+
+class ServiceRefused(ValueError):
+    """A service's choice that is not saved, with the sentence that says why."""
+
+
+def service_patterns(name: str) -> List[str]:
+    """The two patterns Check it or Leave it writes for a service, its spaces as underscores: `mcp__<Service>__*` and
+    `mcp__claude_ai_<Service>__*`. Each names the whole server part of a tool's name, so "mail" never takes in Gmail's tools
+    nor "Chat" Google Chat's, whether or not they were seen yet. `garrick_lib.service_name()` reads both back as <Service>."""
+    part = "_".join(str(name).split())
+    return ["mcp__%s__*" % part, "mcp__claude_ai_%s__*" % part]
+
+
+SERVICE_MIN = 3                      # the fewest letters or digits a name a pattern is built from may have
+CLAUDE_PREFIX = "claude_ai"          # a name inside it would take in every tool of one assistant's connectors
+
+
+def seen_tools(lib) -> List[str]:
+    """The names of the connector tools the read guard noted, from its own folder. [] when there is none, or it does not read."""
+    try:
+        seen = json.loads((Path(lib.read_guard_dir()) / "tools-seen.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return []
+    return sorted(k for k in seen if isinstance(k, str) and k.startswith("mcp__")) if isinstance(seen, dict) else []
+
+
+def service_lines(tools: List[str], skip: List[str], seen: List[str], name_of: Callable[[str], str],
+                  matches: Callable[[List[str], str], bool]) -> List[dict]:
+    """The lines of Connected services, in order: one for each name the two lists give, then one for each service the
+    assistant used that no pattern matches. Each is {"name", "choice", "patterns", "unmatched"}: `choice` is `check`, `leave` or
+    "" (Not decided), `patterns` the stored patterns the line stands for. A name on both lists is Check it, since the filter
+    checks it. A tool no pattern matches, of a service that has a line, makes that line Not decided: the check warns about it."""
+    lines: Dict[str, dict] = {}
+    for choice, patterns in (("check", tools), ("leave", skip)):
+        for pattern in patterns:
+            name = name_of(pattern) or EVERY_SERVICE        # a pattern of wildcards only names no service: its line says so
+            line = lines.setdefault(name.casefold(), {"name": name, "choice": choice, "patterns": [], "unmatched": False})
+            if choice == "check":
+                line["choice"] = "check"
+            if pattern not in line["patterns"]:
+                line["patterns"].append(pattern)
+    for tool in seen:
+        if matches(list(tools) + list(skip), tool):
+            continue
+        name = name_of(tool)
+        if not name:
+            continue
+        line = lines.setdefault(name.casefold(), {"name": name, "choice": "", "patterns": [], "unmatched": False})
+        line["choice"], line["unmatched"] = "", True
+    return list(lines.values())
+
+
+def service_choice(tools: List[str], skip: List[str], seen: List[str], name, choice, add: bool,
+                   name_of: Callable[[str], str], matches: Callable[[List[str], str], bool]) -> Tuple[List[str], List[str]]:
+    """The two lists once `name` is given `choice` (`check` or `leave`), or ServiceRefused with the sentence that says why.
+    A line's own patterns move to the list chosen; a service with none, or one the assistant used that no pattern matches,
+    gets `service_patterns(name)`, both together. *Add a service* (`add`) refuses a name a pattern cannot be built from, and one whose pattern
+    sits on the other list already: the user did not pick to move it. The mail and calendar list never ends empty."""
+    if choice not in ("check", "leave"):
+        raise ServiceRefused("A connected service is Check it or Leave it.")
+    name = " ".join(name.split()) if isinstance(name, str) else ""
+    lines = service_lines(tools, skip, seen, name_of, matches)
+    line = next((l for l in lines if l["name"].casefold() == name.casefold()), None)
+    if add and line is not None and line["choice"]:
+        if line["choice"] != choice:
+            raise ServiceRefused("%s is on the list already. Choose for it on its own line." % (line["name"] or EVERY_SERVICE))
+        return list(tools), list(skip)
+    moving = list(line["patterns"]) if line is not None else []
+    if not moving or (line is not None and line["unmatched"]):
+        if not SERVICE_NAME.fullmatch(name) or "*" in name or "__" in name:
+            raise ServiceRefused("A service's name is letters and numbers, with spaces, dashes or underscores.")
+        key = " ".join(name.casefold().replace("_", " ").replace("-", " ").split())
+        if (key in TOO_WIDE or not name_of(service_patterns(name)[0]) or sum(c.isalnum() for c in name) < SERVICE_MIN
+                or "_".join(name.casefold().split()) in CLAUDE_PREFIX):
+            raise ServiceRefused("That name would take in every connected service. Type the name of one service.")
+        built = service_patterns(name)
+        others = sorted({name_of(t) for t in seen if matches(built, t) and name_of(t).casefold() != name.casefold()})
+        if others:                       # fail closed: a pattern never decides for a service the user did not name
+            raise ServiceRefused("That name would also take in %s. Type the name of one service." % ", ".join(others))
+        other = skip if choice == "check" else tools
+        if add and {b.lower() for b in built} & {p.lower() for p in other}:
+            raise ServiceRefused("%s is on the list already. Choose for it on its own line." % name)
+        moving.extend(b for b in built if b.lower() not in {m.lower() for m in moving})
+    low = {p.lower() for p in moving}
+    new_tools = [p for p in tools if p.lower() not in low]
+    new_skip = [p for p in skip if p.lower() not in low]
+    target = new_tools if choice == "check" else new_skip
+    for p in moving:
+        if p.lower() not in [x.lower() for x in target]:
+            target.append(p)
+    if not new_tools:
+        raise ServiceRefused("At least one service stays on Check it, so mail and calendar results are still checked.")
+    return new_tools, new_skip
 
 
 # ---------------------------------------------------------------------------------------------------- what the guard holds
@@ -150,6 +259,24 @@ def hook_path(word: str) -> Optional[str]:
     return path if os.path.isabs(path) else None
 
 
+def hook_word(word: str) -> Optional[str]:
+    """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
+    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
+    same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
+    settings_guard.py and update.py."""
+    pieces = word.split()
+    for w in (word, pieces[-1] if pieces else ""):
+        if not w or "=" in w.split("/", 1)[0]:
+            continue
+        if any(c.isspace() for c in w):
+            full = hook_path(w)
+            if not (full and os.path.isfile(full)):
+                continue
+        return w
+    return None
+
+
 def hook_scripts(text: str) -> List[str]:
     """The Garrick hook files an assistant's settings text names: the words of each hook `command`, split as a shell splits
     them, that end in zone_guard.py, read_guard.py or waiting_hook.py. A path with a space in it stays whole when quoted.
@@ -164,7 +291,8 @@ def hook_scripts(text: str) -> List[str]:
                     words = shlex.split(command)
                 except ValueError:
                     words = command.split()
-                out.extend(w for w in words if HOOK_NAME.fullmatch(w))
+                kept = [hook_word(w) for w in words if HOOK_NAME.fullmatch(w)]
+                out.extend(w for w in kept if w and HOOK_NAME.fullmatch(w))
             for value in node.values():
                 walk(value)
         elif isinstance(node, list):
@@ -341,7 +469,8 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
     """What Settings shows of the read guard: whether its hook is registered, its mode and cross-wall choice, both lists,
     whether the connector filter can run, and what the log holds. Reads only; never raises."""
     home = Path(home) if home is not None else Path.home()
-    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}, "unreadable": False}
+    state = {"registered": False, "mode": "off", "cross": "deny", "tools": [], "skip": [], "problem": "", "would": {}, "unreadable": False,
+             "services": None}
     try:
         state["cross"] = lib.read_guard_cross(ws)
         state["tools"] = list(lib.connector_patterns(ws))
@@ -349,6 +478,12 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
         state["problem"] = lib.connector_filter_problem(ws)
     except Exception:
         pass
+    try:                                    # a garrick_lib older than #683 names no service: the list is left out
+        name_of = getattr(lib, "service_name", None)
+        if callable(name_of):
+            state["services"] = service_lines(state["tools"], state["skip"], seen_tools(lib), name_of, lib.tool_matches)
+    except Exception:
+        state["services"] = None
     guard = guard_module()
     try:
         lines, _ = guard.check_lines(str(home)) if guard is not None else ([], False)
@@ -365,6 +500,12 @@ def read_state(ws: Path, lib, home: Optional[Path] = None, now: Optional[dt.date
         pass
     try:
         state["would"] = would_have_stopped(log_lines(lib.read_guard_dir(), now or dt.datetime.now()))
+        name_of = getattr(lib, "service_name", None)
+        if callable(name_of):               # a mail or calendar result is shown by its service's name, never the tool's (#683)
+            for items in state["would"].values():
+                for i in items:
+                    if str(i.get("tool", "")).startswith("mcp__"):
+                        i["service"] = name_of(i["tool"])
     except Exception:
         pass
     return state
@@ -552,20 +693,26 @@ var q={verb:'machine-role',role:r};if(r!=='solo'&&n)q.name=n;if(r==='roaming')q.
 if(send(q))dlg.hidden=true}}
 /* ---- the read guard ---- */
 function was(el){return el.dataset.was}
+function svcBack(li){var b=li.querySelector('input[value="'+li.dataset.was+'"]');li.querySelectorAll('input[type=radio]').forEach(function(x){x.checked=x===b})}
 if(rg){
-rg.addEventListener('change',function(e){var i=e.target;if(!i.matches('input[type=radio]'))return;var r=i.closest('[data-rg]'),k=r.dataset.rg,q={verb:'read-guard'};
+/* a connected service's choice sends its plain name and Check it or Leave it; the page writes the pattern (#683) */
+function bad(t){if(said){said.hidden=false;said.className='hint rgsaid bad';said.textContent=t}}
+rg.addEventListener('change',function(e){var i=e.target;if(!i.matches('input[type=radio]'))return;var li=i.closest('.rgsvc');
+if(li){if(!send({verb:'connected-service',service:li.dataset.service,choice:i.value}))svcBack(li);return}
+var r=i.closest('[data-rg]');if(!r)return;var k=r.dataset.rg,q={verb:'read-guard'};
 q[k]=i.value;if(!send(q)){var back=r.querySelector('input[value="'+was(r)+'"]');if(back)back.checked=true}});
 rg.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
+if(b.classList.contains('qhelp')&&b.closest('summary')){e.preventDefault();return}
 if(b.id==='rg-show'){var l=document.getElementById('rg-list');l.hidden=!l.hidden;b.setAttribute('aria-expanded',String(!l.hidden));return}
-var key=b.dataset.rgAdd||b.dataset.rgRemove&&b.dataset.list;if(!key)return;var list=JSON.parse(rg.dataset[key]||'[]');
-if(b.dataset.rgAdd){var inp=rg.querySelector('.rgnew[data-list="'+key+'"]'),v=inp.value.trim();
-if(!/^[A-Za-z0-9_.*?-]{1,100}$/.test(v)||v.indexOf('..')>=0){if(said){said.hidden=false;said.className='hint rgsaid bad';said.textContent='A tool name is letters, numbers, dots, dashes, underscores and * or ? for a pattern.'}return}
-if(list.some(function(x){return x.toLowerCase()===v.toLowerCase()}))return;list.push(v)}
-else list=list.filter(function(x){return x!==b.dataset.rgRemove});
-var q={verb:'read-guard'};q[key]=list;send(q)})}
+if(b.dataset.rgServiceAdd){var inp=document.getElementById('rg-add-name'),v=inp.value.replace(/\s+/g,' ').trim();
+if(!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,59}$/.test(v)){bad('A service\'s name is letters and numbers, with spaces, dashes or underscores.');return}
+send({verb:'connected-service',service:v,choice:'check',add:true})}});
+rg.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.id==='rg-add-name'){e.preventDefault();var a=document.getElementById('rg-add');if(a)a.click()}})}
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&(q.verb==='machine-role'||q.verb==='read-guard')){pending=null;tell(out||{ok:false,say:'That did not work.'});
-if(!(out&&out.ok)&&rg)rg.querySelectorAll('[data-rg][data-was]').forEach(function(r){var b=r.querySelector('input[value="'+was(r)+'"]');if(b)b.checked=true});
+if(q&&(q.verb==='machine-role'||q.verb==='read-guard'||q.verb==='connected-service')){pending=null;tell(out||{ok:false,say:'That did not work.'});
+if(!(out&&out.ok)&&rg){rg.querySelectorAll('[data-rg][data-was]').forEach(function(r){var b=r.querySelector('input[value="'+was(r)+'"]');if(b)b.checked=true});
+rg.querySelectorAll('.rgsvc').forEach(svcBack)}
+else if(rg&&q.verb==='connected-service'&&!q.add){rg.querySelectorAll('.rgsvc').forEach(function(li){if(li.dataset.service===q.service)li.dataset.was=q.choice})}
 return}
 if(prev)return prev(q,out)};
 })();

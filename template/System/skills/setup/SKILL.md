@@ -95,7 +95,7 @@ mode* in the `threads` skill describes.
      so. `claude` and not `codex`: `python3 System/cmux/desk.py agent claude`.
      Both: "Should a cmux tab start Claude Code or Codex?", then run it with
      the answer. Neither: leave it. It writes `agent` in `System/desk.json`,
-     the same choice as Settings › Opening a thread in the Garrick App.
+     the same choice as Settings › Opening work in the Garrick App.
    - Unless `System/garrick-settings.json` already says: "Tell me when a new
      Garrick is out? It asks GitHub once a day and sends nothing about your
      workspace." Ask it once. A yes or a no is written as the `update`
@@ -225,7 +225,7 @@ than nothing: it looks like an answer.
 Only when the user says it: a server that holds the workspace and a laptop that keeps a copy, say. Ask which role
 this machine has, one question: **One computer** (everything happens here, and the default), **Home server** (holds
 the workspace that counts, runs the sessions and the jobs) or **Laptop copy** (a copy that only receives). Tell the
-user to set it in Garrick.app: Settings, *This machine*, *Change…*. The dialog says what changes on this computer and
+user to set it in Garrick.app: Settings, *About*, *This computer*, *Change…*. The dialog says what changes on this computer and
 asks for a yes, and a laptop copy asks for the server's name. Where there is no app, show the one command to run
 themselves, in a terminal, with their own values (the role names there are `solo`, `server` and `roaming`):
 

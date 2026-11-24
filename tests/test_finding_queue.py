@@ -1827,7 +1827,7 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
         js = fq.QUEUE_JS
         refuse = js[js.index("function refuse("):js.index("function open(")]
         self.assertIn("b.disabled=true", refuse)
-        self.assertIn("out(q,f.say,true)", refuse)
+        self.assertIn("failed(q,'finding',f.say)", refuse)          # #511: the plain sentence, the refusal under Details
         self.assertIn("[data-qskip]').hidden=false", refuse)
         self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
         self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place

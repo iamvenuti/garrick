@@ -218,6 +218,7 @@ __all__ = [
     "connector_patterns",
     "connector_skips",
     "tool_matches",
+    "service_name",
     "read_guard_dir",
     "connector_labels",
     "INSTRUCTION_FILES",
@@ -3797,6 +3798,21 @@ def tool_matches(patterns: Iterable[str], tool: str) -> bool:
     """Whether a tool name is on a list of shell-style patterns, matched without regard to case."""
     import fnmatch
     return any(fnmatch.fnmatchcase(tool.lower(), p.lower()) for p in patterns)
+
+
+def service_name(tool: str) -> str:
+    """The plain name of the connected service a tool name, or a pattern for one, belongs to (#683), as Settings shows it:
+    `mcp__claude_ai_Gmail__search_threads` is "Gmail", `mcp__*Google_Calendar*` is "Google Calendar". The `mcp__` before it,
+    a `claude_ai_` prefix, every `*` and `?`, and everything from the next `__` go; underscores become spaces. "" when
+    nothing is left, as for a pattern that is only wildcards."""
+    name = str(tool or "").strip()
+    if name.startswith("mcp__"):
+        name = name[len("mcp__"):]
+    name = name.replace("*", "").replace("?", "")
+    if name.startswith("claude_ai_"):
+        name = name[len("claude_ai_"):]
+    name = name.split("__", 1)[0]
+    return " ".join(name.replace("_", " ").split())
 
 
 def read_guard_dir() -> Path:

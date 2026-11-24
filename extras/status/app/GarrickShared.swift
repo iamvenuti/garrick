@@ -100,15 +100,27 @@ enum GarrickLink {
 	}
 }
 
-// A new session in the Claude or Codex desktop app (#652). The link comes from page_action.py's session-url,
+// A new session in the Claude or Codex desktop app (#652), the one row for each app since 0.80.0 (#682). The link
+// comes from page_action.py's session-url, or, for the menu, the panel and Finder, from GarrickSession.make(),
 // built from the folder the workspace holds; the app opens it only when it is the one its key allows, and
 // falls back when the app does not take it. No state, and no app is touched here: the opener, the app and
 // the clipboard are passed in, so a test stubs them.
 enum GarrickSession {
 	// The scheme, host, path and query names each key's link must have.
 	static let routes = [
-		"claude-new": (scheme: "claude", host: "code", path: "/new", names: ["folder", "q"]),
-		"codex-new": (scheme: "codex", host: "threads", path: "/new", names: ["path", "prompt"])]
+		"claude": (scheme: "claude", host: "code", path: "/new", names: ["folder", "q"]),
+		"codex": (scheme: "codex", host: "threads", path: "/new", names: ["path", "prompt"])]
+
+	// The link for a folder and a prompt, built as page_action.py's session_url() builds it: the key's scheme, host and
+	// path, its two query names, each value encoded. Nil for a key that has no route.
+	static func make(key: String, folder: String, prompt: String) -> URL? {
+		// Each value encoded here, every character but the unreserved ones, so a name with & = # ? cannot add a parameter
+		// whatever the Foundation of this Mac does with a query item.
+		let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+		guard let route = routes[key], let f = folder.addingPercentEncoding(withAllowedCharacters: unreserved),
+		      let p = prompt.addingPercentEncoding(withAllowedCharacters: unreserved) else { return nil }
+		return link(key: key, text: "\(route.scheme)://\(route.host)\(route.path)?\(route.names[0])=\(f)&\(route.names[1])=\(p)")
+	}
 
 	// The link, when its scheme, host and path are its key's own, its query names exactly that key's two, each once,
 	// and it carries nothing else; nil for anything else, a link to any other app, host or route included.

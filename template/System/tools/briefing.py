@@ -128,7 +128,9 @@ JUDGMENT = {
 PARKED, DONE = "parked", "done"
 EXIT_USAGE = 2
 
-DATED = re.compile(r"^\*\*(\d{1,2} [A-Za-z]+ \d{4}|\d{4}-\d\d-\d\d)\.?\*\*")
+# A dated entry opens with a bold date, whatever follows the date inside the bold (#684). history.py keeps its own
+# pattern, which needs no closing bold; tests/test_briefing.py holds both to one table of heading lines.
+DATED = re.compile(r"^\*\*(\d{1,2} [A-Za-z]+ \d{4}|\d{4}-\d\d-\d\d)\b[^*]*\*\*")
 ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*(.*?)\s*\|\s*$")
 MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
           "november", "december")
@@ -298,7 +300,8 @@ LINK_LINE = re.compile(r"^\*Older entries: .*\*$")
 
 
 def dated(lines: List[str]) -> List[dict]:
-    """The dated entries in `lines`, as written: each opens with `**27 September 2026.**` and runs to the next,
+    """The dated entries in `lines`, as written: each opens with a bold date, `**27 September 2026.**` or
+    `**27 September 2026: wrapped.**`, and runs to the next,
     or to a heading of the first two levels. The line that links a note's history files is no part of an entry."""
     out: List[dict] = []
     for line in lines:

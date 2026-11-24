@@ -130,6 +130,27 @@ class TestDisplayName(unittest.TestCase):
             self.assertIn(reason, why, name)
 
 
+class TestServiceName(unittest.TestCase):
+    """A connected service's plain name, from a tool name or a pattern for one (#683)."""
+
+    def test_from_a_tool_name(self):
+        for tool, name in (("mcp__claude_ai_Gmail__search_threads", "Gmail"), ("mcp__claude_ai_Weather__forecast", "Weather"),
+                           ("mcp__claude_ai_Google_Calendar__list_events", "Google Calendar"), ("mcp__acme_mail__search", "acme mail"),
+                           ("mcp__birch__list", "birch")):
+            self.assertEqual(name, lib.service_name(tool), tool)
+
+    def test_from_a_pattern_written_by_hand(self):
+        for pattern, name in (("mcp__*Gmail*", "Gmail"), ("mcp__*Mail*", "Mail"), ("mcp__weather__*", "weather"),
+                              ("mcp__claude_ai_Outlook__*", "Outlook"), ("mcp__*Google_Calendar*", "Google Calendar"),
+                              ("mcp__fake?mail__*", "fakemail"), ("mcp__Google_Chat__*", "Google Chat"),
+                              ("mcp__claude_ai_Google_Chat__*", "Google Chat")):
+            self.assertEqual(name, lib.service_name(pattern), pattern)
+
+    def test_nothing_left_is_empty(self):
+        for pattern in ("mcp__*", "*", "", "mcp__claude_ai_*"):
+            self.assertEqual("", lib.service_name(pattern), pattern)
+
+
 class TestSayable(unittest.TestCase):
     """Whether the writing says how the name is said, or it needs a `spoken` form."""
 

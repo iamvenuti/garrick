@@ -380,6 +380,15 @@ class TestTheDownload(ReleaseCase):
         self.assertEqual(["--update", str(self.root), "--apply", "--clean", "people"],
                          json.loads(self.record.read_text())["argv"])
 
+    def test_refresh_hooks_reaches_the_update_even_on_the_release_the_workspace_runs(self):
+        """#680: the kept hooks refresh is accepted with a flag, so an assistant's session can pass the user's yes."""
+        self.net(answers={"https://api.github.com": latest("v0.15.2"),
+                          "https://github.com/iamvenuti/garrick/archive/refs/tags/v0.15.2.zip": self.zip})
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(0, release.main(["--root", str(self.root), "update", "--apply", "--refresh-hooks"]))
+        self.assertEqual(["--update", str(self.root), "--apply", "--refresh-hooks"],
+                         json.loads(self.record.read_text())["argv"])
+
     def test_the_release_already_installed_is_up_to_date(self):
         self.net(answers={"https://api.github.com": latest("v0.15.2")})
         out = io.StringIO()
@@ -933,7 +942,7 @@ class TestTheButtonsVerbs(ReleaseCase):
         start = html.index('id="about-settings"')
         sec = html[start:html.index("</section>", start)]
         self.assertIn('id="rel-check">Check for updates</button>', sec)
-        self.assertIn("Check for a newer Garrick", sec)
+        self.assertIn("<span>Check for updates</span>", sec)                     # #681: one name for the check
         self.assertIn('<option value="7" selected>Weekly</option>', sec)
         self.assertIn('id="rel-on" checked', sec)
         self.assertIn("window.GarrickRelease", status.RELEASE_JS)

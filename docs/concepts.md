@@ -199,6 +199,10 @@ What "prep me for X" puts together before a meeting: the Meetings pages for that
 
 Each zone's one list of open actions, in Obsidian Tasks style. A line opens with its thread's link and ends with its dates: `📅` when it is due, or `#waiting` and `⏳` for the day to chase something you wait on. A thread note says where the work stands and is not a to-do list; the `todo` skill sweeps actions the records hold into the list's Inbox section and tidies the rest. The list holds actions, never records: a line is ticked as it was written, what came of it goes in the thread note's dated entry, and work that was never on the list gets no line. Lines ticked before today move to the zone's `archive/`, at the nightly sweep and at every wrap.
 
+### The morning brief
+
+One message after the nightly sweep that lists what needs you today across your zones, best first, in the order the band ranks its picks, so its first line is the band's first pick. It is the `morning-brief` event, the *Morning summary* notice, and it follows the switch of the morning Todo summary. It lists eight lines at most, then how many more each zone holds; a quiet day says "Nothing needs you today.", and a zone whose sweep did not finish says its list is as it stood. A line names the zone, the thread and what is due, as the band does, and never quotes a note or a meeting. `notifications.morning` in `System/garrick-settings.json` chooses it: `"all"` sends the one brief, `"each"` (or no key, as in a workspace made before 0.80.0) sends one Todo summary for each zone. Only a new workspace's setup writes `"all"`. A zone with a route of its own (`GARRICK_NOTIFY` or `GARRICK_NOTIFY_CMD` for the sweep, or an older file's per-zone choice) keeps its own summary and is never in the brief. See [Scheduled jobs](extras/scheduled-jobs.md).
+
 ## Instructions
 
 ### Garrick's rules, and yours
@@ -265,6 +269,10 @@ The folder the tools write their pages into, such as the Garrick App's page, Nur
 
 An optional hook for Claude Code and Codex. Before the assistant edits a file outside the project the session was opened in, it stops once so the assistant asks you. It is a reminder, not a gate, and a shell command that writes a file is not covered. See [the zone guard](../extras/hooks/README.md).
 
+### The guard hooks check
+
+The check that warns when a guard hook your assistant runs is not this release's ([#685](https://github.com/iamvenuti/garrick/issues/685)). It reads the assistants' settings for the zone guard and the read guard, and says when one runs another version's file, runs from inside the workspace, or names a path that does not exist, each with one step to fix it. It is quiet when no guard is registered, and the nightly run shows it like any other check. See [the guard hooks check](enforced.md#the-guard-hooks-check).
+
 ### The parked-thread hint
 
 An optional hook for Claude Code that adds one line to a session when your request may belong to a parked thread, since a parked thread's pointer is no longer in the memory index ([#664](https://github.com/iamvenuti/garrick/issues/664)). It names only threads the session may see: its own zone's, an open zone's, and any zone's from the workspace root. See [the parked-thread hint](../extras/hooks/README.md#the-parked-thread-hint).
@@ -297,7 +305,7 @@ The list the Garrick App's Overview opens on: every live piece of work, most rec
 
 ### Continue
 
-*Open in Claude* on a thread, and on a piece of work in Your work when Claude is the way you chose to open things. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
+The request that asks Claude where a piece of work stands and opens Claude's desktop app on that session; since 0.80.0 no button sends it, and *Claude* opens a new session instead. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
 
 ### The Guide
 

@@ -131,29 +131,30 @@ UNKNOWN = ("Garrick, version unknown: this workspace has no record of the copy i
 
 # --------------------------------------------------------------------------- where things are
 
+_FIND = None
+
+
+def finder():
+    """workspace_find.py, beside this file: where the workspace is, and the zone folders in it. It runs before any view model
+    exists and must work when the workspace's own tools are older than this page, so it is this extra's, not the core's
+    (#650): it ships in the same folder as this file and updates with it, and loads nothing from a folder before that
+    folder is known to be a workspace."""
+    global _FIND
+    if _FIND is None:
+        spec = importlib.util.spec_from_file_location("garrick_workspace_find", str(Path(__file__).with_name("workspace_find.py")))
+        _FIND = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FIND)
+    return _FIND
+
+
 def is_workspace(folder: Path) -> bool:
-    return (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir()
+    return finder().is_workspace(folder)
 
 
 def find_workspace(given: Optional[str]) -> Path:
-    """The folder named, or the one this runs in. A named folder must hold
-    System/rules.md and Zones/, so a mistyped path stops here instead of
-    gaining a System/generated/ of its own."""
-    for how, cand in (("--workspace", given), ("GARRICK_WORKSPACE", os.environ.get("GARRICK_WORKSPACE"))):
-        if cand:
-            folder = Path(cand).expanduser().resolve()
-            if not is_workspace(folder):
-                raise SystemExit("status: %s (from %s) is not a Garrick workspace: it has no System/rules.md "
-                                 "and Zones/ folder. Check the path." % (folder, how))
-            return folder
-    here = Path.cwd().resolve()
-    for folder in (here, *here.parents):
-        if is_workspace(folder):
-            return folder
-    for folder in (Path(__file__).resolve().parent, *Path(__file__).resolve().parents):
-        if is_workspace(folder):
-            return folder
-    raise SystemExit("status: no workspace found. Pass --workspace, set GARRICK_WORKSPACE, or run it from inside one.")
+    """The folder named, or the one this runs in. A named folder must hold System/rules.md and Zones/, so a mistyped path
+    stops here instead of gaining a System/generated/ of its own (workspace_find.py)."""
+    return finder().find_workspace(given)
 
 
 def load_agent(ws: Path):
@@ -308,12 +309,10 @@ def drifted(ws: Path) -> List[dict]:
     and when for one that drifted, and where its row leads: the thread's row
     on the Threads card for a file in a thread, else the project's (#323).
     `both` says drift.json names the two copies, for Show both."""
-    try:
-        data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    mod = app_reader()
+    data = mod.drift(ws) if mod is not None else {}       # the core reads the file (view_app.drift, #650)
     out = []
-    for f in data.get("files", []) if isinstance(data, dict) else []:
+    for f in data.get("files", []):
         if not (isinstance(f, dict) and f.get("state") in DRIFT_SAY):
             continue
         project, name = str(f.get("project") or "?"), str(f.get("file") or "")
@@ -346,11 +345,8 @@ def workspace_context(ws: Path) -> dict:
 
 def workspace_stamp(ws: Path) -> dict:
     """The installer's stamp, System/garrick-version.json, or {}."""
-    try:
-        stamp = json.loads(ws.joinpath("System", "garrick-version.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return stamp if isinstance(stamp, dict) else {}
+    mod = app_reader()
+    return mod.version_stamp(ws) if mod is not None else {}      # the core reads it (view_app.version_stamp, #650)
 
 
 def installed_version(ws: Path) -> str:
@@ -406,58 +402,11 @@ def release_ask(ws: Path) -> bool:
         return False
 
 
-def _value(raw: str):
-    """One frontmatter value for the fallback parser: a trailing comment
-    dropped, quotes taken off, [a, b] read as a list."""
-    quote = None
-    for i, ch in enumerate(raw):
-        if quote:
-            quote = None if ch == quote else quote
-        elif ch in "\"'":
-            quote = ch
-        elif ch == "#" and (i == 0 or raw[i - 1].isspace()):
-            raw = raw[:i]
-            break
-    raw = raw.strip()
-    if raw.startswith("[") and raw.endswith("]") and not raw.startswith("[["):
-        return [v.strip().strip("\"'") for v in raw[1:-1].split(",") if v.strip()]
-    return raw.strip("\"'")
-
-
 def frontmatter(path: Path, ws: Optional[Path] = None) -> dict:
-    """The note's frontmatter: the workspace's own parser (garrick_lib in
-    System/tools) when it is there, a small one otherwise that also drops
-    trailing comments and reads block lists. Only frontmatter is ever read
-    from a note here."""
-    lib = workspace_lib(ws)
-    if lib is not None:
-        try:
-            return lib.parse_frontmatter(path) or {}
-        except Exception:
-            pass
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
-    # Lines end where garrick_lib's parse_frontmatter_text ends them, as YAML
-    # does: at \n, \r\n or a lone \r, never at U+2028 and the like (#330).
-    lines = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if not lines or lines[0].strip() != "---":
-        return {}
-    out: dict = {}
-    key = None
-    for line in lines[1:]:
-        if line in ("---", "..."):             # a `---` alone at the margin closes it, as for YAML
-            break
-        item = re.match(r"^\s*-\s+(.*)$", line)
-        if item and key is not None:
-            out[key] = (out[key] if isinstance(out.get(key), list) else []) + [_value(item.group(1))]
-            continue
-        m = re.match(r"^([A-Za-z_][\w-]*)\s*:(.*)$", line)
-        key = m.group(1) if m else None
-        if m:
-            out[key] = _value(m.group(2))
-    return out
+    """The note's frontmatter: the workspace's own parser (garrick_lib in System/tools) when it is there, a small one
+    otherwise. The core reads the note (view.frontmatter, #650); no code of the page calls this, the frozen shadow tests
+    borrow it."""
+    return view_reader(ws).frontmatter(path, workspace_lib(ws))
 
 
 def as_text(value) -> str:
@@ -470,9 +419,7 @@ def as_text(value) -> str:
 
 
 def visible_dirs(folder: Path) -> List[Path]:
-    if not folder.is_dir():
-        return []
-    return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+    return finder().subfolders(folder)
 
 
 def tags(value) -> List[str]:
@@ -608,8 +555,10 @@ def view_model(ws: Path, only=None, today: Optional[dt.date] = None) -> Optional
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
         mod = view_reader(ws)
-        if not hasattr(mod, "PARTS"):    # a view.py from before 0.78.0, kept by an update that stopped half way
+        if not hasattr(mod, "PARTS") or not hasattr(mod, "jobs_reader") or not hasattr(mod, "app_reader"):    # a view.py from before 0.81.0, kept by an update that stopped half way
             raise FileNotFoundError("System/tools/view.py")
+        mod.app_reader()
+        mod.jobs_reader()                # a reader beside it that an update has not brought yet counts the same
         return mod.build(ws, only=only, today=today)
     except FileNotFoundError:
         return None
@@ -630,13 +579,13 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     if model is None:
         # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
-                            "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
+                            "hubs": [], "needs_update": True} for zone in finder().zone_folders(ws)}
     out = {}
     for z in model["zones"]:
         work = z["work"]
         out[z["name"]] = {"rows": [piece_row(ws, p) for p in work if p["shown"] == "row"],
                           "parked": [piece_row(ws, p) for p in work if p["shown"] == "parked"],
-                          "done": z["done"], "folder": ws / "Zones" / z["name"], "held": list(z["held"]),
+                          "done": z["done"], "folder": finder().zone_folder(ws, z["name"]), "held": list(z["held"]),
                           "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
                           "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
                                        for name, v in z["projects"].items()},
@@ -1215,12 +1164,15 @@ def forecast_items(ws: Path, day: dt.date) -> List[dict]:
     if N is None or not getattr(N, "REPORTS", None) or not callable(getattr(N, "debt_settings", None)) or not callable(getattr(N, "debt_scope", None)):
         return []
     try:
-        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        mod = app_reader()
+        rec = mod.nurture_report(ws, N.REPORTS, day) if mod is not None else None     # the core reads the record (view_app.nurture_report, #650)
+        if rec is None:
+            return []
         weights, _ = N.debt_settings(Path(ws))
     except (OSError, ValueError):
         return []
     out = []
-    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+    for f in rec.get("standing") or []:
         kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
         # a wall is on the card whatever its weight: the weight sets the debt figure, not whether a wall shows
         if kind and (kind == "wall" or weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1))):
@@ -1583,10 +1535,8 @@ def guide_tab(ws: Path) -> Tuple[str, str]:
     its links to Garrick's own files pointing at the release it runs. (The tab's body,
     the pages that wait at the end of the page until it opens.)"""
     gd = guide_mod()
-    try:
-        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
-    except OSError:
-        text = None
+    mod = app_reader()
+    text = mod.changelog(ws) if mod is not None else None        # the core reads the release notes (view_app.changelog, #650)
     ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
     body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
     return body, held
@@ -2803,12 +2753,13 @@ def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Op
     """What the last background run of Process the Inbox left for the page (#634): `running`, `done` or `failed`, with its one
     sentence and its figures for each place, never over two. None for none, for one over a day old, and for a `running` that no
     process holds the run's lock for any more (a run that died)."""
+    mod = app_reader()
+    data = mod.inbox_run(ws) if mod is not None else None     # the core reads the file (view_app.inbox_run, #650)
     try:
-        data = json.loads(ws.joinpath(*INBOX_STATE).read_text(encoding="utf-8"))
         at = dt.datetime.fromisoformat(str(data.get("at")))
-    except (OSError, ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError):
         return None
-    if not isinstance(data, dict) or data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
+    if data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
         return None
     if data["state"] == "running":
         try:
@@ -2869,10 +2820,13 @@ def kept_check(store: Path, ws: Path, now: dt.datetime) -> Optional[dict]:
     """The result a build kept in `store` for this workspace, of whatever age,
     marked `kept` and carrying `at`, when the check ran; None when there is
     none, or it cannot be read (#382)."""
+    mod = app_reader()
+    data = mod.kept_check(store) if mod is not None else None    # the core reads the kept file (view_app.kept_check, #650); this page writes it
+    if data is None:
+        return None
     try:
-        data = json.loads(store.read_text(encoding="utf-8"))
         at, result = float(data["at"]), data["result"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return None
     if data.get("workspace") != str(ws) or not isinstance(result, dict) or result.get("failed"):
         return None
@@ -3252,6 +3206,41 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             "op": {place: sorted(ks) for place, ks in opens.items()}}
 
 
+_SAID: set = set()
+
+
+def say_once(reader: str, error: Exception) -> None:
+    """One line on stderr, once per build per reader, when a core reader cannot be used for a reason other than a missing file:
+    a fixed sentence and the error's class, never a path or the error's own words. The page is unchanged."""
+    if reader not in _SAID:
+        _SAID.add(reader)
+        print("status: the %s reader of the core could not be used (%s); its cards are empty." % (reader, type(error).__name__), file=sys.stderr)
+
+
+def jobs_reader():
+    """view_jobs.py, the core's reader of the jobs folder and the launchd agents (#650), through view.py; None while the
+    workspace has no copy of it (a half-finished update: the page then says it needs updating, and these cards are empty)."""
+    try:
+        return view_reader(None, "jobs_reader").jobs_reader()
+    except FileNotFoundError:
+        return None                          # not there yet: the page says it needs updating
+    except Exception as e:
+        say_once("jobs", e)
+        return None
+
+
+def app_reader():
+    """view_app.py, the core's reader of the files the App keeps under System/ and of the check's kept result (#650), through
+    view.py; None while the workspace has no copy of it (a half-finished update: the page then says it needs updating)."""
+    try:
+        return view_reader(None, "app_reader").app_reader()
+    except FileNotFoundError:
+        return None                          # not there yet: the page says it needs updating
+    except Exception as e:
+        say_once("app", e)
+        return None
+
+
 def launch_agents() -> Path:
     return Path.home() / "Library" / "LaunchAgents"
 
@@ -3328,85 +3317,11 @@ RENAMED_FROM = "GARRICK_RENAMED_FROM"     # set in a renamed plist by update.py'
 
 
 def superseded(folder: Path, sched: Dict[str, dict]) -> Tuple[Dict[str, List[Tuple[str, float]]], set]:
-    """Garrick's jobs that run under a new name now (#275): new name ->
-    [(old name, cutoff)], the old names whose runs from before `cutoff`
-    (epoch seconds) are read under the new one, and the old names no longer
-    shown as a row of their own.
-
-    Only what is Garrick's moves. The old name is folded in only when the
-    new name's plist carries GARRICK_RENAMED_FROM naming it, which update.py's
-    commands write into a plist it found running Garrick's own script under
-    that name, or when a run under the new name recorded it (job.py's
-    `renamed_from`), and only while no plist runs the old name. The cutoff is
-    the first run under the new name (`renamed_at`), or before it the
-    renamed plist's last change: a run under the old name after it is not
-    Garrick's, and the old name keeps a row of its own while it has one. The
-    retired evening build, `status`, is hidden once the nightly is there (a
-    plist or a heartbeat), no plist runs `status`, and no `status` run has
-    finished since the nightly's first run; its runs are never the
-    nightly's. Nothing outside the jobs folder decides it, so deleting the
-    plist set aside as .retired changes nothing."""
-    earlier: Dict[str, List[Tuple[str, float]]] = {}
-    hidden = set()
-
-    def beat(name: str) -> dict:
-        try:
-            got = json.loads((folder / (name + ".heartbeat.json")).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return got if isinstance(got, dict) else {}
-
-    def finished(name: str) -> Optional[float]:
-        hb = beat(name)
-        if isinstance(hb.get("finished_ts"), (int, float)):
-            return float(hb["finished_ts"])
-        try:
-            return dt.datetime.strptime(str(hb.get("finished"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S").timestamp()
-        except ValueError:
-            return None
-
-    for old, new in RENAMED_JOBS.items():
-        if old in sched:
-            continue
-        hb = beat(new)
-        plist = sched.get(new) or {}
-        cutoff = None
-        if hb.get("renamed_from") == old and isinstance(hb.get("renamed_at"), (int, float)):
-            cutoff = float(hb["renamed_at"])
-        elif (plist.get("env") or {}).get(RENAMED_FROM) == old and plist.get("plist"):
-            try:
-                cutoff = Path(plist["plist"]).stat().st_mtime
-            except OSError:
-                cutoff = None
-        if cutoff is None:
-            continue
-        earlier.setdefault(new, []).append((old, cutoff))
-        last = finished(old)
-        if last is None or last < cutoff:
-            hidden.add(old)
-    def first_run(name: str) -> Optional[float]:
-        """When the job first ran, as far as its logs and heartbeat go back."""
-        hb = beat(name)
-        seen = [float(hb["renamed_at"])] if isinstance(hb.get("renamed_at"), (int, float)) else []
-        if finished(name) is not None:
-            seen.append(finished(name))
-        for path in (folder / (name + ".log.1"), folder / (name + ".log")):
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            m = next((LOGLINE.match(line) for line in text.splitlines() if LOGLINE.match(line)), None)
-            if m:
-                seen.append(dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp())
-        return min(seen) if seen else None
-
-    for old, new in RETIRED_JOBS.items():
-        if old in sched or not (new in sched or (folder / (new + ".heartbeat.json")).is_file()):
-            continue
-        first, last = first_run(new), finished(old)
-        if first is None or last is None or last < first:
-            hidden.add(old)
-    return earlier, hidden
+    """Garrick's jobs that run under a new name now (#275): new name -> [(old name, cutoff)], the old names whose runs from
+    before `cutoff` (epoch seconds) are read under the new one, and the old names no longer shown as a row of their own.
+    The core reads the jobs folder (view_jobs.superseded, #650), and says what it decides there; with no core reader, none."""
+    mod = jobs_reader()
+    return mod.superseded(folder, sched) if mod is not None else ({}, set())
 
 
 def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
@@ -3415,30 +3330,17 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
     (--agent), the environment it runs with, its label, and the line its
     GARRICK_ABOUT gives, empty when it gives none. Only plists that run job.py;
     anything else in the folder, or a plist that does not read, is passed
-    over. Elsewhere than macOS there are none, and schedules are unknown."""
+    over. Elsewhere than macOS there are none, and schedules are unknown.
+    The core reads the plists (view_jobs.agents, #650); what the schedule says in words and how long
+    before a run is late are this page's."""
+    mod = jobs_reader()
+    if mod is None:
+        return {}
     out: Dict[str, dict] = {}
-    folder = folder or launch_agents()
-    if not folder.is_dir():
-        return out
-    for plist in sorted(folder.glob("*.plist")):
-        try:
-            p = plistlib.loads(plist.read_bytes())
-        except Exception:
-            continue
-        args = p.get("ProgramArguments") if isinstance(p, dict) else None
-        if not isinstance(args, list):
-            continue
-        args = [str(a) for a in args]
-        at = next((i for i, a in enumerate(args) if a.endswith("job.py")), None)
-        if at is None or at + 1 >= len(args):
-            continue
-        flags = args[at + 2:]
-        flags = flags[:flags.index("--")] if "--" in flags else flags
-        env = p.get("EnvironmentVariables")
-        words, late = when(p)
-        env = env if isinstance(env, dict) else {}
-        out[args[at + 1]] = {"schedule": words, "late": late, "agent": "--agent" in flags, "env": env, "plist": plist,
-                             "label": str(p.get("Label") or plist.stem), "about": env["GARRICK_ABOUT"].strip() if isinstance(env.get("GARRICK_ABOUT"), str) else ""}
+    for name, a in mod.agents(folder or launch_agents()).items():
+        words, late = when(a["timing"])
+        out[name] = {"schedule": words, "late": late, "agent": a["agent"], "env": a["env"], "plist": Path(a["plist"]),
+                     "label": a["label"], "about": a["about"]}
     return out
 
 
@@ -3446,21 +3348,12 @@ def history(folder: Path, name: str, now: dt.datetime,
             earlier: Tuple[Tuple[str, float], ...] = ()) -> List[Tuple[dt.datetime, int, bool]]:
     """(when, exit, quiet) for each run the job's logs record in the last DAYS
     days, and those the logs of the names it ran under before record from
-    before each one's cutoff (superseded())."""
-    since = now - dt.timedelta(days=DAYS)
-    runs = []
-    for n, cutoff in (*earlier, (name, None)):
-        for path in (folder / (n + ".log.1"), folder / (n + ".log")):
-            if not path.is_file():
-                continue
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                m = LOGLINE.match(line)
-                if not m:
-                    continue
-                when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-                if when >= since and (cutoff is None or when.timestamp() < cutoff):
-                    runs.append((when, int(m.group(3)) if m.group(3) else 75, bool(m.group(5))))
-    return runs
+    before each one's cutoff (superseded()). The core reads the logs (view_jobs.runs)."""
+    mod = jobs_reader()
+    if mod is None:
+        return []
+    since = (now - dt.timedelta(days=DAYS)).isoformat()
+    return [(dt.datetime.strptime(w, "%Y-%m-%d %H:%M:%S"), c, q) for w, c, q in mod.runs(folder, name, since, earlier)]
 
 
 def quiet_exits(env: dict) -> Tuple[int, ...]:
@@ -3487,8 +3380,10 @@ def lock_held(lock: Path, now: dt.datetime) -> bool:
     whatever the time on it says, since that time runs on while a Mac
     sleeps. Without it, the record in `until`, "<until> <pid> [<started>]",
     holds until that time while its process lives, and a lock without a
-    record counts for three hours."""
-    if not lock.is_dir():
+    record counts for three hours. The core reads the lock (view_jobs.lock)."""
+    mod = jobs_reader()
+    seen = mod.lock(lock) if mod is not None else {"dir": False}
+    if not seen["dir"]:
         return False
     job = sys.modules.get("job")
     if job is not None and hasattr(job, "holder"):
@@ -3497,15 +3392,14 @@ def lock_held(lock: Path, now: dt.datetime) -> bool:
         except Exception:
             pass
     try:
-        words = (lock / "until").read_text(encoding="utf-8").split()
+        if seen["until"] is None:
+            raise OSError
+        words = seen["until"].split()
         if now.timestamp() >= float(words[0]):
             return False
         return pid_alive(int(words[1])) if len(words) > 1 and words[1].isdigit() else True
     except (OSError, ValueError, IndexError):
-        try:
-            return now.timestamp() - lock.stat().st_mtime < 3 * 3600
-        except OSError:
-            return False
+        return seen["mtime"] is not None and now.timestamp() - seen["mtime"] < 3 * 3600
 
 
 def idle_limit(env: dict) -> float:
@@ -3555,14 +3449,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     sched = launchd_jobs() if sched is None else sched
     earlier, hidden = superseded(folder, sched) if folder.is_dir() else ({}, set())
     beats: Dict[str, Tuple[dict, Optional[dt.datetime]]] = {}
-    for beat in sorted(folder.glob("*.heartbeat.json")) if folder.is_dir() else []:
-        try:
-            hb = json.loads(beat.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(hb, dict):
-            continue
-        name = hb.get("job") or beat.name[:-len(".heartbeat.json")]
+    for found in (jobs_reader().heartbeats(folder) if jobs_reader() is not None else []):
+        hb, name = found["heartbeat"], found["name"]
         when = None
         try:
             when = dt.datetime.strptime(str(hb.get("finished"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
@@ -3672,12 +3560,10 @@ def steps_now(folder: Path, name: str) -> Optional[List[dict]]:
     """The steps a run still going has reported so far (job.py's
     `<name>.steps.json`, which the nightly job writes after each step), or
     None. The nightly rebuilds this page as its last step, before its
-    heartbeat is written, so this is how a step that failed tonight shows."""
-    try:
-        data = json.loads((folder / (name + ".steps.json")).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else None
+    heartbeat is written, so this is how a step that failed tonight shows.
+    The core reads it (view_jobs.steps_now)."""
+    mod = jobs_reader()
+    return mod.steps_now(folder, name) if mod is not None else None
 
 
 def failed_steps(steps: Optional[List[dict]]) -> str:
@@ -3688,11 +3574,9 @@ def failed_steps(steps: Optional[List[dict]]) -> str:
 
 def job_log(folder: Path, name: str, earlier: Tuple[Tuple[str, float], ...] = ()) -> Path:
     """The job's log; before a renamed job's first run under its new name,
-    the log it left under the newest of its old ones."""
-    for n in (name, *(o for o, _ in reversed(earlier))):
-        if (folder / (n + ".log")).is_file():
-            return folder / (n + ".log")
-    return folder / (name + ".log")
+    the log it left under the newest of its old ones (view_jobs.log_name)."""
+    mod = jobs_reader()
+    return folder / (mod.log_name(folder, name, earlier) if mod is not None else name + ".log")
 
 
 def plist_facts(plist: Optional[dict], name: Optional[str] = None) -> dict:
@@ -3707,18 +3591,9 @@ def plist_facts(plist: Optional[dict], name: Optional[str] = None) -> dict:
 
 def log_tail(path: Path, lines: int = 30, width: int = 300) -> List[str]:
     """The last lines of a job's log, read from its end, each cut to `width`
-    characters; none when there is no log. A read that starts mid-file drops
-    its first line, which is likely a part of one."""
-    try:
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            start = max(0, f.tell() - 64 * 1024)
-            f.seek(start)
-            text = f.read().decode("utf-8", errors="replace")
-    except OSError:
-        return []
-    got = text.splitlines()[1 if start else 0:]
-    return [line[:width] for line in got[-lines:]]
+    characters; none when there is no log (view_jobs.log_tail)."""
+    mod = jobs_reader()
+    return mod.log_tail(path, lines, width) if mod is not None else []
 
 
 # A job's name opens its panel below its row, and closes it again (#273).
@@ -7632,20 +7507,16 @@ def short_day(day) -> str:
 def followup_records(z: dict) -> Dict[str, dict]:
     """The zone's follow-up records by line key; {} when there are none or the file does not read."""
     folder = Path(z["file"]).parent if z.get("file") else None
-    try:
-        found = json.loads((folder / ".todo-followups.json").read_text(encoding="utf-8")) if folder else {}
-    except (OSError, ValueError):
-        return {}
-    return {k: v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+    mod = app_reader()
+    found = mod.follow_ups(folder) if folder and mod is not None else {}      # the core reads the file (view_app.follow_ups, #650)
+    return {k: v for k, v in found.items() if isinstance(v, dict)}
 
 
 def chase_days_of(ws: Path, zone: str) -> int:
     """Days *Still waiting* and *Give it a week* move a chase day on: `todo-chase-days` of the check settings, a week
     when it is 0 or not set, so a button always moves the day."""
-    try:
-        value = json.loads((ws / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get("todo-chase-days")
-    except (OSError, ValueError, AttributeError):
-        return 7
+    mod = app_reader()
+    value = (mod.check_settings(ws) if mod is not None else {}).get("todo-chase-days")      # the core reads it (view_app.check_settings, #650)
     value = value.get(zone) if isinstance(value, dict) else value
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 7
 
@@ -8326,6 +8197,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     waiting_rows()); without it the Overview's card is empty, so a build never
     reads this Mac's transcripts by itself."""
     now = now or dt.datetime.now()
+    _SAID.clear()
     _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it

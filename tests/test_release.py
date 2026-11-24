@@ -674,7 +674,7 @@ class TestNoScheduledPathUpdates(unittest.TestCase):
 
     def test_the_page_build_asks_and_never_updates(self):
         text = STATUS.read_text(encoding="utf-8")
-        body = text[text.index("def release_ask("):text.index("def _value(")]
+        body = text[text.index("def release_ask("):text.index("def frontmatter(")]
         self.assertIn('"latest", "--background"', body)
         self.assertNotIn("update", body.replace("updat", "", 0).split('"""', 2)[2])
 

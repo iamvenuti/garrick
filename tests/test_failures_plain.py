@@ -81,12 +81,14 @@ LIST = {
     "commit-files": ("Waiting on you now, Commit these: status.py COMMIT_JS, page_action.py commit-files", "TestThePanels"),
     "commit-undo": ("Waiting on you now, Undo after a commit: status.py COMMIT_JS, page_action.py commit-files", "TestThePanels"),
     "chase": ("Waiting on you now, Follow-ups: status.py FOLLOWUP_JS, page_action.py chase", "TestThePanels"),
+    "undo": ("Undo of a bounded answer or of Leave it as it is, in the Context queue: finding_queue.py QUEUE_JS undone(), showLast()",
+             "TestTheUndoLine"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
 PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow", "commit-files",
-          "commit-undo", "chase")
+          "commit-undo", "chase", "undo")
 
 # A row whose producer arrives with another branch of the same release: {code: the function that raises it}. Until that
 # function is in page_action.py the row needs no producer; once it is (on the release merge), it needs one like any row.
@@ -361,7 +363,7 @@ class TestThePanels(unittest.TestCase):
         self.assertIn("if(/^A wall holds /.test(raw)){el.textContent=raw;el.setAttribute('data-failure','wall');return el}", fn)
 
     def test_a_row_that_writes_never_offers_a_second_try(self):
-        for code in ("release-update", "finding", "walls-allow", "commit-files", "commit-undo", "chase"):
+        for code in ("release-update", "finding", "walls-allow", "commit-files", "commit-undo", "chase", "undo"):
             self.assertNotEqual("retry", next(r for r in pa.FAILURES if r[0] == code)[3], code)
 
 
@@ -446,6 +448,115 @@ class TestTheDrawingRuns(unittest.TestCase):
                     self.assertIsNone(self.draw(code, "tool words", False)["button"])     # no way to try again: no Try again
                 else:
                     self.assertIsNone(self.draw(code, "", True)["button"])                # nothing to show: no Show why
+
+
+QUEUE = (STATUS / "finding_queue.py").read_text(encoding="utf-8").split('QUEUE_JS = r"""', 1)[1].split('\n"""', 1)[0]
+UNDO_HARNESS = r"""
+const vm=require('vm');const [work,queue,res,stored]=JSON.parse(process.argv[1]);
+const c={};vm.createContext(c);vm.runInContext(DOM+work,c);
+const pick=function(a,b){return queue.slice(queue.indexOf(a),queue.indexOf(b))};
+vm.runInContext("var GarrickFail=window.GarrickFail;var store=null,cur={dataset:{scope:'s'},querySelector:function(){return box}},box=new E('div');"
++"function all(){return[{querySelector:function(){return box}}]}function hand(){return store?JSON.parse(store):{items:{}}}function putHand(o){store=JSON.stringify(o)}"
++pick("var UNDONE=","function clearLast(){")
++pick("function showLast(){","function setLast(")
++"function done(res){var o=hand();var u=undone(res);o.last.text=u.text;if(u.fail)o.last.fail=u.fail;else delete o.last.fail;o.last.undo=null;putHand(o);showLast()}",c);
+vm.runInContext("store="+JSON.stringify(JSON.stringify(stored))+";"+(res==="__stored__"?"showLast()":"done("+JSON.stringify(res)+")")+";",c);
+const out=vm.runInContext("(function(){var b=box.querySelector('button'),d=box.querySelector('details');"
++"var r={text:box.textContent,failure:box.querySelector('span')&&box.children[0].getAttribute('data-failure'),button:b?b.textContent:null,"
++"details:d?d.children[1].textContent:null,open:d?d.open:null,kept:store};"
++"showLast();r.again=box.textContent;r.againDetails=box.querySelector('details')?box.querySelector('details').children[1].textContent:null;"
++"return JSON.stringify(r)})()",c);
+console.log(out);
+""".replace("DOM", json.dumps(DOM))
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTheUndoLine(unittest.TestCase):
+    """#511's last row: the Context queue's Undo line says one plain sentence and one next step; the reply's text is under Details,
+    closed, and the line keeps its sentence after the page is rebuilt."""
+
+    STORED = {"items": {}, "last": {"scope": "s", "text": "Shortened.", "undo": {"verb": "finding"}, "t": 4102444800000}}
+
+    def run_undo(self, res, stored=None):
+        from test_status import status       # noqa: E402
+        r = subprocess.run(["node", "-e", UNDO_HARNESS, json.dumps([status.WORK_JS, QUEUE, res, stored or self.STORED])],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_a_refused_undo_says_one_sentence_and_keeps_the_replys_text_under_details_closed(self):
+        raw = "git revert failed in /Users/x/Zones/Acme: Traceback exit 1"
+        got = self.run_undo({"ok": False, "say": raw})
+        self.assertEqual("undo", got["failure"])
+        self.assertTrue(got["text"].startswith(pa.plain_failure("undo")["say"]))
+        self.assertEqual(raw, got["details"])
+        self.assertFalse(got["open"])
+        self.assertEqual("Show why", got["button"])
+        self.assertNotRegex(got["text"].replace(raw, ""), RAW)
+        self.assertNotIn("Undone", got["text"])
+
+    def test_no_reply_and_an_unknown_outcome_never_show_as_undone(self):
+        for res in (None, {}, {"ok": False}, {"ok": True, "plain": {"code": "unrecorded"}}, {"ok": False, "plain": {"code": "unknown"}},
+                    {"ok": False, "plain": {"code": "lost"}}):
+            with self.subTest(res=res):
+                got = self.run_undo(res)
+                self.assertRegex(got["text"], r"^(The change was not undone|We cannot tell whether this went through|This page did not hear back|Garrick could not confirm)")
+                self.assertNotRegex(got["text"], r"^Undone")
+
+    def test_an_unconfirmed_undo_says_we_cannot_tell(self):
+        got = self.run_undo({"ok": True, "say": "Undone: the page is as it was.", "plain": {"code": "unrecorded"}})
+        self.assertEqual("unrecorded", got["failure"])
+        self.assertTrue(got["text"].startswith(pa.plain_failure("unrecorded")["say"]))
+
+    def test_a_successful_undo_keeps_its_fixed_words_and_never_a_reply_that_is_not_one_of_them(self):
+        for say in ("Undone: the page is as it was.", "Undone. Garrick asks again when the page is built.", "It was not left as it is."):
+            got = self.run_undo({"ok": True, "say": say})
+            self.assertEqual(say, got["text"])
+            self.assertIsNone(got["failure"])
+        got = self.run_undo({"ok": True, "say": "Reverted a19f3c80 in /Users/x/Zones/Acme with git"})
+        self.assertEqual("Undone.", got["text"])
+        self.assertNotIn("/Users", got["kept"])
+
+    def test_the_failed_line_keeps_its_sentence_after_a_rebuild_and_an_old_stored_line_still_shows(self):
+        got = self.run_undo({"ok": False, "say": "the hook refused"})
+        self.assertEqual(got["text"], got["again"])
+        self.assertEqual("the hook refused", got["againDetails"])
+        old = {"items": {}, "last": {"scope": "s", "text": "Undone: the page is as it was.", "undo": None, "t": 4102444800000}}
+        self.assertEqual("Undone: the page is as it was.", self.run_undo({"ok": True, "say": "Undone: the page is as it was."}, old)["again"])
+
+    def test_a_forged_stored_line_draws_only_the_undo_rows_and_at_most_600_characters(self):
+        forged = {"items": {}, "last": {"scope": "s", "text": "x", "undo": None, "t": 4102444800000,
+                                        "fail": {"code": "commit-undo", "raw": "r" * 5000}}}
+        got = self.draw_stored(forged)
+        self.assertEqual("undo", got["failure"])
+        self.assertTrue(got["text"].startswith(pa.plain_failure("undo")["say"]))
+        self.assertEqual(600, len(got["details"]))
+
+    def test_a_stored_fail_that_is_not_an_object_with_a_code_does_not_break_the_line(self):
+        for fail in (["undo"], "undo", {"raw": "why"}, {"code": 5}, 7, {}):
+            with self.subTest(fail=fail):
+                line = {"items": {}, "last": {"scope": "s", "text": "kept", "undo": None, "t": 4102444800000, "fail": fail}}
+                got = self.draw_stored(line)
+                self.assertTrue(got["text"])
+                self.assertIn(got["failure"], (None, "undo"))
+
+    def draw_stored(self, stored):
+        """The line as showLast draws it from a stored line, with no new reply."""
+        from test_status import status       # noqa: E402
+        r = subprocess.run(["node", "-e", UNDO_HARNESS, json.dumps([status.WORK_JS, QUEUE, "__stored__", stored])],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_the_script_sets_text_only_as_text(self):
+        fn = QUEUE.split("function undone(res)", 1)[1].split("function clearLast", 1)[0]
+        self.assertNotIn("innerHTML", fn)
+        self.assertNotIn("o.last.text=(res&&res.say)", QUEUE)
+        self.assertNotIn("innerHTML", QUEUE.split("function showLast()", 1)[1].split("function setLast", 1)[0])
+
+    def test_the_undo_row_offers_show_why_and_no_second_try(self):
+        row = next(r for r in pa.FAILURES if r[0] == "undo")
+        self.assertEqual(("The change was not undone.", "Show why", "why"), row[1:4])
 
 
 class TestSettingsRows(unittest.TestCase):

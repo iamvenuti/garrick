@@ -1374,11 +1374,19 @@ function isHanded(q){var k=handKey(q);return!!k&&!!hand().items[k]}
 function remember(q){var k=handKey(q);if(!k)return;var o=hand();o.items[k]=Date.now();putHand(o)}
 function showLast(){all().forEach(function(s){var b=s.querySelector('.qlast');if(b){b.textContent='';b.hidden=true}});
 var l=hand().last;if(!l||!cur||l.scope!==cur.dataset.scope)return;var b=cur.querySelector('.qlast');if(!b)return;
-var t=document.createElement('span');t.textContent=l.text;b.appendChild(t);
+var t=document.createElement('span');if(l.fail&&typeof l.fail==='object'&&!Array.isArray(l.fail)&&window.GarrickFail)GarrickFail(t,/^(undo|unknown|lost|unrecorded)$/.test(l.fail.code)?l.fail.code:'undo',String(l.fail.raw||'').slice(0,600));else t.textContent=String(l.text||'');b.appendChild(t);
 if(l.undo){var u=document.createElement('button');u.type='button';u.className='act';u.setAttribute('data-qundo','1');u.textContent='Undo';b.appendChild(u)}
 if(l.show){var w=document.createElement('button');w.type='button';w.className='act';w.setAttribute('data-qshow','1');w.textContent='Show me';b.appendChild(w)}
 b.hidden=false}
 function setLast(text,extra){var o=hand();o.last=Object.assign({scope:cur&&cur.dataset.scope,text:text,t:Date.now()},extra||{});putHand(o);showLast()}
+/* What an Undo came to (#511): a reply that is ok, with nothing of the record against it, says one of three fixed sentences or plain "Undone."
+   (never the reply's own text); any other reply is a failure, drawn as the row "undo" with the reply's text only under Details. A line kept by
+   an older page has no `fail` and shows its text as it was. */
+var UNDONE=['Undone: the page is as it was.','Undone. Garrick asks again when the page is built.','It was not left as it is.'];
+function undone(res){var raw=String((res&&res.say)||'').slice(0,600);
+if(res&&res.ok&&!res.plain)return{text:UNDONE.indexOf(raw)>=0?raw:'Undone.',fail:null};
+var c=res&&res.plain&&/^(unknown|lost|unrecorded)$/.test(res.plain.code)?res.plain.code:'undo';
+return{text:c==='undo'?'The change was not undone.':'We cannot tell whether this was undone.',fail:{code:c,raw:raw}}}
 function clearLast(){var o=hand();if(o.last){delete o.last;putHand(o)}showLast()}
 /* the engine runs a bounded edit in the background in the app, when Ask is not switched off; a browser has no bridge */
 function boundedOK(){var a=window.GarrickApp||{};return!!host&&a.ask!==false}
@@ -1531,7 +1539,7 @@ dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
-if(q&&q.verb==='finding'&&(q.answer==='undo-bounded'||/^unkeep/.test(q.answer||''))){var o=hand();if(o.last){o.last.text=(res&&res.say)||(res&&res.ok?'Undone.':'That did not work.');o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
+if(q&&q.verb==='finding'&&(q.answer==='undo-bounded'||/^unkeep/.test(q.answer||''))){var o=hand();if(o.last){var u=undone(res);o.last.text=u.text;if(u.fail)o.last.fail=u.fail;else delete o.last.fail;o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
 var job=null,jsc=null;if(q&&q.verb==='finding')Object.keys(chain).forEach(function(k){var c=chain[k];if(!job&&c.on&&c.on.req.kind===q.kind&&c.on.req.path===q.path&&c.on.req.answer===q.answer){job=c.on;jsc=k}});
 if(job){chain[jsc].on=null;delete busy[job.key];var same=cur&&cur.dataset.scope===jsc,jel=all().filter(function(x){return x.dataset.scope===jsc})[0],
 je=jel&&qs(jel).filter(function(x){return x.dataset.gk===job.key})[0];

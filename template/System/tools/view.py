@@ -88,9 +88,9 @@ two together. `build(root, scope=["Work"])` holds the records of those zones alo
 wiki. A zone folder that is a link is no zone, and an Inbox or a note that resolves outside
 the zone it sits in is left out, so a link into another zone shows none of that zone's work.
 
-`left` names what the page reads for itself because no core module owns it yet: the jobs
-folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, and the waiting sessions. The settings are read by `view_settings.py` (`settings()` below), not part of
+`left` names what the page reads for itself because no core module owns it yet: the waiting sessions. The App's own files under `System/` and the check's kept result are read by `view_app.py` (`app_reader()`
+below). The jobs folder and this Mac's launchd agents are read by `view_jobs.py` (`jobs_reader()` below), not part of
+`build()`: they are this Mac's. The settings are read by `view_settings.py` (`settings()` below), not part of
 `build()`: Settings is the page's own and names every zone's walled flag.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
@@ -114,8 +114,7 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 # Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
-LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions")
+LEFT = ("waiting sessions",)
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
 PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example", "graph")
@@ -1004,6 +1003,69 @@ def settings(root, extras=None, jobs=None, only=None) -> dict:
     the channels, the read guard, the preview flags, this computer's role. `extras` is the status extra's folder, `jobs`
     this Mac's launchd agents as the page reads them, `only` the parts to read. Reads; never writes."""
     return _settings().read(root, extras, jobs, only)
+
+
+def _fm_value(raw: str):
+    """One frontmatter value for the small parser: a trailing comment
+    dropped, quotes taken off, [a, b] read as a list."""
+    quote = None
+    for i, ch in enumerate(raw):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or raw[i - 1].isspace()):
+            raw = raw[:i]
+            break
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]") and not raw.startswith("[["):
+        return [v.strip().strip("\"'") for v in raw[1:-1].split(",") if v.strip()]
+    return raw.strip("\"'")
+
+
+def frontmatter(path: Path, lib=None) -> dict:
+    """The note's frontmatter, as the page's own helper read it before 0.81.0 (#650): `lib.parse_frontmatter` (the workspace's own
+    garrick_lib) when one is given, a small parser otherwise that also drops trailing comments and reads block lists.
+    Only the frontmatter is ever read from a note here. {} where the note does not read."""
+    if lib is not None:
+        try:
+            return lib.parse_frontmatter(path) or {}
+        except Exception:
+            pass
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    # Lines end where garrick_lib's parse_frontmatter_text ends them, as YAML
+    # does: at \n, \r\n or a lone \r, never at U+2028 and the like (#330).
+    lines = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict = {}
+    key = None
+    for line in lines[1:]:
+        if line in ("---", "..."):             # a `---` alone at the margin closes it, as for YAML
+            break
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and key is not None:
+            out[key] = (out[key] if isinstance(out.get(key), list) else []) + [_fm_value(item.group(1))]
+            continue
+        m = re.match(r"^([A-Za-z_][\w-]*)\s*:(.*)$", line)
+        key = m.group(1) if m else None
+        if m:
+            out[key] = _fm_value(m.group(2))
+    return out
+
+
+def jobs_reader():
+    """The reader of the jobs folder and this Mac's launchd agents (`view_jobs`). Not part of `build()`: they are this Mac's."""
+    return _sibling("view_jobs.py", "garrick_view_jobs")
+
+
+def app_reader():
+    """The reader of the files the App keeps under `System/` and of the check's kept result (`view_app`). Not part of `build()`:
+    they name every zone, or are this Mac's."""
+    return _sibling("view_app.py", "garrick_view_app")
 
 
 def main(argv=None) -> int:

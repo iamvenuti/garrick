@@ -186,6 +186,16 @@ ALWAYS_FULL_NAMES = {"garrick_lib.py"}
 RUNNER_LOST = "not acquired by runner"
 # The jobs of tests.yml that run no tests.
 NOT_TEST_JOBS = {"Plan", "Tests", "Rerun a lost runner"}
+# viewmodel-0810 (#650): the jobs folder and the launchd agents have a reader in the core.
+for _key, _mods in (("template/System/tools/view_jobs.py", ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_jobs"]),
+                    ("tests/test_view_rest.py", ["test_view_rest"]),
+                    ("tests/old_status_reads_0800.py", ["test_view_rest"])):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+for _key in ("template/System/tools/view.py", "extras/status/status.py", "docs/architecture.md"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_view_rest"]
+TOUCH_MAP["extras/status/workspace_find.py"] = ["test_view_rest", "test_status", "test_status_find", "test_status_finder", "test_threads_card"]
+TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_status_work",
+                                                 "test_overview_work", "test_context_card", "test_inbox_run", "test_finding_queue"]
 
 
 def touched(files, names=None):

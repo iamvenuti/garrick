@@ -27,7 +27,8 @@ and says so, when that one failed:
               Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653). The
               tables have a Learned column that the older rows do not fill, so those rows are one cell short:
               each is padded in names.md to the header's cells (#663)
-    hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of the previous release:
+    hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of an earlier release (the newest of the ten tags
+              from the previous one back whose guard files differ; the install is the previous release's):
               the update report names the guard as another version's and offers to refresh the kept hooks; with stdin
               closed and no flag nothing is copied and the flag is named, and with --refresh-hooks and stdin closed
               the folder holds this release's hook files and the settings are unchanged (#670, #672, #680)
@@ -614,15 +615,49 @@ class Run:
         s.note("a v0.76.0 workspace with %d People and Aliases rows: the update alone moved none; after --names --apply names.md holds all %d once, "
                "context.md holds none and is %d characters; check.py is clean" % (len(before), len(in_names), size))
 
+    HOOK_NAMES = ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
+    KEPT_WALK = 10          # how many release tags, newest first from the previous one, the search for a kept download looks at
+
+    def kept_source(self, start):
+        """The release the kept download of the hooks step comes from: the newest of the KEPT_WALK release tags from `start` back
+        whose hook files differ from the candidate's, one with a differing zone_guard.py or read_guard.py first (so the report's
+        first form is still tested), else one where any of the five differs. A tag that lacks one of the five files is passed
+        over, since the step reads all five. Fails when none differs, as it did when the previous release's files equalled the
+        candidate's."""
+        r = sh(["git", "tag", "--list", "v[0-9]*", "--sort=-version:refname"], cwd=REPO, check=False)
+        tags = r.stdout.split()
+        if start not in tags:
+            raise Skip("tag %s is not in this clone (fetch the tags)" % start)
+        walk, any_differs = tags[tags.index(start):][:self.KEPT_WALK], None
+        for tag in walk:
+            files = {}
+            for n in self.HOOK_NAMES:
+                g = sh(["git", "show", "%s:extras/hooks/%s" % (tag, n)], cwd=REPO, check=False)
+                if g.returncode != 0:
+                    break
+                files[n] = g.stdout
+            if len(files) != len(self.HOOK_NAMES):
+                continue
+            differ = [n for n in self.HOOK_NAMES if files[n] != (self.cand / "extras" / "hooks" / n).read_text(encoding="utf-8")]
+            if any(n.endswith("_guard.py") for n in differ):
+                return tag
+            if differ and any_differs is None:
+                any_differs = tag
+        if any_differs:
+            return any_differs
+        raise Fail("none of the %d newest release hook folders from %s differs from the candidate's: there is nothing to refresh"
+                   % (len(walk), start))
+
     def step_hooks(self, s):
-        """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download of the previous release
-        kept in the home folder. The update's report names each guard that differs and offers the refresh; an apply with nobody
+        """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download kept in the home folder, of the
+        release `kept_source` picks. The update's report names each guard that differs and offers the refresh; an apply with nobody
         to ask copies nothing and names `--refresh-hooks`; an apply with the flag and stdin closed copies Garrick's own hook
         files (#680), and the settings file is the same bytes afterwards."""
         tag = self.previous_tag()
         old = self.tag_tree(tag, "hooks-previous")
+        source = self.kept_source(tag)
         kept = self.home / "kept-garrick"
-        shutil.copytree(old / "extras" / "hooks", kept / "extras" / "hooks")
+        shutil.copytree(self.tag_tree(source, "hooks-kept") / "extras" / "hooks", kept / "extras" / "hooks")
         target = self.tmp / "hooks-ws"
         sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
            env=self.env, cwd=old, timeout=900)
@@ -665,10 +700,10 @@ class Run:
                 raise Fail("%s in the kept folder is not this release's after the refresh" % n)
         if settings.read_bytes() != before:
             raise Fail("the refresh changed the assistant's settings")
-        s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s: the report names %s as "
+        s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s (the install is %s): the report names %s as "
                "another version's and offers the refresh; with stdin closed and no flag nothing was copied and the flag was named; with "
                "--refresh-hooks and stdin closed %d hook file(s) match "
-               "this release and the settings are unchanged" % (tag, ", ".join(n for n in differing if n.endswith("_guard.py")) or "no guard (another hook file differs)",
+               "this release and the settings are unchanged" % (source, tag, ", ".join(n for n in differing if n.endswith("_guard.py")) or "no guard (another hook file differs)",
                        len(differing)))
 
     # The last release whose install writes no `morning` key (0.80.0's install writes "morning": "all"), so the case is one

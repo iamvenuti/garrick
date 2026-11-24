@@ -159,6 +159,15 @@ class EnvironmentTest(unittest.TestCase):
         self.assertIn("MORNINGS_FROM", body)
         self.assertNotIn("previous_tag", body)
 
+    def test_the_hooks_step_keeps_a_download_of_a_release_whose_hooks_differ(self):
+        """#672, #680: the kept download comes from `kept_source`, not the previous release, whose hooks may equal the candidate's."""
+        self.assertIn("kept_source", acceptance.Run.step_hooks.__code__.co_names)
+        self.assertEqual(10, acceptance.Run.KEPT_WALK)
+        r = acceptance.Run.__new__(acceptance.Run)
+        r.cand = REPO / "template" / "nowhere"
+        with self.assertRaises(acceptance.Skip):
+            r.kept_source("v0.0.0-not-a-tag")
+
     def test_a_step_that_is_not_one_is_refused(self):
         r = run_acceptance("--steps", "install,nonsense")
         self.assertEqual(r.returncode, 2, r.stdout)

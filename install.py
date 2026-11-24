@@ -634,14 +634,15 @@ def allowlist_files(root, zones):
              recorded: json.dumps(ours, indent=2) + "\n"}, rules, added)
 
 
-def first_settings(root):
+def first_settings(root, new=True):
     """The workspace's settings file as a new workspace starts it: what is there (the commands allowed, with
-    --force whatever was kept), with one morning summary for all zones under "notifications" when nothing
-    there says otherwise."""
+    --force whatever was kept), with one morning summary for all zones under "notifications" when the file
+    is new to this install (`new`) and nothing there says otherwise. A file that was there before the
+    install, as with --force over a workspace, never gains the key: that workspace keeps one for each zone."""
     pl = lib()
     recorded = "/".join(pl.SETTINGS)
     ours = read_json_file(Path(root) / recorded, recorded)
-    if "notifications" not in ours:
+    if new and "notifications" not in ours:
         ours["notifications"] = {"morning": "all"}
     return json.dumps(ours, indent=2) + "\n"
 
@@ -746,6 +747,9 @@ def install(cfg, target, force=False, quiet=False):
         raise InstallError("The setup has problems:\n  - " + "\n  - ".join(problems))
     check_git()
     root = check_target(Path(target), force=force)
+    # Whether this is a new workspace's settings file (#686): only one that did not exist before the
+    # install gets one morning summary for all zones. --force over a workspace keeps what it had.
+    settings_were_there = root.joinpath(*pl.SETTINGS).exists()
     w = Writer(root)
     w.mkdir(root)
 
@@ -807,7 +811,7 @@ def install(cfg, target, force=False, quiet=False):
     # A workspace made now gets one morning summary for all its zones (#686). An update never writes
     # this, so a workspace made before keeps one for each zone; a settings file that already holds
     # notification choices, as with --force over a workspace, is left as it is.
-    w.write(root.joinpath(*pl.SETTINGS), first_settings(root))
+    w.write(root.joinpath(*pl.SETTINGS), first_settings(root, new=not settings_were_there))
 
     # A workspace made now gets the Garrick App's page itself (#208): the extra in System/status, committed
     # and fingerprinted with the rest, as an update finds one copied in by hand.

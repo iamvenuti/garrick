@@ -471,25 +471,18 @@ class TestShadowManageData(Case):
         self.assertEqual(view.mixed_papers(folder), status.mixed_papers(folder))
 
 
-# What status.py still reads from the folders for itself, by function, and why. The acceptance line "status.py has no
-# direct read of Zones/, Wikis/ or a thread note" is met except for what is named here: the page's own guard for a
-# half-finished update (`threads`, and `visible_dirs`, which only it uses), the check that a folder is a workspace
-# (`is_workspace`), and this Mac's own state, which no workspace holds (`launchd_jobs`, `jobs`: the launchd agents and the
-# jobs folder's logs; the waiting sessions are not read from a folder of the workspace at all). It is `Part of #650`, not
-# `Closes`, while `jobs` and `is_workspace` stand beside the three exceptions the plan names. A function that reads anew
-# fails the test below, and one that stops reading must leave the table, so the list never goes stale.
-LEFT = {
-    "is_workspace": "whether a folder holds System/rules.md and Zones/",
-    "jobs": "the jobs folder's logs",
-    "launchd_jobs": "this Mac's launchd agents",
-    "threads": "zone names only, while view.py is missing (a half-finished update)",
-    "visible_dirs": "the helper the others list folders with",
-}
+# What status.py still reads from the folders for itself, by function, and why. Since 0.81.0 it is nothing: the check that a
+# folder is a workspace, the finder, and the half-finished-update guard's list of zone names moved to `workspace_find.py`, which
+# ships in the same folder as status.py (the extra's, by design: it runs before any view model exists, and loads nothing from a
+# candidate folder); the jobs, the launchd agents, the App's own files and the check's kept result are `view_jobs.py` and
+# `view_app.py`'s. A function that reads anew fails the test below, so the list never goes stale.
+LEFT = {}
 
 
 class TestWhatThePageStillReads(unittest.TestCase):
-    """The acceptance line of #650: status.py has no direct read of Zones/, Wikis/ or a thread note. It is not met yet, and
-    this says exactly what is left."""
+    """The acceptance line of #650: status.py has no direct read of Zones/, Wikis/ or a thread note. This is the source scan,
+    which looks for a listing, a walk or a path built from `Zones` or `Wikis`; test_view_rest.TestPageReadsNoWorkspaceNote is the
+    run-time one, which sees a read through `read_text`, `open`, `is_file`, `is_dir`, `exists` or `stat` too."""
 
     @staticmethod
     def readers():
@@ -537,8 +530,8 @@ class TestWhatThePageStillReads(unittest.TestCase):
             self.assertNotIn(name, found, name)
 
     def test_the_view_model_names_what_is_left_for_it(self):
-        for name in ("waiting sessions", "operations journal"):
-            self.assertIn(name, view.LEFT)
+        self.assertEqual(("waiting sessions",), tuple(view.LEFT))
+        self.assertNotIn("operations journal", view.LEFT)    # status.py never reads it: see test_view_rest.TestOperationsJournal
         self.assertNotIn("settings", view.LEFT)           # Settings' data is view_settings.py's since 0.79.0 (#650)
 
 

@@ -333,7 +333,10 @@ brief. To show what this morning's brief would say, with the jobs extra in:
 ```sh
 python3 System/jobs/todo_sweep.py --workspace . --zone Work --zone Personal --print-brief
 ```
-It sweeps nothing and sends nothing. Never change `notifications.morning` by
+It sweeps nothing and sends nothing. Run it only when the user asks, and name
+only the zones this session may read: each zone's thread names and Todo words
+land in the conversation, so a session for one project names its own zone
+alone. What it prints stays in the conversation. Never change `notifications.morning` by
 hand for the user: it is Settings › Notifications, *Morning summary*.
 
 ## Listening mode

@@ -622,6 +622,7 @@ Two Settings actions name their failure, since each leaves a place outside the w
 | The read guard was not changed: your assistant's settings could not be written. | *Try again* |
 | The read guard was not changed: it did not show as registered afterwards. | *Try again* |
 | The read guard's setting was not saved: the workspace's settings could not be written. | *Try again* |
+| That service was not changed. | *Show why* |
 
 A refused change never shows as saved, and the dialog or the row keeps what it showed before.
 

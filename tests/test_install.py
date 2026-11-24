@@ -887,6 +887,15 @@ class AllowlistTest(unittest.TestCase):
         (target / "System" / "garrick-settings.json").write_text(json.dumps({"notifications": kept}))
         self.assertEqual(kept, json.loads(load_installer().first_settings(target))["notifications"])
 
+    def test_a_settings_file_there_before_the_install_never_gains_the_morning_key(self):
+        # A settings file with no notifications part that was there before the install (a workspace made
+        # before 0.80.0) keeps one morning summary for each zone; only a new file gets "all" (#686).
+        target, r = self.box.install("older", config=self.declined)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (target / "System" / "garrick-settings.json").write_text(json.dumps({"zones": {}}))
+        self.assertNotIn("notifications", json.loads(load_installer().first_settings(target, new=False)))
+        self.assertEqual({"morning": "all"}, json.loads(load_installer().first_settings(target))["notifications"])
+
     def test_a_config_that_declines_writes_nothing_about_permissions(self):
         target, r = self.box.install("declined", config=self.declined)
         self.assertEqual(r.returncode, 0, r.stderr)

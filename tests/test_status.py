@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(29, html.count("</script>"))         # (#674: the read guard section's mode script; #651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(30, html.count("</script>"))         # (#682: Settings' table of old anchors; #674: the read guard section's mode script; #651: the count of which cards are opened; #503: the Needs you answers' script; #621: Settings' role choices, and its read guard and machine script) the Waiting on you now card's script, the Follow-ups row's buttons (#603), the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -2054,7 +2054,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_previews_left(self):
         html = self.page()
         self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
-        self.assertIn("ask your assistant to switch one on", html)          # no file or setting is named in a help text (#621)
+        self.assertIn("Not released yet. Ask your assistant to switch one on.", html)   # no file or setting is named on the page (#621, #682)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])
@@ -2141,8 +2141,9 @@ class TestPreviewFeatures(StatusCase):
         html = self.page()
         self.assertIsNotNone(self.menu(html))
         self.assertIn("host.postMessage({menu:data&&", status.MENU_JS)       # a page with none takes the icon away
-        self.assertIn('<section class="setsec apponly" id="menu-settings" hidden>', html)   # until the app answers
-        self.assertIn("if(!host||!box)return;box.hidden=false", status.MENU_SETTINGS_JS)
+        self.assertIn('<div class="setpart menuset apponly" id="menu-settings" hidden>', html)   # a part of Opening work (#682), until the app answers
+        self.assertIn("if(!host||!box)return;['menu-settings','askbox-settings','ask-settings'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=false});",
+                      status.MENU_SETTINGS_JS)
         for control in ('id="menu-show"', 'id="menu-style"', 'id="menu-login"', 'id="menu-hotkey"'):   # the four settings
             self.assertIn(control, html)
         for edge in ("left", "right", "top"):
@@ -3218,14 +3219,17 @@ class TestApp(unittest.TestCase):
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "Garrick.swift").read_text()
         # It only looks, but for what it last filled its menu with, in the jobs folder, outside the workspace.
-        # contentsOfDirectory lists the zones for the Ask window's selector (#317).
-        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile", "createDirectory", "contentsOfDirectory"},
+        # contentsOfDirectory lists the zones for the Ask window's selector (#317). Codex opens through its link since 0.80.0 (#682),
+        # so the app no longer looks for its command-line launcher (isExecutableFile).
+        self.assertEqual({"attributesOfItem", "fileExists", "createDirectory", "contentsOfDirectory"},
                          set(re.findall(r"FileManager\.default\.(\w+)", swift)))
         self.assertEqual(["try? FileManager.default.createDirectory(at: jobsDir,"], re.findall(r"try\? FileManager\.default\.createDirectory\(at: \w+,", swift))
         self.assertEqual(["write(to: menuReport,"], re.findall(r"write\(to: \w+,", swift))
         self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
-        for bundle in ("claudeBundle", "codexBundle"):
-            self.assertIn("withBundleIdentifier: %s" % bundle, swift)
+        self.assertIn("withBundleIdentifier: claudeBundle", swift)
+        # Claude and Codex share one launcher since 0.80.0 (#682): each still found through Launch Services by its bundle id
+        self.assertIn('let (bundle, label) = app == "claude" ? (claudeBundle, "Claude") : (codexBundle, "Codex")', swift)
+        self.assertIn("NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)", swift)
         self.assertIn("guard let folder = inWorkspace(path)", swift)          # only a folder of this workspace
 
     def test_the_menu_bar(self):

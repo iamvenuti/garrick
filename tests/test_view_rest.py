@@ -636,5 +636,141 @@ class TestAppHalfUpdated(Workspace):
         self.assertIn("Garrick needs updating", status.build(self.ws, now=NOW, folder=self.jobs))
 
 
+# ------------------------------------------------------------------------- the finder and the half-updated fallback
+
+import subprocess  # noqa: E402
+
+sys.path.insert(0, str(REPO))
+import update  # noqa: E402
+
+EXTRA = REPO / "extras" / "status"
+
+
+def load_find():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("workspace_find_under_test", str(EXTRA / "workspace_find.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestShadowFinder(Workspace):
+    def setUp(self):
+        super().setUp()
+        self.old = old_reads(status, "FIND")
+        self.find = load_find()
+
+    def test_what_a_workspace_is(self):
+        other = self.base / "other"
+        (other / "Zones").mkdir(parents=True)
+        bare = self.base / "bare"
+        write(bare / "System" / "rules.md", "# Rules\n")
+        for folder in (self.ws, other, bare, self.base / "gone", self.ws / "Zones"):
+            self.assertEqual(self.old["is_workspace"](folder), status.is_workspace(folder), folder.name)
+            self.assertEqual(self.old["is_workspace"](folder), self.find.is_workspace(folder), folder.name)
+        self.assertTrue(status.is_workspace(self.ws))
+
+    def test_the_folder_named_the_environment_and_the_folder_this_runs_in(self):
+        other = self.base / "other"
+        (other / "Zones").mkdir(parents=True)
+        inside = self.ws / "Zones" / "Work"
+        for given, env, cwd in ((str(self.ws), None, self.base), (None, str(self.ws), self.base), (str(other), None, self.base),
+                                (None, str(other), self.base), (None, None, inside), (None, None, self.base), ("~/nope", None, self.base)):
+            outcomes = []
+            for fn in (self.old["find_workspace"], status.find_workspace):
+                with mock.patch.dict(os.environ, {"GARRICK_WORKSPACE": env} if env else {}, clear=False), mock.patch("os.getcwd", lambda c=cwd: str(c)):
+                    if not env:
+                        os.environ.pop("GARRICK_WORKSPACE", None)
+                    try:
+                        outcomes.append(("ok", fn(given)))
+                    except SystemExit as e:
+                        outcomes.append(("exit", str(e)))
+            self.assertEqual(outcomes[0], outcomes[1], (given, env, cwd))
+
+    def test_the_folders_of_a_folder(self):
+        write(self.ws / "Zones" / "_template" / "x.md", "x")
+        (self.ws / "Zones" / ".hidden").mkdir()
+        write(self.ws / "Zones" / "file.md", "x")
+        for folder in (self.ws / "Zones", self.ws / "Wikis", self.base / "gone", self.ws / "Zones" / "file.md"):
+            self.assertEqual(self.old["visible_dirs"](folder), status.visible_dirs(folder))
+        self.assertEqual(["Personal", "Work"], [p.name for p in status.visible_dirs(self.ws / "Zones")])
+
+    def test_the_fallback_names_every_zone_while_the_view_is_missing(self):
+        (self.ws / "Zones" / ".hidden").mkdir()
+        (self.ws / "Zones" / "_t").mkdir()
+        self.old["view_model"] = lambda *a, **k: None
+        with mock.patch.object(status, "view_model", return_value=None):
+            old = self.old["threads"](self.ws)
+            new = status.threads(self.ws)
+        self.assertEqual(old, new)
+        self.assertEqual({"Personal", "Work"}, set(new))
+        self.assertTrue(all(z["needs_update"] for z in new.values()))
+
+    def test_the_finder_runs_nothing_of_the_folder_it_looks_at(self):
+        marker = self.base / "ran"
+        for tools in (self.ws / "System" / "tools", self.ws / "System" / "status"):
+            write(tools / "view.py", "open(%r, 'w').write('x')\nraise SystemExit\n" % str(marker))
+            write(tools / "work.py", "open(%r, 'w').write('x')\n" % str(marker))
+        write(self.ws / "System" / "sitecustomize.py", "open(%r, 'w').write('x')\n" % str(marker))
+        self.assertTrue(status.is_workspace(self.ws))
+        self.assertEqual(self.ws, status.find_workspace(str(self.ws)))
+        self.assertEqual(2, len(status.visible_dirs(self.ws / "Zones")))
+        self.assertFalse(marker.exists())
+
+    def test_the_module_imports_only_the_standard_library_and_nothing_of_the_core(self):
+        text = (EXTRA / "workspace_find.py").read_text(encoding="utf-8")
+        found = set(re.findall(r"(?m)^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", text))
+        self.assertEqual({"__future__", "os", "sys", "pathlib", "typing"}, found)
+
+    def test_the_page_keeps_no_direct_read_of_a_folder_for_it(self):
+        text = (EXTRA / "status.py").read_text(encoding="utf-8")
+        self.assertNotIn(".iterdir()", text.split("def finder", 1)[1].split("def load_agent", 1)[0])
+
+
+class TestFinderShips(unittest.TestCase):
+    def test_the_extra_and_the_core_reach_a_workspace_by_install_and_by_update(self):
+        shipped = update.extras_shipped(["status"])
+        self.assertIn("System/status/workspace_find.py", shipped)
+        self.assertEqual("System/status/workspace_find.py", update.extra_place("extras/status/workspace_find.py"))
+        core = update.shipped(["Work"])
+        for name in ("view.py", "view_jobs.py", "view_app.py"):
+            self.assertIn("System/tools/" + name, core)
+
+    def test_update_holds_the_page_until_the_view_is_in_place_as_it_did(self):
+        self.assertEqual("System/tools/view.py", update.VIEW_TOOL)
+
+
+class TestHalfUpdatedPage(Workspace):
+    """The page is new and System/tools is old: it says "Garrick needs updating" and does not crash, whichever file of the
+    core is missing, run as the installed page is run: its own process, from System/status."""
+
+    def page(self, *missing):
+        """The installed page, in its own process, over a core that lacks `missing` (a file of System/tools, or "System/tools")."""
+        for name in ("status", "tools"):
+            shutil.rmtree(self.ws / "System" / name, ignore_errors=True)
+        shutil.copytree(TOOLS, self.ws / "System" / "tools", ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(EXTRA, self.ws / "System" / "status", ignore=shutil.ignore_patterns("__pycache__", "app", "tests"))
+        for name in missing:
+            if name == "System/tools":
+                shutil.rmtree(self.ws / "System" / "tools")
+            else:
+                (self.ws / "System" / "tools" / name).unlink()
+        out = self.base / "page.html"
+        r = subprocess.run([sys.executable, str(self.ws / "System" / "status" / "status.py"), "--workspace", str(self.ws), "--out", str(out),
+                            "--no-graph"], capture_output=True, text=True, timeout=300, env=dict(os.environ, HOME=str(self.home)))
+        self.assertEqual(0, r.returncode, r.stderr[-800:])
+        return out.read_text(encoding="utf-8")
+
+    def test_each_file_of_the_core_the_page_needs_counts_the_same(self):
+        for name in ("view_jobs.py", "view_app.py", "view.py", "work.py"):
+            self.assertIn("Garrick needs updating", self.page(name), name)
+
+    def test_no_core_at_all_counts_the_same(self):
+        self.assertIn("Garrick needs updating", self.page("System/tools"))
+
+    def test_a_complete_core_does_not_say_it(self):
+        self.assertNotIn("Garrick needs updating", self.page())
+
+
 if __name__ == "__main__":
     unittest.main()

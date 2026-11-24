@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Tuple
 def old_reads(status, *areas):
     """The old functions of the areas named, bound to the page module `status`, as a namespace."""
     g = {k: v for k, v in vars(status).items() if not k.startswith("__")}
+    g["__file__"] = vars(status).get("__file__")          # find_workspace looks beside the page's own file
     g.update({"dt": dt, "re": re, "os": os, "json": json, "plistlib": plistlib, "subprocess": subprocess, "sys": sys, "Path": Path,
               "Dict": Dict, "List": List, "Optional": Optional, "Tuple": Tuple})
     for area in areas:
@@ -529,5 +530,68 @@ def guide_tab(ws: Path) -> Tuple[str, str]:
     ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
     body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
     return body, held
+
+'''
+
+AREAS['FIND'] = r'''
+def is_workspace(folder: Path) -> bool:
+    return (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir()
+
+
+def find_workspace(given: Optional[str]) -> Path:
+    """The folder named, or the one this runs in. A named folder must hold
+    System/rules.md and Zones/, so a mistyped path stops here instead of
+    gaining a System/generated/ of its own."""
+    for how, cand in (("--workspace", given), ("GARRICK_WORKSPACE", os.environ.get("GARRICK_WORKSPACE"))):
+        if cand:
+            folder = Path(cand).expanduser().resolve()
+            if not is_workspace(folder):
+                raise SystemExit("status: %s (from %s) is not a Garrick workspace: it has no System/rules.md "
+                                 "and Zones/ folder. Check the path." % (folder, how))
+            return folder
+    here = Path.cwd().resolve()
+    for folder in (here, *here.parents):
+        if is_workspace(folder):
+            return folder
+    for folder in (Path(__file__).resolve().parent, *Path(__file__).resolve().parents):
+        if is_workspace(folder):
+            return folder
+    raise SystemExit("status: no workspace found. Pass --workspace, set GARRICK_WORKSPACE, or run it from inside one.")
+
+
+def visible_dirs(folder: Path) -> List[Path]:
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+
+
+def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
+    """Per zone, what the Threads card and Your work draw: every live thread's project, name, party and the date its
+    note was last updated; whether the note has a Resume here block, with that block's own date, and its unwrapped
+    checkpoint, with `touched`, the later of `updated:` and that checkpoint's day (#650: all of it decided by the
+    view model, System/tools/view.py, which reads the notes; this page only draws it). A project with no thread note
+    is its own single thread, read from its hub. A project whose hub says parked holds every live thread in it
+    parked too, each marked `held`; `held` per zone names those projects.
+
+    For the Threads card's search (#140), names only: `finished` per zone, the threads `done` counts, and
+    `projects`, each project by name with its hub's status (live, parked or done), its spoken form and whether it is
+    its own single thread (`own`). Nothing of a note's body is read here."""
+    model = model or view_model(ws, ("work",))
+    if model is None:
+        # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
+        return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
+                            "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
+    out = {}
+    for z in model["zones"]:
+        work = z["work"]
+        out[z["name"]] = {"rows": [piece_row(ws, p) for p in work if p["shown"] == "row"],
+                          "parked": [piece_row(ws, p) for p in work if p["shown"] == "parked"],
+                          "done": z["done"], "folder": ws / "Zones" / z["name"], "held": list(z["held"]),
+                          "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
+                          "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
+                                       for name, v in z["projects"].items()},
+                          "open_links": [list(x) for x in z["open_links"]],
+                          "hubs": [piece_row(ws, p) for p in work if p["shown"] == "hub"]}
+    return out
 
 '''

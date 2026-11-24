@@ -131,29 +131,30 @@ UNKNOWN = ("Garrick, version unknown: this workspace has no record of the copy i
 
 # --------------------------------------------------------------------------- where things are
 
+_FIND = None
+
+
+def finder():
+    """workspace_find.py, beside this file: where the workspace is, and the zone folders in it. It runs before any view model
+    exists and must work when the workspace's own tools are older than this page, so it is this extra's, not the core's
+    (#650): it ships in the same folder as this file and updates with it, and loads nothing from a folder before that
+    folder is known to be a workspace."""
+    global _FIND
+    if _FIND is None:
+        spec = importlib.util.spec_from_file_location("garrick_workspace_find", str(Path(__file__).with_name("workspace_find.py")))
+        _FIND = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FIND)
+    return _FIND
+
+
 def is_workspace(folder: Path) -> bool:
-    return (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir()
+    return finder().is_workspace(folder)
 
 
 def find_workspace(given: Optional[str]) -> Path:
-    """The folder named, or the one this runs in. A named folder must hold
-    System/rules.md and Zones/, so a mistyped path stops here instead of
-    gaining a System/generated/ of its own."""
-    for how, cand in (("--workspace", given), ("GARRICK_WORKSPACE", os.environ.get("GARRICK_WORKSPACE"))):
-        if cand:
-            folder = Path(cand).expanduser().resolve()
-            if not is_workspace(folder):
-                raise SystemExit("status: %s (from %s) is not a Garrick workspace: it has no System/rules.md "
-                                 "and Zones/ folder. Check the path." % (folder, how))
-            return folder
-    here = Path.cwd().resolve()
-    for folder in (here, *here.parents):
-        if is_workspace(folder):
-            return folder
-    for folder in (Path(__file__).resolve().parent, *Path(__file__).resolve().parents):
-        if is_workspace(folder):
-            return folder
-    raise SystemExit("status: no workspace found. Pass --workspace, set GARRICK_WORKSPACE, or run it from inside one.")
+    """The folder named, or the one this runs in. A named folder must hold System/rules.md and Zones/, so a mistyped path
+    stops here instead of gaining a System/generated/ of its own (workspace_find.py)."""
+    return finder().find_workspace(given)
 
 
 def load_agent(ws: Path):
@@ -465,9 +466,7 @@ def as_text(value) -> str:
 
 
 def visible_dirs(folder: Path) -> List[Path]:
-    if not folder.is_dir():
-        return []
-    return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+    return finder().subfolders(folder)
 
 
 def tags(value) -> List[str]:
@@ -627,13 +626,13 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     if model is None:
         # A half-finished update: this page is new and System/tools has no view.py or work.py yet. The page builds and says so.
         return {zone.name: {"rows": [], "parked": [], "done": 0, "folder": zone, "held": [], "finished": [], "projects": {},
-                            "hubs": [], "needs_update": True} for zone in visible_dirs(ws / "Zones")}
+                            "hubs": [], "needs_update": True} for zone in finder().zone_folders(ws)}
     out = {}
     for z in model["zones"]:
         work = z["work"]
         out[z["name"]] = {"rows": [piece_row(ws, p) for p in work if p["shown"] == "row"],
                           "parked": [piece_row(ws, p) for p in work if p["shown"] == "parked"],
-                          "done": z["done"], "folder": ws / "Zones" / z["name"], "held": list(z["held"]),
+                          "done": z["done"], "folder": finder().zone_folder(ws, z["name"]), "held": list(z["held"]),
                           "finished": [piece_row(ws, p) for p in work if p["shown"] == "done"],
                           "projects": {name: dict(v, hub=ws / v["hub"] if v["hub"] else None, party=list(v["party"]))
                                        for name, v in z["projects"].items()},

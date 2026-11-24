@@ -595,3 +595,59 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
     return out
 
 '''
+
+AREAS['FM'] = r'''
+def _value(raw: str):
+    """One frontmatter value for the fallback parser: a trailing comment
+    dropped, quotes taken off, [a, b] read as a list."""
+    quote = None
+    for i, ch in enumerate(raw):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or raw[i - 1].isspace()):
+            raw = raw[:i]
+            break
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]") and not raw.startswith("[["):
+        return [v.strip().strip("\"'") for v in raw[1:-1].split(",") if v.strip()]
+    return raw.strip("\"'")
+
+
+def frontmatter(path: Path, ws: Optional[Path] = None) -> dict:
+    """The note's frontmatter: the workspace's own parser (garrick_lib in
+    System/tools) when it is there, a small one otherwise that also drops
+    trailing comments and reads block lists. Only frontmatter is ever read
+    from a note here."""
+    lib = workspace_lib(ws)
+    if lib is not None:
+        try:
+            return lib.parse_frontmatter(path) or {}
+        except Exception:
+            pass
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    # Lines end where garrick_lib's parse_frontmatter_text ends them, as YAML
+    # does: at \n, \r\n or a lone \r, never at U+2028 and the like (#330).
+    lines = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict = {}
+    key = None
+    for line in lines[1:]:
+        if line in ("---", "..."):             # a `---` alone at the margin closes it, as for YAML
+            break
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and key is not None:
+            out[key] = (out[key] if isinstance(out.get(key), list) else []) + [_value(item.group(1))]
+            continue
+        m = re.match(r"^([A-Za-z_][\w-]*)\s*:(.*)$", line)
+        key = m.group(1) if m else None
+        if m:
+            out[key] = _value(m.group(2))
+    return out
+
+'''

@@ -1005,6 +1005,63 @@ def settings(root, extras=None, jobs=None, only=None) -> dict:
     return _settings().read(root, extras, jobs, only)
 
 
+def _fm_value(raw: str):
+    """One frontmatter value for the small parser: a trailing comment
+    dropped, quotes taken off, [a, b] read as a list."""
+    quote = None
+    for i, ch in enumerate(raw):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or raw[i - 1].isspace()):
+            raw = raw[:i]
+            break
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]") and not raw.startswith("[["):
+        return [v.strip().strip("\"'") for v in raw[1:-1].split(",") if v.strip()]
+    return raw.strip("\"'")
+
+
+def frontmatter(path: Path, lib=None) -> dict:
+    """The note's frontmatter, as the page's own helper read it before 0.81.0 (#650): `lib.parse_frontmatter` (the workspace's own
+    garrick_lib) when one is given, a small parser otherwise that also drops trailing comments and reads block lists.
+    Only the frontmatter is ever read from a note here. {} where the note does not read."""
+    if lib is not None:
+        try:
+            return lib.parse_frontmatter(path) or {}
+        except Exception:
+            pass
+    if lib is not None:
+        try:
+            return lib.parse_frontmatter(path) or {}
+        except Exception:
+            pass
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    # Lines end where garrick_lib's parse_frontmatter_text ends them, as YAML
+    # does: at \n, \r\n or a lone \r, never at U+2028 and the like (#330).
+    lines = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict = {}
+    key = None
+    for line in lines[1:]:
+        if line in ("---", "..."):             # a `---` alone at the margin closes it, as for YAML
+            break
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and key is not None:
+            out[key] = (out[key] if isinstance(out.get(key), list) else []) + [_fm_value(item.group(1))]
+            continue
+        m = re.match(r"^([A-Za-z_][\w-]*)\s*:(.*)$", line)
+        key = m.group(1) if m else None
+        if m:
+            out[key] = _fm_value(m.group(2))
+    return out
+
+
 def jobs_reader():
     """The reader of the jobs folder and this Mac's launchd agents (`view_jobs`). Not part of `build()`: they are this Mac's."""
     return _sibling("view_jobs.py", "garrick_view_jobs")

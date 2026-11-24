@@ -772,5 +772,119 @@ class TestHalfUpdatedPage(Workspace):
         self.assertNotIn("Garrick needs updating", self.page())
 
 
+class TestShadowFrontmatter(Workspace):
+    """The one helper of the page that read a note itself, and that no code of the page calls any more (the frozen shadow tests
+    borrow it): its read is the core's, the same answer."""
+
+    def test_the_core_reads_a_note_as_the_page_did(self):
+        old = old_reads(status, "FM")
+        notes = {"a.md": "---\ntitle: A\nparty: [acme, birch]  # two\nstatus: 'active'\ntags:\n  - one\n  - two\n---\n\nBody\n",
+                 "b.md": "no frontmatter\n", "c.md": "---\r\ntitle: C\r\n---\r\n", "d.md": "\ufeff---\ntitle: D\n...\nother: x\n", "e.md": ""}
+        for name, text in notes.items():
+            write(self.ws / name, text)
+        lib = status.workspace_lib(self.ws)
+        for name in list(notes) + ["missing.md"]:
+            for ws in (self.ws, None):
+                self.assertEqual(old["frontmatter"](self.ws / name, ws), status.frontmatter(self.ws / name, ws), (name, ws))
+            self.assertEqual(old["frontmatter"](self.ws / name), view.frontmatter(self.ws / name), name)
+        self.assertEqual({"title": "A", "party": ["acme", "birch"], "status": "active", "tags": ["one", "two"]},
+                         view.frontmatter(self.ws / "a.md"))
+        self.assertIsNotNone(lib)
+
+    def test_a_parser_that_fails_falls_back_to_the_small_one(self):
+        write(self.ws / "a.md", "---\ntitle: A\n---\n")
+        broken = mock.Mock()
+        broken.parse_frontmatter.side_effect = ValueError("x")
+        self.assertEqual({"title": "A"}, view.frontmatter(self.ws / "a.md", broken))
+
+    def test_the_page_has_no_note_reader_of_its_own_left(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        body = text.split("def frontmatter(", 1)[1].split("\ndef ", 1)[0]
+        self.assertNotIn("read_text", body)
+        self.assertNotIn("def _value(", text)
+
+
+# ------------------------------------------------------------------------------- what the page still reads, at run time
+
+import work_fixture  # noqa: E402
+
+STATUS_FILE = str(REPO / "extras" / "status" / "status.py")
+
+
+class TestPageReadsNoWorkspaceNote(Workspace):
+    """The acceptance line of #650: `status.py` has no direct read of `Zones/`, `Wikis/` or a thread note. The source scan in
+    test_view_model (TestWhatThePageStillReads) misses a read through `read_text`, `open`, `is_file`, `is_dir`, `exists` or
+    `stat`. This builds the whole page on a seeded workspace with an audit hook on every open and listing, and a hook on
+    `os.stat` (which Path's `is_file`, `is_dir` and `exists` call, and which has no audit event), and fails when the innermost
+    frame that is Garrick's code, for a read under `Zones/` or `Wikis/` or of a note, is `status.py`. A read made through
+    the core (the view model, `work.py`, `garrick_lib.py`) is the core's read."""
+
+    def seeded(self):
+        work_fixture.build(self.ws / "Zones" / "Work")
+        self.seed()
+        write(self.ws / "Zones" / "Work" / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] Chase Dana #waiting \U0001F4C5 2026-11-10\n\n## Done\n")
+        write(self.ws / "Wikis" / "Meetings" / "wiki" / "log.md", "# Log\n\n- 2026-11-20: [[x]]\n")
+        write(self.ws / "Zones" / "Work" / "Inbox" / "a.md", "x\n")
+
+    def violations(self, build):
+        mine = (str(REPO / "extras"), str(REPO / "template"), str(self.ws / "System" / "tools"))
+        zones, wikis = str(self.ws / "Zones"), str(self.ws / "Wikis")
+        found = {}
+
+        def judge(path):
+            p = str(path)
+            if not (p.startswith(zones) or p.startswith(wikis) or (p.startswith(str(self.ws)) and p.endswith(".md"))):
+                return
+            frame = sys._getframe(2)
+            while frame is not None:
+                name = frame.f_code.co_filename
+                if name.startswith(mine):
+                    if name == STATUS_FILE:
+                        found.setdefault((frame.f_code.co_name, frame.f_lineno), set()).add(p.replace(str(self.ws), ""))
+                    return
+                frame = frame.f_back
+
+        def hook(event, args):
+            if _RECORDING[0] and event in ("open", "os.listdir", "os.scandir", "glob.glob") and args and isinstance(args[0], (str, os.PathLike)):
+                judge(os.fspath(args[0]))
+        real = {"stat": os.stat, "lstat": os.lstat}
+
+        def watch(which):
+            def call(path, *a, **k):
+                if _RECORDING[0] and isinstance(path, (str, os.PathLike)):
+                    judge(os.fspath(path))
+                return real[which](path, *a, **k)
+            return call
+        _HOOKS.append(hook)
+        try:
+            with mock.patch.object(os, "stat", watch("stat")), mock.patch.object(os, "lstat", watch("lstat")):
+                _RECORDING[0] = True
+                try:
+                    build()
+                finally:
+                    _RECORDING[0] = False
+        finally:
+            _HOOKS.remove(hook)
+        return found
+
+    def test_the_whole_page_reads_no_zone_wiki_or_note_for_itself(self):
+        self.seeded()
+        status._NURTURE.pop(self.ws, None)
+        found = self.violations(lambda: status.build(self.ws, now=NOW, folder=self.jobs, launchers=("cmux",), waiting_now=[]))
+        self.assertEqual({}, found)
+
+    def test_the_hook_would_see_a_read_made_by_the_page_itself(self):
+        """The scan is not blind: a read of a note made from a function of status.py is found."""
+        self.seeded()
+        note = self.ws / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
+        namespace = {"note": note, "os": os}
+        code = compile("def probe():\n    note.read_text()\n    note.is_file()\n    note.exists()\n    list(note.parent.iterdir())\n",
+                       STATUS_FILE, "exec")
+        exec(code, namespace)
+        found = self.violations(namespace["probe"])
+        self.assertEqual({"probe"}, {name for name, _ in found})
+        self.assertEqual(4, len(found))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5231,13 +5231,18 @@ def notify_settings(ws: Path, desk: bool = False, data: Optional[dict] = None) -
     # a notification a job sends its own way has no switch: it keeps what is saved, out of sight, so closing Settings saves it as it was
     kept = "".join('<input type="checkbox" data-nt="%s" disabled hidden%s>' % (e, " checked" if cfg["tell"][e] else "") for e, _ in note["tell"] if e in own)
     said = ""
-    if "morning" in cfg:                     # the morning summary, one for all zones or one for each (#686), where notifications.py keeps it
+    # The morning summary, one for all zones or one for each (#686), where notifications.py keeps it. A sweep that sends its
+    # summary its own way never sends the one for all zones, so the row is offered only while the sweep sends through
+    # Garrick; otherwise the line says who sets it, and the saved choice rides along unseen, so a save keeps it as it was.
+    if "morning" in cfg and "todo-summary" not in own:
         pick = lambda v, t: '<option value="%s"%s>%s</option>' % (v, " selected" if cfg.get("morning") == v else "", t)
         said = set_row(row_label("Morning summary", "", "n-morning"),
                        '<select id="n-morning" class="menu-style">%s%s</select>' % (pick("all", "One for all zones"), pick("each", "One for each zone")),
-                       "nsitem nsmorning")
-    elif own:
-        said = '<p class="chnote nsown" id="n-own">%s</p>' % E(NT_MORNING_LINE)
+                       "nsmorning")
+    elif "morning" in cfg:
+        said = '<input type="hidden" id="n-morning" value="%s">' % E(cfg.get("morning") if cfg.get("morning") in ("all", "each") else "each")
+    if own:                                  # a job sends a summary its own way: said in one line
+        said += '<p class="chnote nsown" id="n-own">%s</p>' % E(NT_MORNING_LINE)
     q = cfg["quiet"]
     quiet = set_row(row_label("Quiet hours", "Notifications wait until morning.", "n-quiet"),
                     '%s <input type="time" id="n-from" value="%s" aria-label="Quiet from"><span>to</span>'

@@ -857,7 +857,14 @@ class TestPageReadsNoWorkspaceNote(Workspace):
             return call
         _HOOKS.append(hook)
         try:
-            with mock.patch.object(os, "stat", watch("stat")), mock.patch.object(os, "lstat", watch("lstat")):
+            real_path_stat = Path.stat
+
+            def path_stat(self, *a, **k):          # Python 3.9 binds os.stat inside pathlib at import, so patching os alone misses it
+                if _RECORDING[0]:
+                    judge(os.fspath(self))
+                return real_path_stat(self, *a, **k)
+            with mock.patch.object(os, "stat", watch("stat")), mock.patch.object(os, "lstat", watch("lstat")), \
+                    mock.patch.object(Path, "stat", path_stat):
                 _RECORDING[0] = True
                 try:
                     build()

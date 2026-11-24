@@ -152,6 +152,22 @@ class EnvironmentTest(unittest.TestCase):
             self.assertTrue(hasattr(acceptance.Run, "step_" + key), key)
             self.assertRegex(doc, r"(?m)^    %s\s" % key)
 
+    def test_the_mornings_case_installs_from_the_release_that_wrote_no_morning_key(self):
+        """#686: the case is about an update from a 0.79.0 workspace, so it names that tag and does not follow the previous one."""
+        self.assertEqual("v0.79.0", acceptance.Run.MORNINGS_FROM)
+        body = acceptance.Run.step_mornings.__code__.co_names
+        self.assertIn("MORNINGS_FROM", body)
+        self.assertNotIn("previous_tag", body)
+
+    def test_the_hooks_step_keeps_a_download_of_a_release_whose_hooks_differ(self):
+        """#672, #680: the kept download comes from `kept_source`, not the previous release, whose hooks may equal the candidate's."""
+        self.assertIn("kept_source", acceptance.Run.step_hooks.__code__.co_names)
+        self.assertEqual(10, acceptance.Run.KEPT_WALK)
+        r = acceptance.Run.__new__(acceptance.Run)
+        r.cand = REPO / "template" / "nowhere"
+        with self.assertRaises(acceptance.Skip):
+            r.kept_source("v0.0.0-not-a-tag")
+
     def test_a_step_that_is_not_one_is_refused(self):
         r = run_acceptance("--steps", "install,nonsense")
         self.assertEqual(r.returncode, 2, r.stdout)
@@ -213,7 +229,7 @@ class ReviewFixesTest(unittest.TestCase):
         for flag, code in (([], 0), (["--strict"], 1)):
             res = run_acceptance("--steps", "resume", *flag)
             self.assertEqual(code, res.returncode, res.stdout)
-            self.assertIn("Passed, with 13 skipped", res.stdout)
+            self.assertIn("Passed, with %d skipped" % len(acceptance.STEPS), res.stdout)
 
     def test_the_refused_save_must_be_the_walls_sentence(self):
         src = RUN.read_text(encoding="utf-8")

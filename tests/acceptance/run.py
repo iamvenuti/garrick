@@ -27,10 +27,13 @@ and says so, when that one failed:
               Aliases are in System/names.md, every row kept once, context.md under 8,000 characters (#653). The
               tables have a Learned column that the older rows do not fill, so those rows are one cell short:
               each is padded in names.md to the header's cells (#663)
-    hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of the previous release:
+    hooks     a workspace whose assistants name the zone guard through $HOME, in a kept download of an earlier release (the newest of the ten tags
+              from the previous one back whose guard files differ; the install is the previous release's):
               the update report names the guard as another version's and offers to refresh the kept hooks; with stdin
               closed and no flag nothing is copied and the flag is named, and with --refresh-hooks and stdin closed
               the folder holds this release's hook files and the settings are unchanged (#670, #672, #680)
+    mornings  a workspace of v0.79.0 with a notifications part as that release saves it, updated: the part is as it was,
+              the morning summary reads "each", and the sweep's dry run gives each zone its own summary (#686)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
 
@@ -68,7 +71,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 ASK_SET = HERE / "ask_set.json"
 
-STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "hooks", "refused", "ask")
+STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "hooks", "mornings", "refused", "ask")
 # The demo's thread this run wraps, the call it files, and the fact it corrects.
 ZONE, PROJECT, THREAD = "Birch", "Birch Entry", "Launch Plan"
 SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-northern-lane-for-birch"
@@ -612,15 +615,49 @@ class Run:
         s.note("a v0.76.0 workspace with %d People and Aliases rows: the update alone moved none; after --names --apply names.md holds all %d once, "
                "context.md holds none and is %d characters; check.py is clean" % (len(before), len(in_names), size))
 
+    HOOK_NAMES = ("zone_guard.py", "read_guard.py", "parked_hint.py", "waiting_hook.py", "README.md")
+    KEPT_WALK = 10          # how many release tags, newest first from the previous one, the search for a kept download looks at
+
+    def kept_source(self, start):
+        """The release the kept download of the hooks step comes from: the newest of the KEPT_WALK release tags from `start` back
+        whose hook files differ from the candidate's, one with a differing zone_guard.py or read_guard.py first (so the report's
+        first form is still tested), else one where any of the five differs. A tag that lacks one of the five files is passed
+        over, since the step reads all five. Fails when none differs, as it did when the previous release's files equalled the
+        candidate's."""
+        r = sh(["git", "tag", "--list", "v[0-9]*", "--sort=-version:refname"], cwd=REPO, check=False)
+        tags = r.stdout.split()
+        if start not in tags:
+            raise Skip("tag %s is not in this clone (fetch the tags)" % start)
+        walk, any_differs = tags[tags.index(start):][:self.KEPT_WALK], None
+        for tag in walk:
+            files = {}
+            for n in self.HOOK_NAMES:
+                g = sh(["git", "show", "%s:extras/hooks/%s" % (tag, n)], cwd=REPO, check=False)
+                if g.returncode != 0:
+                    break
+                files[n] = g.stdout
+            if len(files) != len(self.HOOK_NAMES):
+                continue
+            differ = [n for n in self.HOOK_NAMES if files[n] != (self.cand / "extras" / "hooks" / n).read_text(encoding="utf-8")]
+            if any(n.endswith("_guard.py") for n in differ):
+                return tag
+            if differ and any_differs is None:
+                any_differs = tag
+        if any_differs:
+            return any_differs
+        raise Fail("none of the %d newest release hook folders from %s differs from the candidate's: there is nothing to refresh"
+                   % (len(walk), start))
+
     def step_hooks(self, s):
-        """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download of the previous release
-        kept in the home folder. The update's report names each guard that differs and offers the refresh; an apply with nobody
+        """#670, #672: the settings name the zone guard and the read guard through `$HOME`, in a download kept in the home folder, of the
+        release `kept_source` picks. The update's report names each guard that differs and offers the refresh; an apply with nobody
         to ask copies nothing and names `--refresh-hooks`; an apply with the flag and stdin closed copies Garrick's own hook
         files (#680), and the settings file is the same bytes afterwards."""
         tag = self.previous_tag()
         old = self.tag_tree(tag, "hooks-previous")
+        source = self.kept_source(tag)
         kept = self.home / "kept-garrick"
-        shutil.copytree(old / "extras" / "hooks", kept / "extras" / "hooks")
+        shutil.copytree(self.tag_tree(source, "hooks-kept") / "extras" / "hooks", kept / "extras" / "hooks")
         target = self.tmp / "hooks-ws"
         sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
            env=self.env, cwd=old, timeout=900)
@@ -663,11 +700,63 @@ class Run:
                 raise Fail("%s in the kept folder is not this release's after the refresh" % n)
         if settings.read_bytes() != before:
             raise Fail("the refresh changed the assistant's settings")
-        s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s: the report names %s as "
+        s.note("the settings name the zone guard and the read guard through $HOME in a kept download of %s (the install is %s): the report names %s as "
                "another version's and offers the refresh; with stdin closed and no flag nothing was copied and the flag was named; with "
                "--refresh-hooks and stdin closed %d hook file(s) match "
-               "this release and the settings are unchanged" % (tag, ", ".join(n for n in differing if n.endswith("_guard.py")) or "no guard (another hook file differs)",
+               "this release and the settings are unchanged" % (source, tag, ", ".join(n for n in differing if n.endswith("_guard.py")) or "no guard (another hook file differs)",
                        len(differing)))
+
+    # The last release whose install writes no `morning` key (0.80.0's install writes "morning": "all"), so the case is one
+    # about an update from a workspace of that release. A tag the clone lacks skips the step, as every step that installs a tag.
+    MORNINGS_FROM = "v0.79.0"
+
+    def step_mornings(self, s):
+        """#686: a workspace installed from v0.79.0, the last release that writes no `morning` key, with a notifications part written as
+        that release writes it, keeps one Todo summary for each zone after the update: the update writes no `morning` key and
+        leaves the part as it was, the settings read "each", and the sweep's dry run says each zone gets its own summary.
+        The control: the same workspace with "morning": "all" gets the one brief, so the dry run can tell the two apart."""
+        tag = self.MORNINGS_FROM
+        old = self.tag_tree(tag, "mornings-previous")
+        target = self.tmp / "mornings-ws"
+        sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
+           env=self.env, cwd=old, timeout=900)
+        sf = target / "System" / "garrick-settings.json"
+        cur = json.loads(sf.read_text(encoding="utf-8")) if sf.is_file() else {}
+        if "morning" in (cur.get("notifications") or {}):
+            raise Fail("%s's install already wrote a morning key" % tag)
+        cur["notifications"] = {"tell": {"todo-summary": True}, "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}
+        sf.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+        before = json.loads(sf.read_text(encoding="utf-8"))["notifications"]
+        sh(["git", "-C", target, "add", "-A"], env=self.env, check=False)
+        sh(["git", "-C", target, "commit", "-qm", "notifications as 0.79.0 saves them"], env=self.env, check=False)
+        sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand, timeout=900, stdin="")
+        after = (json.loads(sf.read_text(encoding="utf-8")) if sf.is_file() else {}).get("notifications")
+        if after != before:
+            raise Fail("the update changed the notifications part: %r became %r" % (before, after))
+        tools = target / "System" / "tools"
+        r = sh([sys.executable, "-I", "-c", "import sys,json;sys.path.insert(0,sys.argv[1]);import notifications as n;"
+                "print(n.normal(json.load(open(sys.argv[2])).get('notifications'))['morning'])", tools, sf], env=self.env, check=False)
+        if r.stdout.strip() != "each":
+            raise Fail("the updated settings read morning=%r, not 'each': %s" % (r.stdout.strip(), r.stderr.strip()[-200:]))
+        zones = sorted(z.name for z in (target / "Zones").iterdir() if (z / "Todo.md").is_file())
+        if len(zones) < 2:
+            raise Fail("the workspace has fewer than two zones with a Todo.md: %s" % zones)
+        env = {k: v for k, v in self.env.items() if not k.startswith("GARRICK_NOTIFY")}
+        cmd = [sys.executable, self.cand / "extras" / "jobs" / "todo_sweep.py", "--workspace", target, "--print-brief"]
+        for z in zones:
+            cmd += ["--zone", z]
+        dry = sh(cmd, env=env, cwd=self.cand, check=False, stdin="")
+        if dry.stdout.strip() != "No morning brief: each zone gets its own summary.":
+            raise Fail("the sweep's dry run after the update said (rc %d): %r %s" % (dry.returncode, dry.stdout.strip()[-300:], dry.stderr.strip()[-200:]))
+        cur = json.loads(sf.read_text(encoding="utf-8")); cur["notifications"]["morning"] = "all"
+        sf.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+        ctl = sh(cmd, env=env, cwd=self.cand, check=False, stdin="")
+        cur["notifications"].pop("morning"); sf.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
+        if ctl.returncode != 0 or "No morning brief" in ctl.stdout or not ctl.stdout.strip():
+            raise Fail("the control (morning: all) did not give one brief (rc %d): %r" % (ctl.returncode, ctl.stdout.strip()[-300:]))
+        s.note("a %s workspace with a notifications part as %s saves it: the update left the part as it was (no morning key), the "
+               "settings read 'each', and the sweep's dry run over %s says each zone gets its own summary; with morning: all the "
+               "same dry run gives one brief (%d lines)" % (tag, tag, ", ".join(zones), len(ctl.stdout.strip().splitlines())))
 
     def step_refused(self, s):
         root = self.demo
@@ -842,7 +931,7 @@ class Run:
         titles = {"install": "Install from the zip", "demo": "Build the demo", "file": "File one conversation",
                   "brief": "Ask for a brief", "wrap": "Wrap a thread", "restart": "Restart the page builder",
                   "resume": "Resume the thread", "correct": "Correct one fact", "update": "Update from the previous tag", "names": "Move People and Aliases to names.md",
-                  "hooks": "Refresh the kept hooks",
+                  "hooks": "Refresh the kept hooks", "mornings": "One summary per zone after the update",
                   "refused": "A refused save", "ask": "The fixed Ask set"}
         needs = {"file": "demo", "brief": "demo", "wrap": "demo", "restart": "demo", "resume": "wrap", "correct": "demo",
                  "refused": "demo", "ask": "demo"}

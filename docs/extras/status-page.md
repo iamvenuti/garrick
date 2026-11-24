@@ -597,6 +597,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | *The words are mine* was refused | The Context queue's wall question | The words were not marked as yours. | *Show why* |
 | *Commit these* was refused | Waiting on you now, a zone with files not committed | These files were not committed. | *Show why*; the button is ready again |
 | *Undo* after a commit did not undo it | Waiting on you now | The commit was not undone. | *Show why* |
+| *Undo* in the Context queue, after a change it made or after *Leave it as it is*, did not undo it | The Context queue, the line under the answers | The change was not undone. | *Show why*; a line that says *Undone* is never shown for an undo that failed or that the record cannot confirm |
 | A follow-up could not be prepared | Waiting on you now, Follow-ups | The follow-up was not prepared, and nothing was sent. | *Show why*; the button is ready again |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Never: every search brings its index up to date before it reads, and a refresh that fails gives no results at all, never older ones, so no answer can rest on an old index | None | None: an *Index now* button would write, and none is added |

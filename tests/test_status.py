@@ -480,7 +480,7 @@ class TestGraph(StatusCase):
         # loading, a refusal in the host's words, and no Open for a note that is not there
         self.assertIn("said('Reading the note…')", js)
         self.assertIn("if(out&&out.missing)el('[data-nv=\"open\"]').hidden=true;", js)
-        self.assertIn("else said((out&&out.say)||'That note could not be read.',true)}", js)
+        self.assertIn("failed('note-read',out,'That note could not be read.',function(){read(cur.path,t,b)})", js)   # #511
         self.assertIn("if(!cur||!dlg.open||q.path!==cur.path)return;", js)     # a reply for a note no longer shown
         self.assertIn("if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}", js)
         self.assertIn("if(prev)return prev(q,out)};", js)

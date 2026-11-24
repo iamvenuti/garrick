@@ -94,7 +94,7 @@ def esc(text) -> str:
 
 # ---------------------------------------------------------------------------------------------------- connected services (#683)
 # One line for each connected service, by its plain name: each service on either list, and each one the assistant used that
-# is on neither. The page never shows a pattern: Check it puts `mcp__*<Service>__*` on `connector-tools`, Leave it on
+# is on neither. The page never shows a pattern: Check it puts `mcp__<Service>__*` and `mcp__claude_ai_<Service>__*` on `connector-tools`, Leave it on
 # `connector-tools-skip`, and a pattern written by hand keeps its own line, named from it. The settings keep their format.
 SERVICE_CHOICES = (("check", "Check it", "It returns mail, events or messages."),
                    ("leave", "Leave it", "It returns nothing about people."))
@@ -109,11 +109,12 @@ class ServiceRefused(ValueError):
     """A service's choice that is not saved, with the sentence that says why."""
 
 
-def service_pattern(name: str) -> str:
-    """The pattern Check it or Leave it writes for a service: `mcp__*<Service>__*`, its spaces as underscores. It is held to the
-    server part of a tool's name, the one before its `__`, so a name such as "search" never takes in another service's
-    `…__search_messages` tool."""
-    return "mcp__*%s__*" % "_".join(str(name).split())
+def service_patterns(name: str) -> List[str]:
+    """The two patterns Check it or Leave it writes for a service, its spaces as underscores: `mcp__<Service>__*` and
+    `mcp__claude_ai_<Service>__*`. Each names the whole server part of a tool's name, so "mail" never takes in Gmail's tools
+    nor "Chat" Google Chat's, whether or not they were seen yet. `garrick_lib.service_name()` reads both back as <Service>."""
+    part = "_".join(str(name).split())
+    return ["mcp__%s__*" % part, "mcp__claude_ai_%s__*" % part]
 
 
 SERVICE_MIN = 3                      # the fewest letters or digits a name a pattern is built from may have
@@ -159,7 +160,7 @@ def service_choice(tools: List[str], skip: List[str], seen: List[str], name, cho
                    name_of: Callable[[str], str], matches: Callable[[List[str], str], bool]) -> Tuple[List[str], List[str]]:
     """The two lists once `name` is given `choice` (`check` or `leave`), or ServiceRefused with the sentence that says why.
     A line's own patterns move to the list chosen; a service with none, or one the assistant used that no pattern matches,
-    gets `service_pattern(name)`. *Add a service* (`add`) refuses a name a pattern cannot be built from, and one whose pattern
+    gets `service_patterns(name)`, both together. *Add a service* (`add`) refuses a name a pattern cannot be built from, and one whose pattern
     sits on the other list already: the user did not pick to move it. The mail and calendar list never ends empty."""
     if choice not in ("check", "leave"):
         raise ServiceRefused("A connected service is Check it or Leave it.")
@@ -175,17 +176,17 @@ def service_choice(tools: List[str], skip: List[str], seen: List[str], name, cho
         if not SERVICE_NAME.fullmatch(name) or "*" in name or "__" in name:
             raise ServiceRefused("A service's name is letters and numbers, with spaces, dashes or underscores.")
         key = " ".join(name.casefold().replace("_", " ").replace("-", " ").split())
-        if (key in TOO_WIDE or not name_of(service_pattern(name)) or sum(c.isalnum() for c in name) < SERVICE_MIN
+        if (key in TOO_WIDE or not name_of(service_patterns(name)[0]) or sum(c.isalnum() for c in name) < SERVICE_MIN
                 or "_".join(name.casefold().split()) in CLAUDE_PREFIX):
             raise ServiceRefused("That name would take in every connected service. Type the name of one service.")
-        built = service_pattern(name)
-        others = sorted({name_of(t) for t in seen if matches([built], t) and name_of(t).casefold() != name.casefold()})
+        built = service_patterns(name)
+        others = sorted({name_of(t) for t in seen if matches(built, t) and name_of(t).casefold() != name.casefold()})
         if others:                       # fail closed: a pattern never decides for a service the user did not name
             raise ServiceRefused("That name would also take in %s. Type the name of one service." % ", ".join(others))
         other = skip if choice == "check" else tools
-        if add and built.lower() in [p.lower() for p in other]:
+        if add and {b.lower() for b in built} & {p.lower() for p in other}:
             raise ServiceRefused("%s is on the list already. Choose for it on its own line." % name)
-        moving.append(built)
+        moving.extend(b for b in built if b.lower() not in {m.lower() for m in moving})
     low = {p.lower() for p in moving}
     new_tools = [p for p in tools if p.lower() not in low]
     new_skip = [p for p in skip if p.lower() not in low]

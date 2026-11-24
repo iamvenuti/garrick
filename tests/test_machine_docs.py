@@ -85,7 +85,7 @@ class SettingsRouteDocs(unittest.TestCase):
         setup = page[page.index("## Set it up"):page.index("## What you cannot do on the laptop")]
         self.assertLess(setup.index("Settings"), setup.index("python3 System/tools/machine.py set"))
         self.assertLess(setup.index("*Change…*"), setup.index("If you cannot use the app"))
-        self.assertIn("In a browser, *This machine* shows the role and says it is changed in Garrick.app", page)
+        self.assertIn("In a browser, the row *This computer* shows the role and says it is changed in Garrick.app", page)   # About › This computer (#682)
 
     def test_each_role_has_its_bracket_name_once_and_its_plain_name_used_after(self):
         page = text("docs/machines.md")
@@ -146,7 +146,7 @@ class SettingsRouteDocs(unittest.TestCase):
     def test_the_setup_skill_leads_with_settings_and_says_the_plain_names(self):
         skill = text("template/System/skills/setup/SKILL.md")
         section = skill[skill.index('## "The workspace is on more than one machine"'):skill.index("## Never")]
-        self.assertLess(section.index("Settings, *This machine*, *Change"), section.index("python3 System/tools/machine.py set"))
+        self.assertLess(section.index("Settings, *About*, *This computer*, *Change"), section.index("python3 System/tools/machine.py set"))   # #682
         for word in ("One computer", "Home server", "Laptop copy", "System/garrick-docs/machines.md"):
             self.assertIn(word, section)
 

@@ -673,17 +673,32 @@ class TestOneShortHelpText(SettingsCase):
 
     def test_the_morning_summary_row_only_where_notifications_keep_its_choice(self):
         doc = status._data(self.root, None, "notifications")
+        doc["notifications"]["settings"].pop("morning", None)               # a notifications.py that does not know the key
+        doc["notifications"]["own_way"] = {}
         sec = status.notify_settings(self.root, False, doc)
-        self.assertNotIn("Morning summary", sec)                           # notifications.py does not know the key yet
+        self.assertNotIn("Morning summary", sec)
         doc["notifications"]["settings"]["morning"] = "all"
         sec = status.notify_settings(self.root, False, doc)
         self.assertIn('<span>Morning summary</span>', sec)
         self.assertIn('<option value="all" selected>One for all zones</option><option value="each">One for each zone</option>', sec)
-        self.assertNotIn(status.NT_MORNING_LINE, sec)
+        self.assertNotIn(status.NT_MORNING_LINE, sec)                      # no job sends one its own way
         self.assertNotIn("qhelp", sec[sec.index("Morning summary"):sec.index("</select>", sec.index("Morning summary"))])
+        self.assertNotIn("nsitem nsmorning", sec)                          # a choice, not a switch of the list
+        doc["notifications"]["own_way"] = {"todo-summary": "x"}               # the sweep sends its summary its own way
+        doc["notifications"]["settings"]["morning"] = "all"
+        sec = status.notify_settings(self.root, False, doc)
+        self.assertNotIn("Morning summary", sec)                           # one for all zones would never be sent: no row
+        self.assertIn(status.NT_MORNING_LINE, sec)
+        self.assertIn('<input type="hidden" id="n-morning" value="all">', sec)   # the saved choice still goes with a save
+        doc["notifications"]["own_way"] = {"context-summary": "x"}            # another job's own way leaves the row
+        sec = status.notify_settings(self.root, False, doc)
+        self.assertIn('<span>Morning summary</span>', sec)
+        self.assertIn(status.NT_MORNING_LINE, sec)
         doc["notifications"]["own_way"] = {"todo-summary": "x"}
         del doc["notifications"]["settings"]["morning"]
-        self.assertIn(status.NT_MORNING_LINE, status.notify_settings(self.root, False, doc))
+        sec = status.notify_settings(self.root, False, doc)
+        self.assertIn(status.NT_MORNING_LINE, sec)
+        self.assertNotIn("Morning summary", sec)
         self.assertIn("var mo=document.getElementById('n-morning');if(mo)r.morning=mo.value;", status.NOTIFY_JS)
 
     def test_one_term_per_thing(self):

@@ -651,8 +651,8 @@ def threads(ws: Path, model: Optional[dict] = None) -> Dict[str, dict]:
 # on what it is trying out; a release switches a feature on for everyone and
 # drops its flag. Settings lists them, and which are on.
 FLAGS = {
-    "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
-               "time, read from Claude Code's own transcripts. The nightly job, gr-nightly, records them, so days outlive their clean-up."),
+    "effort": ("Time and cost per thread", "On Overview, how long the assistant worked on each thread, and what that would cost "
+               "at list price, over 7 days, 30 days or all time."),
 }
 
 

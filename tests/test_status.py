@@ -2053,13 +2053,13 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Time and cost per thread"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn("Not released yet. Ask your assistant to switch one on.", html)   # no file or setting is named on the page (#621, #682)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
             self.assertFalse(status.preview_flags(self.root)["effort"])
         write(self.root / "System" / "garrick-flags.json", json.dumps({"effort": True}))
-        self.assertRegex(self.page(), r'Effort</b><span class="chip on">on</span>')
+        self.assertRegex(self.page(), r'Time and cost per thread</b><span class="chip on">on</span>')
 
     def test_a_released_flag_left_behind_changes_nothing(self):
         self.todo()

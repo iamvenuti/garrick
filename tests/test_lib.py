@@ -142,7 +142,8 @@ class TestServiceName(unittest.TestCase):
     def test_from_a_pattern_written_by_hand(self):
         for pattern, name in (("mcp__*Gmail*", "Gmail"), ("mcp__*Mail*", "Mail"), ("mcp__weather__*", "weather"),
                               ("mcp__claude_ai_Outlook__*", "Outlook"), ("mcp__*Google_Calendar*", "Google Calendar"),
-                              ("mcp__fake?mail__*", "fakemail")):
+                              ("mcp__fake?mail__*", "fakemail"), ("mcp__Google_Chat__*", "Google Chat"),
+                              ("mcp__claude_ai_Google_Chat__*", "Google Chat")):
             self.assertEqual(name, lib.service_name(pattern), pattern)
 
     def test_nothing_left_is_empty(self):

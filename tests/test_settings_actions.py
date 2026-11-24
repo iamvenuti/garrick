@@ -416,16 +416,16 @@ class TestConnectedServices(SettingsCase):
         out = self.go({"verb": "connected-service", "service": "Weather", "choice": "leave"})
         self.assertTrue(out["ok"], out)
         self.assertEqual("Weather is now Leave it.", out["say"])
-        self.assertEqual(["mcp__*Weather__*"], self.saved()["connector-tools-skip"])
+        self.assertEqual(["mcp__Weather__*", "mcp__claude_ai_Weather__*"], self.saved()["connector-tools-skip"])
         self.assertEqual(["mcp__*Gmail*", "mcp__*Calendar*"], self.saved()["connector-tools"])     # the defaults, kept
         self.assertEqual([], self.findings())
 
     def test_outlook_typed_in_add_a_service_is_checked(self):
         out = self.go({"verb": "connected-service", "service": "Outlook", "choice": "check", "add": True})
         self.assertTrue(out["ok"], out)
-        self.assertEqual(["mcp__*Gmail*", "mcp__*Calendar*", "mcp__*Outlook__*"], self.saved()["connector-tools"])
+        self.assertEqual(["mcp__*Gmail*", "mcp__*Calendar*", "mcp__Outlook__*", "mcp__claude_ai_Outlook__*"], self.saved()["connector-tools"])
         out = self.go({"verb": "connected-service", "service": "Google Calendar", "choice": "check", "add": True})
-        self.assertIn("mcp__*Google_Calendar__*", self.saved()["connector-tools"])                   # spaces become underscores
+        self.assertIn("mcp__claude_ai_Google_Calendar__*", self.saved()["connector-tools"])                   # spaces become underscores
 
     def test_a_choice_moves_a_lines_own_pattern_a_hand_written_one_too(self):
         self.settings_file.write_text(json.dumps({"connector-tools": ["mcp__*Gmail*", "mcp__acme_mail__*"]}))
@@ -435,7 +435,7 @@ class TestConnectedServices(SettingsCase):
         self.assertEqual({"connector-tools": ["mcp__*Gmail*", "mcp__acme_mail__*"], "connector-tools-skip": []}, self.saved())
 
     def test_add_a_service_refuses_what_it_cannot_build_and_nothing_is_written(self):
-        self.settings_file.write_text(json.dumps({"connector-tools-skip": ["mcp__*Weather__*"]}))
+        self.settings_file.write_text(json.dumps({"connector-tools-skip": ["mcp__claude_ai_Weather__*"]}))
         before = self.saved()
         for bad in ("", " ", "*", "Mail*", "a/b", "a.b", "_x", "claude ai", "MCP", "x" * 61,
                     "a", "c", "e", "i", "ab", "laude", "claude_a", "Aude", "de a",              # too short, or inside claude_ai (review S2)
@@ -456,7 +456,7 @@ class TestConnectedServices(SettingsCase):
         self.seen("mcp__claude_ai_Outlook__search_messages")
         out = self.go({"verb": "connected-service", "service": "search", "choice": "leave", "add": True})
         self.assertTrue(out["ok"], out)
-        self.assertEqual(["mcp__*search__*"], self.saved()["connector-tools-skip"])
+        self.assertEqual(["mcp__search__*", "mcp__claude_ai_search__*"], self.saved()["connector-tools-skip"])
         self.assertEqual(["Settings › Walls › Connected services: Outlook is not decided, so its results are not checked "
                           "against the walls. Choose Check it or Leave it there"], [f.message for f in self.findings()])
         import importlib.util
@@ -468,14 +468,42 @@ class TestConnectedServices(SettingsCase):
                                  lib.service_name, lib.tool_matches)
         self.assertIn({"name": "Outlook", "choice": "", "patterns": [], "unmatched": True}, lines)
 
+    def test_a_leave_it_with_nothing_seen_never_takes_in_a_longer_name_used_later(self):
+        # confirmation pass: "mail" and "Chat" are left with nothing seen; Gmail and Google Chat, used later, stay Not decided
+        for name in ("mail", "Chat"):
+            out = self.go({"verb": "connected-service", "service": name, "choice": "leave", "add": True})
+            self.assertTrue(out["ok"], out)
+        self.assertEqual(["mcp__mail__*", "mcp__claude_ai_mail__*", "mcp__Chat__*", "mcp__claude_ai_Chat__*"],
+                         self.saved()["connector-tools-skip"])
+        self.settings_file.write_text(json.dumps(dict(self.saved(), **{"connector-tools": ["mcp__*Calendar*"]})))
+        self.seen("mcp__claude_ai_Gmail__search_threads", "mcp__claude_ai_Google_Chat__send", "mcp__claude_ai_Chat__list")
+        said = sorted(f.message.split(": ", 1)[1].split(" is not decided")[0] for f in self.findings())
+        self.assertEqual(["Gmail", "Google Chat"], said)                                     # Chat itself is left, as chosen
+        lib = pa.prefs().lib(self.root)
+        sg = pa.guard_settings()
+        lines = sg.service_lines(lib.connector_patterns(self.root), lib.connector_skips(self.root), sg.seen_tools(lib),
+                                 lib.service_name, lib.tool_matches)
+        by = {l["name"]: l["choice"] for l in lines}
+        self.assertEqual(("", "", "leave", "leave"), (by["Gmail"], by["Google Chat"], by["Chat"], by["mail"]))
+        self.assertEqual(["mcp__mail__*", "mcp__claude_ai_mail__*"], next(l for l in lines if l["name"] == "mail")["patterns"])
+
+    def test_both_patterns_move_together_on_a_choice(self):
+        self.go({"verb": "connected-service", "service": "Outlook", "choice": "check", "add": True})
+        self.go({"verb": "connected-service", "service": "Outlook", "choice": "leave"})
+        self.assertEqual(["mcp__Outlook__*", "mcp__claude_ai_Outlook__*"], self.saved()["connector-tools-skip"])
+        self.assertNotIn("mcp__Outlook__*", self.saved()["connector-tools"])
+
     def test_a_built_pattern_never_decides_for_a_seen_service_of_another_name(self):
-        # review S2: a seen tool of another named service that the pattern would match refuses it, on Leave it of a line too
+        # review S2, now by the exact patterns: Leave it on "mail" leaves Acme mail Not decided, and it still warns
         self.seen("mcp__claude_ai_Acme_mail__find", "mcp__claude_ai_mail__get")
-        before = self.saved()
         out = self.go({"verb": "connected-service", "service": "mail", "choice": "leave"})
-        self.refused(out)
-        self.assertIn("Acme mail", out["say"])
-        self.assertEqual(before, self.saved())
+        self.assertTrue(out["ok"], out)
+        said = [f.message.split(": ", 1)[1].split(" is not decided")[0] for f in self.findings()]
+        self.assertEqual(["Acme mail"], said)
+        sg = pa.guard_settings()
+        self.assertEqual([], [n for n in ("Acme mail",) if sg.service_choice(
+            ["mcp__*Gmail*"], [], ["mcp__claude_ai_Acme_mail__find"], "Acme mail", "leave", False,
+            pa.prefs().lib(self.root).service_name, pa.prefs().lib(self.root).tool_matches) is None])
 
     def test_a_refusal_names_its_own_row_with_its_own_sentence(self):
         # review C2: never the general guard-value row; the sentence is the refusal's own, for Show why

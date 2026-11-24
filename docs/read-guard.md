@@ -27,7 +27,7 @@ Each service has two choices:
 
 A service with neither choice says *Not decided*. Its results are not checked. *Add a service* takes a service you have not used yet: type its name, such as Outlook, and press *Add*, and it shows as **Check it**. A name is letters and numbers, with spaces, dashes or underscores, at least three of them. A name that would take in every service, or also a service you have used under another name, is refused, and so is a name already on the list as **Leave it**: choose for it on its own line. At least one service stays on **Check it**.
 
-The page writes what each choice means into the settings for you: Check it adds the service to the list of tools the guard checks, Leave it to the list it leaves alone, and the settings file keeps the format it had. A list an older Garrick wrote, or one written by hand, still shows: each entry is a line named from it.
+The page writes what each choice means into the settings for you, held to the service's whole name, so Leave it on "mail" or "Chat" never takes in Gmail or Google Chat, even before your assistant has used them: Check it adds the service to the list of tools the guard checks, Leave it to the list it leaves alone, and the settings file keeps the format it had. A list an older Garrick wrote, or one written by hand, still shows: each entry is a line named from it.
 
 The weekly check names each service your sessions used that is not decided, where you decide it: "Settings › Walls › Connected services: Weather is not decided". It warns about these services and no others.
 

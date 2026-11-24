@@ -152,6 +152,13 @@ class EnvironmentTest(unittest.TestCase):
             self.assertTrue(hasattr(acceptance.Run, "step_" + key), key)
             self.assertRegex(doc, r"(?m)^    %s\s" % key)
 
+    def test_the_mornings_case_installs_from_the_release_that_wrote_no_morning_key(self):
+        """#686: the case is about an update from a 0.79.0 workspace, so it names that tag and does not follow the previous one."""
+        self.assertEqual("v0.79.0", acceptance.Run.MORNINGS_FROM)
+        body = acceptance.Run.step_mornings.__code__.co_names
+        self.assertIn("MORNINGS_FROM", body)
+        self.assertNotIn("previous_tag", body)
+
     def test_a_step_that_is_not_one_is_refused(self):
         r = run_acceptance("--steps", "install,nonsense")
         self.assertEqual(r.returncode, 2, r.stdout)
@@ -213,7 +220,7 @@ class ReviewFixesTest(unittest.TestCase):
         for flag, code in (([], 0), (["--strict"], 1)):
             res = run_acceptance("--steps", "resume", *flag)
             self.assertEqual(code, res.returncode, res.stdout)
-            self.assertIn("Passed, with 13 skipped", res.stdout)
+            self.assertIn("Passed, with %d skipped" % len(acceptance.STEPS), res.stdout)
 
     def test_the_refused_save_must_be_the_walls_sentence(self):
         src = RUN.read_text(encoding="utf-8")

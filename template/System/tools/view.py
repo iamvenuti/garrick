@@ -88,9 +88,9 @@ two together. `build(root, scope=["Work"])` holds the records of those zones alo
 wiki. A zone folder that is a link is no zone, and an Inbox or a note that resolves outside
 the zone it sits in is left out, so a link into another zone shows none of that zone's work.
 
-`left` names what the page reads for itself because no core module owns it yet: the jobs
-folder, the operations journal, this Mac's launchd agents, the App's own files under `System/`, the
-check's kept result, and the waiting sessions. The settings are read by `view_settings.py` (`settings()` below), not part of
+`left` names what the page reads for itself because no core module owns it yet: the operations journal, the App's own files under `System/`, the
+check's kept result, and the waiting sessions. The jobs folder and this Mac's launchd agents are read by `view_jobs.py` (`jobs_reader()` below), not part of
+`build()`: they are this Mac's. The settings are read by `view_settings.py` (`settings()` below), not part of
 `build()`: Settings is the page's own and names every zone's walled flag.
 
 `build(root, only=(...))` builds the parts named (`PARTS`) and leaves the rest out, for a caller that needs one.
@@ -114,8 +114,7 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 # Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
-LEFT = ("jobs folder state", "operations journal", "launchd agents", "System/ files of the App",
-        "the check's kept result", "waiting sessions")
+LEFT = ("operations journal", "System/ files of the App", "the check's kept result", "waiting sessions")
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
 PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example", "graph")
@@ -1004,6 +1003,11 @@ def settings(root, extras=None, jobs=None, only=None) -> dict:
     the channels, the read guard, the preview flags, this computer's role. `extras` is the status extra's folder, `jobs`
     this Mac's launchd agents as the page reads them, `only` the parts to read. Reads; never writes."""
     return _settings().read(root, extras, jobs, only)
+
+
+def jobs_reader():
+    """The reader of the jobs folder and this Mac's launchd agents (`view_jobs`). Not part of `build()`: they are this Mac's."""
+    return _sibling("view_jobs.py", "garrick_view_jobs")
 
 
 def main(argv=None) -> int:

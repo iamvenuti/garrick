@@ -480,8 +480,6 @@ class TestShadowManageData(Case):
 # fails the test below, and one that stops reading must leave the table, so the list never goes stale.
 LEFT = {
     "is_workspace": "whether a folder holds System/rules.md and Zones/",
-    "jobs": "the jobs folder's logs",
-    "launchd_jobs": "this Mac's launchd agents",
     "threads": "zone names only, while view.py is missing (a half-finished update)",
     "visible_dirs": "the helper the others list folders with",
 }

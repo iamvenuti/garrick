@@ -81,7 +81,7 @@ The shape, with one piece of work and one inbox:
            "edges": []},
  "example": null,
  "system": [{"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}],
- "left": ["jobs folder state", "operations journal", "..."]}
+ "left": ["operations journal", "..."]}
 ```
 
 `files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. `todo` is the zone's open actions, as the Todo tab draws them: every open line of the zone's notes with the note it names (`note`) and the project and thread of that note, the `## ` headings of its `Todo.md` in order, and the lines ticked on `today`, the day the build counts from. The view model decides which note a line names; the page decides what late means and how a row sorts. A zone folder that is a link has no `todo`, and a note that is a link into another zone or a wiki gives that zone none of the lines it leads to. `questions` is what Garrick asked and waits on, the open files in the `Needs you` folders of the zone, its projects and its threads, oldest first; one put off to a day that has not come is left out, and a project, thread or file that is a link into another zone or a wiki is not read. `wikis` is each wiki's log: how many entries it holds and the newest one, with the page it names, taken from the wiki's own folder; a log that is a link into another zone or a wiki is not read, and a wiki belongs to no zone, so a build limited to some zones holds none. `repos` is what each repository has uncommitted: the root, each zone, the wikis, and a wiki with one of its own; a repository git could not read is `unread`, never clean, a zone folder that is a link has none here, and a build limited to some zones holds those zones' repositories alone. `graph` is what Explore draws: every note of the zones and of the wikis with its place, kind, status, date, parties and title, and the links between notes as pairs of indexes, each pair once. Notes in an `Inbox`, in an archive or raw folder, hidden notes, instructions and what the vault excludes are left out, and so are a zone folder that is a link and a note that is a link into another zone or a wiki; a build limited to some zones holds those zones' notes and no wiki. `example` names the zone the worked example is in, by the `.example.json` marker that zone holds, or is null. `system` lists the projects kept in `System/`, which belong to no zone: the hub note and each thread note, by path, so the page can match a Todo line's link to one; a build limited to some zones holds none of it. The field names are stable: the page, the tests and any later reader build on them.
@@ -108,6 +108,24 @@ Settings has a document of its own: `view.settings(root)`, from `System/tools/vi
 ```
 
 What stays with the page, because it is this Mac's and no workspace's: which apps are installed, this Mac's launchd agents (the page hands them in, so a notice row can say who sends it), and whether cmux is here. A zone's colour and icon, and each kind of note's colour in Explore, are read for the cards too, so the page reads them once for both.
+
+#### What the App reads on this Mac
+
+Some of what the page shows is this Mac's and no workspace's: the jobs the scheduler runs, and the files the App keeps under `System/`. None of it is in `build()`, so a document built for one zone holds nothing from it. Each has a reader of its own in the core, reached through `view.py`, that reads the same files the page used to read, writes nothing, starts no process and gives its empty value for a file that is missing or does not read, never a path or the text of an error. `status.py` keeps what a state means (late, idle, failed), the words of a row and how it is drawn.
+
+The scheduled jobs are `view.jobs_reader()`, from `System/tools/view_jobs.py`. Each reader takes the folder it reads as its first argument (the jobs folder, or the launch agents folder), as the page's own functions did, and follows no link or `..` that they did not. It does not load the jobs extra: the extra's own lock rule stays with the page, which has it loaded or not.
+
+```json
+{"agents": {"brief": {"agent": true, "env": {"GARRICK_ABOUT": "A morning brief"}, "label": "garrick.brief",
+                      "about": "A morning brief", "plist": "/Users/jo/Library/LaunchAgents/garrick.brief.plist",
+                      "mtime": 1763000000.0, "timing": {"StartCalendarInterval": {"Hour": 6}}}},
+ "heartbeats": [{"name": "brief", "heartbeat": {"job": "brief", "finished": "2026-11-20 09:00:00", "exit": 0}}],
+ "runs": [["2026-11-19 09:00:00", 0, false]],
+ "steps": [{"step": "effort", "exit": 1}],
+ "lock": {"dir": true, "until": "1763000600 4242 1763000000", "mtime": 1763000000.0}}
+```
+
+`agents` is the plists that run `job.py`, by job name, with the keys the schedule is read from; `heartbeats`, `runs`, `steps` and `lock` are what one job's files say, each from the file the job's name gives. The page works out the schedule in words and how long before a run is late from `timing`.
 
 #### What the App counts
 
@@ -182,7 +200,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `check.py` tests the workspace against every rule a machine can check. Run by hand it reports; run by the pre-commit hook as `--staged --walls-only` it refuses. See [The check](commands.md#the-check).
 - `scaffold.py` makes zones, parties, projects and threads, and parks, wakes, renames and deletes them. It checks a name and a party before it writes anything. See [Your first project](commands.md#your-first-project).
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
-- `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes. `view_settings.py`, loaded through it, does the same for Settings.
+- `view.py` builds the view model, the one document the Garrick App draws: your pieces of work, what each may do, and the queues that wait. It reads and never writes. `view_settings.py`, loaded through it, does the same for Settings, and `view_jobs.py` for the scheduled jobs.
 - `usage.py` prints what the Garrick App is used for: card opens, wraps started from the App and Ask actions, from records that already exist. It names each source and what it cannot see. It reads and never writes.
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.

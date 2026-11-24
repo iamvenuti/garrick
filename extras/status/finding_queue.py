@@ -1374,7 +1374,7 @@ function isHanded(q){var k=handKey(q);return!!k&&!!hand().items[k]}
 function remember(q){var k=handKey(q);if(!k)return;var o=hand();o.items[k]=Date.now();putHand(o)}
 function showLast(){all().forEach(function(s){var b=s.querySelector('.qlast');if(b){b.textContent='';b.hidden=true}});
 var l=hand().last;if(!l||!cur||l.scope!==cur.dataset.scope)return;var b=cur.querySelector('.qlast');if(!b)return;
-var t=document.createElement('span');if(l.fail&&typeof l.fail==='object'&&window.GarrickFail)GarrickFail(t,String(l.fail.code||'undo'),String(l.fail.raw||''));else t.textContent=l.text;b.appendChild(t);
+var t=document.createElement('span');if(l.fail&&typeof l.fail==='object'&&!Array.isArray(l.fail)&&window.GarrickFail)GarrickFail(t,/^(undo|unknown|lost|unrecorded)$/.test(l.fail.code)?l.fail.code:'undo',String(l.fail.raw||'').slice(0,600));else t.textContent=String(l.text||'');b.appendChild(t);
 if(l.undo){var u=document.createElement('button');u.type='button';u.className='act';u.setAttribute('data-qundo','1');u.textContent='Undo';b.appendChild(u)}
 if(l.show){var w=document.createElement('button');w.type='button';w.className='act';w.setAttribute('data-qshow','1');w.textContent='Show me';b.appendChild(w)}
 b.hidden=false}

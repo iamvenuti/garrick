@@ -460,7 +460,7 @@ vm.runInContext("var GarrickFail=window.GarrickFail;var store=null,cur={dataset:
 +pick("var UNDONE=","function clearLast(){")
 +pick("function showLast(){","function setLast(")
 +"function done(res){var o=hand();var u=undone(res);o.last.text=u.text;if(u.fail)o.last.fail=u.fail;else delete o.last.fail;o.last.undo=null;putHand(o);showLast()}",c);
-vm.runInContext("store="+JSON.stringify(JSON.stringify(stored))+";done("+JSON.stringify(res)+");",c);
+vm.runInContext("store="+JSON.stringify(JSON.stringify(stored))+";"+(res==="__stored__"?"showLast()":"done("+JSON.stringify(res)+")")+";",c);
 const out=vm.runInContext("(function(){var b=box.querySelector('button'),d=box.querySelector('details');"
 +"var r={text:box.textContent,failure:box.querySelector('span')&&box.children[0].getAttribute('data-failure'),button:b?b.textContent:null,"
 +"details:d?d.children[1].textContent:null,open:d?d.open:null,kept:store};"
@@ -523,6 +523,30 @@ class TestTheUndoLine(unittest.TestCase):
         self.assertEqual("the hook refused", got["againDetails"])
         old = {"items": {}, "last": {"scope": "s", "text": "Undone: the page is as it was.", "undo": None, "t": 4102444800000}}
         self.assertEqual("Undone: the page is as it was.", self.run_undo({"ok": True, "say": "Undone: the page is as it was."}, old)["again"])
+
+    def test_a_forged_stored_line_draws_only_the_undo_rows_and_at_most_600_characters(self):
+        forged = {"items": {}, "last": {"scope": "s", "text": "x", "undo": None, "t": 4102444800000,
+                                        "fail": {"code": "commit-undo", "raw": "r" * 5000}}}
+        got = self.draw_stored(forged)
+        self.assertEqual("undo", got["failure"])
+        self.assertTrue(got["text"].startswith(pa.plain_failure("undo")["say"]))
+        self.assertEqual(600, len(got["details"]))
+
+    def test_a_stored_fail_that_is_not_an_object_with_a_code_does_not_break_the_line(self):
+        for fail in (["undo"], "undo", {"raw": "why"}, {"code": 5}, 7, {}):
+            with self.subTest(fail=fail):
+                line = {"items": {}, "last": {"scope": "s", "text": "kept", "undo": None, "t": 4102444800000, "fail": fail}}
+                got = self.draw_stored(line)
+                self.assertTrue(got["text"])
+                self.assertIn(got["failure"], (None, "undo"))
+
+    def draw_stored(self, stored):
+        """The line as showLast draws it from a stored line, with no new reply."""
+        from test_status import status       # noqa: E402
+        r = subprocess.run(["node", "-e", UNDO_HARNESS, json.dumps([status.WORK_JS, QUEUE, "__stored__", stored])],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr)
+        return json.loads(r.stdout)
 
     def test_the_script_sets_text_only_as_text(self):
         fn = QUEUE.split("function undone(res)", 1)[1].split("function clearLast", 1)[0]

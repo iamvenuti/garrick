@@ -173,6 +173,14 @@ class TestNoSettingValueIsShown(Case):
         self.assertNotIn("ghp_", text)
         self.assertEqual("~/dl/garrick/extras/hooks/zone_guard.py", f.path)
 
+    def test_a_quoted_path_with_a_space_that_is_missing_is_named_whole(self):
+        """N2: a folder name with a space is one path, and its file is said not to exist, never "not a full path"."""
+        self.name('python3 "/x/My Folder/zone_guard.py"')
+        (f,) = self.found()
+        self.assertIn("/x/My Folder/zone_guard.py", f.message)
+        self.assertIn("does not exist", f.message)
+        self.assertNotIn("not a full path", f.message)
+
     def test_env_with_a_setting_names_only_the_path(self):
         self.kept(b"# old\n", files=("zone_guard.py",))
         self.name('env GH_TOKEN=ghp_secret123 python3 "$HOME/kept/extras/hooks/zone_guard.py"')

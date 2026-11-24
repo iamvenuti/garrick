@@ -116,7 +116,12 @@ class TestOneWordFilterThreeCopies(unittest.TestCase):
             ("$HOME/kept/extras/hooks/zone_guard.py", "$HOME/kept/extras/hooks/zone_guard.py"),
             ("GH_TOKEN=ghp_secret123/zone_guard.py", None),
             (h + "/my hooks/zone_guard.py", h + "/my hooks/zone_guard.py"),     # a quoted path with a space, that is there
-            (h + "/gone dir/zone_guard.py", "dir/zone_guard.py"),               # not there: only its last token, a relative word
+            (h + "/gone dir/zone_guard.py", h + "/gone dir/zone_guard.py"),     # not there, but one path: kept whole
+            ("/x/My Folder/zone_guard.py", "/x/My Folder/zone_guard.py"),
+            ("~/My Folder/zone_guard.py", "~/My Folder/zone_guard.py"),
+            ("$HOME/My Folder/zone_guard.py", "$HOME/My Folder/zone_guard.py"),
+            ("/x/a; GH_TOKEN=ghp_x /z/zone_guard.py", "/z/zone_guard.py"),
+            ("/bin/t ghp_secret /z/zone_guard.py", "/z/zone_guard.py"),
             ("", None),
         ]
 

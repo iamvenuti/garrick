@@ -6914,9 +6914,18 @@ def hook_path(word: str) -> Optional[str]:
     return path if os.path.isabs(path) else None
 
 
+def one_path(word: str) -> bool:
+    """Whether a word with whitespace reads as one path (a quoted folder name with a space): it starts with `/`, `~`, `$HOME/`
+    or `${HOME}/`, holds no `=`, `;`, `&`, `|` or backtick, and every piece after its first space holds a `/`, so a command's
+    flag or value never passes as part of a path."""
+    if not word.startswith(("/", "~", "$HOME/", "${HOME}/")) or any(c in word for c in "=;&|`"):
+        return False
+    return all("/" in piece for piece in word.split()[1:])
+
+
 def hook_word(word: str) -> Optional[str]:
     """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
-    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    first `/` and no whitespace, or one with whitespace that reads as one path (`one_path`) or names an existing file whole. Any
     other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
     same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
     settings_guard.py and update.py."""
@@ -6924,7 +6933,7 @@ def hook_word(word: str) -> Optional[str]:
     for w in (word, pieces[-1] if pieces else ""):
         if not w or "=" in w.split("/", 1)[0]:
             continue
-        if any(c.isspace() for c in w):
+        if any(c.isspace() for c in w) and not one_path(w):
             full = hook_path(w)
             if not (full and os.path.isfile(full)):
                 continue

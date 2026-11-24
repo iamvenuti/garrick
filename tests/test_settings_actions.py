@@ -376,7 +376,7 @@ class TestTheReadGuard(SettingsCase):
 
     def test_every_failure_row_has_a_sentence_and_one_next_step_and_no_path_or_key(self):
         rows = [r for r in pa.FAILURES if r[0].startswith(("role-", "guard-"))]
-        self.assertEqual(12, len(rows))
+        self.assertEqual(13, len(rows))
         for code, sentence, button, act, band in rows:
             with self.subTest(code=code):
                 self.assertIn(act, ("why", "retry", "refresh"))

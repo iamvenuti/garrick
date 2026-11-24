@@ -2093,7 +2093,7 @@ def guard_settings():
 
 def set_connected_service(ws: Path, req: dict) -> dict:
     """Settings › Walls › Connected services (#683): `service`, a plain name, takes `choice`, `check` (Check it) or `leave`
-    (Leave it). The page sends no pattern: this writes them, `mcp__*<Service>*` for a service that has none, and moves a line's
+    (Leave it). The page sends no pattern: this writes them, `mcp__*<Service>__*` for a service that has none, and moves a line's
     own patterns, a hand-written one too, to the list chosen. `add` is *Add a service*: it refuses a name a pattern cannot be
     built from, or would match every tool, and one whose pattern is already on the other list. The two lists are checked as
     the read-guard verb checks them, and saved in the settings file through the page's own save (prefs). Nothing else changes."""
@@ -2104,18 +2104,22 @@ def set_connected_service(ws: Path, req: dict) -> dict:
         raise fails("guard-value", "a connected service is given by its name")
     keep = prefs()
     lib = keep.lib(ws)
+
+    def too_old(why: str):
+        """A Garrick older than its page: no write failed, so it is never `guard-save` (review C2)."""
+        return fails("guard-old", why) if "guard-old" in FAILURE_CODES else Refused("%s; update Garrick" % why)
     if lib is None or not callable(getattr(lib, "service_name", None)):
-        raise fails("guard-save", "this workspace's garrick_lib names no connected service; update Garrick")
+        raise too_old("this workspace's garrick_lib names no connected service")
     try:
         sg = guard_settings()
     except Exception as e:
-        raise fails("guard-save", "settings_guard.py did not load: %s" % type(e).__name__)
+        raise too_old("settings_guard.py did not load: %s" % type(e).__name__)
     try:
         tools, skip = list(lib.connector_patterns(ws)), list(lib.connector_skips(ws))
         new_tools, new_skip = sg.service_choice(tools, skip, sg.seen_tools(lib), req["service"], req.get("choice"), add,
                                                 lib.service_name, lib.tool_matches)
-    except sg.ServiceRefused as e:
-        raise fails("guard-value", str(e))
+    except sg.ServiceRefused as e:                      # its own row; the refusal's sentence is what Show why shows (review C2)
+        raise fails("guard-service", str(e))
     new = {"connector-tools": clean_patterns(new_tools, "the mail and calendar tools", needs_one=True),
            "connector-tools-skip": clean_patterns(new_skip, "the tools with nothing to check")}
     if new["connector-tools"] == tools and new["connector-tools-skip"] == skip:
@@ -2125,7 +2129,7 @@ def set_connected_service(ws: Path, req: dict) -> dict:
         keep.save(ws, new)
     except (OSError, ValueError, keep.NoAccessor) as e:
         raise fails("guard-save", "%s: %s" % (type(e).__name__, e))
-    name = " ".join(req["service"].split())
+    name = " ".join(req["service"].split()) or sg.EVERY_SERVICE
     said = "%s is now %s." % (name, "Check it" if req["choice"] == "check" else "Leave it")
     return {"say": said, "logged": "Connected services: %s" % said}
 
@@ -2147,7 +2151,9 @@ def set_channel_answers(ws: Path, req: dict) -> str:
     try:
         kept = prefs().read(ws).get("channels")
         merged = dict(kept) if isinstance(kept, dict) else {}
-        merged.update(lib.clean({channel: {"tier": tier, "effort": effort}}, merged))
+        # the autonomy the channel runs at now goes with it, so a stored value that reads as Read is kept at Read, never raised
+        autonomy = lib.settings(ws)[channel]["autonomy"]
+        merged.update(lib.clean({channel: {"tier": tier, "effort": effort, "autonomy": autonomy}}, merged))
     except ValueError as e:
         raise Refused(str(e))
     keep = prefs()

@@ -94,7 +94,7 @@ def esc(text) -> str:
 
 # ---------------------------------------------------------------------------------------------------- connected services (#683)
 # One line for each connected service, by its plain name: each service on either list, and each one the assistant used that
-# is on neither. The page never shows a pattern: Check it puts `mcp__*<Service>*` on `connector-tools`, Leave it on
+# is on neither. The page never shows a pattern: Check it puts `mcp__*<Service>__*` on `connector-tools`, Leave it on
 # `connector-tools-skip`, and a pattern written by hand keeps its own line, named from it. The settings keep their format.
 SERVICE_CHOICES = (("check", "Check it", "It returns mail, events or messages."),
                    ("leave", "Leave it", "It returns nothing about people."))
@@ -110,8 +110,14 @@ class ServiceRefused(ValueError):
 
 
 def service_pattern(name: str) -> str:
-    """The pattern Check it or Leave it writes for a service: `mcp__*<Service>*`, its spaces as underscores."""
-    return "mcp__*%s*" % "_".join(str(name).split())
+    """The pattern Check it or Leave it writes for a service: `mcp__*<Service>__*`, its spaces as underscores. It is held to the
+    server part of a tool's name, the one before its `__`, so a name such as "search" never takes in another service's
+    `…__search_messages` tool."""
+    return "mcp__*%s__*" % "_".join(str(name).split())
+
+
+SERVICE_MIN = 3                      # the fewest letters or digits a name a pattern is built from may have
+CLAUDE_PREFIX = "claude_ai"          # a name inside it would take in every tool of one assistant's connectors
 
 
 def seen_tools(lib) -> List[str]:
@@ -132,7 +138,7 @@ def service_lines(tools: List[str], skip: List[str], seen: List[str], name_of: C
     lines: Dict[str, dict] = {}
     for choice, patterns in (("check", tools), ("leave", skip)):
         for pattern in patterns:
-            name = name_of(pattern) or ""
+            name = name_of(pattern) or EVERY_SERVICE        # a pattern of wildcards only names no service: its line says so
             line = lines.setdefault(name.casefold(), {"name": name, "choice": choice, "patterns": [], "unmatched": False})
             if choice == "check":
                 line["choice"] = "check"
@@ -166,11 +172,16 @@ def service_choice(tools: List[str], skip: List[str], seen: List[str], name, cho
         return list(tools), list(skip)
     moving = list(line["patterns"]) if line is not None else []
     if not moving or (line is not None and line["unmatched"]):
-        if not SERVICE_NAME.fullmatch(name) or "*" in name:
+        if not SERVICE_NAME.fullmatch(name) or "*" in name or "__" in name:
             raise ServiceRefused("A service's name is letters and numbers, with spaces, dashes or underscores.")
-        if " ".join(name.casefold().replace("_", " ").replace("-", " ").split()) in TOO_WIDE or not name_of(service_pattern(name)):
+        key = " ".join(name.casefold().replace("_", " ").replace("-", " ").split())
+        if (key in TOO_WIDE or not name_of(service_pattern(name)) or sum(c.isalnum() for c in name) < SERVICE_MIN
+                or "_".join(name.casefold().split()) in CLAUDE_PREFIX):
             raise ServiceRefused("That name would take in every connected service. Type the name of one service.")
         built = service_pattern(name)
+        others = sorted({name_of(t) for t in seen if matches([built], t) and name_of(t).casefold() != name.casefold()})
+        if others:                       # fail closed: a pattern never decides for a service the user did not name
+            raise ServiceRefused("That name would also take in %s. Type the name of one service." % ", ".join(others))
         other = skip if choice == "check" else tools
         if add and built.lower() in [p.lower() for p in other]:
             raise ServiceRefused("%s is on the list already. Choose for it on its own line." % name)

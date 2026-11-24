@@ -1032,11 +1032,6 @@ def frontmatter(path: Path, lib=None) -> dict:
             return lib.parse_frontmatter(path) or {}
         except Exception:
             pass
-    if lib is not None:
-        try:
-            return lib.parse_frontmatter(path) or {}
-        except Exception:
-            pass
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:

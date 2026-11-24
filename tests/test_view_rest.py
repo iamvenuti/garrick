@@ -352,6 +352,31 @@ class TestDocumentedJobs(Machine):
         self.assertNotIn("launchd agents", view.LEFT)
 
 
+class TestABrokenReaderSaysSo(Machine):
+    """A core reader that is there but fails says so once on stderr, with its error's class alone; a missing one stays silent."""
+
+    def run_reader(self, error):
+        import io
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        status._SAID.clear()
+        with mock.patch.object(status, "view_reader", side_effect=error), redirect_stderr(err):
+            self.assertIsNone(status.jobs_reader())
+            self.assertIsNone(status.jobs_reader())
+            self.assertIsNone(status.app_reader())
+        return err.getvalue()
+
+    def test_a_broken_module_is_said_once_per_reader_without_its_words(self):
+        out = self.run_reader(SyntaxError("secret words in /private/path"))
+        self.assertEqual(2, len(out.splitlines()))
+        self.assertIn("SyntaxError", out)
+        self.assertNotIn("secret", out)
+        self.assertNotIn("/private", out)
+
+    def test_a_missing_file_stays_silent(self):
+        self.assertEqual("", self.run_reader(FileNotFoundError("System/tools/view.py")))
+
+
 class TestHalfUpdated(Machine):
     """The page is new and System/tools is old: a view.py with no `jobs_reader`, or one whose reader is missing."""
 

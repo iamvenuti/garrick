@@ -138,7 +138,7 @@ def service_lines(tools: List[str], skip: List[str], seen: List[str], name_of: C
     lines: Dict[str, dict] = {}
     for choice, patterns in (("check", tools), ("leave", skip)):
         for pattern in patterns:
-            name = name_of(pattern) or ""
+            name = name_of(pattern) or EVERY_SERVICE        # a pattern of wildcards only names no service: its line says so
             line = lines.setdefault(name.casefold(), {"name": name, "choice": choice, "patterns": [], "unmatched": False})
             if choice == "check":
                 line["choice"] = "check"
@@ -172,7 +172,7 @@ def service_choice(tools: List[str], skip: List[str], seen: List[str], name, cho
         return list(tools), list(skip)
     moving = list(line["patterns"]) if line is not None else []
     if not moving or (line is not None and line["unmatched"]):
-        if not SERVICE_NAME.fullmatch(name) or "*" in name:
+        if not SERVICE_NAME.fullmatch(name) or "*" in name or "__" in name:
             raise ServiceRefused("A service's name is letters and numbers, with spaces, dashes or underscores.")
         key = " ".join(name.casefold().replace("_", " ").replace("-", " ").split())
         if (key in TOO_WIDE or not name_of(service_pattern(name)) or sum(c.isalnum() for c in name) < SERVICE_MIN

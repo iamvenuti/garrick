@@ -2147,7 +2147,9 @@ def set_channel_answers(ws: Path, req: dict) -> str:
     try:
         kept = prefs().read(ws).get("channels")
         merged = dict(kept) if isinstance(kept, dict) else {}
-        merged.update(lib.clean({channel: {"tier": tier, "effort": effort}}, merged))
+        # the autonomy the channel runs at now goes with it, so a stored value that reads as Read is kept at Read, never raised
+        autonomy = lib.settings(ws)[channel]["autonomy"]
+        merged.update(lib.clean({channel: {"tier": tier, "effort": effort, "autonomy": autonomy}}, merged))
     except ValueError as e:
         raise Refused(str(e))
     keep = prefs()

@@ -156,6 +156,19 @@ class TestAnswers(EngineCase):
                 self.assertFalse(self.answers(channel, answers)["ok"])
         self.assertEqual(("opus", "low"), tuple(self.channels.settings(self.root)["ask"][k] for k in ("tier", "effort")))
 
+    def test_a_level_that_reads_as_read_is_never_raised_by_a_pick(self):
+        # review S3: a stored Full for Telegram, or a value that is no level, runs as Read, and a pick keeps it at Read
+        path = self.root / "System" / "garrick-settings.json"
+        for bad in ("full", "bogus"):
+            with self.subTest(autonomy=bad):
+                write(path, json.dumps({"channels": {"telegram": {"autonomy": bad}, "ask": {"autonomy": "bogus"}}}))
+                self.assertEqual("read", self.channels.settings(self.root)["telegram"]["autonomy"])
+                self.assertTrue(self.answers("telegram", "fuller")["ok"])
+                self.assertTrue(self.answers("ask", "faster")["ok"])
+                got = self.channels.settings(self.root)
+                self.assertEqual(("opus", "high", "read"), tuple(got["telegram"][k] for k in ("tier", "effort", "autonomy")))
+                self.assertEqual("read", got["ask"]["autonomy"])
+
     def test_it_is_the_pages_own_verb(self):
         self.assertIn("channel-answers", self.pa.PAGE_ONLY)
         self.assertIn("channel-answers", self.pa.ops_lib(self.root).DECLARED)

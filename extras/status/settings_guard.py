@@ -150,6 +150,24 @@ def hook_path(word: str) -> Optional[str]:
     return path if os.path.isabs(path) else None
 
 
+def hook_word(word: str) -> Optional[str]:
+    """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
+    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
+    same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
+    settings_guard.py and update.py."""
+    pieces = word.split()
+    for w in (word, pieces[-1] if pieces else ""):
+        if not w or "=" in w.split("/", 1)[0]:
+            continue
+        if any(c.isspace() for c in w):
+            full = hook_path(w)
+            if not (full and os.path.isfile(full)):
+                continue
+        return w
+    return None
+
+
 def hook_scripts(text: str) -> List[str]:
     """The Garrick hook files an assistant's settings text names: the words of each hook `command`, split as a shell splits
     them, that end in zone_guard.py, read_guard.py or waiting_hook.py. A path with a space in it stays whole when quoted.
@@ -164,7 +182,8 @@ def hook_scripts(text: str) -> List[str]:
                     words = shlex.split(command)
                 except ValueError:
                     words = command.split()
-                out.extend(w for w in words if HOOK_NAME.fullmatch(w))
+                kept = [hook_word(w) for w in words if HOOK_NAME.fullmatch(w)]
+                out.extend(w for w in kept if w and HOOK_NAME.fullmatch(w))
             for value in node.values():
                 walk(value)
         elif isinstance(node, list):

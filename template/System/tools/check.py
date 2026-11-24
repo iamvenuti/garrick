@@ -6914,6 +6914,24 @@ def hook_path(word: str) -> Optional[str]:
     return path if os.path.isabs(path) else None
 
 
+def hook_word(word: str) -> Optional[str]:
+    """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
+    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
+    same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
+    settings_guard.py and update.py."""
+    pieces = word.split()
+    for w in (word, pieces[-1] if pieces else ""):
+        if not w or "=" in w.split("/", 1)[0]:
+            continue
+        if any(c.isspace() for c in w):
+            full = hook_path(w)
+            if not (full and os.path.isfile(full)):
+                continue
+        return w
+    return None
+
+
 def guard_shown(word: str) -> str:
     """A hook path as the settings write it, with the home folder as `~` and a variable by its name, never its value: as
     settings_guard.shown_path and update.shown_path show it, printable and at most 200 characters."""
@@ -6942,7 +6960,10 @@ def guard_words(home: Path) -> List[str]:
                     words = shlex.split(command)
                 except ValueError:
                     words = command.split()
-                out.extend(w for w in words if posixpath.basename(w) in GUARD_NAMES and w not in out)
+                for w in words:
+                    w = hook_word(w) if posixpath.basename(w) in GUARD_NAMES else None
+                    if w and posixpath.basename(w) in GUARD_NAMES and w not in out:
+                        out.append(w)
             for value in node.values():
                 walk(value, depth + 1)
         elif isinstance(node, list):
@@ -6974,6 +6995,12 @@ def check_guard_hooks(ws: Workspace) -> List[Finding]:
                                "your assistant runs %s from %s, inside the workspace, where the update never refreshes it. %s"
                                % (what, shown, GUARD_FIX_POINT),
                                "%s runs from inside the workspace" % what.capitalize()))
+            continue
+        if path is None:
+            out.append(Finding(WARNING, "guard-hooks", shown,
+                               "your assistant names %s as %s, which is not a full path, so the check cannot tell which file "
+                               "it runs. %s" % (what, shown, GUARD_FIX_POINT),
+                               "%s your assistant names is not a full path" % what.capitalize()))
             continue
         data = None
         if path is not None:

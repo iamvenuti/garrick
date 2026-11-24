@@ -1477,6 +1477,24 @@ def hook_path(word):
     return path if os.path.isabs(path) else None
 
 
+def hook_word(word):
+    """The part of a hook command word that may name a hook file, or None (#685's review): a word with no `=` before its
+    first `/` and no whitespace, or one with whitespace that names an existing file whole (a quoted path with a space). Any
+    other word, such as the one script after `sh -c` that sets a variable, gives its last whitespace-separated token under the
+    same test, else nothing, so no setting's value is ever read or shown as a path. Written alike in check.py,
+    settings_guard.py and update.py."""
+    pieces = word.split()
+    for w in (word, pieces[-1] if pieces else ""):
+        if not w or "=" in w.split("/", 1)[0]:
+            continue
+        if any(c.isspace() for c in w):
+            full = hook_path(w)
+            if not (full and os.path.isfile(full)):
+                continue
+        return w
+    return None
+
+
 def shown_path(word):
     """A hook path as the settings write it, with the home folder as `~` and a variable as its name, never its value (#670):
     `$HOME/x` and `${HOME}/x` show as `~/x`; a path under the home folder shows with `~`; any other word shows as written."""
@@ -1505,7 +1523,7 @@ def outside_found(root):
             pass
     paths = set()
     for text in texts:
-        paths |= set(re.findall(r"[^\s\"']*zone_guard\.py", text))
+        paths |= set(re.findall(r"[^\s\"'=]*zone_guard\.py", text))
     for path in sorted(paths):
         full = hook_path(path)
         there = Path(full) if full else None
@@ -1514,7 +1532,7 @@ def outside_found(root):
     reader = REPO / "extras" / "hooks" / "read_guard.py"
     paths = set()
     for text in texts:
-        paths |= set(re.findall(r"[^\s\"']*read_guard\.py", text))
+        paths |= set(re.findall(r"[^\s\"'=]*read_guard\.py", text))
     for path in sorted(paths):
         full = hook_path(path)
         there = Path(full) if full else None
@@ -1563,7 +1581,8 @@ def hook_words(root):
                 except ValueError:
                     words = command.split()
                 for word in words:
-                    if name.fullmatch(word) and word not in seen:
+                    word = hook_word(word) if name.fullmatch(word) else None
+                    if word and name.fullmatch(word) and word not in seen:
                         seen.add(word)
                         out.append((word, hook_path(word)))
             for value in node.values():

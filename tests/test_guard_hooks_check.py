@@ -104,6 +104,17 @@ class TestGuardHooksCheck(Case):
         self.assertIn("~/gone/extras/hooks/read_guard.py", f.message)
         self.assertIn(check.GUARD_FIX_POINT, f.message)
 
+    def test_a_word_that_is_not_a_full_path_has_its_own_wording(self):
+        """C7: a relative path, or one through a variable the check cannot read, is not called missing."""
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        for written in ("python3 extras/hooks/zone_guard.py", 'python3 "$CLAUDE_PROJECT_DIR/extras/hooks/zone_guard.py"'):
+            with self.subTest(written=written):
+                self.name(written)
+                (f,) = self.found()
+                self.assertIn("is not a full path", f.message)
+                self.assertNotIn("does not exist", f.message)
+                self.assertIn(check.GUARD_FIX_POINT, f.message)
+
     def test_no_guard_hook_in_either_settings_file_has_no_finding(self):
         self.assertEqual([], self.found())                                   # no settings at all
         self.name("python3 ~/kept/extras/hooks/waiting_hook.py", codex={"hooks": {}})
@@ -148,6 +159,39 @@ class TestGuardHooksCheck(Case):
             "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "python3 ~/kept/extras/hooks/zone_guard.py"}]},
                                      {"hooks": [{"type": "command", "command": "python3 ~/kept/extras/hooks/zone_guard.py"}]}]}}))
         self.assertEqual(1, len(self.found()))
+
+
+class TestNoSettingValueIsShown(Case):
+    """#685's review (S1): a command that sets a variable before the guard shows only the guard's path."""
+
+    def test_sh_c_with_a_token_names_only_the_path(self):
+        self.name("sh -c 'GH_TOKEN=ghp_secret123 python3 ~/dl/garrick/extras/hooks/zone_guard.py'")
+        (f,) = self.found()
+        text = f.message + f.path + f.ear
+        self.assertIn("~/dl/garrick/extras/hooks/zone_guard.py", text)
+        self.assertNotIn("GH_TOKEN", text)
+        self.assertNotIn("ghp_", text)
+        self.assertEqual("~/dl/garrick/extras/hooks/zone_guard.py", f.path)
+
+    def test_env_with_a_setting_names_only_the_path(self):
+        self.kept(b"# old\n", files=("zone_guard.py",))
+        self.name('env GH_TOKEN=ghp_secret123 python3 "$HOME/kept/extras/hooks/zone_guard.py"')
+        (f,) = self.found()
+        self.assertIn("~/kept/extras/hooks/zone_guard.py", f.message)
+        self.assertNotIn("ghp_", f.message + f.path + f.ear)
+        self.assertNotIn("GH_TOKEN", f.message + f.path + f.ear)
+
+    def test_settings_and_the_update_show_no_value_either(self):
+        import importlib.util as iu
+        sg = load("sg_s1", REPO / "extras" / "status" / "settings_guard.py")
+        self.name("sh -c 'GH_TOKEN=ghp_secret123 python3 ~/dl/garrick/extras/hooks/zone_guard.py'")
+        shown = " ".join(w for w, _ in sg.named_hooks(str(self.home)))
+        self.assertIn("~/dl/garrick/extras/hooks/zone_guard.py", shown)
+        self.assertNotIn("ghp_", shown)
+        sys.path.insert(0, str(REPO))
+        up = load("up_s1", REPO / "update.py")
+        words = [w for w, _ in up.hook_words(self.root)]
+        self.assertEqual(["~/dl/garrick/extras/hooks/zone_guard.py"], words)
 
 
 class TestTheCheckIsRegistered(unittest.TestCase):

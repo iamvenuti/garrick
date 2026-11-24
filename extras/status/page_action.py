@@ -6599,6 +6599,7 @@ FAILURES = (
      "Open Settings and choose Try again."),
     ("guard-check", "The read guard was not changed: it did not show as registered afterwards.", "Try again", "retry",
      "Open Settings and choose Try again."),
+    ("guard-service", "That service was not changed.", "Show why", "why", "Open Settings and choose Show why."),
     ("guard-save", "The read guard's setting was not saved: the workspace's settings could not be written.", "Try again", "retry",
      "Open Settings and choose Try again."),
     # Panels that showed a failed reply's own text (#511): Settings' Check for updates and the update it

@@ -157,7 +157,7 @@ TOUCH_MAP["tests/test_settings_layout.py"] = ["test_settings_layout"]
 TOUCH_MAP["tests/test_read_guard_list.py"] = ["test_read_guard_list"]
 # fixes-0800 (#685): the guard hooks check, and its fourth copy of the hook path reader.
 for _key in ("template/System/tools/check.py", "extras/status/settings_guard.py", "extras/hooks/zone_guard.py",
-             "extras/hooks/read_guard.py", "tests/test_guard_hooks_check.py"):
+             "extras/hooks/read_guard.py", "tests/test_guard_hooks_check.py", "update.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_guard_hooks_check"]
 TOUCH_MAP["template/System/tools/check.py"] = TOUCH_MAP["template/System/tools/check.py"] + ["test_hook_path"]
 

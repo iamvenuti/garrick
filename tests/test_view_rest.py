@@ -110,6 +110,8 @@ class Machine(unittest.TestCase):
         mods = mock.patch.dict(sys.modules)            # the jobs extra's `job`, if another test loaded it, would decide a lock
         mods.start()
         sys.modules.pop("job", None)
+        for key in ("garrick_view_jobs", "garrick_view_app"):       # a copy another module loaded would hide a file a test removes
+            sys.modules.pop(key, None)
         self.addCleanup(mods.stop)
         self.addCleanup(self._tmp.cleanup)
 

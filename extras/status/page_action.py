@@ -2093,7 +2093,7 @@ def guard_settings():
 
 def set_connected_service(ws: Path, req: dict) -> dict:
     """Settings › Walls › Connected services (#683): `service`, a plain name, takes `choice`, `check` (Check it) or `leave`
-    (Leave it). The page sends no pattern: this writes them, `mcp__*<Service>*` for a service that has none, and moves a line's
+    (Leave it). The page sends no pattern: this writes them, `mcp__*<Service>__*` for a service that has none, and moves a line's
     own patterns, a hand-written one too, to the list chosen. `add` is *Add a service*: it refuses a name a pattern cannot be
     built from, or would match every tool, and one whose pattern is already on the other list. The two lists are checked as
     the read-guard verb checks them, and saved in the settings file through the page's own save (prefs). Nothing else changes."""

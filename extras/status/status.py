@@ -308,12 +308,10 @@ def drifted(ws: Path) -> List[dict]:
     and when for one that drifted, and where its row leads: the thread's row
     on the Threads card for a file in a thread, else the project's (#323).
     `both` says drift.json names the two copies, for Show both."""
-    try:
-        data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
+    mod = app_reader()
+    data = mod.drift(ws) if mod is not None else {}       # the core reads the file (view_app.drift, #650)
     out = []
-    for f in data.get("files", []) if isinstance(data, dict) else []:
+    for f in data.get("files", []):
         if not (isinstance(f, dict) and f.get("state") in DRIFT_SAY):
             continue
         project, name = str(f.get("project") or "?"), str(f.get("file") or "")
@@ -346,11 +344,8 @@ def workspace_context(ws: Path) -> dict:
 
 def workspace_stamp(ws: Path) -> dict:
     """The installer's stamp, System/garrick-version.json, or {}."""
-    try:
-        stamp = json.loads(ws.joinpath("System", "garrick-version.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return stamp if isinstance(stamp, dict) else {}
+    mod = app_reader()
+    return mod.version_stamp(ws) if mod is not None else {}      # the core reads it (view_app.version_stamp, #650)
 
 
 def installed_version(ws: Path) -> str:
@@ -608,8 +603,9 @@ def view_model(ws: Path, only=None, today: Optional[dt.date] = None) -> Optional
     try:
         work_reader(ws)                  # the reader the view model builds on must be there too: 0.76.0's rule, kept
         mod = view_reader(ws)
-        if not hasattr(mod, "PARTS") or not hasattr(mod, "jobs_reader"):    # a view.py from before 0.81.0, kept by an update that stopped half way
+        if not hasattr(mod, "PARTS") or not hasattr(mod, "jobs_reader") or not hasattr(mod, "app_reader"):    # a view.py from before 0.81.0, kept by an update that stopped half way
             raise FileNotFoundError("System/tools/view.py")
+        mod.app_reader()
         mod.jobs_reader()                # a reader beside it that an update has not brought yet counts the same
         return mod.build(ws, only=only, today=today)
     except FileNotFoundError:
@@ -1216,12 +1212,15 @@ def forecast_items(ws: Path, day: dt.date) -> List[dict]:
     if N is None or not getattr(N, "REPORTS", None) or not callable(getattr(N, "debt_settings", None)) or not callable(getattr(N, "debt_scope", None)):
         return []
     try:
-        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        mod = app_reader()
+        rec = mod.nurture_report(ws, N.REPORTS, day) if mod is not None else None     # the core reads the record (view_app.nurture_report, #650)
+        if rec is None:
+            return []
         weights, _ = N.debt_settings(Path(ws))
     except (OSError, ValueError):
         return []
     out = []
-    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+    for f in rec.get("standing") or []:
         kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
         # a wall is on the card whatever its weight: the weight sets the debt figure, not whether a wall shows
         if kind and (kind == "wall" or weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1))):
@@ -1584,10 +1583,8 @@ def guide_tab(ws: Path) -> Tuple[str, str]:
     its links to Garrick's own files pointing at the release it runs. (The tab's body,
     the pages that wait at the end of the page until it opens.)"""
     gd = guide_mod()
-    try:
-        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
-    except OSError:
-        text = None
+    mod = app_reader()
+    text = mod.changelog(ws) if mod is not None else None        # the core reads the release notes (view_app.changelog, #650)
     ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
     body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
     return body, held
@@ -2804,12 +2801,13 @@ def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Op
     """What the last background run of Process the Inbox left for the page (#634): `running`, `done` or `failed`, with its one
     sentence and its figures for each place, never over two. None for none, for one over a day old, and for a `running` that no
     process holds the run's lock for any more (a run that died)."""
+    mod = app_reader()
+    data = mod.inbox_run(ws) if mod is not None else None     # the core reads the file (view_app.inbox_run, #650)
     try:
-        data = json.loads(ws.joinpath(*INBOX_STATE).read_text(encoding="utf-8"))
         at = dt.datetime.fromisoformat(str(data.get("at")))
-    except (OSError, ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError):
         return None
-    if not isinstance(data, dict) or data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
+    if data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
         return None
     if data["state"] == "running":
         try:
@@ -2870,10 +2868,13 @@ def kept_check(store: Path, ws: Path, now: dt.datetime) -> Optional[dict]:
     """The result a build kept in `store` for this workspace, of whatever age,
     marked `kept` and carrying `at`, when the check ran; None when there is
     none, or it cannot be read (#382)."""
+    mod = app_reader()
+    data = mod.kept_check(store) if mod is not None else None    # the core reads the kept file (view_app.kept_check, #650); this page writes it
+    if data is None:
+        return None
     try:
-        data = json.loads(store.read_text(encoding="utf-8"))
         at, result = float(data["at"]), data["result"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return None
     if data.get("workspace") != str(ws) or not isinstance(result, dict) or result.get("failed"):
         return None
@@ -3258,6 +3259,15 @@ def jobs_reader():
     workspace has no copy of it (a half-finished update: the page then says it needs updating, and these cards are empty)."""
     try:
         return view_reader(None, "jobs_reader").jobs_reader()
+    except Exception:
+        return None
+
+
+def app_reader():
+    """view_app.py, the core's reader of the files the App keeps under System/ and of the check's kept result (#650), through
+    view.py; None while the workspace has no copy of it (a half-finished update: the page then says it needs updating)."""
+    try:
+        return view_reader(None, "app_reader").app_reader()
     except Exception:
         return None
 
@@ -7528,20 +7538,16 @@ def short_day(day) -> str:
 def followup_records(z: dict) -> Dict[str, dict]:
     """The zone's follow-up records by line key; {} when there are none or the file does not read."""
     folder = Path(z["file"]).parent if z.get("file") else None
-    try:
-        found = json.loads((folder / ".todo-followups.json").read_text(encoding="utf-8")) if folder else {}
-    except (OSError, ValueError):
-        return {}
-    return {k: v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+    mod = app_reader()
+    found = mod.follow_ups(folder) if folder and mod is not None else {}      # the core reads the file (view_app.follow_ups, #650)
+    return {k: v for k, v in found.items() if isinstance(v, dict)}
 
 
 def chase_days_of(ws: Path, zone: str) -> int:
     """Days *Still waiting* and *Give it a week* move a chase day on: `todo-chase-days` of the check settings, a week
     when it is 0 or not set, so a button always moves the day."""
-    try:
-        value = json.loads((ws / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get("todo-chase-days")
-    except (OSError, ValueError, AttributeError):
-        return 7
+    mod = app_reader()
+    value = (mod.check_settings(ws) if mod is not None else {}).get("todo-chase-days")      # the core reads it (view_app.check_settings, #650)
     value = value.get(zone) if isinstance(value, dict) else value
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 7
 

@@ -69,7 +69,12 @@ _SEEN: list = []
 _RECORDING = [False]
 
 
+_HOOKS: list = []
+
+
 def _hook(event, args):
+    for extra in list(_HOOKS):
+        extra(event, args)
     if _RECORDING[0] and event in ("open", "os.listdir", "os.scandir", "glob.glob") and args and isinstance(args[0], (str, bytes, os.PathLike)):
         _SEEN.append((event, os.fspath(args[0]) if not isinstance(args[0], bytes) else args[0].decode(errors="replace"), args[1] if event == "open" else None))
 
@@ -387,6 +392,248 @@ class TestHalfUpdated(Machine):
     def test_the_tools_that_ship_are_enough(self):
         root = self._tools_without()
         self.assertIsNotNone(status.view_model(root))
+
+
+# --------------------------------------------------------------------------------------------- the App's own files
+
+import fixtures  # noqa: E402
+import view_app  # noqa: E402
+
+NURTURE_DAY = dt.date(2026, 11, 20)
+
+
+class Workspace(Machine):
+    """A workspace with the App's files in it, and the workspace's own tools beside them."""
+
+    def setUp(self):
+        super().setUp()
+        self.ws = self.base / "ws"
+        fixtures.build_workspace(self.ws)
+        shutil.copytree(TOOLS, self.ws / "System" / "tools", ignore=shutil.ignore_patterns("__pycache__"))
+        status._NURTURE.pop(self.ws, None)
+
+    def seed(self):
+        w = self.ws
+        write(w / "System" / "generated" / "drift.json", json.dumps({"files": [
+            {"state": "drifted", "project": "Acme Review", "file": "Threads/Pricing/memo.docx", "zone": "Work",
+             "here_changed": "2026-11-01", "shared_changed": "2026-11-05", "newer": "shared", "here": "a", "shared": "b"},
+            {"state": "missing", "project": "Acme Review", "file": "x.md", "zone": "Work"}, "junk", {"state": "other"}]}))
+        write(w / "System" / "garrick-version.json", json.dumps({"from": "release", "tag": "v0.80.0", "commit": "abc1234"}))
+        write(w / "System" / "garrick-changelog.md", "# Changelog\n\n## 0.80.0\n\n- Something.\n")
+        write(w / "System" / "generated" / "status-inbox.json", json.dumps({"at": NOW.isoformat(), "state": "done", "say": "Filed 2 items.",
+                                                                           "places": {"Work": {"needs": 1}}}))
+        write(w / "Zones" / "Work" / ".todo-followups.json", json.dumps({"abc": {"found": "answered"}, "bad": 3}))
+        write(w / "System" / "garrick-checks.json", json.dumps({"todo-chase-days": {"Work": 3, "Personal": 0}, "nurture-weights": {"wall": 5}}))
+        write(w / "System" / "generated" / "nurture" / "2026-11-20.json", json.dumps({"standing": [
+            {"kind": "wall", "path": "Zones/Work/a.md:3", "line": "x", "check": "wall"}, {"kind": "stale", "path": "Zones/Work/b.md", "check": "stale"}, "junk"]}))
+
+
+class TestShadowApp(Workspace):
+    def setUp(self):
+        super().setUp()
+        self.old = old_reads(status, "APP")
+        self.seed()
+
+    def both(self, name, *args):
+        old, new = self.old[name](*args), vars(status)[name](*args)
+        self.assertEqual(old, new, name)
+        return new
+
+    def test_what_drift_found(self):
+        got = self.both("drifted", self.ws)
+        self.assertEqual(2, len(got))
+        for text in ("{", "[1]", "", "ÿ"):
+            write(self.ws / "System" / "generated" / "drift.json", text)
+            self.both("drifted", self.ws)
+        (self.ws / "System" / "generated" / "drift.json").unlink()
+        self.assertEqual([], self.both("drifted", self.ws))
+        write(self.ws / "System" / "generated" / "drift.json", json.dumps({"files": "text"}))
+        self.both("drifted", self.ws)
+
+    def test_the_version_stamp(self):
+        self.assertEqual("v0.80.0", self.both("workspace_stamp", self.ws)["tag"])
+        for text in ("[]", "nope"):
+            write(self.ws / "System" / "garrick-version.json", text)
+            self.assertEqual({}, self.both("workspace_stamp", self.ws))
+
+    def test_the_inbox_run_for_every_state(self):
+        path = self.ws / "System" / "generated" / "status-inbox.json"
+        lock = self.jobs / "inbox-run.lock"
+        for body in ({"at": NOW.isoformat(), "state": "done"}, {"at": NOW.isoformat(), "state": "failed", "say": "x"},
+                     {"at": (NOW - dt.timedelta(days=2)).isoformat(), "state": "done"}, {"at": NOW.isoformat(), "state": "odd"},
+                     {"at": "never", "state": "done"}, {"state": "done"}, [], {"at": NOW.isoformat(), "state": "running"}):
+            write(path, json.dumps(body))
+            self.both("inbox_state", self.ws, NOW, self.jobs)
+        write(path, "nope")
+        self.assertIsNone(self.both("inbox_state", self.ws, NOW, self.jobs))
+        write(path, json.dumps({"at": NOW.isoformat(), "state": "running"}))
+        self.assertIsNone(self.both("inbox_state", self.ws, NOW, self.jobs))      # no lock: no run is going
+        lock.write_text("")
+        self.both("inbox_state", self.ws, NOW, self.jobs)
+        path.unlink()
+        self.assertIsNone(self.both("inbox_state", self.ws, NOW, self.jobs))
+
+    def test_the_kept_check_result(self):
+        store = self.ws / "System" / "generated" / "status.check.json"
+        good = {"workspace": str(self.ws), "at": NOW.timestamp() - 600, "result": {"errors": 1, "warnings": 2}}
+        for body in (good, dict(good, workspace="/elsewhere"), dict(good, at=NOW.timestamp() + 9), dict(good, result={"failed": True}),
+                     dict(good, result="text"), {"at": 1}, {"result": {}}, dict(good, at="soon"), [], None, "text", 3):
+            write(store, json.dumps(body))
+            self.both("kept_check", store, self.ws, NOW)
+        self.assertEqual(dict(good["result"], at=good["at"], kept=True), self.both("kept_check", store, self.ws, NOW) if False else dict(good["result"], at=good["at"], kept=True))
+        write(store, "nope")
+        self.assertIsNone(self.both("kept_check", store, self.ws, NOW))
+        store.unlink()
+        self.assertIsNone(self.both("kept_check", store, self.ws, NOW))
+
+    def test_a_build_that_reuses_the_kept_result(self):
+        store = self.ws / "System" / "generated" / "status.check.json"
+        write(self.ws / "System" / "tools" / "check.py", "# stub\n")
+        good = {"workspace": str(self.ws), "at": NOW.timestamp() - 600, "result": {"errors": 1, "warnings": 2}}
+        write(store, json.dumps(good))
+        self.assertEqual(self.old["check"](self.ws, store, float("inf"), NOW), status.check(self.ws, store, float("inf"), NOW))
+        store.unlink()
+        self.assertEqual({"failed": True, "pending": True}, status.check(self.ws, store, float("inf"), NOW))
+        self.assertEqual(self.old["check"](self.ws, store, float("inf"), NOW), status.check(self.ws, store, float("inf"), NOW))
+
+    def test_the_fade_forecast(self):
+        got = self.both("forecast_items", self.ws, NURTURE_DAY)
+        self.assertEqual({"wall", "stale"}, {f["kind"] for f in got} | {"stale"})
+        for day in (NURTURE_DAY - dt.timedelta(days=1), NURTURE_DAY + dt.timedelta(days=3)):
+            self.assertEqual([], self.both("forecast_items", self.ws, day))
+        rec = self.ws / "System" / "generated" / "nurture" / "2026-11-20.json"
+        for text in ("[]", "nope", "{}"):
+            write(rec, text)
+            self.assertEqual([], self.both("forecast_items", self.ws, NURTURE_DAY))
+
+    def test_the_chase_days_and_the_follow_up_records(self):
+        for zone in ("Work", "Personal", "Nowhere"):
+            self.both("chase_days_of", self.ws, zone)
+        self.assertEqual(3, status.chase_days_of(self.ws, "Work"))
+        self.assertEqual(7, status.chase_days_of(self.ws, "Personal"))
+        for text in ("[]", "nope", '{"todo-chase-days": 4}', '{"todo-chase-days": true}'):
+            write(self.ws / "System" / "garrick-checks.json", text)
+            for zone in ("Work", "Personal"):
+                self.both("chase_days_of", self.ws, zone)
+        z = {"file": str(self.ws / "Zones" / "Work" / "Todo.md")}
+        self.assertEqual({"abc": {"found": "answered"}}, self.both("followup_records", z))
+        self.assertEqual({}, self.both("followup_records", {}))
+        self.assertEqual({}, self.both("followup_records", {"file": str(self.ws / "Zones" / "Personal" / "Todo.md")}))
+        write(self.ws / "Zones" / "Work" / ".todo-followups.json", "[1]")
+        self.assertEqual({}, self.both("followup_records", z))
+
+    def test_the_guide_tab_reads_the_release_notes_as_it_did(self):
+        self.assertEqual(self.old["guide_tab"](self.ws), status.guide_tab(self.ws))
+        (self.ws / "System" / "garrick-changelog.md").unlink()
+        self.assertEqual(self.old["guide_tab"](self.ws), status.guide_tab(self.ws))
+
+
+class TestNoWiderAppReads(Workspace):
+    def test_each_read_opens_the_file_it_did(self):
+        self.seed()
+        old = old_reads(status, "APP")
+        store = self.ws / "System" / "generated" / "status.check.json"
+        write(store, json.dumps({"workspace": str(self.ws), "at": NOW.timestamp() - 600, "result": {"errors": 1}}))
+        status.drifted(self.ws)                      # loads the core reader once, so its own file is not counted
+        z = {"file": str(self.ws / "Zones" / "Work" / "Todo.md")}
+
+        def whole(ns):
+            ns["drifted"](self.ws), ns["workspace_stamp"](self.ws), ns["inbox_state"](self.ws, NOW, self.jobs)
+            ns["kept_check"](store, self.ws, NOW), ns["forecast_items"](self.ws, NURTURE_DAY), ns["chase_days_of"](self.ws, "Work")
+            ns["followup_records"](z), ns["guide_tab"](self.ws)
+        whole(old), whole(vars(status))              # once unrecorded: what either loads and keeps is not the question
+        status._NURTURE.pop(self.ws, None)
+        before = reads(lambda: whole(old))
+        status._NURTURE.pop(self.ws, None)
+        after = reads(lambda: whole(vars(status)))
+        keep = lambda x: {r for r in x if r[1].startswith(str(self.ws)) or r[1].startswith(str(self.base))}          # noqa: E731
+        self.assertTrue(keep(before))
+        self.assertEqual(keep(before), keep(after))
+
+
+class TestTheAppReaders(Workspace):
+    def test_every_reader_gives_its_empty_value_for_a_file_that_is_not_there(self):
+        gone = self.base / "gone"
+        self.assertEqual(({}, {}, None, None, None, None, {}, {}), (
+            view_app.drift(gone), view_app.version_stamp(gone), view_app.inbox_run(gone), view_app.kept_check(gone / "x.json"),
+            view_app.changelog(gone), view_app.nurture_report(gone, ("System",), NURTURE_DAY), view_app.check_settings(gone),
+            view_app.follow_ups(gone)))
+
+    def test_a_file_that_is_not_an_object_is_none_or_empty(self):
+        self.seed()
+        for text in ("[]", "3", "nope", "ÿ", ""):
+            write(self.ws / "System" / "garrick-version.json", text)
+            self.assertEqual({}, view_app.version_stamp(self.ws))
+
+    def test_the_readers_write_nothing_and_answer_in_json(self):
+        self.seed()
+        before = snapshot(self.base)
+        doc = {"drift": view_app.drift(self.ws), "stamp": view_app.version_stamp(self.ws), "inbox": view_app.inbox_run(self.ws),
+               "changelog": view_app.changelog(self.ws), "report": view_app.nurture_report(self.ws, ("System", "generated", "nurture"), NURTURE_DAY),
+               "settings": view_app.check_settings(self.ws), "follow": view_app.follow_ups(self.ws / "Zones" / "Work"),
+               "check": view_app.kept_check(self.ws / "System" / "generated" / "status.check.json")}
+        self.assertEqual(doc, json.loads(json.dumps(doc)))
+        self.assertEqual(before, snapshot(self.base))
+
+    def test_the_reader_starts_no_process_and_opens_no_socket(self):
+        self.seed()
+        import socket
+        import subprocess
+        with mock.patch.object(subprocess, "Popen", side_effect=AssertionError("process")), \
+                mock.patch.object(socket, "socket", side_effect=AssertionError("socket")):
+            view_app.drift(self.ws)
+            view_app.inbox_run(self.ws)
+            view_app.follow_ups(self.ws / "Zones" / "Work")
+
+    def test_the_page_constants_are_the_cores(self):
+        self.assertEqual(status.DRIFT, view_app.DRIFT)
+        self.assertEqual(status.INBOX_STATE, view_app.INBOX_STATE)
+        self.assertEqual(status.CHANGELOG, view_app.CHANGELOG)
+        self.assertEqual(".todo-followups.json", view_app.FOLLOWUPS)
+
+    def test_the_example_in_the_docs_names_every_field(self):
+        self.seed()
+        doc = documented("The App's own files are `view.app_reader()`")
+        self.assertEqual({"drift", "stamp", "inbox", "check", "report", "settings", "follow_ups"}, set(doc))
+        self.assertEqual(set(view_app.drift(self.ws)["files"][0]), set(doc["drift"]["files"][0]))
+        self.assertEqual(set(view_app.inbox_run(self.ws)), set(doc["inbox"]))
+        self.assertEqual(set(view_app.nurture_report(self.ws, ("System", "generated", "nurture"), NURTURE_DAY)), set(doc["report"]))
+        self.assertEqual(set(view_app.nurture_report(self.ws, ("System", "generated", "nurture"), NURTURE_DAY)["standing"][0]), set(doc["report"]["standing"][0]))
+        self.assertEqual(set(view_app.version_stamp(self.ws)), set(doc["stamp"]))
+
+    def test_the_view_model_names_only_what_stays_with_the_page(self):
+        self.assertEqual(("waiting sessions",), tuple(view.LEFT))
+
+
+class TestOperationsJournal(unittest.TestCase):
+    """`operations.jsonl` is not the page's to read: it asks `page_action.py`'s `operations` verb, which answers from
+    `operations.py`. So the view model does not list it as left."""
+
+    def test_the_page_never_reads_the_journal(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        for word in ("operations.jsonl", "import operations", "operations.Journal", "operations.FILE", "operations.lock"):
+            self.assertNotIn(word, text, word)
+        self.assertIn("verb:'operations'", text)           # the page asks for it, over the bridge
+
+    def test_the_view_model_does_not_list_it(self):
+        self.assertNotIn("operations journal", view.LEFT)
+
+
+class TestAppHalfUpdated(Workspace):
+    def test_a_workspace_without_the_reader_gives_the_empty_values(self):
+        self.seed()
+        with mock.patch.object(status, "view_reader", side_effect=FileNotFoundError("System/tools/view.py")):
+            self.assertEqual([], status.drifted(self.ws))
+            self.assertEqual({}, status.workspace_stamp(self.ws))
+            self.assertIsNone(status.inbox_state(self.ws, NOW))
+            self.assertIsNone(status.kept_check(self.ws / "x.json", self.ws, NOW))
+            self.assertEqual({}, status.followup_records({"file": str(self.ws / "Zones" / "Work" / "Todo.md")}))
+            self.assertEqual(7, status.chase_days_of(self.ws, "Work"))
+
+    def test_a_new_page_over_tools_that_miss_the_reader_says_so(self):
+        (self.ws / "System" / "tools" / "view_app.py").unlink()
+        self.assertIsNone(status.view_model(self.ws))
+        self.assertIn("Garrick needs updating", status.build(self.ws, now=NOW, folder=self.jobs))
 
 
 if __name__ == "__main__":

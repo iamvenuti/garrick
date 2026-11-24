@@ -88,8 +88,8 @@ two together. `build(root, scope=["Work"])` holds the records of those zones alo
 wiki. A zone folder that is a link is no zone, and an Inbox or a note that resolves outside
 the zone it sits in is left out, so a link into another zone shows none of that zone's work.
 
-`left` names what the page reads for itself because no core module owns it yet: the operations journal, the App's own files under `System/`, the
-check's kept result, and the waiting sessions. The jobs folder and this Mac's launchd agents are read by `view_jobs.py` (`jobs_reader()` below), not part of
+`left` names what the page reads for itself because no core module owns it yet: the waiting sessions. The App's own files under `System/` and the check's kept result are read by `view_app.py` (`app_reader()`
+below). The jobs folder and this Mac's launchd agents are read by `view_jobs.py` (`jobs_reader()` below), not part of
 `build()`: they are this Mac's. The settings are read by `view_settings.py` (`settings()` below), not part of
 `build()`: Settings is the page's own and names every zone's walled flag.
 
@@ -114,7 +114,7 @@ PIECE_VERBS = ("park", "wake", "rename", "move", "delete", "continue", "open", "
 # Never a thread's or a project's: a row of the Threads card has a name in it, and a name is never counted.
 CARDS = ("start", "your-work", "waiting-now", "threads", "checks", "jobs", "calls", "repos", "wikis", "graph")
 # What the page reads for itself, by name, until a core module owns it.
-LEFT = ("operations journal", "System/ files of the App", "the check's kept result", "waiting sessions")
+LEFT = ("waiting sessions",)
 
 # The parts of the document, for `build(only=...)`: each is built by its own reader, and a part not asked for is not read.
 PARTS = ("work", "inbox", "system", "todo", "questions", "wikis", "repos", "example", "graph")
@@ -1008,6 +1008,12 @@ def settings(root, extras=None, jobs=None, only=None) -> dict:
 def jobs_reader():
     """The reader of the jobs folder and this Mac's launchd agents (`view_jobs`). Not part of `build()`: they are this Mac's."""
     return _sibling("view_jobs.py", "garrick_view_jobs")
+
+
+def app_reader():
+    """The reader of the files the App keeps under `System/` and of the check's kept result (`view_app`). Not part of `build()`:
+    they name every zone, or are this Mac's."""
+    return _sibling("view_app.py", "garrick_view_app")
 
 
 def main(argv=None) -> int:

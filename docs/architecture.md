@@ -81,7 +81,7 @@ The shape, with one piece of work and one inbox:
            "edges": []},
  "example": null,
  "system": [{"name": "Sys", "notes": ["System/Sys/Sys.md", "System/Sys/Threads/Job/Job.md"]}],
- "left": ["operations journal", "..."]}
+ "left": ["waiting sessions"]}
 ```
 
 `files`, `open`, `layout` and `open_links` are what the Rename, Move and Delete dialogs say: the files a delete would take, the open lines of the zone's `Todo.md` that link a note, and the layout change a project offers; `open_links` holds only the names of the notes a line links, never its words. `shown` says where the page draws a piece: `row` (live), `parked`, `done` or `hub` (a hub's own resume point beside its threads). A done piece carries no resume fields, as its note is not read. `todo` is the zone's open actions, as the Todo tab draws them: every open line of the zone's notes with the note it names (`note`) and the project and thread of that note, the `## ` headings of its `Todo.md` in order, and the lines ticked on `today`, the day the build counts from. The view model decides which note a line names; the page decides what late means and how a row sorts. A zone folder that is a link has no `todo`, and a note that is a link into another zone or a wiki gives that zone none of the lines it leads to. `questions` is what Garrick asked and waits on, the open files in the `Needs you` folders of the zone, its projects and its threads, oldest first; one put off to a day that has not come is left out, and a project, thread or file that is a link into another zone or a wiki is not read. `wikis` is each wiki's log: how many entries it holds and the newest one, with the page it names, taken from the wiki's own folder; a log that is a link into another zone or a wiki is not read, and a wiki belongs to no zone, so a build limited to some zones holds none. `repos` is what each repository has uncommitted: the root, each zone, the wikis, and a wiki with one of its own; a repository git could not read is `unread`, never clean, a zone folder that is a link has none here, and a build limited to some zones holds those zones' repositories alone. `graph` is what Explore draws: every note of the zones and of the wikis with its place, kind, status, date, parties and title, and the links between notes as pairs of indexes, each pair once. Notes in an `Inbox`, in an archive or raw folder, hidden notes, instructions and what the vault excludes are left out, and so are a zone folder that is a link and a note that is a link into another zone or a wiki; a build limited to some zones holds those zones' notes and no wiki. `example` names the zone the worked example is in, by the `.example.json` marker that zone holds, or is null. `system` lists the projects kept in `System/`, which belong to no zone: the hub note and each thread note, by path, so the page can match a Todo line's link to one; a build limited to some zones holds none of it. The field names are stable: the page, the tests and any later reader build on them.
@@ -126,6 +126,21 @@ The scheduled jobs are `view.jobs_reader()`, from `System/tools/view_jobs.py`. E
 ```
 
 `agents` is the plists that run `job.py`, by job name, with the keys the schedule is read from; `heartbeats`, `runs`, `steps` and `lock` are what one job's files say, each from the file the job's name gives. The page works out the schedule in words and how long before a run is late from `timing`.
+
+The App's own files are `view.app_reader()`, from `System/tools/view_app.py`: what drift.py last found, the installer's version stamp, what the last run of Process the Inbox left, the release notes, the check's kept result, Nurture's record of a day, the check settings and a zone's follow-up records. Each reader takes the folder or the file the page's own reader took. A file the page both reads and writes has its read here and its write in `status.py`: the page still writes the check's kept result, and only reads it through the core.
+
+```json
+{"drift": {"files": [{"state": "drifted", "project": "Acme", "file": "Threads/Pricing/memo.docx", "zone": "Work",
+                      "here_changed": "2026-11-01", "shared_changed": "2026-11-05", "newer": "shared", "here": "a", "shared": "b"}]},
+ "stamp": {"from": "release", "tag": "v0.80.0", "commit": "abc1234"},
+ "inbox": {"at": "2026-11-20T09:00:00", "state": "done", "say": "Filed 2 items.", "places": {"Work": {"needs": 1}}},
+ "check": {"workspace": "/Users/jo/Garrick", "at": 1763000000.0, "result": {"errors": 0, "warnings": 2}},
+ "report": {"standing": [{"kind": "wall", "path": "Zones/Work/a.md:3", "line": "x", "check": "wall"}]},
+ "settings": {"todo-chase-days": {"Work": 3}},
+ "follow_ups": {"3f0a": {"found": "answered"}}}
+```
+
+`inbox`, `check` and `report` are `null` where there is no such file. Whether a kept check result is this workspace's, whether a run of Process the Inbox is recent or still going, and what a record means are the page's. The release notes are read as text.
 
 #### What the App counts
 

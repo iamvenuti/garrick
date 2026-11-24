@@ -193,6 +193,8 @@ for _key, _mods in (("template/System/tools/view_jobs.py", ["test_view_rest", "t
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
 for _key in ("template/System/tools/view.py", "extras/status/status.py", "docs/architecture.md"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_view_rest"]
+TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_status_work",
+                                                 "test_overview_work", "test_context_card", "test_inbox_run", "test_finding_queue"]
 
 
 def touched(files, names=None):

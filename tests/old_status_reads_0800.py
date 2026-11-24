@@ -337,3 +337,197 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     return sorted(out, key=lambda j: j["name"].casefold())
 
 '''
+
+AREAS['APP'] = r'''
+def drifted(ws: Path) -> List[dict]:
+    """What drift.py last found worth a look, from System/generated/drift.json,
+    which it writes when run from a session or the app: a launchd job may
+    not read a cloud folder, so the page never compares anything itself.
+    Each with the sentence its Needs attention row says, which copy changed
+    and when for one that drifted, and where its row leads: the thread's row
+    on the Threads card for a file in a thread, else the project's (#323).
+    `both` says drift.json names the two copies, for Show both."""
+    try:
+        data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for f in data.get("files", []) if isinstance(data, dict) else []:
+        if not (isinstance(f, dict) and f.get("state") in DRIFT_SAY):
+            continue
+        project, name = str(f.get("project") or "?"), str(f.get("file") or "")
+        thread = str(f.get("thread") or "")
+        parts = name.split("/")
+        if not thread and len(parts) > 2 and parts[0] == "Threads":
+            thread = parts[1]                       # kept in a thread's folder, named from the project's
+        where = project + (", " + thread if thread else "")
+        here, shared = drift_day(f.get("here_changed")), drift_day(f.get("shared_changed"))
+        if f["state"] == "drifted" and here and shared and f.get("newer") in ("here", "shared"):
+            first, then = ("the shared copy", "the copy here") if f["newer"] == "shared" else ("the copy here", "the shared copy")
+            said = "%s: %s: %s changed on %s, after %s (%s)" % (
+                where, parts[-1], first, shared if f["newer"] == "shared" else here, then, here if f["newer"] == "shared" else shared)
+        else:
+            said = "%s: %s %s" % (where, name or "published.md", DRIFT_SAY[f["state"]])
+        out.append({"text": said, "zone": str(f.get("zone") or ""), "project": project, "thread": thread,
+                    "ledger": str(f.get("thread") or ""), "file": name,
+                    "both": f["state"] == "drifted" and bool(f.get("here")) and bool(f.get("shared"))})
+    return out
+
+
+def workspace_stamp(ws: Path) -> dict:
+    """The installer's stamp, System/garrick-version.json, or {}."""
+    try:
+        stamp = json.loads(ws.joinpath("System", "garrick-version.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stamp if isinstance(stamp, dict) else {}
+
+
+def inbox_state(ws: Path, now: dt.datetime, folder: Optional[Path] = None) -> Optional[dict]:
+    """What the last background run of Process the Inbox left for the page (#634): `running`, `done` or `failed`, with its one
+    sentence and its figures for each place, never over two. None for none, for one over a day old, and for a `running` that no
+    process holds the run's lock for any more (a run that died)."""
+    try:
+        data = json.loads(ws.joinpath(*INBOX_STATE).read_text(encoding="utf-8"))
+        at = dt.datetime.fromisoformat(str(data.get("at")))
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("state") not in ("running", "done", "failed") or abs((now - at).total_seconds()) > 86400:
+        return None
+    if data["state"] == "running":
+        try:
+            import fcntl
+            fd = os.open(str((folder or jobs_dir(None)) / "inbox-run.lock"), os.O_RDWR)
+        except (OSError, ImportError):
+            return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return None                 # nobody holds it: the run is not going
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return data
+
+
+def kept_check(store: Path, ws: Path, now: dt.datetime) -> Optional[dict]:
+    """The result a build kept in `store` for this workspace, of whatever age,
+    marked `kept` and carrying `at`, when the check ran; None when there is
+    none, or it cannot be read (#382)."""
+    try:
+        data = json.loads(store.read_text(encoding="utf-8"))
+        at, result = float(data["at"]), data["result"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if data.get("workspace") != str(ws) or not isinstance(result, dict) or result.get("failed"):
+        return None
+    if now.timestamp() < at:
+        return None                           # from the future: not a result to trust
+    return dict(result, at=at, kept=True)
+
+
+def check(ws: Path, store: Optional[Path] = None, reuse: Optional[float] = None,
+          now: Optional[dt.datetime] = None) -> Optional[dict]:
+    """check.py's findings, run as the page is built. With `--quick`, where the
+    workspace's check.py has it: every check but the comparison of wording
+    with the meetings, which on a large workspace is most of a full run's
+    time, and which the commit hook and a scheduled full check still make.
+
+    With `store`, a result is kept there for the next build, and with `reuse`
+    as well, the one kept there is shown, whatever its age, and the check is
+    never run: what scaffold.py's and correct.py's rebuilds ask for (#260,
+    #382), so a thread a session made reaches the page in seconds. The
+    builds that run the check keep it fresh. With no result kept, such a
+    build says there is none yet (`pending`) rather than claim a pass. A
+    check that did not run is never kept."""
+    tool = ws / "System" / "tools" / "check.py"
+    if not tool.is_file():
+        return None
+    now = now or dt.datetime.now()
+    if store is not None and reuse:
+        kept = kept_check(store, ws, now)
+        return kept if kept is not None else {"failed": True, "pending": True}
+    try:
+        quick = ["--quick"] if "--quick" in tool.read_text(encoding="utf-8") else []
+    except OSError:
+        quick = []
+    try:
+        proc = subprocess.run([sys.executable, str(tool), "--root", str(ws), "--json"] + quick,
+                              capture_output=True, text=True, timeout=300)
+        data = json.loads(proc.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {"failed": True}
+    titles = {}
+    try:
+        src = tool.read_text(encoding="utf-8")
+        titles = dict(re.findall(r'\(\s*"([a-z-]+)",\s*"([^"]+)"\s*\)', src.split("EAR_GROUP")[0]))
+    except OSError:
+        pass
+    data["titles"] = titles
+    if store is not None:
+        try:
+            write_page(store, json.dumps({"workspace": str(ws), "at": now.timestamp(), "result": data}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass                              # the next build runs the check again
+    return data
+
+
+def forecast_items(ws: Path, day: dt.date) -> List[dict]:
+    """The standing findings of the Nurture record of `day` that weigh anything, each with its scope: the one-pass
+    forecast, as nurture.py's day_outcome() counts it. The list the card's lines and the queue are both made from, so
+    a line's number and its queue's are one. [] without a record or a nurture.py that keeps them."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not getattr(N, "REPORTS", None) or not callable(getattr(N, "debt_settings", None)) or not callable(getattr(N, "debt_scope", None)):
+        return []
+    try:
+        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        weights, _ = N.debt_settings(Path(ws))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+        kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
+        # a wall is on the card whatever its weight: the weight sets the debt figure, not whether a wall shows
+        if kind and (kind == "wall" or weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1))):
+            path = re.sub(r":\d+$", "", str(f.get("path", "")))
+            out.append({"kind": kind, "path": path, "line": str(f.get("line") or ""), "check": str(f.get("check") or ""),
+                        "scope": N.debt_scope(path)})
+    return out
+
+
+def chase_days_of(ws: Path, zone: str) -> int:
+    """Days *Still waiting* and *Give it a week* move a chase day on: `todo-chase-days` of the check settings, a week
+    when it is 0 or not set, so a button always moves the day."""
+    try:
+        value = json.loads((ws / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get("todo-chase-days")
+    except (OSError, ValueError, AttributeError):
+        return 7
+    value = value.get(zone) if isinstance(value, dict) else value
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 7
+
+
+def followup_records(z: dict) -> Dict[str, dict]:
+    """The zone's follow-up records by line key; {} when there are none or the file does not read."""
+    folder = Path(z["file"]).parent if z.get("file") else None
+    try:
+        found = json.loads((folder / ".todo-followups.json").read_text(encoding="utf-8")) if folder else {}
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+
+
+def guide_tab(ws: Path) -> Tuple[str, str]:
+    """The Guide tab: the docs this workspace was installed with, in System/garrick-docs/,
+    its links to Garrick's own files pointing at the release it runs. (The tab's body,
+    the pages that wait at the end of the page until it opens.)"""
+    gd = guide_mod()
+    try:
+        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        text = None
+    ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
+    body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
+    return body, held
+
+'''

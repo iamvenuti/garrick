@@ -1498,14 +1498,14 @@ def hook_word(word):
 def shown_path(word):
     """A hook path as the settings write it, with the home folder as `~` and a variable as its name, never its value (#670):
     `$HOME/x` and `${HOME}/x` show as `~/x`; a path under the home folder shows with `~`; any other word shows as written."""
-    word = "".join(c for c in word if c.isprintable())[:200]       # as settings_guard.named_hooks shows it
+    word = "".join(c for c in word if c.isprintable())       # as settings_guard.named_hooks shows it
     for var in ("$HOME", "${HOME}"):
         if word == var or word.startswith(var + "/"):
-            return "~" + word[len(var):]
+            return ("~" + word[len(var):])[:200]
     home = str(Path.home())
     if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
-        return "~" + word[len(home):]
-    return word
+        return ("~" + word[len(home):])[:200]
+    return word[:200]
 
 
 def outside_found(root):

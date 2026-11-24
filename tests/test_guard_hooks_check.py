@@ -194,6 +194,19 @@ class TestNoSettingValueIsShown(Case):
         self.assertEqual(["~/dl/garrick/extras/hooks/zone_guard.py"], words)
 
 
+class TestALongHomeFolder(unittest.TestCase):
+    """The path is cut to 200 characters after the home folder becomes `~`, so a long home folder still shows the whole path."""
+
+    def test_a_path_under_a_long_home_folder_is_shown_whole(self):
+        home = "/Users/" + "a" * 220
+        path = home + "/kept/extras/hooks/read_guard.py"
+        with mock.patch.object(Path, "home", return_value=Path(home)):
+            self.assertEqual("~/kept/extras/hooks/read_guard.py", check.guard_shown(path))
+
+    def test_a_very_long_word_is_still_cut(self):
+        self.assertEqual(200, len(check.guard_shown("/" + "b" * 400)))
+
+
 class TestTheCheckIsRegistered(unittest.TestCase):
     def test_it_runs_with_every_check_and_has_a_heading_and_a_spoken_group(self):
         self.assertIn(check.check_guard_hooks, check.ALL_CHECKS)

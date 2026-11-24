@@ -6941,14 +6941,14 @@ def hook_word(word: str) -> Optional[str]:
 def guard_shown(word: str) -> str:
     """A hook path as the settings write it, with the home folder as `~` and a variable by its name, never its value: as
     settings_guard.shown_path and update.shown_path show it, printable and at most 200 characters."""
-    word = "".join(c for c in word if c.isprintable())[:200]
+    word = "".join(c for c in word if c.isprintable())
     for var in ("$HOME", "${HOME}"):
         if word == var or word.startswith(var + "/"):
-            return "~" + word[len(var):]
+            return ("~" + word[len(var):])[:200]
     home = str(Path.home())
     if "$" not in word and home not in ("", "/") and (word == home or word.startswith(home + "/")):
-        return "~" + word[len(home):]
-    return word
+        return ("~" + word[len(home):])[:200]
+    return word[:200]
 
 
 def guard_words(home: Path) -> List[str]:

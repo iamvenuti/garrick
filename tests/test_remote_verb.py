@@ -88,6 +88,15 @@ class TestDispatch(RemoteVerbCase):
         self.assertFalse(self.go({})["ok"])
         self.assertFalse((self.root / "System" / "remote" / "seen.json").exists())
 
+    def test_the_fields_the_settings_page_sends_are_declared(self):
+        """Settings' script sends adapter and address with enable, and acknowledged with zone (settings_remote.py)."""
+        self.install()
+        for req in ({"action": "enable", "adapter": "own", "address": "https://mcp.acme.example"},
+                    {"action": "zone", "grant": "g1", "zone": "Work", "read": True, "write": False, "acknowledged": True},
+                    {"action": "revoke", "grant": "g1"}):
+            with self.subTest(req=req):
+                self.assertTrue(self.go(req)["ok"], req)
+
     def test_an_undeclared_field_is_refused_by_name(self):
         self.install()
         out = self.go({"action": "enable", "path": "/etc"})

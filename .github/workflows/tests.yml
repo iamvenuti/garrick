@@ -50,7 +50,7 @@ jobs:
           fi
           # The remote access extra has a job of its own: it runs on its own runtime, from its own lock.
           remote=false
-          if [ "$EVENT" = pull_request ] && git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q '^extras/remote/'; then
+          if [ "$EVENT" = pull_request ] && git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qE '^(extras/remote/|extras/status/page_action\.py|extras/status/ask_tools\.py|template/System/tools/operations\.py|template/System/tools/scaffold\.py)'; then
             remote=true
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"

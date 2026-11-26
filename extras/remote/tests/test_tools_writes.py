@@ -228,6 +228,8 @@ class TestRetries(WritesCase):
             p.read_text().count("RETRYRETIRE") for p in (c.work / "archive").glob("Todo-expired-*.md"))
             if (c.work / "archive").is_dir() else 0),
         ("park", dict(project="Acme Review", thread="Pricing"), lambda c: len(git(c.work, "log", "--oneline").splitlines())),
+        ("todo-undo", dict(line="Line for undo"), lambda c: (c.work / "Todo.md").read_text().count("- [ ] Line for undo")),
+        ("wake", dict(project="Acme Review", thread="Pricing"), lambda c: len(git(c.work, "log", "--oneline").splitlines())),
         ("checkpoint", dict(project="Acme Review", thread="Pricing", items=[{"id": "r1", "kind": "decided", "said": "RETRYCP said once."}]),
          lambda c: (c.root / TH).read_text().count("RETRYCP")),
     ]
@@ -235,13 +237,17 @@ class TestRetries(WritesCase):
     def test_each_verb_saves_once_when_asked_again_during_after_and_across_a_restart(self):
         todo = self.work / "Todo.md"
         todo.write_text(todo.read_text().replace("## Done", "".join(
-            "- [ ] Line for %s\n" % v for v in ("date", "edit", "retire")) + "\n## Done"))
+            "- [ ] Line for %s\n" % v for v in ("date", "edit", "retire", "undo")) + "\n## Done"))
         git(self.work, "add", "-A")
         subprocess.run(["git", "-C", str(self.work), "commit", "-q", "-m", "lines"], capture_output=True)
         for verb, fields, effect in self.CASES:
             fields = {k: (v.replace("Invoice for September", "Line for " + verb.split("-")[1]) if isinstance(v, str) and verb in (
-                "todo-date", "todo-edit", "todo-retire") and k == "line" else v) for k, v in fields.items()}
+                "todo-date", "todo-edit", "todo-retire", "todo-undo") and k == "line" else v) for k, v in fields.items()}
             with self.subTest(verb=verb):
+                if verb == "todo-undo":
+                    self.assertEqual("saved", self.go("todo-done", line="Line for undo")[1]["state"])
+                if verb == "wake":
+                    self.assertEqual("saved", self.go("park", project="Acme Review", thread="Pricing")[1]["state"])
                 made = self.w.prepare(verb, "Work", **fields)
                 op = made["operation_id"]
                 base = effect(self)

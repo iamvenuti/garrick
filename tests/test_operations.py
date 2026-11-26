@@ -38,6 +38,10 @@ REQUESTS = {
     "todo-undo": {"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "key": "0123456789abcdef"},
     "todo-date": {"verb": "todo-date", "zone": "Work", "file": "Todo.md", "key": "0123456789abcdef", "date": "2026-10-12"},
     "todo-add": {"verb": "todo-add", "zone": "Work", "text": "Book the room", "target": "-", "date": "-"},
+    # recorded since 0.82.0 (#701): a session or a remote assistant sends them, never a button
+    "note-add": {"verb": "note-add", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "text": "Dana hinted the floor could move"},
+    "todo-edit": {"verb": "todo-edit", "zone": "Work", "file": "Todo.md", "key": "0123456789abcdef", "text": "Book the large room"},
+    "todo-retire": {"verb": "todo-retire", "zone": "Work", "file": "Todo.md", "key": "0123456789abcdef", "reason": "superseded"},
 }
 # What the code says when a check refuses or the worker falls over, and what a
 # careless one might: every one of them must come out without a success.
@@ -102,17 +106,21 @@ class TestDeclared(unittest.TestCase):
                 wide = verb in ("walls-unallow", "walls-allow", "finding")
                 self.assertIn(spec.scope, ("zone", "workspace") if wide else ("zone",), verb)
 
-    def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):
+    def test_only_the_nine_that_commit_a_note_under_the_lock_keep_a_record(self):
         """`OPS` is what page_action.py has read since 0.26.0. A newer copy of
         this file found by an older extra must not start recording verbs that
-        extra knows nothing of, so the table grew and `OPS` did not."""
-        self.assertEqual(("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add"), ops.RECORDED)
+        extra knows nothing of, so the table grew and `OPS` did not. 0.82.0 adds
+        the three a remote caller sends and retries (#701): a note, a reworded line, a retired one."""
+        self.assertEqual(("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add",
+                          "note-add", "todo-edit", "todo-retire"), ops.RECORDED)
         for verb in ops.RECORDED:
             self.assertEqual(("zone", True), (ops.DECLARED[verb].scope, ops.DECLARED[verb].commits), verb)
-            self.assertEqual("safe", ops.DECLARED[verb].retry, verb)
+            # a second note is a second note, so a retry of it is not safe: the record is what stops it
+            self.assertEqual("unsafe" if verb == "note-add" else "safe", ops.DECLARED[verb].retry, verb)
 
     def test_the_page_script_zones_cover_them(self):
-        self.assertTrue(set(ops.OPS) <= set(status_py().ZONE_VERBS))
+        # The three recorded since 0.82.0 (#701) are a session's or a remote assistant's: the page sends no button for them.
+        self.assertTrue(set(ops.OPS) - {"note-add", "todo-edit", "todo-retire"} <= set(status_py().ZONE_VERBS))
 
     def test_a_worker_and_a_reader_agree_on_the_words(self):
         self.assertEqual(("saved", "refused", "crashed", "unknown", "lost"), ops.OUTCOMES)

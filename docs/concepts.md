@@ -251,6 +251,26 @@ How the assistant answers when you are listening: when you say so, or the reques
 
 The `parked/` folder inside your assistant's memory folder, where a parked thread's memory pointer waits until the thread is woken ([#664](https://github.com/iamvenuti/garrick/issues/664)). Parking moves the pointer there and takes its line out of the memory index, which every session loads whole; waking moves both back; finishing deletes it. See [The memory index](context.md#the-memory-index).
 
+### Remote access
+
+The optional extra that serves the workspace to an assistant on a phone or another computer, over a remote connection. It is off until you turn it on in Settings, at the Mac, and it is a preview. Decided in [#695](https://github.com/iamvenuti/garrick/issues/695). See [Remote access](extras/remote-access.md).
+
+### Grant
+
+One connected assistant's standing permission to use remote access: its name, whether it may read, write or both, and its reach. You create one by typing a pairing code from the Mac, and you list and revoke them in Settings. Decided in [#697](https://github.com/iamvenuti/garrick/issues/697). See [Pause, revoke and turn off](extras/remote-access.md#pause-revoke-and-turn-off).
+
+### Handle
+
+A short token that each remote answer carries, so that record ids and retries from one chat stay apart. A handle works only while the grant's reach is the one it was made under. After you change the reach at the Mac, an old handle is refused with "start a new chat". It is an aid, not a wall. Decided in [#698](https://github.com/iamvenuti/garrick/issues/698). See [Reach](extras/remote-access.md#reach).
+
+### Relay
+
+The service that gives the Mac one public address, so that an assistant in the cloud can reach it. In this release the relay carries the traffic and cannot read it, because the connection ends on the Mac. You may use an address of your own instead, and then the server behind it can read what passes. Decided in [#696](https://github.com/iamvenuti/garrick/issues/696). See [What leaves the Mac](extras/remote-access.md#what-leaves-the-mac).
+
+### Reach
+
+The zones a grant may read and the zones it may write, set at the Mac. It starts as the zones that are not walled, Knowledge and Garrick's docs. A walled zone joins only when you turn it on by name, after a notice, and no tool an assistant can call changes it. Decided in [#698](https://github.com/iamvenuti/garrick/issues/698). See [Reach](extras/remote-access.md#reach).
+
 ## Checks and guards
 
 ### The check

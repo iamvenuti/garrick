@@ -2,7 +2,7 @@
 
 Use your phone to ask about the Garrick files on your computer. For example, before a call while away from home, ask “Open Supplier Review, Next Call. What do I owe them? Answer briefly; do not change anything.” Include the project so the assistant knows which party's work the answer is for.
 
-Set up and test the desk workflow first. Remote access belongs to the assistant provider; Garrick does not install or enable it.
+Set up and test the desk workflow first. The routes below belong to the assistant provider; Garrick does not install or enable them. Garrick also has a remote service of its own, [remote access (preview)](remote-access.md), which you turn on in Settings at the Mac: it serves the workspace to an assistant with its own sign-in, and limits what a phone may see to a reach you set.
 
 ## Codex and remote voice on iPhone
 

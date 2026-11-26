@@ -1,0 +1,241 @@
+"""Remote access (preview): one reach for each client, set on the Mac (#698).
+
+    cd tests && python3 -m unittest test_remote_context
+
+The default reach is the open zones, Knowledge and Garrick's docs. A walled zone joins only through Settings, by name, reads and writes
+apart, after the notice, with the day. A handle keeps a chat to the reach it was made under. Standard library only.
+"""
+from __future__ import annotations
+
+import re
+import sys
+import unittest
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "remote" / "tests"))
+
+from remote_fixture import EXTRA, RemoteCase, mod  # noqa: E402
+
+
+class Case(RemoteCase):
+    def setUp(self):
+        super().setUp()
+        self.ctx = mod("context")
+        self.act = mod("settings_actions")
+        self.turn_on()
+
+    def grant(self, classes=("read", "write"), name="Phone"):
+        return self.store.create_grant("client-" + name, name, list(classes))
+
+    def session(self, gid):
+        return self.ctx.session_for(self.ws, gid)
+
+    def zone(self, gid, zone, read=False, write=False, ack=True):
+        return self.act.run(self.ws, {"action": "zone", "grant": gid, "zone": zone, "read": read, "write": write, "acknowledged": ack})
+
+
+class Defaults(Case):
+    def test_a_fresh_grant_reaches_the_open_zones_knowledge_and_the_docs_and_nothing_walled(self):
+        s = self.session(self.grant())
+        self.assertEqual(set(s.readable), {"Home", "Garden", "Knowledge", "docs"})
+        self.assertEqual(set(s.writable), {"Home", "Garden"})
+        for walled in ("Work", "Vault"):
+            self.assertFalse(s.zone_allowed(walled))
+            self.assertFalse(s.zone_allowed(walled, write=True))
+
+    def test_the_zone_flags_come_from_the_workspaces_own_zone_function(self):
+        self.assertEqual({z["zone"]: z["walled"] for z in self.ctx.zones(self.ws)}, {"Work": True, "Home": False, "Garden": False, "Vault": True})
+        src = (EXTRA / "context.py").read_text()
+        self.assertIn("load_context", src)
+        self.assertNotIn("context.md", src.replace("`System/context.md`", ""))        # it names the file only in prose
+
+    def test_a_zone_no_flag_names_is_walled_and_a_zone_that_changes_to_walled_leaves_the_reach(self):
+        gid = self.grant()
+        self.assertTrue(self.session(gid).zone_allowed("Garden"))
+        text = (self.ws / "System" / "context.md").read_text().replace("| Garden | Things of garden | no |", "| Garden | Things of garden | yes |")
+        (self.ws / "System" / "context.md").write_text(text)
+        self.assertFalse(self.session(gid).zone_allowed("Garden"))
+
+    def test_no_zone_function_means_no_zone(self):
+        (self.ws / "System" / "tools").unlink()
+        self.assertEqual(self.ctx.zones(self.ws), [])
+        s = self.session(self.grant())
+        self.assertEqual(set(s.readable), {"Knowledge", "docs"})
+        self.assertEqual(set(s.writable), set())
+
+    def test_the_class_decides_before_the_zone(self):
+        s = self.session(self.grant(classes=("read",)))
+        self.assertTrue(s.zone_allowed("Home"))
+        self.assertFalse(s.zone_allowed("Home", write=True))
+
+    def test_knowledge_and_docs_are_never_writable(self):
+        s = self.session(self.grant())
+        self.assertTrue(s.zone_allowed("Knowledge") and s.zone_allowed("docs"))
+        self.assertFalse(s.zone_allowed("Knowledge", write=True) or s.zone_allowed("docs", write=True))
+
+    def test_a_name_that_is_not_a_plain_zone_name_says_no(self):
+        s = self.session(self.grant())
+        for odd in (None, "", " ", 7, ["Home"], "../Work", "Home/../Work", "Work", "Zones/Work", "Home\x00", "<no zone>"):
+            self.assertFalse(s.zone_allowed(odd), repr(odd))
+
+    def test_a_grant_that_is_gone_or_revoked_has_no_session(self):
+        gid = self.grant()
+        self.store.revoke(gid)
+        with self.assertRaises(ValueError):
+            self.session(gid)
+        with self.assertRaises(ValueError):
+            self.session("g-000000000000")
+
+
+class Walled(Case):
+    def test_a_walled_zone_joins_by_name_with_the_notice_acknowledged_and_the_day_recorded(self):
+        gid = self.grant()
+        refused = self.zone(gid, "Work", read=True, ack=False)
+        self.assertFalse(refused["ok"])
+        self.assertFalse(self.session(gid).zone_allowed("Work"))
+        done = self.zone(gid, "work", read=True)                                   # the name is matched without regard to case
+        self.assertTrue(done["ok"], done)
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+        self.assertFalse(self.session(gid).zone_allowed("Work", write=True))      # reads and writes are separate
+        row = [r for r in self.ctx.reach_rows(self.ws, gid) if r["zone"] == "Work"][0]
+        self.assertEqual((row["walled"], row["read"], row["write"]), (True, True, False))
+        self.assertRegex(row["since"], r"^\d{4}-\d\d-\d\d$")
+
+    def test_writes_are_a_second_choice_and_need_the_grant_to_write(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.assertTrue(self.zone(gid, "Work", read=True, write=True)["ok"])
+        self.assertTrue(self.session(gid).zone_allowed("Work", write=True))
+        reader = self.grant(classes=("read",), name="Tablet")
+        out = self.zone(reader, "Work", read=True, write=True)
+        self.assertFalse(out["ok"])
+        self.assertFalse(self.session(reader).zone_allowed("Work"))             # nothing was half done
+
+    def test_turning_a_zone_off_takes_it_out_and_keeps_the_other(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.zone(gid, "Vault", read=True)
+        self.assertTrue(self.zone(gid, "Work", read=False, write=False, ack=False)["ok"])        # turning off needs no notice
+        s = self.session(gid)
+        self.assertFalse(s.zone_allowed("Work"))
+        self.assertTrue(s.zone_allowed("Vault"))
+
+    def test_the_action_takes_only_walled_zones_known_to_the_workspace(self):
+        gid = self.grant()
+        self.assertFalse(self.zone(gid, "Home", read=True)["ok"])                 # open already
+        self.assertFalse(self.zone(gid, "Nowhere", read=True)["ok"])
+        self.assertFalse(self.zone(gid, "../Work", read=True)["ok"])
+        self.assertFalse(self.zone("g-nope", "Work", read=True)["ok"])
+        self.assertFalse(self.zone("", "Work", read=True)["ok"])
+
+    def test_two_grants_with_different_reach_see_only_their_own(self):
+        a, b = self.grant(name="Phone"), self.grant(name="Tablet")
+        self.zone(a, "Work", read=True)
+        self.zone(b, "Vault", read=True)
+        sa, sb = self.session(a), self.session(b)
+        self.assertTrue(sa.zone_allowed("Work") and not sa.zone_allowed("Vault"))
+        self.assertTrue(sb.zone_allowed("Vault") and not sb.zone_allowed("Work"))
+
+    def test_a_walled_zone_that_leaves_the_workspace_leaves_the_reach(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        text = (self.ws / "System" / "context.md").read_text().replace("| Work | Things of work | yes |\n", "")
+        (self.ws / "System" / "context.md").write_text(text)
+        self.assertFalse(self.session(gid).zone_allowed("Work"))
+
+    def test_the_notice_is_the_fixed_text_with_the_zone_in_it(self):
+        text = (EXTRA / "notice.md").read_text().strip()
+        self.assertEqual(text.count("{zone}"), 1)
+        self.assertEqual(self.state.view(self.ws)["notice"], text)
+        for must in ("leaves this Mac", "relay carries it but cannot read it", "stays in the chat history after you revoke",
+                     "Another connector in the same chat", "commit check does not see a chat"):
+            self.assertIn(must, text)
+
+
+class Handles(Case):
+    def setUp(self):
+        super().setUp()
+        self.gid = self.grant()
+        self.s = self.session(self.gid)
+        self.now = [1_000_000.0]
+        self.ctx._clock = lambda: self.now[0]
+        self.addCleanup(lambda: setattr(self.ctx, "_clock", __import__("time").time))
+
+    def refused(self, handle, session=None):
+        with self.assertRaises(self.ctx.HandleRefused) as caught:
+            (session or self.s).check_handle(handle)
+        self.assertIn("new chat", str(caught.exception).lower())
+
+    def test_a_handle_this_grant_made_passes(self):
+        self.s.check_handle(self.s.new_handle())
+        self.s.check_handle(self.session(self.gid).new_handle())               # a new Session of the same grant and reach
+
+    def test_a_made_up_handle_is_refused(self):
+        for fake in ("", "h1", "h1.abc.def", "x" * 80, None, 7, "h1." + "A" * 60 + "." + "0" * 32):
+            self.refused(fake)
+
+    def test_a_tampered_handle_is_refused(self):
+        h = self.s.new_handle()
+        tag, body, sig = h.split(".")
+        self.refused("%s.%s.%s" % (tag, body, "0" * 32))
+        self.refused("%s.%sA.%s" % (tag, body, sig))
+
+    def test_an_expired_handle_is_refused(self):
+        h = self.s.new_handle()
+        self.now[0] += 12 * 3600 + 1
+        self.refused(h)
+
+    def test_a_handle_stops_working_when_the_owner_changes_the_reach_and_works_again_when_it_returns(self):
+        h = self.s.new_handle()
+        self.zone(self.gid, "Work", read=True)
+        self.refused(h, self.session(self.gid))
+        self.zone(self.gid, "Work", read=False, ack=False)
+        self.session(self.gid).check_handle(h)
+
+    def test_another_grants_handle_is_refused(self):
+        other = self.session(self.grant(name="Tablet"))
+        self.refused(self.s.new_handle(), other)
+
+    def test_a_handle_is_not_a_secret_and_carries_none(self):
+        h = self.s.new_handle()
+        self.assertNotIn(self.state.home().name, h)
+        self.assertRegex(h, r"^h1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}$")
+
+    def test_the_key_behind_a_handle_is_private_and_stays_the_same(self):
+        k = self.store.handle_key()
+        self.assertEqual(len(k), 32)
+        self.assertEqual(k, self.store.handle_key())
+        self.assertEqual(oct(self.state.mode_of(self.state.home() / "handle.key")), "0o600")
+
+    def test_the_machine_code_and_the_spoken_words(self):
+        self.assertEqual(self.ctx.NEW_CONTEXT_REQUIRED, "new_context_required")
+        self.assertIn("reach", self.ctx.NEW_CONTEXT_SAY)
+        self.assertNotIn("context", self.ctx.NEW_CONTEXT_SAY.lower())
+
+
+class NoToolChangesTheReach(unittest.TestCase):
+    def test_nothing_the_service_serves_can_reach_the_actions_that_change_a_grant(self):
+        for name in ("service.py", "provider.py", "consent.py"):
+            text = (EXTRA / name).read_text()
+            self.assertNotIn("settings_actions", text, name)
+            self.assertNotIn("set_zone", text, name)
+        tools = EXTRA / "tools"
+        if tools.is_dir():
+            for path in tools.rglob("*.py"):
+                text = path.read_text()
+                for bad in ("settings_actions", "set_zone", "store.revoke", "set_status", "make_pairing_code", "create_grant"):
+                    self.assertNotIn(bad, text, path.name)
+
+    def test_only_settings_actions_writes_a_reach(self):
+        writers = [p.name for p in EXTRA.glob("*.py") if re.search(r"\bset_zone\(", p.read_text()) and p.name != "store.py"]
+        self.assertEqual(writers, ["settings_actions.py"])
+
+    def test_the_service_offers_no_tool_of_its_own(self):
+        text = (EXTRA / "service.py").read_text()
+        self.assertNotIn("@server.tool", text)
+        self.assertNotIn(".tool(", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

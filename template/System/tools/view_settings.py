@@ -32,7 +32,7 @@ from typing import Dict, Iterable, List, Optional
 sys.dont_write_bytecode = True
 
 API = 1
-PARTS = ("desk", "flags", "release", "usage", "walls", "notifications", "channels", "memory", "guard", "machine")
+PARTS = ("desk", "flags", "release", "usage", "walls", "notifications", "channels", "memory", "guard", "machine", "remote")
 HERE = Path(__file__).resolve().parent
 DESK_AGENTS = ("claude", "codex")
 
@@ -353,6 +353,17 @@ def guard(root: Path, extras: Optional[Path]) -> Optional[dict]:
     return {"state": dict(state, would=would), "codex": codex}
 
 
+def remote(root: Path) -> dict:
+    """Remote access (preview) as Settings shows it: what the extra's own `state.py` says (`System/remote/state.py`, standard library, run on the
+    Python macOS ships), or `{"installed": False, ...}` where the extra is not in this workspace or does not read. Reads; the extra's state
+    folder is not made and nothing is written."""
+    mod = _load(Path(root) / "System" / "remote" / "state.py", "garrick_settings_remote_state", ("view", "installed"))
+    try:
+        return dict(mod.view(Path(root))) if mod is not None else {"installed": False, "name": "Remote access", "label": "Preview"}
+    except Exception:
+        return {"installed": False, "name": "Remote access", "label": "Preview"}
+
+
 # --------------------------------------------------------------------------- the document
 
 def read(root, extras: Optional[Path] = None, jobs: Optional[Dict[str, dict]] = None, only: Optional[Iterable[str]] = None) -> dict:
@@ -382,4 +393,6 @@ def read(root, extras: Optional[Path] = None, jobs: Optional[Dict[str, dict]] = 
         out["machine"] = machine(root, extras)
     if "guard" in parts:
         out["read_guard"] = guard(root, extras)
+    if "remote" in parts:
+        out["remote"] = remote(root)
     return out

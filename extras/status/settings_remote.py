@@ -125,7 +125,7 @@ CSS = r"""
 #remote-settings .rgrant{padding:8px 10px;border:1px solid var(--line);border-radius:10px}
 #remote-settings .rgline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 #remote-settings .rchk{margin-left:12px;font-size:var(--fs-meta)}
-#remote-settings .rdigits{font-size:1.4em;letter-spacing:.25em}
+#remote-settings .rdigits{font-size:var(--fs-h3);letter-spacing:.25em}
 #remote-settings .rsaid.bad{color:var(--bad,#b00)}
 #remote-settings .r-off,#remote-settings .r-on,#remote-settings .r-paused{display:none}
 #remote-settings[data-state="off"] button.r-off,#remote-settings[data-state="on"] button.r-on,

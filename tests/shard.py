@@ -168,6 +168,10 @@ for _key, _mods in (("template/System/tools/next_up.py", ["test_morning_brief"])
                     ("install.py", ["test_morning_brief"]),
                     ("tests/test_next_up.py", ["test_morning_brief"])):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+# tools-0820 (#702): the remote access manifest is held against the declared verbs and the shipped skills.
+for _key in ("extras/remote/manifest.json", "extras/remote/tools/manifest.py", "template/System/tools/operations.py",
+             "docs/extras/remote-access.md"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_manifest"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

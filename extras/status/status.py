@@ -2193,7 +2193,8 @@ ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread", "rename", "move",
               "layout",
               "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
-              "bring-back", "files")
+              "bring-back", "files",
+              "note-add", "todo-edit", "todo-retire")      # recorded since 0.82.0 (#701); a session sends them, never a button
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}

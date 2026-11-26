@@ -1569,7 +1569,7 @@ class TestJournal(ActionCase):
         self.wait_for(mark)
         reply = self.run_script({"verb": "operations"})
         self.assertEqual((True, True), (reply["ok"], reply["durable"]))
-        self.assertEqual(["park", "todo-add", "todo-date", "todo-done", "todo-undo", "wake"], reply["verbs"])
+        self.assertEqual(["note-add", "park", "todo-add", "todo-date", "todo-done", "todo-edit", "todo-retire", "todo-undo", "wake"], reply["verbs"])
         (running,) = reply["ops"]
         self.assertEqual(("a19f3c80", "running", "checking", "todo-add", "Work", None),
                          (running["op"], running["state"], running["phase"], running["verb"], running["zone"], running["outcome"]))

@@ -199,7 +199,7 @@ TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_m
 
 # core-0820 (#701): the remote caller and the durable record of a note, a reworded line and a retired one.
 for _key in ("extras/status/page_action.py", "template/System/tools/operations.py", "extras/status/outbox.py"):
-    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_caller", "test_remote_verb"]
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_caller", "test_remote_verb", "test_remote_record"]
 
 
 def touched(files, names=None):

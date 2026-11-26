@@ -72,8 +72,10 @@ a batch of one is the same request as the line named by `key`.
 back (#116). Any action the zone's wall check refused ends on it word for
 word (#107, #172): say() adds no refusal wording of its own to it.
 
-`OPS` stays what it has been since 0.26.0: the six verbs that keep a durable
-record, derived from the table. A newer copy of this file found by an older
+`OPS` is the verbs that keep a durable record, derived from the table: six
+since 0.26.0, and `note-add`, `todo-edit` and `todo-retire` since 0.82.0, so
+that a retry from a caller that cannot see its first answer is joined, not
+done twice (#701). A newer copy of this file found by an older
 status extra must not start recording verbs that extra knows nothing about.
 `checkpoint` is declared and deliberately left out of `RECORDED`: it keeps no
 journal entry and does not use `IDEM_WINDOW`, because it has state of its own
@@ -191,14 +193,14 @@ DECLARED: Dict[str, Op] = {
     # by the handler, which is that verb's own check.
     "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
     # Distil (#591): reword an open line, or move it to the expired archive with its source. By key, as a tick is, so a
-    # line that has moved is refused. Neither keeps a journal record, like note-add: a session sends them, never a button.
+    # line that has moved is refused. They keep a journal record since 0.82.0, as note-add does (#701).
     "todo-edit": _op(("zone", "file", "key", "text", "confirm"), ("file", "key", "text"), "zone", True, "safe", "line"),
     "todo-retire": _op(("zone", "file", "key", "reason", "confirm"), ("file", "key", "reason"), "zone", True, "safe", "line"),
     # A note to yourself (#569): the text goes into a dated file under the thread or project it is about, its actions
     # into that zone's Todo.md, one commit. The place is a `destination`, as the owner would say it, or the `zone`,
     # `project` and `thread` the ask box has checked; the handler refuses one that does not settle to one folder.
     # A second run writes a second note, so a retry is not safe.
-    "note-add": _op(("zone", "project", "thread", "destination", "text", "title"),
+    "note-add": _op(("zone", "project", "thread", "destination", "text", "title", "confirm"),
                     ("project", "thread", "destination", "text"), "zone", True),
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
@@ -364,7 +366,7 @@ DECLARED: Dict[str, Op] = {
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since
 # 0.26.0, and the name read() reports, so it keeps meaning exactly that.
-RECORDED = ("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add")
+RECORDED = ("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "todo-edit", "todo-retire")
 OPS: Dict[str, Op] = {verb: DECLARED[verb] for verb in RECORDED}
 # A roaming machine's copy of the workspace only receives, so a Todo action made there is queued in its zone's outbox
 # and applied on the server, `via: outbox` (#612). It carries these four verbs and no other, and `via_refusal` says so.
@@ -543,10 +545,13 @@ def name_of(verb: str, req: dict) -> str:
 
 WORKING = {"park": "Parking {name}…", "wake": "Waking {name}…", "todo-done": "Ticking that line…",
            "todo-undo": "Reopening that line…", "todo-date": "Changing that line's date…",
-           "todo-add": "Adding to {zone}…"}
+           "todo-add": "Adding to {zone}…", "note-add": "Saving the note…", "todo-edit": "Rewording that line…",
+           "todo-retire": "Retiring that line…"}
 ALREADY = {"park": "Already parking {name}…", "wake": "Already waking {name}…",
            "todo-done": "Already ticking that line…", "todo-undo": "Already reopening that line…",
-           "todo-date": "Already changing that line's date…", "todo-add": "Already adding to {zone}…"}
+           "todo-date": "Already changing that line's date…", "todo-add": "Already adding to {zone}…",
+           "note-add": "Already saving the note…", "todo-edit": "Already rewording that line…",
+           "todo-retire": "Already retiring that line…"}
 # What a request is told when it repeats one the record holds, past the window:
 # what was done and when, that this one did nothing, and the question. {when}
 # reads "4 minutes ago, at 14:02"; {said} is the earlier action's own sentence,
@@ -670,9 +675,12 @@ def lost_sentence() -> str:
 
 
 def _request(verb: str, req: dict) -> dict:
-    """Only the fields the verb declares, a new line's text cut short."""
+    """Only the fields the verb declares, a new line's text cut short. A note's own words are never kept: the record
+    holds where it went, and the note holds what it says."""
     out = {}
     for k in OPS[verb].fields:
+        if verb == "note-add" and k == "text":
+            continue
         if k in req:
             v = req[k]
             if isinstance(v, str) and len(v) > LOGGED_TEXT:
@@ -932,6 +940,10 @@ def start(folder, req: dict, now: Optional[float] = None, via: str = "", workspa
     try:
         with journal.lock():
             journal.settle_dead(now)
+            earlier_op = journal.latest().get(op)
+            if earlier_op is not None and earlier_op.get("workspace") == where and earlier_op.get("key") != key:
+                # An operation id names one request. The same id with other words is a mistake or a forgery, never a retry.
+                raise BadOp("this operation id was used for another request")
             how, earlier = repeats([r for r in journal.latest().values() if r.get("workspace") == where], key, zone, op, now)
             if how == "join":
                 return _release(journal, fd, op), {"ok": True, "say": label(verb, req, already=True),

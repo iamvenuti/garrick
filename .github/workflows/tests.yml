@@ -50,7 +50,7 @@ jobs:
           fi
           # The remote access extra has a job of its own: it runs on its own runtime, from its own lock.
           remote=false
-          if [ "$EVENT" = pull_request ] && git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q '^extras/remote/'; then
+          if [ "$EVENT" = pull_request ] && git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qE '^(extras/remote/|extras/status/page_action\.py|extras/status/ask_tools\.py|template/System/tools/operations\.py|template/System/tools/scaffold\.py)'; then
             remote=true
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
@@ -159,7 +159,12 @@ jobs:
       - name: A changed hash stops the install
         run: |
           python -m venv "$RUNNER_TEMP/refused"
-          sed '0,/--hash=sha256:./s//--hash=sha256:0/' extras/remote/requirements.lock > "$RUNNER_TEMP/changed.lock"
+          python3 - "$RUNNER_TEMP/changed.lock" <<'PY'
+          import sys
+          text = open("extras/remote/requirements.lock").read()
+          i = text.index("--hash=sha256:") + len("--hash=sha256:")
+          open(sys.argv[1], "w").write(text[:i] + ("0" if text[i] != "0" else "1") + text[i + 1:])
+          PY
           if diff -q extras/remote/requirements.lock "$RUNNER_TEMP/changed.lock" >/dev/null; then echo "the lock was not changed"; exit 1; fi
           if "$RUNNER_TEMP/refused/bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r "$RUNNER_TEMP/changed.lock"; then
             echo "A changed hash did not stop the install."; exit 1

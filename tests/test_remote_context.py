@@ -112,14 +112,14 @@ class Walled(Case):
         self.assertFalse(out["ok"])
         self.assertFalse(self.session(reader).zone_allowed("Work"))             # nothing was half done
 
-    def test_turning_a_zone_off_takes_it_out_and_keeps_the_other(self):
+    def test_turning_a_zone_off_takes_it_out_and_lets_another_in(self):
         gid = self.grant()
         self.zone(gid, "Work", read=True)
-        self.zone(gid, "Vault", read=True)
+        self.assertFalse(self.zone(gid, "Vault", read=True)["ok"])
         self.assertTrue(self.zone(gid, "Work", read=False, write=False, ack=False)["ok"])        # turning off needs no notice
-        s = self.session(gid)
-        self.assertFalse(s.zone_allowed("Work"))
-        self.assertTrue(s.zone_allowed("Vault"))
+        self.assertFalse(self.session(gid).zone_allowed("Work"))
+        self.assertTrue(self.zone(gid, "Vault", read=True)["ok"])
+        self.assertTrue(self.session(gid).zone_allowed("Vault"))
 
     def test_the_action_takes_only_walled_zones_known_to_the_workspace(self):
         gid = self.grant()
@@ -151,6 +151,71 @@ class Walled(Case):
         for must in ("leaves this Mac", "relay carries it but cannot read it", "stays in the chat history after you revoke",
                      "Another connector in the same chat", "commit check does not see a chat"):
             self.assertIn(must, text)
+
+
+class OneWalledZone(Case):
+    """W1: one connection reaches one walled zone, for reads or for writes, so one answer never holds two."""
+
+    SAY = "One connection reaches one walled zone. Use another connection for the second zone."
+
+    def test_a_second_walled_zone_is_refused_with_one_plain_sentence(self):
+        gid = self.grant()
+        self.assertTrue(self.zone(gid, "Work", read=True)["ok"])
+        for kw in ({"read": True}, {"write": True}, {"read": True, "write": True}):
+            out = self.zone(gid, "Vault", **kw)
+            self.assertEqual(out, {"ok": False, "say": self.SAY})
+        self.assertEqual(self.store.get_grant(gid)["zones"].keys(), {"Work"})
+
+    def test_one_walled_zone_may_have_its_reads_and_its_writes(self):
+        gid = self.grant()
+        self.assertTrue(self.zone(gid, "Work", read=True)["ok"])
+        self.assertTrue(self.zone(gid, "Work", read=True, write=True)["ok"])
+        self.assertTrue(self.session(gid).zone_allowed("Work", write=True))
+
+    def test_two_stored_by_hand_reach_none_and_settings_says_why(self):
+        gid = self.grant()
+        with self.store.txn() as db:                         # the case the reviewer ran: a file edited by hand
+            db["grants"][gid]["zones"] = {"Work": {"read": "2026-11-26", "write": ""}, "Vault": {"read": "2026-11-26", "write": ""}}
+        s = self.session(gid)
+        self.assertFalse(s.zone_allowed("Work") or s.zone_allowed("Vault"))
+        self.assertEqual(set(s.readable), {"Home", "Garden", "Knowledge", "docs"})
+        row = self.state.view(self.ws)["grants"][0]
+        self.assertIn("more than one walled zone", row["reach_note"])
+
+    def test_an_open_zone_does_not_count_and_one_stored_still_reaches(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.assertEqual(self.state.view(self.ws)["grants"][0]["reach_note"], "")
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+
+
+class Scopes(Case):
+    def test_a_session_is_never_wider_than_its_token(self):
+        gid = self.grant()                                    # the grant may read and write
+        self.assertEqual(set(self.ctx.session_for(self.ws, gid, ["read"]).classes), {"read"})
+        s = self.ctx.session_for(self.ws, gid, ["read"])
+        self.assertFalse(s.zone_allowed("Home", write=True))
+        self.assertEqual(set(self.ctx.session_for(self.ws, gid).classes), {"read", "write"})
+
+
+class ZoneThatLeaves(Case):
+    def test_an_entry_for_a_zone_that_left_is_dropped_so_a_new_zone_of_that_name_starts_empty(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        path = self.ws / "System" / "context.md"
+        text = path.read_text()
+        path.write_text(text.replace("| Work | Things of work | yes |\n", ""))
+        self.session(gid)                                     # a read of the grant drops the entry
+        self.assertEqual(self.store.get_grant(gid)["zones"], {})
+        path.write_text(text)                                 # a later zone with the same name
+        self.assertFalse(self.session(gid).zone_allowed("Work"))
+
+    def test_a_zone_function_that_cannot_load_drops_nothing(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        (self.ws / "System" / "tools").unlink()
+        self.session(gid)
+        self.assertIn("Work", self.store.get_grant(gid)["zones"])
 
 
 class Handles(Case):

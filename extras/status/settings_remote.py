@@ -24,6 +24,10 @@ STATES = {"off": "Off", "on": "On", "paused": "Paused"}
 NOT_BROWSER = "Remote access is changed in Garrick.app."
 
 
+ADD_REQUEST = ("copy the folder extras/remote of my Garrick download to System/remote in this workspace, leave out its tests folder, "
+               "and tell me when it is done")
+
+
 def _classes(c: List[str]) -> str:
     return "can read and write" if "write" in c else "can read"
 
@@ -49,10 +53,11 @@ def _reach(g: dict, notice: str) -> str:
                  '<p class="hint rnotice" hidden>%s</p></li>'
                  % (E(z["zone"]), E(g["id"]), E(z["zone"]), " checked" if z["read"] else "", " checked" if z["write"] else "",
                     "" if "write" in g["classes"] else " disabled", since, E(notice.replace("{zone}", z["zone"]))))
-    return ('<details class="rreachbox"><summary>What it may reach</summary><p class="hint">Walled zones are off until you turn them on '
+    why = '<p class="hint bad rwhy">%s</p>' % E(g["reach_note"]) if g.get("reach_note") else ""
+    return ('<details class="rreachbox"><summary>What it may reach</summary>%s<p class="hint">Walled zones are off until you turn them on '
             'here, by name. Reads and writes are separate choices.</p><ul class="rreaches">%s</ul>'
             '<div class="rconfirm" hidden><button class="act sm" type="button" data-rconfirm="1">Turn on</button> '
-            '<button class="act sm" type="button" data-rcancel="1">Cancel</button></div></details>' % rows)
+            '<button class="act sm" type="button" data-rcancel="1">Cancel</button></div></details>' % (why, rows))
 
 
 def _grants(rows: List[dict], notice: str) -> str:
@@ -75,8 +80,12 @@ def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
     row = h["set_row"]
     label = h["row_label"]
     if not v.get("installed"):
-        ask = h["request_button"]("Install remote access", "install remote access", workspace, "act sm")
-        body = row(label("Remote access", "Not installed in this workspace."), '<span class="st idle" id="remote-missing">Not installed</span> ' + ask)
+        ask = h["request_button"]("Ask my assistant to add it", ADD_REQUEST, workspace, "act sm")
+        body = (row(label("Remote access", "Not installed in this workspace."), '<span class="st idle" id="remote-missing">Not installed</span> ' + ask)
+                + '<p class="hint" id="remote-how">To add it, ask your assistant to copy remote access from your Garrick download into this workspace. '
+                  'Updating Garrick then keeps it current.</p>'
+                + '<details class="rdetails"><summary>Details</summary><p class="hint">Copy the folder extras/remote of your Garrick download to '
+                  'System/remote in this workspace, and delete System/remote/tests. Then reopen Settings.</p></details>')
         return '<section class="setsec" id="remote-settings" data-state="missing">%s%s%s</section>' % (head, tail, body)
     state = v["status"]
     if v.get("refusal"):
@@ -125,7 +134,7 @@ CSS = r"""
 #remote-settings .rgrant{padding:8px 10px;border:1px solid var(--line);border-radius:10px}
 #remote-settings .rgline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 #remote-settings .rchk{margin-left:12px;font-size:var(--fs-meta)}
-#remote-settings .rdigits{font-size:1.4em;letter-spacing:.25em}
+#remote-settings .rdigits{font-size:var(--fs-h3);letter-spacing:.25em}
 #remote-settings .rsaid.bad{color:var(--bad,#b00)}
 #remote-settings .r-off,#remote-settings .r-on,#remote-settings .r-paused{display:none}
 #remote-settings[data-state="off"] button.r-off,#remote-settings[data-state="on"] button.r-on,

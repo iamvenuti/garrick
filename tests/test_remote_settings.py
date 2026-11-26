@@ -59,7 +59,9 @@ class States(Case):
         self.assertIn('id="remote-settings"', out)
         self.assertIn('data-state="missing"', out)
         self.assertIn("Not installed", out)
-        self.assertIn('data-request="install remote access"', out)
+        self.assertIn("data-request=", out)
+        self.assertIn("extras/remote", out)
+        self.assertIn("Updating Garrick then keeps it current", out)
         self.assertIn("Preview", out)
 
     def test_off(self):

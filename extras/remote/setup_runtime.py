@@ -87,7 +87,15 @@ def safe_unpack(archive: Path, into: Path) -> None:
     root = os.path.realpath(str(into))
     with tarfile.open(str(archive), "r:*") as tar:
         members = tar.getmembers()
+        links = []
         for m in members:
+            name = os.path.normpath(m.name)
+            if ".." in m.name.split("/") or ".." in (m.linkname or "").split("/") and m.islnk():
+                raise SetupError("The download holds a name with .. in it, so nothing was unpacked.")
+            if any(name == l or name.startswith(l + os.sep) for l in links):
+                raise SetupError("The download holds a file that goes through a link, so nothing was unpacked.")
+            if m.issym() or m.islnk():
+                links.append(name)
             target = os.path.realpath(os.path.join(root, m.name))
             if not (target == root or target.startswith(root + os.sep)):
                 raise SetupError("The download holds a file outside its folder, so nothing was unpacked.")
@@ -98,7 +106,10 @@ def safe_unpack(archive: Path, into: Path) -> None:
                     raise SetupError("The download holds a link that leaves its folder, so nothing was unpacked.")
             elif not (m.isfile() or m.isdir()):
                 raise SetupError("The download holds a file of a kind that is not allowed, so nothing was unpacked.")
-        tar.extractall(str(into), members=members)
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(str(into), members=members, filter="data")
+        else:
+            tar.extractall(str(into), members=members)
 
 
 def lock_text() -> str:
@@ -161,7 +172,12 @@ def setup(home: Path, fetch: Callable[[str, Path], None] = download, runner: Cal
             shutil.rmtree(str(old))
         if final.exists():
             os.replace(str(final), str(old))
-        os.replace(str(staging), str(final))
+        try:
+            os.replace(str(staging), str(final))
+        except OSError:
+            if old.exists() and not final.exists():
+                os.replace(str(old), str(final))                     # put the runtime that worked back
+            raise SetupError("The new software could not be put in place, so the old one was kept.") from None
         if old.exists():
             shutil.rmtree(str(old), ignore_errors=True)
         return final / "python" / "bin" / "python3"

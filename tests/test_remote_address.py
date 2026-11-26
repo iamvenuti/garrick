@@ -112,9 +112,11 @@ class Relay(RemoteCase):
     def test_enable_with_a_relay_that_is_missing_still_says_the_one_next_step(self):
         os.environ["GARRICK_REMOTE_RELAY_CLI"] = str(self.bin / "nothing")
         out = self.act.run(self.ws, {"action": "enable", "adapter": "relay"})
+        self.assertFalse(out["ok"])
         self.assertIn(self.ad.NO_APP, out["say"])
         self.assertEqual(self.state.address()["url"], "")
-        self.assertEqual(self.state.status(), "on")                         # on, with no address: the service will not start
+        self.assertEqual(self.state.status(), "off")                        # a relay that cannot publish turns nothing on
+        self.assertFalse(self.act.run(self.ws, {"action": "pair"})["ok"])
 
     def test_the_address_survives_a_restart_and_an_update(self):
         self.act.run(self.ws, {"action": "enable", "adapter": "relay"})

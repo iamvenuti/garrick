@@ -136,6 +136,43 @@ class Runtime(RemoteCase):
         with self.assertRaises(self.setup.SetupError):
             self.run_setup()
 
+    def test_a_swap_that_fails_puts_the_old_runtime_back(self):
+        make_archive(self.archive)
+        self.run_setup()
+        before = (self.runtime_folder() / "ready.json").read_text()
+        real = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append((Path(src).name, Path(dst).name))
+            if Path(src).name == "runtime.staging" and Path(dst).name == "runtime":
+                raise OSError("killed")
+            return real(src, dst)
+        from unittest import mock
+        with mock.patch.object(os, "replace", flaky), self.assertRaises(self.setup.SetupError):
+            self.run_setup()
+        self.assertEqual((self.runtime_folder() / "ready.json").read_text(), before)
+        self.assertFalse((self.state.home() / "runtime.old").exists())
+
+    def test_a_name_with_dots_or_a_path_through_a_link_is_refused(self):
+        for evil in ("python/../x", "../x"):
+            make_archive(self.archive, evil=evil)
+            with self.assertRaises(self.setup.SetupError):
+                self.run_setup()
+        with tarfile.open(str(self.archive), "w:gz") as tar:
+            link = tarfile.TarInfo("python/lib")
+            link.type, link.linkname = tarfile.SYMTYPE, "inside"
+            tar.addfile(link)
+            inner = tarfile.TarInfo("python/lib/file")
+            inner.size = 1
+            tar.addfile(inner, io.BytesIO(b"x"))
+        with self.assertRaises(self.setup.SetupError):
+            self.run_setup()
+
+    def test_the_data_filter_is_used_where_tarfile_has_it(self):
+        src = (EXTRA / "setup_runtime.py").read_text()
+        self.assertIn('filter="data"', src)
+
     def test_a_plain_http_address_is_never_fetched(self):
         with self.assertRaises(self.setup.SetupError):
             self.setup.download("http://example.test/x", Path(self._tmp.name) / "x")

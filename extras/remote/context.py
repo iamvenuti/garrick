@@ -130,8 +130,23 @@ def reach_of(ws: Path, grant: Dict[str, Any]) -> Dict[str, FrozenSet[str]]:
             readable.add(zone)
         if entry.get("write"):
             writable.add(zone)
+    held = [z for z, e in (grant.get("zones") or {}).items() if z in known and isinstance(e, dict) and (e.get("read") or e.get("write"))]
+    if len(held) > 1:                                                  # one connection reaches one walled zone: with two stored, none
+        readable = {z for z, walled in known.items() if not walled}
+        writable = set(readable)
     readable |= {KNOWLEDGE, DOCS}
     return {"readable": frozenset(readable), "writable": frozenset(writable), "classes": classes}
+
+
+ONE_WALLED = "One connection reaches one walled zone. Use another connection for the second zone."
+TOO_MANY = "This connection holds more than one walled zone, so it reaches none of them. Turn all but one off."
+
+
+def reach_note(ws: Path, grant: Dict[str, Any]) -> str:
+    """Why a grant's walled zones are all out of reach, or "" when they are not."""
+    known = {z["zone"] for z in zones(ws)}
+    held = [z for z, e in (grant.get("zones") or {}).items() if z in known and isinstance(e, dict) and (e.get("read") or e.get("write"))]
+    return TOO_MANY if len(held) > 1 else ""
 
 
 def reach_rows(ws: Path, gid: str) -> List[Dict[str, Any]]:
@@ -204,12 +219,17 @@ class Session:
             raise HandleRefused(HANDLE_WORDS) from None
 
 
-def session_for(ws: Path, gid: str) -> Session:
+def session_for(ws: Path, gid: str, scopes=None) -> Session:
     """The Session of a live grant, from the reach as it stands now. Raises HandleRefused-free ValueError for a grant that is
     gone or revoked: the caller turns that into a refusal."""
     grant = _grant(gid)
     if grant is None:
         raise ValueError("That connection is not active.")
+    known = [z["zone"] for z in zones(ws)]
+    if known and any(z not in known for z in (grant.get("zones") or {})):
+        _sib("store").prune_zones(gid, known)                          # a zone that left the workspace takes its entry with it
+        grant = _grant(gid) or grant
     reach = reach_of(ws, grant)
-    return Session(grant_id=gid, workspace=Path(ws), classes=reach["classes"], readable=reach["readable"],
+    classes = reach["classes"] if scopes is None else reach["classes"] & frozenset(scopes)   # never wider than the token's own scopes
+    return Session(grant_id=gid, workspace=Path(ws), classes=classes, readable=reach["readable"],
                    writable=reach["writable"])

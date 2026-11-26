@@ -144,6 +144,33 @@ class Actions(Case):
         self.assertEqual(len(self.spawned), 1)
         self.assertFalse(self.la.written())
 
+    def test_resume_sets_up_the_software_first_when_it_is_missing_or_older(self):
+        self.make_runtime_ready()
+        self.turn_on()
+        self.run_act("pause")
+        (self.state.runtime_dir() / "ready.json").write_text('{"ok": true, "lock": "an-older-lock"}', encoding="utf-8")
+        out = self.run_act("resume")
+        self.assertTrue(out["ok"])
+        self.assertEqual(self.state.status(), "on")
+        self.assertEqual(len(self.spawned), 1)
+        self.assertFalse(self.la.written())                                  # the service starts when the setup is done
+        self.assertIn("Setting up the service software first", out["say"])
+
+    def test_resume_with_current_software_starts_the_agent(self):
+        self.make_runtime_ready()
+        self.turn_on()
+        self.run_act("pause")
+        self.assertTrue(self.run_act("resume")["ok"])
+        self.assertEqual(self.spawned, [])
+        self.assertTrue(self.la.written())
+
+    def test_a_pairing_code_needs_an_address(self):
+        self.state.set_status("on")
+        out = self.run_act("pair")
+        self.assertFalse(out["ok"])
+        self.assertIn("address", out["say"])
+        self.assertFalse(self.store.pairing_state()["waiting"])
+
     def test_enable_never_runs_the_setup_twice_at_once(self):
         self.run_act("enable", adapter="own", address="https://home.example.test")
         self.state.write_json("setup.json", {"state": "running", "say": "x"})
@@ -200,6 +227,31 @@ class Actions(Case):
     def test_actions_never_raise(self):
         with mock.patch.object(self.state, "set_status", side_effect=OSError("disk")):
             self.assertFalse(self.run_act("pause")["ok"])
+
+
+class InstallPath(Case):
+    """The way remote access gets into a workspace: copy extras/remote to System/remote, then update.py keeps it current."""
+
+    def test_a_copied_folder_is_an_installed_extra_that_update_keeps_current(self):
+        import importlib.util
+        repo = Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(repo))
+        spec = importlib.util.spec_from_file_location("garrick_update_for_remote", str(repo / "update.py"))
+        upd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(upd)
+        root = Path(self._tmp.name) / "fresh"
+        (root / "System").mkdir(parents=True)
+        self.assertNotIn("remote", upd.installed_extras(root))
+        import shutil
+        shutil.copytree(str(repo / "extras" / "remote"), str(root / "System" / "remote"), ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.rmtree(str(root / "System" / "remote" / "tests"))
+        self.assertIn("remote", upd.installed_extras(root))
+        shipped = upd.extras_shipped(["remote"])
+        self.assertIn("System/remote/service.py", shipped)
+        self.assertIn("System/remote/requirements.lock", shipped)
+        self.assertEqual([p for p in shipped if "/tests/" in p], [])
+        self.assertEqual(upd.extra_place("extras/remote/state.py"), "System/remote/state.py")
+        self.assertIsNone(upd.extra_place("extras/remote/tests/test_e2e.py"))
 
 
 class LaunchAgent(Case):

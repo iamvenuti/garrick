@@ -45,15 +45,17 @@ def program(workspace: Path, python: Path, service: Path) -> List[str]:
 
 
 def make_plist(workspace: Path, python: Path, service: Path, log_dir: Path) -> dict:
-    """The agent: start at login, start again after a crash, not after a clean exit. The service exits cleanly when remote access is
-    off or paused or this computer is a roaming one, so launchd does not restart it into a loop."""
+    """The agent: start at login, start again after a crash, not after a clean exit. A service that starts while remote access is off or
+    paused, or on a roaming computer, says so and exits cleanly, so launchd does not restart it into a loop. A service that is already
+    running when a pause comes stays up and refuses every call; after a restart of the Mac while paused it stays stopped, and a resume
+    starts it again."""
     env = {}
     if os.environ.get("GARRICK_REMOTE_HOME"):
         env["GARRICK_REMOTE_HOME"] = os.environ["GARRICK_REMOTE_HOME"]
     if os.environ.get("HOME"):
         env["HOME"] = os.environ["HOME"]
     out = {"Label": LABEL, "ProgramArguments": program(workspace, python, service), "RunAtLoad": True,
-           "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30, "ProcessType": "Background",
+           "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30,
            "StandardOutPath": str(log_dir / "launchd.out"), "StandardErrorPath": str(log_dir / "launchd.err")}
     if env:
         out["EnvironmentVariables"] = env

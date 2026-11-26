@@ -119,7 +119,8 @@ class TestDeclared(unittest.TestCase):
             self.assertEqual("unsafe" if verb == "note-add" else "safe", ops.DECLARED[verb].retry, verb)
 
     def test_the_page_script_zones_cover_them(self):
-        self.assertTrue(set(ops.OPS) <= set(status_py().ZONE_VERBS))
+        # The three recorded since 0.82.0 (#701) are a session's or a remote assistant's: the page sends no button for them.
+        self.assertTrue(set(ops.OPS) - {"note-add", "todo-edit", "todo-retire"} <= set(status_py().ZONE_VERBS))
 
     def test_a_worker_and_a_reader_agree_on_the_words(self):
         self.assertEqual(("saved", "refused", "crashed", "unknown", "lost"), ops.OUTCOMES)

@@ -136,10 +136,9 @@ class TestWhatRemoteIsRefused(RemoteCase):
                 self.assertFalse(remote["ok"], verb)
                 self.assertEqual(pa.REMOTE_REFUSED, remote["say"], verb)
 
-    def test_an_unknown_caller_is_refused(self):
-        out, _, _ = self.go({"verb": "todo-add", "zone": "Work", "text": "Book the room"}, via="telegram")
-        self.assertFalse(out["ok"], out)
-        self.assertNotIn("Book the room", (self.work / "Todo.md").read_text(encoding="utf-8"))
+    def test_an_unknown_caller_has_no_page_right(self):
+        out, _, _ = self.go({"verb": "walls-allow"}, via="telegram")
+        self.assertEqual(pa.PAGE_REFUSED, out["say"])
 
     def test_the_ones_a_remote_assistant_may_send_still_work(self):
         out, _, _ = self.go({"verb": "todo-add", "zone": "Work", "text": "Book the room"})

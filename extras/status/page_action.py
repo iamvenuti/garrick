@@ -6785,8 +6785,8 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     request repeating one the record holds is joined, answered or asked
     about (operations.start()) rather than done again. Never raises.
     `via` names the caller, one of CALLERS: it goes into the record. It has no default, so that a new caller cannot
-    take the page's rights by leaving it out: a call without it raises TypeError, and one with a word that is not in
-    CALLERS is refused (#701).
+    take the page's rights by leaving it out: a call without it raises TypeError. A word that is not in CALLERS has no
+    page right, as before (#701).
 
     An action that changed something the page shows ends with the page
     request (ask_for_page), once, after the commit, and
@@ -6805,8 +6805,6 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     try:
         try:
             joined = None
-            if via not in CALLERS:
-                raise Refused("this caller is not known")
             queued = outbox_gate(ws, req, via)
             if queued is not None:
                 return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)

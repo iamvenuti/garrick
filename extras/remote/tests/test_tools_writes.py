@@ -306,6 +306,39 @@ class TestRetries(WritesCase):
         self.assertNotIn("KEEPNOT", json.dumps(self.w.store.read(op)))
 
 
+class TestTheRecord(WritesCase):
+    def test_an_unknown_id_makes_no_file(self):
+        files = lambda: sorted(p.name for p in self.w.store.root.iterdir() if p.name != "prepare.lock")     # the one fixed lock
+        before = files()
+        for bad in ("0123456789abcdef", "fedcba9876543210"):
+            for call in (self.w.status, self.w.execute):
+                self.assertEqual("not_found", call(bad)["error"])
+            self.assertEqual("not_found", self.w.prepare("todo-add", "Work", text="x", operation_id=bad)["error"])
+        self.assertEqual(before, files())
+
+    def test_what_would_change_is_dropped_with_the_words(self):
+        op, out = self.go("note-add", project="Acme Review", text="WOULDMARK words")
+        rec = self.w.store.read(op)
+        self.assertNotIn("would", rec)
+        self.assertNotIn("WOULDMARK", json.dumps(rec))
+        refused = self.w.prepare("todo-add", "Work", text="WOULD2 words")
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text() + "- [ ] dirty\n")
+        self.w.execute(refused["operation_id"])
+        self.assertNotIn("WOULD2", json.dumps(self.w.store.read(refused["operation_id"])))
+
+    def test_a_repeat_the_record_asks_about_is_a_plain_receipt_without_a_question(self):
+        asked = {"ok": False, "state": "asked", "say": "The same request was done 4 minutes ago: Added. It has not been done again. Do you want it done a second time?", "op": "x", "again": "x"}
+        made = run_op.receipt("todo-add", 1, json.dumps(asked), "")
+        self.assertFalse(made["ok"])
+        self.assertEqual("This was already done a few minutes ago. Nothing was saved again.", made["say"])
+        text = run_op.receipt("todo-done", 1, "", asked["say"])
+        self.assertNotIn("?", text["say"])
+        self.assertIn("Nothing was saved again", text["say"])
+        running = dict(asked, say="The same request is still running, started 1 minute ago: Adding. It has not been sent again. Do you want it done a second time once that one ends?")
+        self.assertNotIn("?", run_op.receipt("note-add", 1, json.dumps(running), "")["say"])
+
+
 class TestTheDeskIsSafe(WritesCase):
     def test_a_todo_with_changes_not_committed_is_not_overwritten(self):
         todo = self.work / "Todo.md"

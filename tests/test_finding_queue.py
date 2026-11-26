@@ -896,7 +896,7 @@ class TestNotNowForTheWikisKinds(ActionCase):
         self.rel = "Wikis/Meetings/questions/261104 - Renewal owner.md"
 
     def ask(self, **req):
-        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root), via="page")[0]
 
     def test_a_verdict_and_a_decision_are_put_off_in_the_pages_own_file_and_a_question_is_not(self):
         for kind in ("verdict", "decision-review"):
@@ -953,7 +953,7 @@ class TestFindingVerb(ActionCase):
         self.rel = "Zones/Work/Acme Review/Acme Review.md"
 
     def ask(self, **req):
-        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root), via="page")[0]
 
     def test_the_verb_is_declared_and_closed(self):
         ops = pa.ops_lib(self.root)
@@ -1167,7 +1167,7 @@ class TestEveryBoundedAnswer(ActionCase):
         self.addCleanup(env.stop)
 
     def ask(self, **req):
-        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root), via="page")[0]
 
     def with_assistant(self, act):
         def assistant(cmd, tier, cwd, env):
@@ -1999,7 +1999,7 @@ class TestKeepVerb(ActionCase):
         self.rel = "Zones/Work/Acme Review/Acme Review.md"
 
     def ask(self, **req):
-        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root), via="page")[0]
 
     def store(self):
         return json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))

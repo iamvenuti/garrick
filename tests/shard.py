@@ -197,6 +197,10 @@ TOUCH_MAP["extras/status/workspace_find.py"] = ["test_view_rest", "test_status",
 TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_status_work",
                                                  "test_overview_work", "test_context_card", "test_inbox_run", "test_finding_queue"]
 
+# core-0820 (#701): the remote caller and the durable record of a note, a reworded line and a retired one.
+for _key in ("extras/status/page_action.py", "template/System/tools/operations.py", "extras/status/outbox.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_caller"]
+
 
 def touched(files, names=None):
     """The modules to run for the changed files, sorted; or None for the full suite."""

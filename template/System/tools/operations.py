@@ -140,8 +140,8 @@ OP_RE = re.compile(r"[0-9a-f]{8,32}")
 
 STATES = ("queued", "running", "completed", "failed")
 # Who sent a request, named in its record and in the audit log (#344): a click
-# on the page, the ask box, or an assistant's session at the command line.
-CALLERS = ("page", "ask", "session", "outbox")
+# on the page, the ask box, an assistant's session at the command line, the outbox, or a remote assistant.
+CALLERS = ("page", "ask", "session", "outbox", "remote")
 OUTCOMES = ("saved", "refused", "crashed", "unknown", "lost")
 SUCCESS_VERBS = ("saved", "parked", "ticked", "added", "renamed", "made", "committed")
 

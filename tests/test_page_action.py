@@ -2128,9 +2128,9 @@ class TestNotePreview(ActionCase):
             self.read("Wikis/Meetings/wiki/people/rowan-ash.md")
         self.assertEqual("rowan-ash is not there any more: it was moved, renamed or deleted after the page was built",
                          str(said.exception))
-        out, _, why = pa.perform(self.root, {"verb": "note-read", "path": "Wikis/Meetings/wiki/people/rowan-ash.md"})
+        out, _, why = pa.perform(self.root, {"verb": "note-read", "path": "Wikis/Meetings/wiki/people/rowan-ash.md"}, via="page")
         self.assertEqual({"ok": False, "say": why, "missing": True}, out)
-        out, _, _ = pa.perform(self.root, {"verb": "note-read", "path": "System/context.md"})
+        out, _, _ = pa.perform(self.root, {"verb": "note-read", "path": "System/context.md"}, via="page")
         self.assertNotIn("missing", out)                    # refused, not gone: the page keeps its Open
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads a file whatever its mode")

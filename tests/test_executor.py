@@ -217,7 +217,7 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
         """"It rebuilds now, try again" is only true if the host rebuilds: a refusal leaves `built` out."""
         with mock.patch.object(self.lib, "detach", return_value=True) as spawn:
             out, _, _ = pa.perform(self.root, {"verb": "wake", "zone": "Work", "project": "Acme", "thread": "Pricing"},
-                                   pa.ops_lib(self.root))
+                                   pa.ops_lib(self.root), via="page")
         self.assertEqual((False, False, 0), (out["ok"], "built" in out, spawn.call_count))
 
     def test_the_page_does_not_close_a_click_with_the_ask_reply(self):

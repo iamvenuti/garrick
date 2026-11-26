@@ -324,7 +324,7 @@ class TestMakingThem(MakeCase):
         self.assertEqual("Undo", undo["label"])
         self.assertEqual({"verb": "undo", "zone": "Work"}, {k: v for k, v in undo["act"].items() if k != "commit"})
         pa = ask.page_action()
-        reply, _, why = pa.perform(self.root, undo["act"], pa.ops_lib(self.root))
+        reply, _, why = pa.perform(self.root, undo["act"], pa.ops_lib(self.root), via="page")
         self.assertTrue(reply["ok"], why)
         self.assertFalse((self.work / "Acme Review" / "Threads" / "Renewal").exists())
 

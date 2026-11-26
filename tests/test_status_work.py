@@ -684,6 +684,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"session-url"}
         # A card opened (#651) adds one to a count under System/, outside every zone: no commit, no lock.
         unzoned |= {"count-card"}
+        # Remote access's switch (decision 7) is the page's own, scope machine: it writes outside every zone, no commit, no lock.
+        unzoned |= {"remote"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

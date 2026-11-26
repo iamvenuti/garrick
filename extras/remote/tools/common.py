@@ -17,11 +17,11 @@ NOT_THERE = "No such place. places() lists the projects and threads."      # the
 NOT_GIVEN = "That id was not given in this conversation."                  # and for an id that was never handed out
 NO_ZONE = "No such zone."
 
-REACH_SAY = ("That zone is outside what this connection may reach. Only the owner changes the reach, at the Mac. "
-             "After that, start a new chat.")
-NEW_CHAT_SAY = "This chat is out of date: the owner changed what it may reach. Start a new chat."
-WRITE_REACH_SAY = ("This connection may not write in that zone. Only the owner changes the reach, at the Mac. "
-                   "Nothing was written.")
+# The machine code and the spoken sentence are context.py's (NEW_CONTEXT_REQUIRED, NEW_CONTEXT_SAY). One copy is kept here, because this
+# module cannot load context.py on its own; test_tools_reach_words.py fails when the two differ.
+REACH_SAY = "That is outside what this connection may reach. The owner sets that at the Mac."
+NEW_CHAT_SAY = "That chat belongs to an earlier setting. Start a new chat."
+WRITE_REACH_SAY = REACH_SAY
 
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 

@@ -36,6 +36,9 @@ and says so, when that one failed:
               the morning summary reads "each", and the sweep's dry run gives each zone its own summary (#686)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
+    remote    remote access (preview): the service starts on loopback and the SDK's own OAuth client signs in, lists the tools and calls
+              one (the extra's end-to-end test); it needs GARRICK_REMOTE_RUNTIME, the interpreter made from the extra's lock, and
+              is skipped without it
 
 --model stub (the default, and what CI runs) does a step that needs a model with
 a stand-in that calls the same tools and checks the same outcome, and says in the

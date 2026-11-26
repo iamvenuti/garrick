@@ -375,6 +375,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "machine-role", "read-guard",
          "connected-service", "channel-answers",
          "count-card",
+         "remote",
          "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -1922,6 +1923,50 @@ def machine_lib(ws: Path):
     """System/tools/machine.py, found as outbox.py finds it: the workspace's, else the one beside this folder, else a clone's."""
     box = outbox_lib()
     return box._machine(ws) if box is not None else None
+
+
+REMOTE_ACTIONS = ("enable", "pause", "resume", "off", "pair", "zone", "revoke")
+REMOTE_NOT_INSTALLED = "Remote access is not installed."
+
+
+def remote_module(ws: Path):
+    """System/remote/settings_actions.py of the remote access extra, loaded from this workspace by its path; None when it is
+    not there. A link is followed only where it stays inside the workspace's own System/remote folder."""
+    folder = ws / "System" / "remote"
+    path = folder / "settings_actions.py"
+    try:
+        real = path.resolve()
+        if not path.is_file() or not str(real).startswith(str(folder.resolve()) + os.sep):
+            return None
+        spec = importlib.util.spec_from_file_location("garrick_remote_settings_actions_%x" % abs(hash(str(real))), str(real))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod if callable(getattr(mod, "run", None)) else None
+    except Exception:
+        return None
+
+
+def remote_access(ws: Path, req: dict) -> dict:
+    """Settings › Remote access: one of enable, pause, resume, off, pair, zone, revoke, done by the extra's own
+    settings_actions.run(ws, req) -> dict. Only the app's bridge sends it (PAGE_ONLY), so no remote caller, session or
+    ask box turns remote access on, widens a grant's reach or reads a pairing code. Without the extra it refuses."""
+    action = req.get("action")
+    if not isinstance(action, str) or action not in REMOTE_ACTIONS:
+        raise Refused("Remote access does not know that action.")
+    mod = remote_module(ws)
+    if mod is None:
+        raise Refused(REMOTE_NOT_INSTALLED)
+    try:
+        got = mod.run(ws, dict(req))
+    except Refused:
+        raise
+    except Exception as e:
+        raise Refused("Remote access could not do that: %s." % type(e).__name__)
+    if not isinstance(got, dict) or not isinstance(got.get("say"), str):
+        raise Refused("Remote access gave no answer.")
+    if got.get("ok") is False:
+        raise Refused(got["say"])
+    return {k: v for k, v in got.items() if k != "ok"}
 
 
 def set_machine_role(ws: Path, req: dict) -> dict:
@@ -6426,6 +6471,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_connected_service(ws, req)
     if req["verb"] == "channel-answers":
         return set_channel_answers(ws, req)
+    if req["verb"] == "remote":
+        return remote_access(ws, req)
     if req["verb"] == "wrap":
         return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
@@ -6472,7 +6519,8 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "machine-role", "read-guard",
          "connected-service", "channel-answers",
              "count-card",
-             "session-url")
+             "session-url",
+             "remote")
 
 
 # What a remote assistant is refused (#701), on top of everything `via != "page"` is refused already (PAGE_ONLY, a party,

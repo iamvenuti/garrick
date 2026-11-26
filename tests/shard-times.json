@@ -73,6 +73,7 @@
   "test_read_guard": 21.0,
   "test_reading": 1.5,
   "test_remote_caller": 20.0,
+  "test_remote_verb": 10.0,
   "test_release": 8.0,
   "test_scaffold_manage": 148.4,
   "test_settings_actions": 20.0,

@@ -64,7 +64,8 @@ def _lock_for(folder: Path) -> threading.Lock:
 
 
 def zone_tag(zone: str) -> str:
-    return hashlib.sha256(zone.encode("utf-8")).hexdigest()[:3]
+    """The name of a zone in an id and in a folder: 12 hex characters, so that two zones never share one."""
+    return common.short(zone)
 
 
 class Reads:
@@ -76,17 +77,37 @@ class Reads:
         self.state = Path(state) if state else common.state_root()
         self.script = read_server(self.ws)
         self._names = None
+        self.clear_old_reaches()
 
     # ------------------------------------------------------------ the reach
 
     def reach_zones(self) -> list:
         """The zones of the grant's reach that exist in the workspace, sorted. Zones the grant lists and the workspace lacks are dropped."""
         known = self.all_zones()
-        return sorted(z for z in known if z not in NOT_ZONES and self.session.zone_allowed(z, False))
+        zones = sorted(z for z in known if z not in NOT_ZONES and self.session.zone_allowed(z, False))
+        if len({zone_tag(z) for z in zones}) != len(zones):
+            raise RuntimeError("two zones of the reach have one tag")      # fails closed: nothing is answered
+        return zones
+
+    def reach_name(self) -> str:
+        """A name that changes when the grant's reach does: the classes and the two zone sets."""
+        body = [sorted(self.session.classes), sorted(z.casefold() for z in self.session.readable),
+                sorted(z.casefold() for z in self.session.writable)]
+        return common.short(json.dumps(body))
+
+    def grant_folder(self) -> Path:
+        return common.private_dir(common.private_dir(self.state / "reads") / common.short(self.session.grant_id))
+
+    def clear_old_reaches(self) -> None:
+        """The ids Ask handed out under an earlier reach go with it: only the folder of the present reach is kept."""
+        here = self.reach_name()
+        for child in self.grant_folder().iterdir():
+            if child.name != here:
+                shutil.rmtree(str(child), ignore_errors=True)
 
     def folder(self, zone: str) -> Path:
-        """The state of one grant and one zone: out.json holds the ids Ask handed out to this grant for this zone."""
-        return common.private_dir(common.private_dir(common.private_dir(self.state / "reads") / common.short(self.session.grant_id)) / zone_tag(zone))
+        """The state of one grant, one reach and one zone: out.json holds the ids Ask handed out to this grant for this zone."""
+        return common.private_dir(common.private_dir(self.grant_folder() / self.reach_name()) / zone_tag(zone))
 
     def all_zones(self) -> list:
         """Every zone the workspace has, by name. Zone names are not secret."""

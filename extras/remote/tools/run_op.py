@@ -86,9 +86,30 @@ def with_state(argv, stdin, env, ws):
     return json.dumps(req)
 
 
+REPEAT_DONE = "This was already done a few minutes ago. Nothing was saved again."
+REPEAT_RUNNING = "The same request is still running. Nothing was sent again."
+
+
+def repeat_receipt(reply, text: str):
+    """A repeat that the page action's record answers with a question ("Do you want it done a second time?") is a
+    plain receipt here: nothing ran, nothing was saved, and no model can answer the question, so none is passed on."""
+    asked = isinstance(reply, dict) and (reply.get("state") == "asked" or "again" in reply)
+    if not (asked or "done a second time" in text):
+        return None
+    said = str((reply or {}).get("say") or "") if isinstance(reply, dict) else text
+    return {"ok": False, "say": REPEAT_RUNNING if "still running" in (said or text) else REPEAT_DONE}
+
+
 def receipt(verb: str, code: int, out: str, err: str) -> dict:
     """What came back, as a receipt: whether it saved, in the words of the tool, and the commit when it names one."""
     out, err = (out or "").strip(), (err or "").strip()
+    try:
+        first = json.loads(out) if out.startswith("{") else None
+    except ValueError:
+        first = None
+    made = repeat_receipt(first, out if code == 0 else (err or out))
+    if made is not None:
+        return made
     if verb == "checkpoint" or (out.startswith("{") and verb in JSON_VERBS):
         try:
             reply = json.loads(out)
@@ -171,6 +192,7 @@ def main(argv=None) -> int:
     fresh = json.loads(path.read_text(encoding="utf-8"))
     fresh.update({"state": state_now, "receipt": made, "finished": time.time()})
     fresh.pop("fields", None)                               # the words are kept only while there is work to do
+    fresh.pop("would", None)
     write(path, fresh)
     return 0
 

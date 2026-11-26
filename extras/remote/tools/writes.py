@@ -260,6 +260,8 @@ class Writes:
         if operation_id not in (None, ""):
             if not common.op_id_ok(operation_id) or len(operation_id) != 16:
                 return say("not_found", NOT_FOUND)
+            if not self.store.exists(operation_id):
+                return say("not_found", NOT_FOUND)
             with self.store.locked(operation_id):
                 rec = self.store.read(operation_id)
                 if rec is None or rec.get("grant") != self.grant:
@@ -350,6 +352,8 @@ class Writes:
         if not (common.op_id_ok(operation_id) and len(str(operation_id)) == 16):
             return say("not_found", NOT_FOUND)
         op = str(operation_id)
+        if not self.store.exists(op):
+            return say("not_found", NOT_FOUND)
         with self.store.locked(op):
             rec = self.store.read(op)
             if rec is None or rec.get("grant") != self.grant:
@@ -362,6 +366,7 @@ class Writes:
             if why:
                 rec.update({"state": "refused", "receipt": {"ok": False, "say": why}, "finished": time.time()})
                 rec.pop("fields", None)
+                rec.pop("would", None)
                 self.store.write(op, rec)
                 return self.view(rec)
             rec.update({"state": "running", "started": time.time()})
@@ -382,6 +387,7 @@ class Writes:
             if fresh.get("state") == "running":
                 fresh.update({"state": "unknown", "receipt": {"ok": False, "say": run_op.CRASHED}, "finished": time.time()})
                 fresh.pop("fields", None)
+                fresh.pop("would", None)
                 self.store.write(rec["id"], fresh)
             return fresh
         return rec
@@ -390,6 +396,8 @@ class Writes:
         if not (common.op_id_ok(operation_id) and len(str(operation_id)) == 16):
             return say("not_found", NOT_FOUND)
         op = str(operation_id)
+        if not self.store.exists(op):
+            return say("not_found", NOT_FOUND)
         with self.store.locked(op):
             rec = self.store.read(op)
             if rec is None or rec.get("grant") != self.grant:

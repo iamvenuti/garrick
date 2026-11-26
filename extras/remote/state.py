@@ -315,7 +315,13 @@ def view(ws: Path) -> Dict[str, Any]:
             reach = sibling("context").reach_rows(ws, g["id"])
         except Exception:
             reach = []
-        rows.append(dict(g, reach=reach))
+        note = ""
+        try:
+            sib = sibling("context")
+            note = sib.reach_note(ws, sibling("store").get_grant(g["id"]) or {})
+        except Exception:
+            note = ""
+        rows.append(dict(g, reach=reach, reach_note=note))
     return {"installed": True, "name": NAME, "label": PREVIEW, "status": cfg["status"], "port": cfg["port"],
             "address": cfg["address"], "role": role(ws), "refusal": refusal, "can_enable": not refusal,
             "steps": steps(ws, cfg, refusal), "grants": rows, "notice": notice,

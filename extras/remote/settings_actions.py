@@ -102,11 +102,9 @@ def _enable(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         change = st.set_address(result["url"], adapter, trust_forwarded=_flag(req.get("trust_forwarded")))
         if change["changed"]:
             said.append(ad.CHANGED)
-    elif adapter == "own":
-        return _no(result["say"])                      # a typed address that is no address changes nothing
+    else:
+        return _no(result["say"])                      # no address, or a relay that cannot publish: nothing is turned on
     st.set_status("on")
-    if result["ok"] is False:
-        said.append(result["say"])
     if not st.runtime_current():
         said.append("Setting up the service software. This takes a few minutes." if _setup_started(ws)
                     else "The service software could not be set up here.")
@@ -135,7 +133,10 @@ def _resume(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     if refusal:
         return _no(refusal)
     st.set_status("on")
-    started = start_if_on(ws) if st.runtime_python() else {"ok": True}
+    if not st.runtime_current():                       # missing, or older than this release's lock: set it up first
+        return {"ok": True, "say": "Remote access is on again. Setting up the service software first. This takes a few minutes."
+                if _setup_started(ws) else "Remote access is on again. The service software could not be set up here."}
+    started = start_if_on(ws)
     return {"ok": True, "say": "Remote access is on again." if started["ok"] else "Remote access is on again. " + started["say"]}
 
 
@@ -158,6 +159,8 @@ def _pair(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         return _no("Remote access is paused. Resume it first.")
     if state != "on":
         return _no("Turn remote access on first.")
+    if not st.address()["url"]:
+        return _no("Remote access has no address yet. Set it up first.")
     if store.consent_locked():
         return _no("Too many wrong codes were tried. The sign-in page opens again in a few minutes.")
     code, seconds = store.make_pairing_code()
@@ -170,7 +173,11 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     grant = store.get_grant(gid)
     if grant is None:
         return _no("That connection is not active.")
-    found = [z for z in ctx.zones(ws) if z["zone"].casefold() == name.casefold()]
+    known = ctx.zones(ws)
+    if known:
+        store.prune_zones(gid, [z["zone"] for z in known])
+        grant = store.get_grant(gid) or grant
+    found = [z for z in known if z["zone"].casefold() == name.casefold()]
     if not found:
         return _no("That zone is not in this workspace.")
     zone = found[0]
@@ -179,6 +186,9 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     read, write = _flag(req.get("read")), _flag(req.get("write"))
     now = grant.get("zones", {}).get(zone["zone"], {})
     turning_on = (read and not now.get("read")) or (write and not now.get("write"))
+    others = [z for z, e in (grant.get("zones") or {}).items() if z != zone["zone"] and (e.get("read") or e.get("write"))]
+    if turning_on and others:
+        return _no(ctx.ONE_WALLED)
     if turning_on and not _flag(req.get("acknowledged")):
         return _no("Read the notice first. Nothing was changed.")
     if write and "write" not in grant["classes"]:

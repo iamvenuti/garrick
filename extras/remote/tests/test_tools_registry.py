@@ -18,6 +18,7 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from tools import common, manifest, register  # noqa: E402
 
 READ_TOOLS = ["places", "thread_state", "search", "read", "owed"]
+WRITE_TOOLS = ["prepare", "execute", "status"]
 
 
 def build(session_for):
@@ -40,9 +41,14 @@ class TestTheToolList(unittest.TestCase):
         self.manifest = manifest.load()
 
     def test_the_tool_list_is_the_served_rows(self):
+        """The five read tools the manifest serves, and the three write tools, which take only the verbs it serves."""
         self.assertEqual(sorted(manifest.served_tools(self.manifest)), sorted(READ_TOOLS))
-        self.assertTrue(set(READ_TOOLS) <= set(self.listed))
+        self.assertEqual(sorted(READ_TOOLS + WRITE_TOOLS), sorted(self.listed))
         self.assertEqual(sorted(self.names), sorted(self.listed))
+        from tools import writes
+        self.assertEqual(sorted(manifest.served_verbs(self.manifest)), sorted(writes.TAKES))
+        self.assertEqual(sorted(manifest.served_verbs(self.manifest)), sorted(writes.Writes(
+            support.StubSession(".")).verbs))
 
     def test_no_tool_is_a_declared_verb_that_is_not_served(self):
         served = set(manifest.served_verbs(self.manifest)) | set(READ_TOOLS)
@@ -53,10 +59,12 @@ class TestTheToolList(unittest.TestCase):
             self.assertNotIn(name, self.listed)
 
     def test_the_read_tools_are_marked_read_only_and_the_rest_are_not_marked_so_by_accident(self):
-        for name in READ_TOOLS:
+        for name in READ_TOOLS + ["status"]:
             ann = self.listed[name].annotations
             self.assertTrue(ann.read_only_hint, name)
             self.assertFalse(ann.destructive_hint, name)
+        for name in ("prepare", "execute"):
+            self.assertFalse(self.listed[name].annotations.read_only_hint, name)
 
     def test_no_tool_changes_a_reach_a_grant_or_a_setting(self):
         for name, tool in self.listed.items():

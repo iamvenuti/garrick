@@ -102,4 +102,6 @@ def register(server, session_for):
                        handle: str | None = None) -> dict:
             return await run(ctx, "owed", handle, lambda s: reads.Reads(s).owed(period, party, waiting))
 
+    from . import writes_registry
+    state["names"] += writes_registry.register(server, run, data)
     return state["names"]

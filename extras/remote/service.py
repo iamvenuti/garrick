@@ -103,8 +103,29 @@ class Guard:
                 size = MAX_BODY + 1
             if size > MAX_BODY:
                 return await self._say(send, 413, b'{"error":"too_large"}')
+            if method in ("POST", "PUT", "PATCH"):
+                body, more = b"", True
+                while more:                                  # no Content-Length can be trusted: count what really arrives
+                    msg = await receive()
+                    if msg["type"] != "http.request":
+                        return await self._say(send, 400, b'{"error":"bad_request"}')
+                    body += msg.get("body", b"")
+                    more = msg.get("more_body", False)
+                    if len(body) > MAX_BODY:
+                        return await self._say(send, 413, b'{"error":"too_large"}')
+                sent = [False]
+
+                async def replay():
+                    if not sent[0]:
+                        sent[0] = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    return await receive()
+                receive_for_app = replay
+            else:
+                receive_for_app = receive
             caller = self.address.caller((scope.get("client") or ("", 0))[0], headers, self.trust())
             verdict, wait = self.limits[path].hit(caller, self.clock())
+            receive = receive_for_app
             if verdict == "refuse":
                 return await self._say(send, 429, b'{"error":"slow_down"}', [(b"retry-after", str(int(wait) + 1).encode())])
             if verdict == "slow":
@@ -175,7 +196,7 @@ def build(ws: Path, fetch=None, tools=None, clock: Callable[[], float] = time.ti
         if tok is None or not active() or str(tok.resource or "").rstrip("/") != resource.rstrip("/"):
             raise PermissionError("Sign in again.")
         try:
-            session = ctx.session_for(ws, tok.subject or "")
+            session = ctx.session_for(ws, tok.subject or "", tok.scopes)
         except ValueError:
             raise PermissionError("Sign in again.") from None
         if "read" not in session.classes:

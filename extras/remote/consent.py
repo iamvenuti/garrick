@@ -44,9 +44,10 @@ def minutes(seconds: int) -> str:
     return "%d minute%s" % (n, "" if n == 1 else "s")
 
 
-def form(pid: str, name: str, say: str = "") -> str:
+def form(pid: str, name: str, say: str = "", ago: int = 0) -> str:
     note = '<p class="say">%s</p>' % html.escape(say) if say else ""
     return ('<h1>Connect an assistant</h1>%s<p>%s asks to connect to your Garrick workspace on this Mac.</p>'
+            '<p>This sign-in was started %s. Go on only if you started it yourself a moment ago. If you did not, close this page.</p>'
             '<form method="post" action="/consent"><input type="hidden" name="p" value="%s">'
             '<p>What may it do?</p>'
             '<label><input type="checkbox" name="read" value="1" checked> Read what your open zones hold</label>'
@@ -56,7 +57,16 @@ def form(pid: str, name: str, say: str = "") -> str:
             'aria-label="Code from your Mac" required autofocus></p>'
             '<p><button type="submit">Connect</button></p></form>'
             '<p class="muted">Zones that are walled stay out of reach unless you turn them on in Settings.</p>'
-            % (note, html.escape(name), html.escape(pid, quote=True)))
+            % (note, html.escape(name), ago_words(ago), html.escape(pid, quote=True)))
+
+
+def ago_words(seconds: int) -> str:
+    n = max(0, int(seconds)) // 60
+    return "less than a minute ago" if n < 1 else ("%d minute%s ago" % (n, "" if n == 1 else "s"))
+
+
+def age(row, now: float) -> int:
+    return int(now - float(row.get("made") or now))
 
 
 GONE = page('<h1>This link has run out</h1><p>Start again from your assistant.</p>', 400)
@@ -76,7 +86,7 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
         if not row:
             return GONE
         wait = store.consent_locked(clock())
-        return locked(wait) if wait else page(form(pid, row["name"]))
+        return locked(wait) if wait else page(form(pid, row["name"], ago=age(row, clock())))
 
     async def answer(request: Request) -> Response:
         sent = request.headers.get("origin")
@@ -92,10 +102,10 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
             return locked(wait)
         classes = [c for c in ("read", "write") if data.get(c)]
         if "read" not in classes:
-            return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect."), 400)
+            return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect.", age(row, clock())), 400)
         if not store.check_pairing_code(code, clock()):
             wait = store.consent_locked(clock())
-            return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out."), 400)
+            return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out.", age(row, clock())), 400)
         target = provider.finish(pid, classes)
         if target is None:
             return GONE

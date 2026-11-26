@@ -43,6 +43,10 @@ CIMD_KEEP = 3600
 SCOPES = ("read", "write")
 GRANTS = ["authorization_code", "refresh_token"]
 NAME_MAX = 60
+KEEP = ("client_id", "client_name", "redirect_uris", "grant_types", "response_types", "scope", "token_endpoint_auth_method",
+        "client_id_issued_at")
+STATE_MAX = 300
+CHALLENGE_MAX = 128
 
 
 def loopback(uri: str) -> bool:
@@ -192,7 +196,8 @@ class Provider:
         client_info.client_secret_expires_at = None
         client_info.client_name = clean_name(client_info.client_name)
         client_info.scope = " ".join(s for s in (client_info.scope or "read").split() if s in SCOPES) or "read"
-        if not self.store.put_client(client_info.client_id, client_info.model_dump(mode="json", exclude_none=True), self.clock()):
+        kept = {k: v for k, v in client_info.model_dump(mode="json", exclude_none=True).items() if k in KEEP}      # only what the service uses
+        if not self.store.put_client(client_info.client_id, kept, self.clock()):
             raise RegistrationError("invalid_client_metadata", "Too many sign-ins are waiting. Try again later.")
 
     # ---- sign-in
@@ -200,10 +205,14 @@ class Provider:
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         if params.resource and params.resource.rstrip("/") != self.resource.rstrip("/"):
             raise AuthorizeError("invalid_target", "That is not this server's address.")
+        if len(params.state or "") > STATE_MAX or len(params.code_challenge or "") > CHALLENGE_MAX:
+            raise AuthorizeError("invalid_request", "That request is too long.")
         pid = self.store.put_pending({"client": client.client_id, "name": clean_name(client.client_name),
                                       "challenge": params.code_challenge, "redirect": str(params.redirect_uri),
                                       "explicit": params.redirect_uri_provided_explicitly, "state": params.state or ""},
                                      self.clock())
+        if pid is None:
+            raise AuthorizeError("temporarily_unavailable", "Too many sign-ins are waiting. Try again later.")
         return "%s/consent?p=%s" % (self.issuer, pid)
 
     def finish(self, pending_id: str, classes: List[str]) -> Optional[str]:

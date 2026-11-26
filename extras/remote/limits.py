@@ -56,7 +56,7 @@ def routes() -> Dict[str, Limiter]:
     """The sign-in routes and their limits. Registration is the one anyone can reach, so it is the tightest."""
     return {
         "/register": Limiter(soft=3, hard=8, window=600, shared_hard=40),
-        "/token": Limiter(soft=30, hard=90, window=60, shared_hard=400),
+        "/token": Limiter(soft=30, hard=5000, window=60, shared_hard=20000),   # a flood is slowed; refusing it would shut out every refresh
         "/consent": Limiter(soft=10, hard=30, window=600, shared_hard=120),
         "/authorize": Limiter(soft=20, hard=60, window=60, shared_hard=300),
         "/revoke": Limiter(soft=20, hard=60, window=60, shared_hard=300),

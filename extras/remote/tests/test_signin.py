@@ -362,6 +362,97 @@ class Flood(Case):
         self.assertLessEqual(len(lim.callers), mod("limits").MAX_CALLERS)
 
 
+class Hardening(Case):
+    """The release fix round: S1 to S4, S6, S11."""
+
+    def test_a_chunked_body_with_no_length_over_the_limit_is_refused(self):
+        def chunks():
+            for _ in range(80):
+                yield b" " * 1024
+        r = self.raw.http.post("/register", content=chunks(), headers={"Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 413)
+
+    def test_a_small_chunked_body_still_registers(self):
+        body = json.dumps({"redirect_uris": [self.raw.redirect], "client_name": "Test", "grant_types": ["authorization_code"],
+                           "response_types": ["code"], "token_endpoint_auth_method": "none"}).encode()
+        r = self.raw.http.post("/register", content=iter([body[:20], body[20:]]), headers={"Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 201, r.text)
+
+    def test_a_registration_keeps_only_the_fields_the_service_uses(self):
+        r = self.raw.register(logo_uri="https://evil.example.test/x.png", contacts=["a@evil.example.test"], tos_uri="https://evil.example.test/t",
+                              client_uri="https://evil.example.test/", software_id="x" * 500)
+        self.assertEqual(r.status_code, 201)
+        kept = self.store.get_client(r.json()["client_id"])
+        self.assertTrue(set(kept) <= set(mod("provider").KEEP), set(kept))
+        self.assertNotIn("logo_uri", kept)
+
+    def test_the_waiting_sign_in_requests_are_capped(self):
+        self.raw.register()
+        seen = []
+        for _ in range(55):
+            seen.append(self.raw.authorize())
+        self.assertEqual(sum("/consent?p=" in r.headers["location"] for r in seen), self.store.MAX_PENDING)
+        self.assertIn("temporarily_unavailable", seen[-1].headers["location"])
+
+    def test_a_long_state_or_challenge_is_refused(self):
+        self.raw.register()
+        q = {"response_type": "code", "client_id": self.raw.client_id, "redirect_uri": self.raw.redirect, "state": "s" * 301,
+             "code_challenge": self.raw.challenge, "code_challenge_method": "S256", "scope": "read", "resource": self.served.mcp_url}
+        self.assertIn("invalid_request", self.raw.http.get("/authorize", params=q).headers["location"])
+        q.update(state="ok", code_challenge="c" * 129)
+        self.assertIn("invalid_request", self.raw.http.get("/authorize", params=q).headers["location"])
+
+    def test_wrong_codes_are_not_counted_while_no_code_waits_and_the_words_are_the_same(self):
+        self.raw.register()
+        a = self.raw.authorize()
+        first = [self.raw.consent(a, code="123456") for _ in range(8)]
+        self.assertEqual({r.status_code for r in first}, {400})
+        self.assertEqual(self.store.consent_locked(), 0)
+        self.assertEqual(len({r.text.split("<p class=\"say\">")[1].split("</p>")[0] for r in first}), 1)
+        code = self.act.run(self.ws, {"action": "pair"})["code"]                       # and the owner can still connect
+        self.assertEqual(self.raw.consent(a, code=code).status_code, 302)
+
+    def test_a_new_code_resets_the_count(self):
+        self.raw.register()
+        a = self.raw.authorize()
+        self.act.run(self.ws, {"action": "pair"})
+        for _ in range(4):
+            self.raw.consent(a, code="000001")
+        with self.store.txn() as db:
+            self.assertEqual(db["consent"]["wrong"], 4)
+        self.act.run(self.ws, {"action": "pair"})
+        with self.store.txn() as db:
+            self.assertEqual(db["consent"]["wrong"], 0)
+
+    def test_a_flood_on_the_token_route_is_slowed_never_refused(self):
+        limiter = mod("limits").routes()["/token"]
+        verdicts = {limiter.hit("x", 100.0 + i * 0.001)[0] for i in range(1000)}
+        self.assertEqual(verdicts, {"ok", "slow"})
+        self.assertEqual(mod("limits").routes()["/register"].hard, 8)
+
+    def test_a_token_with_fewer_scopes_than_its_grant_gets_a_session_with_fewer_classes(self):
+        tokens = self.raw.sign_in(write=True)
+        gid = self.store.listing()[0]["id"]
+        pair = self.store.issue(gid, self.raw.client_id, ["read"], self.served.mcp_url)
+        body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "stub-who", "arguments": {}}}
+        wide = self.raw.mcp(tokens["access_token"], body=body).json()
+        narrow = self.raw.mcp(pair["access"], body=body).json()
+        classes = lambda r: json.loads(r["result"]["content"][0]["text"])["classes"]
+        self.assertEqual(classes(wide), ["read", "write"])
+        self.assertEqual(classes(narrow), ["read"])
+
+    def test_the_consent_page_says_when_the_sign_in_was_started(self):
+        self.raw.register()
+        a = self.raw.authorize()
+        text = self.raw.http.get(a.headers["location"]).text
+        self.assertIn("This sign-in was started less than a minute ago", text)
+        self.assertIn("Go on only if you started it yourself a moment ago", text)
+        pid = parse_qs(urlsplit(a.headers["location"]).query)["p"][0]
+        with self.store.txn() as db:
+            db["pending"][pid]["made"] -= 300
+        self.assertIn("5 minutes ago", self.raw.http.get(a.headers["location"]).text)
+
+
 class Documents(Case):
     """The client ID metadata document: HTTPS only, a fixed list of hosts, 64 KB, five seconds."""
 

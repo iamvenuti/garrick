@@ -52,6 +52,7 @@ AUTHCODE_SECONDS = 2 * 60                # an authorization code, from consent t
 PENDING_SECONDS = 10 * 60                # a sign-in request waits for the owner this long
 UNFINISHED_SECONDS = 60 * 60             # a registration that never completes is dropped after an hour
 MAX_UNFINISHED = 200                     # and no more than this many wait at once
+MAX_PENDING = 50                         # sign-in requests that wait for the owner at once
 LOCK_AFTER = 5                           # wrong codes before the consent page locks
 LOCK_SECONDS = 15 * 60
 
@@ -152,6 +153,7 @@ def make_pairing_code(now: Optional[float] = None) -> Tuple[str, int]:
     code = "%06d" % secrets.randbelow(1000000)
     with txn(now) as db:
         db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS}}
+        db["consent"]["wrong"] = 0                       # a new code starts a new count
     return code, CODE_SECONDS
 
 
@@ -179,6 +181,8 @@ def check_pairing_code(code: str, now: Optional[float] = None) -> bool:
         consent = db["consent"]
         if consent.get("locked_until", 0) > now:
             return False
+        if not db["pairing"]:
+            return False                                 # no code waits: nothing to guess, so a wrong try is not counted
         text = str(code or "").strip()
         ok = False
         if len(text) == 6 and text.isdigit():
@@ -287,13 +291,26 @@ def set_zone(gid: str, zone: str, read: bool, write: bool, now: Optional[float] 
         return True
 
 
+def prune_zones(gid: str, known) -> None:
+    """Drop the walled-zone entries of a grant whose zone is not among `known` any more, so a later zone of the same name starts with nothing."""
+    names = set(known)
+    with txn() as db:
+        g = db["grants"].get(gid)
+        if g:
+            for zone in [z for z in g["zones"] if z not in names]:
+                del g["zones"][zone]
+
+
 # --------------------------------------------------------------------------- sign-in requests and codes
 
-def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> str:
+def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> Optional[str]:
+    """Keep a sign-in request while the owner decides. None when too many already wait: they expire, so a flood runs out."""
     now = time.time() if now is None else now
     pid = secrets.token_urlsafe(32)
     with txn(now) as db:
-        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS)
+        if len(db["pending"]) >= MAX_PENDING:
+            return None
+        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS, made=now)
     return pid
 
 

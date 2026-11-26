@@ -13,6 +13,7 @@ import json
 import re
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -26,12 +27,12 @@ ASK_TOOLS = support.REPO / "extras" / "status" / "ask_tools.py"
 
 
 def ids(text):
-    return re.findall(r"^\[([0-9a-f]{3}~r\d+-[0-9a-f]+)\]", text, re.M)
+    return re.findall(r"^\[([0-9a-f]{12}~r\d+-[0-9a-f]+)\]", text, re.M)
 
 
 def plain(text):
     """A result with its ids made alike, so that two results can be compared."""
-    return re.sub(r"\[[0-9a-f]{3}~r\d+-[0-9a-f]+\]|\[r\d+-[0-9a-f]+\]", "[id]", text)
+    return re.sub(r"\[[0-9a-f]{12}~r\d+-[0-9a-f]+\]|\[r\d+-[0-9a-f]+\]", "[id]", text)
 
 
 class TestReadsInsideOneReach(support.ToolsCase):
@@ -49,7 +50,7 @@ class TestReadsInsideOneReach(support.ToolsCase):
         text = self.r.search("pallet quote")["text"]
         self.assertIn("Acme kick-off", text)
         self.assertIn("Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", text)       # the source
-        self.assertRegex(text, r"\[[0-9a-f]{3}~r\d+-[0-9a-f]+\] 2026-03-10 ")           # the date, and an id to read it by
+        self.assertRegex(text, r"\[[0-9a-f]{12}~r\d+-[0-9a-f]+\] 2026-03-10 ")           # the date, and an id to read it by
         self.assertIn("Library", text)                                                  # Knowledge is in the reach
         self.assertIn("supply-chain-report.md", text)
 
@@ -210,6 +211,33 @@ class TestGrantsWithDifferentReaches(support.ToolsCase):
         self.assertIn("Birch kick-off", text)
         self.assertEqual(len(ids(text)), len(set(ids(text))))
         self.assertIn("forty a unit", r.read([i for i in ids(text)][0])["text"] + r.read([i for i in ids(text)][1])["text"])
+
+
+class TestTheStateOfTheReads(support.ToolsCase):
+    """W3, S9: a zone's state folder and id tag are 12 hex characters and unique in a reach; a reach change clears the old state."""
+
+    def test_the_tag_is_twelve_hex_and_two_zones_never_share_one(self):
+        self.assertEqual(12, len(reads.zone_tag("Zone 4")))
+        self.assertNotEqual(reads.zone_tag("Zone 4"), reads.zone_tag("Zone 10"))
+        self.assertEqual(common.short("Work"), reads.zone_tag("Work"))
+
+    def test_a_collision_in_one_reach_fails_closed(self):
+        r = reads.Reads(self.session(readable=("Work", "Personal", "Knowledge", "docs")))
+        with unittest.mock.patch.object(reads, "zone_tag", lambda z: "abc"):
+            with self.assertRaises(RuntimeError):
+                r.reach_zones()
+
+    def test_a_reach_change_removes_the_grants_old_state(self):
+        s = self.session(readable=("Work", "Personal", "Knowledge", "docs"))
+        text = reads.Reads(s).search("pallet kick-off")["text"]
+        old = reads.Reads(s).folder("Personal")
+        self.assertTrue(old.is_dir())
+        old_id = [i for i in ids(text)][0]
+        s.change_reach(readable=("Work", "Knowledge", "docs"))
+        r = reads.Reads(s)
+        self.assertEqual({"text": common.NOT_GIVEN}, r.read(old_id))
+        self.assertFalse(old.exists())
+        self.assertNotIn("Birch", json.dumps(r.search("pallet")))
 
 
 class TestAnInjectedRecord(support.ToolsCase):

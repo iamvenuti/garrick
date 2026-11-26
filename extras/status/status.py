@@ -4268,6 +4268,21 @@ def machine_settings(ws: Path, data: Optional[dict] = None) -> str:
     return settings_mod("settings_readguard").machine_section(guard, role, name, server, help_button, help_text)
 
 
+SETREMOTE_JS = getattr(settings_mod("settings_remote"), "JS", "")
+SETREMOTE_CSS = getattr(settings_mod("settings_remote"), "CSS", "")
+
+
+def remote_settings(ws: Path, data: Optional[dict] = None) -> str:
+    """Settings › Remote access (preview): the extra's state as `view_settings.remote()` read it, drawn by settings_remote.py. Nothing where that
+    module or the document's part is missing: a Garrick without them builds Settings as it was."""
+    mod = settings_mod("settings_remote")
+    doc = _data(ws, data, "remote").get("remote")
+    if mod is None or not doc:
+        return ""
+    return mod.section(doc, {"set_head": set_head, "help_text": help_text, "help_button": help_button, "set_row": set_row, "row_label": row_label,
+                             "request_button": lambda label, phrase, folder, cls: request_button(label, phrase, Path(folder), cls)}, str(ws))
+
+
 def read_guard_block(ws: Path, data: Optional[dict] = None) -> str:
     """The Read guard block of Settings › Walls: Off, Watch only or On, Refuse or Ask me, and the two tool lists (#621). In the
     app only. Empty where settings_guard.py is not there."""
@@ -4807,7 +4822,8 @@ def look_settings(zones: str, follow: str, colours: str) -> str:
 # headings: each section is one entry. A part of a section (the menu's rows, the Ask box, Telegram, the read guard,
 # this computer) is a part, not a section, and has no entry of its own.
 SET_SECTIONS = (("launcher-settings", "Opening work"), ("ask-settings", "Ask"), ("notify-settings", "Notifications"),
-                ("memory-settings", "Older pages"), ("walls-settings", "Walls"), ("look-settings", "Look"), ("about-settings", "About"))
+                ("memory-settings", "Older pages"), ("walls-settings", "Walls"), ("remote-settings", "Remote access"),
+                ("look-settings", "Look"), ("about-settings", "About"))
 SET_SECTION = re.compile(r'<section class="setsec[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
 # Every anchor that opened Settings at a section in 0.79.0 (and each section's own), to the section that holds those
 # rows now. The part keeps its old id where it is still there, so the page scrolls to the rows themselves (JS).
@@ -4819,7 +4835,7 @@ SET_ANCHORS = {"launcher-settings": "launcher-settings", "menu-settings": "launc
                "look-settings": "look-settings", "zone-settings": "look-settings", "follow-settings": "look-settings",
                "graph-colour-settings": "look-settings", "view-settings": "look-settings",
                "about-settings": "about-settings", "release-settings": "about-settings", "usage-settings": "about-settings",
-               "machine-settings": "about-settings", "preview-settings": "about-settings"}
+               "machine-settings": "about-settings", "preview-settings": "about-settings", "remote-settings": "remote-settings"}
 
 
 def settings_nav(sections: List[str]) -> str:
@@ -4835,7 +4851,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              link: Optional["Links"] = None,
              kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
-    """The Settings dialog, seven sections (#682): Opening work (the apps on each card, the default, and the menu's rows),
+    """The Settings dialog, seven sections (#682) and Remote access (preview) after Walls: Opening work (the apps on each card, the default, and the menu's rows),
     Ask (the Ask box, then Telegram, then what waits for your yes when something does), Notifications, Older pages (how
     older material fades; `link` opens the full list), Walls (each zone, then the read guard), Look (each zone's colour
     and icon, whether the graph follows the zone, the graph's colours with the graph, Reset view), and About (the release,
@@ -4849,6 +4865,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                 notify_settings(ws, CMUXLIB.is_file(), data),
                 memory_settings(ws, link, data),
                 walls_settings(ws, None, data),
+                remote_settings(ws, data),
                 look_settings(zone_settings(list(zones), styles or {}), follow_settings() if graph else "",
                               graph_colour_settings(kinds or [], kind_styles or {}) if graph else ""),
                 about_garrick(release_number(ws, data), ws, data, machine_settings(ws, data), preview_section(preview_flags(ws, data)))]
@@ -8791,13 +8808,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, SETREMOTE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
-                + (NOTE_CSS if show_graph else "") + LOOK_CSS + SETGUARD_CSS,
+                + (NOTE_CSS if show_graph else "") + LOOK_CSS + SETGUARD_CSS + SETREMOTE_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 

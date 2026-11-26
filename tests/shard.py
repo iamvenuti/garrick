@@ -197,6 +197,15 @@ TOUCH_MAP["extras/status/workspace_find.py"] = ["test_view_rest", "test_status",
 TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_status_work",
                                                  "test_overview_work", "test_context_card", "test_inbox_run", "test_finding_queue"]
 
+# remote-0820 (#695, #696, #697, #698): remote access (preview), an extra with its own runtime. A change to the extra runs the core modules that
+# read it on the Python macOS ships; the extra's own tests need its runtime and have a job of their own (tests.yml, "Remote access extra").
+TOUCH_MAP["extras/remote/"] = ["test_remote_state", "test_remote_runtime", "test_remote_address", "test_remote_imports", "test_remote_context",
+                               "test_remote_settings", "test_remote_notice"]
+for _key in ("extras/status/settings_remote.py", "template/System/tools/view_settings.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings", "test_remote_imports"]
+for _key in ("extras/status/status.py",):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings"]
+
 
 def touched(files, names=None):
     """The modules to run for the changed files, sorted; or None for the full suite."""

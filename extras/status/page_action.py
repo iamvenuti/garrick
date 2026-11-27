@@ -2505,6 +2505,13 @@ def field(req: dict, key: str, required: bool = True) -> Optional[str]:
     return value.strip()
 
 
+def record_env() -> dict:
+    """The trailers of the action in hand, for a tool that makes its own commit (scaffold.py's rename, move, layout and
+    delete), so that its commit names the operation as the page's own do (#716). Empty without a record."""
+    rec = RECORD
+    return {"GARRICK_COMMIT_TRAILERS": rec["trailers"]} if rec is not None else {}
+
+
 def scaffold(ws: Path, *args) -> str:
     """Run the workspace's scaffold.py: what it said, or Refused with its reason.
     A rename or a deletion commits through the wall check, so it has a
@@ -2518,7 +2525,7 @@ def scaffold(ws: Path, *args) -> str:
     try:
         r = subprocess.run([sys.executable, str(tool), "--root", str(ws)] + list(args), capture_output=True, text=True,
                            timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL,
-                           env=dict(os.environ, **{CALLER_BUILDS_PAGE: "1"}))
+                           env=dict(os.environ, **{CALLER_BUILDS_PAGE: "1"}, **record_env()))
     except subprocess.TimeoutExpired:
         raise Refused("scaffold.py was still running after %s, most likely in the wall check of its commit, and was "
                       "stopped; its change may be left staged, so look at git status in the zone before trying again"
@@ -6926,11 +6933,29 @@ def commit_repo(ws: Path, req, ops) -> Optional[tuple]:
     try:
         if spec.scope == "zone":
             return zone_dir(ws, req.get("zone")), verb
+        if verb == "finding":
+            repo = finding_repo(ws, req)
+            return (repo, verb) if repo is not None else None
         if spec.scope == "workspace":
             return Path(ws).resolve(), verb
     except Refused:
         return None
     return None
+
+
+def finding_repo(ws: Path, req) -> Optional[Path]:
+    """The repository an answer to a finding commits in: the zone or the wiki its path is in, and no other. None when
+    the request does not name one, so that no record is kept rather than a false one (#716)."""
+    rel = req.get("path")
+    if not isinstance(rel, str) or "\\" in rel or "\0" in rel:
+        return None
+    parts = rel.split("/")
+    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or parts[1] in ("", ".", "..") or ".." in parts:
+        return None
+    repo = (Path(ws) / parts[0] / parts[1]).resolve()
+    if repo.parent != (Path(ws) / parts[0]).resolve() or not repo.is_dir():
+        return None
+    return repo
 
 
 def record_and_act(ws: Path, req, via: str, ops, run=None):
@@ -6955,14 +6980,19 @@ def record_and_act(ws: Path, req, via: str, ops, run=None):
     if not receipt.get("run"):
         return None, receipt
 
+    ran = []
+
     def work(trailers):
         global RECORD
+        ran.append(1)
         RECORD = {"repo": repo.resolve(), "trailers": trailers}
         return act(ws, req)
     try:
-        done, _ = ops.execute(repo, receipt["op"], work)
+        done, got = ops.execute(repo, receipt["op"], work)
     finally:
         RECORD = None
+    if not ran:                         # lost the race, or git already holds the commit: nothing ran, and nothing is said saved
+        return None, got
     return done, None
 
 
@@ -7121,6 +7151,8 @@ def command_parser() -> argparse.ArgumentParser:
                  "heading", "separate", "join", "resume-from",
                  "papers"):
         ap.add_argument("--" + name)
+    ap.add_argument("--op", help="the operation's id, 8 to 32 lowercase hex characters: a retry that sends the same one "
+                                 "gets the first answer back and commits nothing twice")
     return ap
 
 
@@ -7135,6 +7167,10 @@ def main(argv=None) -> int:
             raise Refused("not a Garrick workspace")
         if cli:
             req = session_request(ws, args)
+            if args.op is not None:
+                if not re.fullmatch(r"[0-9a-f]{8,32}", args.op):
+                    raise Refused("not an operation id")
+                req["op"] = args.op
         else:
             try:
                 req = json.loads(sys.stdin.read())
@@ -7142,7 +7178,7 @@ def main(argv=None) -> int:
                 raise Refused("not a request")
         ops = ops_lib(ws)
         if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
-            settled = sweep_receipts(ws, ops)                       # what a worker that stopped in the middle left, from git (#716)
+            settled = sweep_receipts(ws, ops) if via == "page" else []     # from git, for the page only: no other caller reads, says or marks one (#716)
             try:
                 said = ops.read(jobs_dir(), workspace=str(ws))      # this workspace's own operations (#641)
             except TypeError:                                       # an older operations.py reads them all, as it always did

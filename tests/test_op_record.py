@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
 from pathlib import Path
 
@@ -321,6 +322,157 @@ class TestCrash(Base):
             rec = {"op": OP, "state": "settled", "result": result, "found": ["a" * 40], "commit": ""}
             self.assertFalse(ops.affirms(ops._receipt(rec)["say"]), result)
         self.assertFalse(ops.affirms(ops._receipt({"op": OP, "state": "settled", "result": "unsure", "found": []})["say"]))
+
+
+class TestFixRound(Base):
+    """The fix round of 0.84.0: each test failed before its fix."""
+
+    def record_path(self, op=OP):
+        return self.repo / ".git" / "garrick-ops" / (op + ".json")
+
+    def edit(self, op=OP, **change):
+        rec = json.loads(self.record_path(op).read_text())
+        rec.update(change)               # the seal covers op, verb, zone, payload and head only
+        self.record_path(op).write_text(json.dumps(rec))
+
+    def test_c2_a_second_execute_and_a_reader_leave_a_live_worker_alone(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        inside, release, results = threading.Event(), threading.Event(), {}
+
+        def work(tr):
+            inside.set()
+            release.wait(20)
+            return commit_with(self.repo, tr)
+        first = threading.Thread(target=lambda: results.update(first=ops.execute(self.repo, OP, work)))
+        first.start()
+        self.assertTrue(inside.wait(20))
+        called = []
+        second = ops.execute(self.repo, OP, lambda tr: called.append(1))
+        self.assertEqual((second[0], second[1]["state"]), (None, "running"))
+        self.assertTrue((self.repo / ".git" / "garrick-ops" / (OP + ".run")).exists())
+        self.assertEqual(ops.outcome(self.repo, OP)["state"], "running")
+        self.assertEqual(ops.sweep(self.repo), [])
+        self.assertFalse(ops.prepare(self.repo, "park", REQ, op=OP)["run"])
+        release.set()
+        first.join(20)
+        self.assertEqual(called, [])
+        self.assertEqual(results["first"][1]["result"], "done")
+        self.assertEqual(count(self.repo), 2)
+
+    def test_s1_an_edited_record_does_not_run_a_done_operation_again(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        ops.execute(self.repo, OP, lambda tr: commit_with(self.repo, tr))
+        for change in ({"state": "prepared"}, {"result": "not-done"}, {"state": "running", "result": None}, {"state": "prepared", "result": None, "commit": "", "found": []}):
+            self.edit(**change)
+            got = ops.prepare(self.repo, "park", REQ, op=OP)
+            self.assertFalse(got["run"], change)
+            called = []
+            ops.execute(self.repo, OP, lambda tr: called.append(1))
+            self.assertEqual(called, [], change)
+        self.assertEqual(count(self.repo), 2)
+
+    def test_s1_a_record_deleted_does_not_run_a_done_operation_again(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        ops.execute(self.repo, OP, lambda tr: commit_with(self.repo, tr))
+        self.record_path().unlink()
+        self.assertFalse(ops.prepare(self.repo, "park", REQ, op=OP)["run"])
+        self.assertEqual(count(self.repo), 2)
+
+    def test_s1_a_prepared_operation_whose_commit_is_already_there_does_not_run(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        sha = commit_with(self.repo, ops.trailers(OP, ops.payload_hash("park", REQ)))     # made by another process
+        called = []
+        _, receipt = ops.execute(self.repo, OP, lambda tr: called.append(1))
+        self.assertEqual((called, receipt["result"], receipt["commit"]), ([], "done", sha))
+
+    def test_s1_two_commits_with_the_op_are_unsure_and_never_run(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        for n in range(2):
+            commit_with(self.repo, ops.trailers(OP, ops.payload_hash("park", REQ)), name="n%d.md" % n)
+        got = ops.prepare(self.repo, "park", REQ, op=OP)
+        self.assertEqual((got["run"], got["result"], len(got["found"])), (False, "unsure", 2))
+
+    def test_s5_separators_in_a_message_do_not_forge_a_commit(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        message = "a\x1eNOT-A-COMMIT\x1fb\n\n" + ops.trailers(OP, ops.payload_hash("park", REQ))
+        (self.repo / "x.md").write_text("x")
+        run_git(self.repo, "add", "x.md")
+        run_git(self.repo, "commit", "-q", "-m", message)
+        sha = run_git(self.repo, "rev-parse", "HEAD")
+        found, readable = ops._carrying(self.repo, OP)
+        self.assertEqual([c for c, _ in found], [sha])         # a hand-made commit with the two lines is taken as the action's own
+        self.assertTrue(all(ops.SHA_RE.fullmatch(c) for c, _ in found))
+
+    def test_s3_a_busy_record_is_refused_not_gone_past(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        import fcntl
+        fd = os.open(str(self.repo / ".git" / "garrick-ops" / ".lock"), os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        old, ops.LOCK_WAIT = ops.LOCK_WAIT, 0.2
+        try:
+            for call in (lambda: ops.prepare(self.repo, "park", REQ, op=OP), lambda: ops.settle(self.repo, OP),
+                         lambda: ops.outcome(self.repo, OP), lambda: ops.execute(self.repo, OP, lambda tr: None)):
+                with self.assertRaises(ops.BadOp):
+                    call()
+            self.assertEqual(ops.sweep(self.repo), [])
+        finally:
+            ops.LOCK_WAIT = old
+            os.close(fd)
+
+    def test_s4_a_linked_record_folder_or_file_is_refused(self):
+        other = make_repo(self.root, "Personal")
+        ops.prepare(other, "park", REQ, op="aaaaaaaa11111111")
+        (self.repo / ".git" / "garrick-ops").symlink_to(other / ".git" / "garrick-ops")
+        self.assertFalse(ops.prepare(self.repo, "park", REQ, op=OP)["recorded"])
+        with self.assertRaises(ops.BadOp):
+            ops.outcome(self.repo, "aaaaaaaa11111111")
+        (self.repo / ".git" / "garrick-ops").unlink()
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        real = self.record_path()
+        moved = self.root / "elsewhere.json"
+        real.rename(moved)
+        real.symlink_to(moved)
+        with self.assertRaises(ops.BadOp):
+            ops.outcome(self.repo, OP)
+
+    def test_s4_records_are_private_and_leave_no_temporary_file(self):
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        self.assertEqual(oct(self.record_path().stat().st_mode & 0o777), "0o600")
+        self.assertEqual(list((self.repo / ".git" / "garrick-ops").glob("*.tmp")), [])
+
+    def test_s4_prune_takes_the_op_from_the_file_name(self):
+        victim = self.root / "victim.run"
+        victim.write_text("x")
+        d = self.repo / ".git" / "garrick-ops"
+        ops.prepare(self.repo, "park", REQ, op=OP)
+        rec = dict(json.loads(self.record_path().read_text()), op="../../../victim", state="settled", reported=True, settled=1)
+        (d / "deadbeef00000000.json").write_text(json.dumps(rec))
+        ops._prune(d, time_now())
+        self.assertTrue(victim.exists())
+
+    def test_w4_a_verb_of_the_workspace_keeps_no_zone(self):
+        got = ops.prepare(self.repo, "walls-allow", {"verb": "walls-allow", "zone": "Secret Zone", "path": "a", "id": "b"}, op=OP)
+        self.assertEqual(got["zone"], "")
+        self.assertEqual(json.loads(self.record_path().read_text())["zone"], "")
+
+    def test_c3_a_commit_without_trailers_is_still_done_on_a_retry(self):
+        ops.prepare(self.repo, "rename", dict(REQ, verb="rename", to="Cost"), op=OP)
+
+        def work(tr):
+            (self.repo / "r.md").write_text("x")
+            run_git(self.repo, "add", "r.md")
+            run_git(self.repo, "commit", "-q", "-m", "renamed")      # a tool that does not carry the trailers
+            return "ok"
+        _, receipt = ops.execute(self.repo, OP, work)
+        self.assertEqual(receipt["result"], "done")
+        again = ops.prepare(self.repo, "rename", dict(REQ, verb="rename", to="Cost"), op=OP)
+        self.assertEqual((again["run"], again["result"]), (False, "done"))
+        self.assertEqual(count(self.repo), 2)
+
+
+def time_now():
+    import time
+    return time.time()
 
 
 class TestAnotherRepository(Base):

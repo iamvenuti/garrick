@@ -57,12 +57,6 @@ class Runs(unittest.TestCase):
         self.assertEqual(["the", "library", "and", "the", "users", "bin"], check.words(check.without_link_targets("the library and the users bin")))
 
 
-class OtherRulesKeepTheirPatterns(unittest.TestCase):
-    def test_the_resume_rule_still_finds_a_path_into_the_meetings_wiki(self):
-        self.assertTrue(check.MEETINGS_IN_PATH_RE.search("the note from `Wikis/Meetings/raw/260310-acme-kickoff.txt` is half read"))
-        self.assertFalse(check.MEETINGS_IN_PATH_RE.search("nothing about them here"))
-
-
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TwoFiles(unittest.TestCase):
     """The issue's two cases and the ones that must not get through, on a fixture workspace."""

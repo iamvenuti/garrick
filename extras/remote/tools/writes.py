@@ -275,12 +275,17 @@ class Writes:
         op = secrets.token_hex(8)
         rec = {"id": op, "grant": self.grant, "workspace": str(self.ws), "verb": verb, "zone": canonical, "fields": fields,
                "hash": digest, "state": "prepared", "created": time.time(), "would": self.would(verb, canonical, fields),
-               "receipt": None, "finished": None}
+               "receipt": None, "finished": None, "reach": self.reach_now()}
         with self.store.locked(op):
             self.store.write(op, rec)
         return self.view(rec)
 
     # ------------------------------------------------------------ execute
+
+    def reach_now(self) -> str:
+        """The fingerprint of the Session's reach, which holds the marker of a walled zone: "" for a Session that has none."""
+        fn = getattr(self.session, "reach_id", None)
+        return str(fn()) if callable(fn) else ""
 
     def refusal_before(self, rec):
         """Why an operation may not run now, or "". The reach as it is now, then the desk: a wrap that is running, and
@@ -288,6 +293,8 @@ class Writes:
         zone, verb, fields = rec["zone"], rec["verb"], rec["fields"]
         if not self.may_write(zone):
             return "reach"
+        if self.reach_now() and rec.get("reach") != self.reach_now():
+            return "reach"                                    # prepared under another reach, or another folder of that zone
         zdir = self.ws / "Zones" / zone
         for rel in self.targets(verb, zone, fields):
             if self.wrapping(zone, rel, verb, fields):

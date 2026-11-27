@@ -97,6 +97,25 @@ class Marked(WritesCase):
         self.assertNotEqual("saved", out.get("state"), out)
         self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
 
+    def test_a_handle_and_a_prepared_write_from_before_do_not_come_back_when_the_zone_is_turned_on_again(self):
+        s = self.live()
+        handle = s.new_handle()
+        made = writes.Writes(s).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.assertEqual("prepared", made.get("state"), made)
+        old_reach = s.reach_id()
+        self.remade()
+        self.assertTrue(self.turn_on_work()["ok"])                                           # the owner turns the new zone on
+        fresh = self.live()
+        self.assertTrue(fresh.zone_allowed("Work", write=True))
+        self.assertNotEqual(old_reach, fresh.reach_id())
+        with self.assertRaises(self.ctx.HandleRefused):
+            fresh.check_handle(handle)
+        out = writes.Writes(fresh).execute(made["operation_id"])
+        self.assertNotEqual("saved", out.get("state"), out)
+        self.assertNotEqual("running", out.get("state"), out)
+        self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
+        fresh.check_handle(fresh.new_handle())                                                # a new handle works
+
     def test_the_old_entry_does_not_come_back_when_a_walled_zone_is_turned_on_again(self):
         self.remade()
         self.assertFalse(self.live().zone_allowed("Work"))

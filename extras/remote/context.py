@@ -184,7 +184,8 @@ def reach_of(ws: Path, grant: Dict[str, Any]) -> Dict[str, FrozenSet[str]]:
         readable = {z for z, walled in known.items() if not walled}
         writable = set(readable)
     readable |= {KNOWLEDGE, DOCS}
-    return {"readable": frozenset(readable), "writable": frozenset(writable), "classes": classes}
+    marks = tuple(sorted((z.casefold(), str(e.get("marker"))) for z, e in live.items())) if len(live) == 1 else ()
+    return {"readable": frozenset(readable), "writable": frozenset(writable), "classes": classes, "marks": marks}
 
 
 ONE_WALLED = "One connection reaches one walled zone. Use another connection for the second zone."
@@ -234,11 +235,12 @@ class Session:
     readable: FrozenSet[str]
     writable: FrozenSet[str]
     secret: bytes = dataclasses.field(default=b"", repr=False, compare=False)
+    marks: tuple = ()                    # (zone, marker) of the walled zone that counts now: a zone made again is another reach
 
     def reach_id(self) -> str:
         """A short fingerprint of the reach: the classes and the two zone sets. It changes when any of them does."""
         text = json.dumps([sorted(self.classes), sorted(z.casefold() for z in self.readable),
-                           sorted(z.casefold() for z in self.writable)])
+                           sorted(z.casefold() for z in self.writable), [list(m) for m in self.marks]])
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def zone_allowed(self, zone: Any, write: bool = False) -> bool:
@@ -291,4 +293,4 @@ def session_for(ws: Path, gid: str, scopes=None) -> Session:
     reach = reach_of(ws, grant)
     classes = reach["classes"] if scopes is None else reach["classes"] & frozenset(scopes)   # never wider than the token's own scopes
     return Session(grant_id=gid, workspace=Path(ws), classes=classes, readable=reach["readable"],
-                   writable=reach["writable"])
+                   writable=reach["writable"], marks=reach["marks"])

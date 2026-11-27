@@ -72,6 +72,9 @@ ISO = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 FIELDS = ("project", "thread", "text", "title", "line", "date", "target", "reason", "items", "drop")
 
 
+REACH_CHANGED_SAY = "That was prepared before the owner changed what this connection may reach. Prepare it again in a new chat."
+
+
 def say(code, words):
     return common.refusal(code, words)
 
@@ -268,9 +271,12 @@ class Writes:
                     return say("not_found", NOT_FOUND)
                 if rec.get("hash") != digest:
                     return say("changed", "That operation id belongs to a different request. Prepare a new one.")
+                if rec.get("state") == "prepared" and self.reach_changed(rec):
+                    return say("changed", REACH_CHANGED_SAY)
                 return self.view(rec)
         for rec in self.store.all():                     # the same request prepared twice, and not yet run, is one operation
-            if rec.get("grant") == self.grant and rec.get("hash") == digest and rec.get("state") == "prepared":
+            if rec.get("grant") == self.grant and rec.get("hash") == digest and rec.get("state") == "prepared" \
+                    and not self.reach_changed(rec):     # one made under an earlier reach is not that operation: a new one is made
                 return self.view(rec)
         op = secrets.token_hex(8)
         rec = {"id": op, "grant": self.grant, "workspace": str(self.ws), "verb": verb, "zone": canonical, "fields": fields,
@@ -287,14 +293,19 @@ class Writes:
         fn = getattr(self.session, "reach_id", None)
         return str(fn()) if callable(fn) else ""
 
+    def reach_changed(self, rec) -> bool:
+        """Whether a record was prepared under another reach than the Session's now. A Session with no reach id never differs."""
+        now = self.reach_now()
+        return bool(now) and rec.get("reach") != now
+
     def refusal_before(self, rec):
         """Why an operation may not run now, or "". The reach as it is now, then the desk: a wrap that is running, and
         changes that git does not hold yet."""
         zone, verb, fields = rec["zone"], rec["verb"], rec["fields"]
         if not self.may_write(zone):
             return "reach"
-        if self.reach_now() and rec.get("reach") != self.reach_now():
-            return "reach"                                    # prepared under another reach, or another folder of that zone
+        if self.reach_changed(rec):
+            return "reach_changed"                            # prepared under another reach, or another folder of that zone
         zdir = self.ws / "Zones" / zone
         for rel in self.targets(verb, zone, fields):
             if self.wrapping(zone, rel, verb, fields):
@@ -370,6 +381,8 @@ class Writes:
             why = self.refusal_before(rec)
             if why == "reach":
                 return common.write_reach_refusal()
+            if why == "reach_changed":
+                return common.refusal(common.NEW_REACH, REACH_CHANGED_SAY)
             if why:
                 rec.update({"state": "refused", "receipt": {"ok": False, "say": why}, "finished": time.time()})
                 rec.pop("fields", None)

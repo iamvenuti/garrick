@@ -2,8 +2,9 @@
 """consent.py: the page where the owner lets an assistant in, with the code the Mac shows (preview).
 
 The page sits on the service's own address. It shows the name the assistant gave itself, two choices (read, write) and one box for
-the six-digit pairing code that Settings shows at the Mac. A code works once and lives five minutes. Five wrong codes lock the page for
-fifteen minutes, and a locked page takes no code at all, the right one included.
+the six-digit pairing code that Settings shows at the Mac. A code works once and lives five minutes. Each sign-in request has its own five
+tries: the fifth wrong code closes that request, and the others stay open. A flood across many requests reaches a shared ceiling, and a
+request that no code was made for then takes no code for fifteen minutes. A request with a code is outside the ceiling.
 
 The name on the page is the client's own word, so it is shown as text only, cut short, and never as markup. The page is never framed,
 sends no referrer and is never cached. The words are plain: no path, no key, no command.
@@ -76,6 +77,9 @@ def age(row, now: float) -> int:
 GONE = page('<h1>This link has run out</h1><p>Start again from your assistant.</p>', 400)
 
 
+CLOSED = page('<h1>This sign-in is closed</h1><p class="say">Too many wrong codes were typed on it. Start again from your assistant.</p>', 429)
+
+
 def locked(seconds: int) -> Response:
     return page('<h1>Try again later</h1><p class="say">Too many wrong codes were typed. This page takes a code again in about %s.</p>'
                 % minutes(seconds), 429)
@@ -89,7 +93,7 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
         row = store.get_pending(pid, clock())
         if not row:
             return GONE
-        wait = store.consent_locked(clock())
+        wait = store.consent_locked(clock(), str(row.get("rid") or ""))
         return locked(wait) if wait else page(form(pid, row["name"], ago=age(row, clock()), rid=str(row.get("rid") or "")))
 
     async def answer(request: Request) -> Response:
@@ -101,14 +105,16 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
         row = store.get_pending(pid, clock())
         if not row:
             return GONE
-        wait = store.consent_locked(clock())
+        wait = store.consent_locked(clock(), str(row.get("rid") or ""))
         if wait:
             return locked(wait)
         classes = [c for c in ("read", "write") if data.get(c)]
         if "read" not in classes:
             return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect.", age(row, clock()), str(row.get("rid") or "")), 400)
         if not store.check_pairing_code(code, clock(), str(row.get("rid") or "")):
-            wait = store.consent_locked(clock())
+            wait = store.consent_locked(clock(), str(row.get("rid") or ""))
+            if store.get_pending(pid, clock()) is None:
+                return CLOSED                            # the fifth wrong code closed this request
             return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out.", age(row, clock()), str(row.get("rid") or "")), 400)
         target = provider.finish(pid, classes)
         if target is None:

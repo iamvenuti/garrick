@@ -386,13 +386,32 @@ class Hardening(Case):
         self.assertTrue(set(kept) <= set(mod("provider").KEEP), set(kept))
         self.assertNotIn("logo_uri", kept)
 
-    def test_the_waiting_sign_in_requests_are_capped(self):
+    def test_the_waiting_sign_in_requests_are_capped_and_the_oldest_goes_first(self):
         self.raw.register()
         seen = []
         for _ in range(55):
             seen.append(self.raw.authorize())
-        self.assertEqual(sum("/consent?p=" in r.headers["location"] for r in seen), self.store.MAX_PENDING)
-        self.assertIn("temporarily_unavailable", seen[-1].headers["location"])
+        self.assertTrue(all("/consent?p=" in r.headers["location"] for r in seen))              # every new one is kept
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+        self.assertEqual(self.raw.http.get(seen[0].headers["location"]).status_code, 400)       # the oldest ran out
+        self.assertEqual(self.raw.http.get(seen[4].headers["location"]).status_code, 400)
+        self.assertEqual(self.raw.http.get(seen[5].headers["location"]).status_code, 200)
+        self.assertEqual(self.raw.http.get(seen[-1].headers["location"]).status_code, 200)
+
+    def test_a_request_with_a_live_code_survives_fifty_newer_ones(self):
+        self.raw.register()
+        mine = self.raw.authorize()
+        rid = next(iter(self.store.peek()["pending"].values()))["rid"]
+        with self.store.txn() as db:
+            db["pairing"] = {self.store.sha("123456"): {"expires": time.time() + 300, "request": rid}}
+        newer = [self.raw.authorize() for _ in range(52)]
+        self.assertTrue(all("/consent?p=" in r.headers["location"] for r in newer))
+        self.assertEqual(self.raw.http.get(mine.headers["location"]).status_code, 200)
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+        with self.store.txn() as db:                                                           # code gone: it is the oldest, so it goes
+            db["pairing"] = {}
+        self.raw.authorize()
+        self.assertEqual(self.raw.http.get(mine.headers["location"]).status_code, 400)
 
     def test_a_long_state_or_challenge_is_refused(self):
         self.raw.register()

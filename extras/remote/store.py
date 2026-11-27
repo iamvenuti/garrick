@@ -52,7 +52,7 @@ AUTHCODE_SECONDS = 2 * 60                # an authorization code, from consent t
 PENDING_SECONDS = 10 * 60                # a sign-in request waits for the owner this long
 UNFINISHED_SECONDS = 60 * 60             # a registration that never completes is dropped after an hour
 MAX_UNFINISHED = 200                     # and no more than this many wait at once
-MAX_PENDING = 50                         # sign-in requests that wait for the owner at once
+MAX_PENDING = 50                         # sign-in requests that wait for the owner at once; a new one pushes out the oldest
 LOCK_AFTER = 5                           # wrong codes before the consent page locks
 LOCK_SECONDS = 15 * 60
 
@@ -304,13 +304,20 @@ def prune_zones(gid: str, known) -> None:
 # --------------------------------------------------------------------------- sign-in requests and codes
 
 def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> Optional[str]:
-    """Keep a sign-in request while the owner decides. None when too many already wait: they expire, so a flood runs out."""
+    """Keep a sign-in request while the owner decides, and give it a short random id of its own (`rid`) for Settings to name it by. When 50
+    already wait, the oldest goes and this one stays, so a flood of new sign-ins cannot shut the owner out. The request that a live pairing
+    code was made for is never the one that goes."""
     now = time.time() if now is None else now
     pid = secrets.token_urlsafe(32)
     with txn(now) as db:
-        if len(db["pending"]) >= MAX_PENDING:
-            return None
-        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS, made=now)
+        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)}
+        while len(db["pending"]) >= MAX_PENDING:
+            order = sorted(((float(v.get("made", 0)) if isinstance(v, dict) else 0.0), k) for k, v in db["pending"].items()
+                           if not (isinstance(v, dict) and v.get("rid") in held))
+            if not order:
+                return None                                  # nothing may go: refuse the new one, as before
+            del db["pending"][order[0][1]]
+        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS, made=now, rid=secrets.token_hex(4))
     return pid
 
 

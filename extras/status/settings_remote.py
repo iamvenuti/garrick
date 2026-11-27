@@ -55,7 +55,8 @@ def _reach(g: dict, notice: str) -> str:
                     "" if "write" in g["classes"] else " disabled", since, E(notice.replace("{zone}", z["zone"]))))
     why = '<p class="hint bad rwhy">%s</p>' % E(g["reach_note"]) if g.get("reach_note") else ""
     return ('<details class="rreachbox"><summary>What it may reach</summary>%s<p class="hint">Walled zones are off until you turn them on '
-            'here, by name. Reads and writes are separate choices.</p><ul class="rreaches">%s</ul>'
+            'here, by name. Reads and writes are separate choices. A zone that was turned on before this version, or that was removed and made '
+            'again, stays off until you turn it on here again.</p><ul class="rreaches">%s</ul>'
             '<div class="rconfirm" hidden><button class="act sm" type="button" data-rconfirm="1">Turn on</button> '
             '<button class="act sm" type="button" data-rcancel="1">Cancel</button></div></details>' % (why, rows))
 
@@ -70,6 +71,26 @@ def _grants(rows: List[dict], notice: str) -> str:
                   % (E(g["id"]), E(g["name"]), _classes(g["classes"]), E(g["created"]),
                      ", last used %s" % E(g["last_used"]) if g["last_used"] else ", not used yet", E(g["id"]), _reach(g, notice)))
     return '<ul class="rgrants" id="remote-grants">%s</ul>' % items
+
+
+REQUEST_NONE = "No sign-in was waiting when this page was last refreshed. Start one in your assistant, then choose Show a code."
+
+
+def _requests(rows: List[dict], coded: str) -> str:
+    """The sign-in requests that wait for the owner: the name each client gave and when it started. A code is made for the one picked; with
+    one waiting it is picked already. Names come from the client, so they are escaped here and shown as text only."""
+    if not rows:
+        return '<div class="rrequests" id="remote-requests"><p class="hint" id="remote-norequests">%s</p></div>' % E(REQUEST_NONE)
+    many = len(rows) > 1
+    items = ""
+    for i, r in enumerate(rows):
+        label = '<b>%s</b> <small>Sign-in %s. Started %s.</small>' % (E(r["name"]), E(r["id"]), E(r["started"]))
+        pick = ('<input type="radio" name="remote-request" value="%s"%s> ' % (E(r["id"]), " checked" if r["id"] == coded else "")) if many else ""
+        items += '<li class="rreq" data-request="%s"><label class="rchk">%s%s</label></li>' % (E(r["id"]), pick, label)
+    ask = ("Pick the sign-in you started, then choose Show a code." if many else "Choose Show a code for this sign-in.") \
+        + " The sign-in number must match the one on the sign-in page. This list is as of the last refresh."
+    return ('<div class="rrequests" id="remote-requests"><p class="hint">%s</p><ul class="rreqs" id="remote-reqlist">%s</ul></div>'
+            % (E(ask), items))
 
 
 def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
@@ -115,11 +136,12 @@ def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
     details = ('<details class="rdetails"><summary>Details</summary><p class="hint">The service listens on this computer only, on port %d. '
                'The relay or your own address carries the traffic to it.</p></details>' % int(v["port"]))
     pill = row(label("Remote access", "Preview"), '<span class="st %s" id="remote-pill">%s</span>' % ("good" if state == "on" else "idle", STATES[state]))
+    asking = _requests(v["requests"], str(pairing.get("request") or "")) if "requests" in v else ""      # an older extra has no list: none is drawn
     code = ('<p class="rcode" id="remote-code" aria-live="polite" hidden>Your code: <b class="rdigits"></b> '
             '<small>It works once, for five minutes.</small></p>')
-    return ('<section class="setsec" id="remote-settings" data-state="%s" data-notice="%s">%s%s%s%s%s%s%s%s%s%s%s%s'
+    return ('<section class="setsec" id="remote-settings" data-state="%s" data-notice="%s">%s%s%s%s%s%s%s%s%s%s%s%s%s'
             '<p class="hint rsaid" id="remote-said" aria-live="polite" hidden></p></section>'
-            % (E(state), E(v.get("notice") or ""), head, tail, pill, setup, address, buttons, code, waiting, locked, _steps(v["steps"]),
+            % (E(state), E(v.get("notice") or ""), head, tail, pill, setup, address, asking, buttons, code, waiting, locked, _steps(v["steps"]),
                _grants(v["grants"], v.get("notice") or ""), details))
 
 
@@ -141,13 +163,20 @@ CSS = r"""
 #remote-settings[data-state="paused"] button.r-paused{display:inline-block}
 #remote-settings[data-state="off"] .rsetup.r-off{display:grid}
 #remote-settings .rbtns button[hidden]{display:none}
+#remote-settings .rrequests{display:none;margin:.5rem 0}
+#remote-settings[data-state="on"] .rrequests{display:block}
+#remote-settings .rreqs{list-style:none;margin:.3rem 0;padding:0;display:grid;gap:4px}
+#remote-settings .rreq .rchk{margin-left:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
 """
 
 JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,sec=document.getElementById('remote-settings');
 if(!sec||!sec.dataset.state||sec.dataset.state==='missing'||sec.dataset.state==='refused')return;
 var said=document.getElementById('remote-said'),pending=null,tick=null;
-function tell(t,bad){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');said.textContent=String(t||'')}
+function tell(t,bad,code){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');
+if(window.GarrickFailClear)GarrickFailClear(said);
+if(bad&&window.GarrickFail){said.textContent='';GarrickFail(said,code||'remote',String(t||''));return}
+said.textContent=String(t||'')}
 function send(q){if(!host||pending)return false;pending=q;host.postMessage({act:q});return true}
 var ad=document.getElementById('remote-adapter'),own=document.getElementById('remote-own'),url=document.getElementById('remote-url');
 function adapter(){if(own)own.hidden=!ad||ad.value!=='own'}
@@ -158,6 +187,8 @@ var left=secs||300;clearInterval(tick);tick=setInterval(function(){left--;if(lef
 var awaiting=null;
 sec.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
 if(b.dataset.raction){var q={verb:'remote',action:b.dataset.raction};
+if(q.action==='pair'&&sec.querySelector('#remote-requests')){var pick=sec.querySelector('input[name=remote-request]:checked'),one=sec.querySelectorAll('#remote-reqlist .rreq');
+if(pick)q.request=pick.value;else if(one.length===1)q.request=one[0].dataset.request}
 if(q.action==='enable'){q.adapter=ad?ad.value:'relay';if(q.adapter==='own')q.address=url?url.value.trim():''}
 send(q);return}
 if(b.dataset.revoke){send({verb:'remote',action:'revoke',grant:b.dataset.revoke});return}
@@ -172,7 +203,8 @@ if(i.checked){awaiting={li:li,box:i};li.querySelector('.rnotice').hidden=false;v
 send({verb:'remote',action:'zone',grant:li.dataset.grant,zone:li.dataset.zone,read:li.querySelector('[data-rr=read]').checked,
 write:li.querySelector('[data-rr=write]').checked,acknowledged:false})});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&q.verb==='remote'){pending=null;out=out||{ok:false,say:'That did not work.'};tell(out.say,!out.ok);
+if(q&&q.verb==='remote'){pending=null;var none=!out,odd=!none&&/^(unknown|lost|crashed)$/.test(String((out.plain&&out.plain.code)||out.outcome||''));
+out=out||{ok:false,say:'That did not work.'};tell(out.say,!out.ok,none?'lost':odd?'unknown':'remote');
 if(out.ok){var a=q.action;if(a==='enable'||a==='resume')setState('on');else if(a==='pause')setState('paused');else if(a==='off')setState('off');
 else if(a==='pair'&&out.code)showCode(out.code,out.seconds);
 else if(a==='revoke'){var g=sec.querySelector('.rgrant[data-grant="'+q.grant+'"]');if(g)g.remove()}

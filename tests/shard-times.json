@@ -22,6 +22,7 @@
   "test_docs": 0.8,
   "test_drift": 1.1,
   "test_effort": 1.4,
+  "test_empty_states": 15.0,
   "test_example": 38.5,
   "test_extract": 3.3,
   "test_fade": 11.2,

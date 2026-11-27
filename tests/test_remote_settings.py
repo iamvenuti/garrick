@@ -111,11 +111,97 @@ class States(Case):
         self.assertIn("A code is waiting", out)
         self.assertNotIn(code, out)
 
+    def test_the_waiting_sign_in_requests_are_listed_with_their_name_and_start(self):
+        self.install()
+        self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple <b>phone</b>", "challenge": "CHALLENGEX", "state": "STATEX", "redirect": "http://r.example"})
+        self.store.put_pending({"client": "c2", "name": "Cedar tablet"})
+        out = self.draw()
+        block = re.search(r'<div class="rrequests" id="remote-requests">.*?</ul></div>', out, re.S).group(0)
+        self.assertEqual(2, block.count('class="rreq"'))
+        self.assertIn("Maple &lt;b&gt;phone&lt;/b&gt;", block)
+        self.assertNotIn("<b>phone</b>", block)
+        self.assertIn("Cedar tablet", block)
+        self.assertEqual(2, block.count("Started less than a minute ago."))
+        self.assertEqual(2, block.count('type="radio"'))                               # with several waiting, one is picked
+        self.assertIn("Pick the sign-in you started", block)
+        for secret in ("CHALLENGEX", "STATEX", "r.example"):
+            self.assertNotIn(secret, out)
+
+    def test_with_one_request_waiting_there_is_nothing_to_pick(self):
+        self.install()
+        self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
+        block = re.search(r'<div class="rrequests" id="remote-requests">.*?</ul></div>', self.draw(), re.S).group(0)
+        self.assertEqual(1, block.count('class="rreq"'))
+        self.assertNotIn('type="radio"', block)
+        self.assertIn("Choose Show a code for this sign-in.", block)
+
+    def test_an_older_extra_with_no_list_gets_no_list_and_no_request_field(self):
+        mod_sr = status.settings_mod("settings_remote")
+        view = {"installed": True, "status": "on", "port": 8781, "address": {"url": "https://home.example.test", "adapter": "own"},
+                "steps": [], "grants": [], "pairing": {}, "notice": ""}                # what 0.82.0's state.view gives: no requests key
+        helpers = {"set_head": lambda *a: "", "help_text": lambda *a: "", "set_row": lambda *a, **k: "", "row_label": lambda *a, **k: "",
+                   "request_button": lambda *a, **k: ""}
+        self.assertNotIn("remote-requests", mod_sr.section(view, helpers, str(self.root)))
+        self.assertIn("remote-requests", mod_sr.section(dict(view, requests=[]), helpers, str(self.root)))
+        js = mod_sr.JS
+        self.assertIn("q.action==='pair'&&sec.querySelector('#remote-requests')", js)     # no list drawn: no `request` is sent
+
+    def test_the_list_says_it_is_as_of_the_last_refresh(self):
+        self.install()
+        self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
+        self.assertIn("This list is as of the last refresh.", self.draw())
+
+    def test_with_none_waiting_the_page_says_so_in_one_sentence(self):
+        self.install()
+        self.turn_on()
+        out = self.draw()
+        self.assertIn('id="remote-norequests">No sign-in was waiting when this page was last refreshed. Start one in your assistant, then choose Show a code.', out)
+        self.assertNotIn('class="rreq"', out)
+
+    def test_a_failed_reply_is_drawn_by_the_pages_failure_row_never_as_raw_text(self):
+        js = (EXTRA.parent / "status" / "settings_remote.py").read_text()
+        tell = js.split("function tell(", 1)[1].split("\nfunction send(", 1)[0]
+        self.assertIn("GarrickFail(said,code||'remote',String(t||''))", tell)           # the sentence, the tool's text under Details
+        self.assertIn("GarrickFailClear(said)", tell)                              # a later success takes the drawing away
+        self.assertLess(tell.index("GarrickFail(said"), tell.index("said.textContent=String(t||'')}"))
+        self.assertIn("tell(out.say,!out.ok,", js)
+        built = (EXTRA.parent / "status" / "status.py").read_text()
+        self.assertIn("window.GarrickFail=function", built)                         # the page defines it, with a default row for an unknown code
+
+    def test_a_reply_nobody_could_settle_is_never_drawn_as_not_changed(self):
+        js = (EXTRA.parent / "status" / "settings_remote.py").read_text()
+        self.assertIn("GarrickFail(said,code||'remote'", js)
+        self.assertIn("var none=!out", js)
+        self.assertIn("tell(out.say,!out.ok,none?'lost':odd?'unknown':'remote')", js)        # no reply: the lost row, Refresh
+        self.assertIn("/^(unknown|lost|crashed)$/.test(String((out.plain&&out.plain.code)||out.outcome||''))", js)
+        for code in ("lost", "unknown"):
+            self.assertIn('("%s", ' % code, (EXTRA.parent / "status" / "page_action.py").read_text())      # the rows are the page's own
+
+    def test_the_show_a_code_button_sends_the_picked_request(self):
+        out = (EXTRA.parent / "status" / "settings_remote.py").read_text()
+        self.assertIn("input[name=remote-request]:checked", out)
+        self.assertIn("q.request=pick.value", out)
+        self.assertIn("q.request=one[0].dataset.request", out)
+
+    def test_a_pairing_code_waiting_names_the_request_it_is_for_by_its_id_only(self):
+        self.install()
+        self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
+        self.store.put_pending({"client": "c2", "name": "Cedar tablet"})
+        first, second = self.store.waiting_requests()
+        code, _ = self.store.make_pairing_code(request=second["id"])
+        out = self.draw()
+        self.assertRegex(out, r'<input type="radio" name="remote-request" value="%s" checked>' % second["id"])
+        self.assertNotIn(code, out)
+
     def test_grants_are_listed_with_their_reach_and_a_revoke(self):
         self.install()
         self.turn_on()
         gid = self.store.create_grant("c1", "Maple phone", ["read", "write"])
-        self.store.set_zone(gid, "Work", True, False)
+        self.store.set_zone(gid, "Work", True, False, marker=mod("context").zone_marker(self.root, "Work"))
         out = self.draw()
         self.assertIn("Maple phone", out)
         self.assertIn('data-revoke="%s"' % gid, out)

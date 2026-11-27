@@ -132,6 +132,12 @@ class InstallTest(unittest.TestCase):
                          f"and say \"set up Garrick\".")
         self.assertNotIn("garrick@localhost", self.result.stdout)  # git had an identity: no hint
 
+    def test_the_summary_counts_zones_and_says_which_are_walled(self):
+        # Walls are set per zone, so the summary says "2 zones (2 walled)"; parties are a count with no wall (#709).
+        out = self.result.stdout
+        self.assertIn("  2 zones (2 walled) and 2 parties in System/context.md, 2 people in System/names.md.", out)
+        self.assertNotIn("parties (", out)
+
     def test_the_wikis_check_the_walls_before_a_commit_as_the_zones_do(self):
         hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
         self.assertIn("Garrick wall check", hook.read_text())

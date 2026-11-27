@@ -175,7 +175,7 @@ class OneWalledZone(Case):
     def test_two_stored_by_hand_reach_none_and_settings_says_why(self):
         gid = self.grant()
         with self.store.txn() as db:                         # the case the reviewer ran: a file edited by hand
-            db["grants"][gid]["zones"] = {"Work": {"read": "2026-11-26", "write": ""}, "Vault": {"read": "2026-11-26", "write": ""}}
+            db["grants"][gid]["zones"] = {z: {"read": "2026-11-26", "write": "", "marker": self.ctx.zone_marker(self.ws, z)} for z in ("Work", "Vault")}
         s = self.session(gid)
         self.assertFalse(s.zone_allowed("Work") or s.zone_allowed("Vault"))
         self.assertEqual(set(s.readable), {"Home", "Garden", "Knowledge", "docs"})
@@ -216,7 +216,7 @@ class OnlyWalledNow(Case):
     def test_two_held_zones_with_one_open_now_still_reach_the_walled_one(self):
         gid = self.grant()
         with self.store.txn() as db:
-            db["grants"][gid]["zones"] = {"Work": {"read": "2026-11-26", "write": ""}, "Vault": {"read": "2026-11-26", "write": ""}}
+            db["grants"][gid]["zones"] = {z: {"read": "2026-11-26", "write": "", "marker": self.ctx.zone_marker(self.ws, z)} for z in ("Work", "Vault")}
         self.open_work()
         self.assertTrue(self.session(gid).zone_allowed("Vault"))
         self.assertEqual(self.state.view(self.ws)["grants"][0]["reach_note"], "")
@@ -277,6 +277,57 @@ class ZoneThatLeaves(Case):
         (self.ws / "System" / "tools").unlink()
         self.session(gid)
         self.assertIn("Work", self.store.get_grant(gid)["zones"])
+
+
+class ZoneMadeAgain(Case):
+    """W4: the grant keeps a marker of the zone folder, and every read of the reach compares it."""
+
+    def remake(self, zone="Work"):
+        import os
+        import shutil
+        folder = self.ws / "Zones" / zone
+        away = folder.with_name(zone + "-away")
+        os.rename(str(folder), str(away))
+        shutil.copytree(str(away), str(folder))
+        shutil.rmtree(str(away))
+
+    def test_a_zone_removed_and_made_again_starts_with_nothing(self):
+        gid = self.grant()
+        self.assertTrue(self.zone(gid, "Work", read=True, write=True)["ok"])
+        self.assertTrue(self.session(gid).zone_allowed("Work", write=True))
+        self.remake()
+        s = self.session(gid)
+        self.assertFalse(s.zone_allowed("Work") or s.zone_allowed("Work", write=True))
+        self.assertTrue(self.zone(gid, "Work", read=True)["ok"])                       # the owner turns it on again, with the notice
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+        self.assertFalse(self.session(gid).zone_allowed("Work", write=True))
+
+    def test_an_edit_inside_the_zone_keeps_the_grant(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        (self.ws / "Zones" / "Work" / "Note.md").write_text("a note\n")
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+
+    def test_an_entry_saved_without_a_marker_is_refused_until_the_zone_is_turned_on_again(self):
+        gid = self.grant()
+        with self.store.txn() as db:
+            db["grants"][gid]["zones"] = {"Work": {"read": "2026-11-20", "write": ""}}
+        self.assertFalse(self.session(gid).zone_allowed("Work"))
+        self.assertTrue(self.zone(gid, "Work", read=True)["ok"])
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+
+    def test_an_unreadable_marker_refuses_the_zone_and_the_entry_stays(self):
+        import unittest.mock
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        with unittest.mock.patch.object(self.ctx, "zone_marker", return_value=""):
+            self.assertFalse(self.session(gid).zone_allowed("Work"))
+        self.assertTrue(self.session(gid).zone_allowed("Work"))
+
+    def test_settings_says_an_old_or_remade_zone_stays_off_until_turned_on_again(self):
+        text = (EXTRA.parent / "status" / "settings_remote.py").read_text()
+        self.assertIn("stays off until you turn it on here again", text)
+        self.assertIn("Garrick 0.82.0 or earlier has no marker", (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text())
 
 
 class Handles(Case):

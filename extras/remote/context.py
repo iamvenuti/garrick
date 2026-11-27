@@ -25,6 +25,7 @@ import importlib.util
 import json
 import os
 import secrets
+import stat
 import sys
 import time
 from pathlib import Path
@@ -109,10 +110,60 @@ def open_zones(ws: Path) -> List[str]:
     return [z["zone"] for z in zones(ws) if not z["walled"]]
 
 
+def zone_marker(ws: Path, zone: str) -> str:
+    """A marker of one zone's folder: it changes when the folder is removed and made again, and not when something inside it is edited.
+    It is made of the folder's device, its inode and its birth time. "" when the folder cannot be read or the system gives no birth time:
+    a caller treats that as no zone."""
+    try:
+        base = Path(ws) / "Zones"
+        folder = base / str(zone)
+        if str(zone) in ("", ".", "..") or not str(zone).strip() or folder.parent != base or folder.name != str(zone):
+            return ""
+        st = os.stat(str(folder))
+        if not stat.S_ISDIR(st.st_mode):
+            return ""
+        born = getattr(st, "st_birthtime_ns", None)
+        if born is None:
+            born = int((getattr(st, "st_birthtime", 0) or 0) * 1000000000)
+        if not born:
+            return ""                                                 # no birth time: an inode can come back, so the zone cannot be marked
+        text = "zone1:%d:%d:%d" % (st.st_dev, st.st_ino, born)
+        return hashlib.sha256(text.encode("ascii")).hexdigest()[:32]
+    except (OSError, ValueError):
+        return ""
+
+
+def entry_holds(ws: Path, zone: str, entry: Any) -> bool:
+    """Is this stored entry for this zone good now: it has a marker, the zone folder can be read, and the two are the same folder?
+    An entry from before markers has none, so it is not good until the owner turns the zone on again in Settings."""
+    if not isinstance(entry, dict):
+        return False
+    stored = entry.get("marker")
+    if not isinstance(stored, str) or not stored:
+        return False
+    now = zone_marker(ws, zone)
+    return bool(now) and hmac.compare_digest(stored, now)
+
+
 # --------------------------------------------------------------------------- reach
 
 def _grant(gid: str) -> Optional[Dict[str, Any]]:
     return _sib("store").get_grant(gid)
+
+
+def _live(ws: Path, grant: Dict[str, Any], known: Dict[str, bool]) -> Dict[str, Dict[str, Any]]:
+    """The walled zones a grant holds that count now: still in the workspace, still walled, turned on (read or write), and the same folder
+    that was turned on. An entry for a zone that is open now adds nothing here: an open zone is in every reach anyway."""
+    out = {}
+    for zone, entry in (grant.get("zones") or {}).items():
+        if known.get(zone) and isinstance(entry, dict) and (entry.get("read") or entry.get("write")) and entry_holds(ws, zone, entry):
+            out[zone] = entry
+    return out
+
+
+def live_zones(ws: Path, grant: Dict[str, Any]) -> List[str]:
+    """The names of the walled zones that count in a grant's reach now."""
+    return sorted(_live(ws, grant, {z["zone"]: z["walled"] for z in zones(ws)}))
 
 
 def reach_of(ws: Path, grant: Dict[str, Any]) -> Dict[str, FrozenSet[str]]:
@@ -123,19 +174,18 @@ def reach_of(ws: Path, grant: Dict[str, Any]) -> Dict[str, FrozenSet[str]]:
     classes = frozenset(c for c in grant.get("classes", ()) if c in ("read", "write"))
     readable = {z for z, walled in known.items() if not walled}
     writable = set(readable)
-    for zone, entry in (grant.get("zones") or {}).items():
-        if zone not in known or not isinstance(entry, dict):
-            continue
+    live = _live(ws, grant, known)
+    for zone, entry in live.items():
         if entry.get("read"):
             readable.add(zone)
         if entry.get("write"):
             writable.add(zone)
-    held = [z for z, e in (grant.get("zones") or {}).items() if known.get(z) and isinstance(e, dict) and (e.get("read") or e.get("write"))]
-    if len(held) > 1:                                                  # one connection reaches one walled zone: with two stored, none
+    if len(live) > 1:                                                  # one connection reaches one walled zone: with two stored, none
         readable = {z for z, walled in known.items() if not walled}
         writable = set(readable)
     readable |= {KNOWLEDGE, DOCS}
-    return {"readable": frozenset(readable), "writable": frozenset(writable), "classes": classes}
+    marks = tuple(sorted((z.casefold(), str(e.get("marker"))) for z, e in live.items())) if len(live) == 1 else ()
+    return {"readable": frozenset(readable), "writable": frozenset(writable), "classes": classes, "marks": marks}
 
 
 ONE_WALLED = "One connection reaches one walled zone. Use another connection for the second zone."
@@ -145,8 +195,7 @@ TOO_MANY = "This connection holds more than one walled zone, so it reaches none 
 def reach_note(ws: Path, grant: Dict[str, Any]) -> str:
     """Why a grant's walled zones are all out of reach, or "" when they are not."""
     known = {z["zone"]: z["walled"] for z in zones(ws)}
-    held = [z for z, e in (grant.get("zones") or {}).items() if known.get(z) and isinstance(e, dict) and (e.get("read") or e.get("write"))]
-    return TOO_MANY if len(held) > 1 else ""
+    return TOO_MANY if len(_live(ws, grant, known)) > 1 else ""
 
 
 def prune_absent(ws: Path, gid: str) -> None:
@@ -168,6 +217,8 @@ def reach_rows(ws: Path, gid: str) -> List[Dict[str, Any]]:
     out = []
     for z in zones(ws):
         entry = (grant.get("zones") or {}).get(z["zone"], {}) if z["walled"] else {}
+        if z["walled"] and not entry_holds(ws, z["zone"], entry):
+            entry = {}                                                    # an old entry, or another folder of that name: off until turned on again
         out.append({"zone": z["zone"], "walled": z["walled"],
                     "read": (not z["walled"]) or bool(entry.get("read")),
                     "write": ((not z["walled"]) and "write" in grant["classes"]) or bool(entry.get("write")),
@@ -184,11 +235,12 @@ class Session:
     readable: FrozenSet[str]
     writable: FrozenSet[str]
     secret: bytes = dataclasses.field(default=b"", repr=False, compare=False)
+    marks: tuple = ()                    # (zone, marker) of the walled zone that counts now: a zone made again is another reach
 
     def reach_id(self) -> str:
         """A short fingerprint of the reach: the classes and the two zone sets. It changes when any of them does."""
         text = json.dumps([sorted(self.classes), sorted(z.casefold() for z in self.readable),
-                           sorted(z.casefold() for z in self.writable)])
+                           sorted(z.casefold() for z in self.writable), [list(m) for m in self.marks]])
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def zone_allowed(self, zone: Any, write: bool = False) -> bool:
@@ -241,4 +293,4 @@ def session_for(ws: Path, gid: str, scopes=None) -> Session:
     reach = reach_of(ws, grant)
     classes = reach["classes"] if scopes is None else reach["classes"] & frozenset(scopes)   # never wider than the token's own scopes
     return Session(grant_id=gid, workspace=Path(ws), classes=classes, readable=reach["readable"],
-                   writable=reach["writable"])
+                   writable=reach["writable"], marks=reach["marks"])

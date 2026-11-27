@@ -83,12 +83,15 @@ LIST = {
     "chase": ("Waiting on you now, Follow-ups: status.py FOLLOWUP_JS, page_action.py chase", "TestThePanels"),
     "undo": ("Undo of a bounded answer or of Leave it as it is, in the Context queue: finding_queue.py QUEUE_JS undone(), showLast()",
              "TestTheUndoLine"),
+    "layout-look": ("the layout dialog's first look failed: status.py MANAGE_JS lresult(), page_action.py layout look", "TestTheLayoutDialog"),
+    "layout": ("the layout change was refused: status.py MANAGE_JS lresult(), page_action.py layout", "TestTheLayoutDialog"),
+    "remote": ("Settings, Remote access: a failed remote reply, drawn by settings_remote.py (remote-0830)", "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
 PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow", "commit-files",
-          "commit-undo", "chase", "undo")
+          "commit-undo", "chase", "undo", "layout-look", "layout", "remote")
 
 # A row whose producer arrives with another branch of the same release: {code: the function that raises it}. Until that
 # function is in page_action.py the row needs no producer; once it is (on the release merge), it needs one like any row.
@@ -557,6 +560,123 @@ class TestTheUndoLine(unittest.TestCase):
     def test_the_undo_row_offers_show_why_and_no_second_try(self):
         row = next(r for r in pa.FAILURES if r[0] == "undo")
         self.assertEqual(("The change was not undone.", "Show why", "why"), row[1:4])
+
+
+LAY_HARNESS = r"""
+const vm=require('vm');const [work,manage,out,again]=JSON.parse(process.argv[1]);
+const c={};vm.createContext(c);vm.runInContext(DOM+work,c);
+vm.runInContext("var GarrickFail=window.GarrickFail;"+manage+"; var sent=[],closed=0,store={},localStorage={setItem:function(k,v){store[k]=v}};var host={postMessage:function(m){sent.push(m)}};"
++"function mk(){var e=new E('div');e.innerHTML='';e.onclick=null;return e}"
++"var box=mk(),row=mk(),cancel=mk(),refresh=mk();var d={close:function(){closed++},querySelector:function(s){"
++"return s==='#lay-plan'?box:s==='.mg-row'?row:s==='[data-cancel]'&&/data-cancel/.test(row.innerHTML)?cancel:s==='[data-refresh]'&&/data-refresh/.test(row.innerHTML)?refresh:null}};"
++"row.querySelector=function(s){return d.querySelector(s)};var tried=0;lresult(d,{zone:'Work',project:'Acme'},"+JSON.stringify(out)+","+(again?"function(){tried++}":"null")+");",c);
+console.log(vm.runInContext("JSON.stringify({text:box.textContent,html:box.innerHTML,failure:box.children[0]&&box.children[0].getAttribute?box.children[0].getAttribute('data-failure'):null,"
++"button:(box.querySelector('button')||{}).textContent||null,details:box.querySelector('details')?box.querySelector('details').children[1].textContent:null,"
++"open:box.querySelector('details')?box.querySelector('details').open:null,foot:row.innerHTML,undo:store['garrick-undo']||null,"
++"refreshed:(function(){if(!/data-refresh/.test(row.innerHTML))return null;refresh.onclick();return JSON.stringify({sent:sent,closed:closed})})()})",c));
+""".replace("DOM", json.dumps(DOM))
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTheLayoutDialog(unittest.TestCase):
+    """#511's layout dialog: each failed reply says the sentence of its row, with one next step and the tool's text under Details,
+    closed. Only a reply the record settled as refused says that nothing was moved."""
+
+    RAW = "scaffold.py layout failed in /Users/x/Zones/Acme: exit 2"
+
+    def lresult(self, out, again=False):
+        from test_status import status       # noqa: E402
+        manage = status.MANAGE_JS
+        fn = manage[manage.index("function lcode("):manage.index("function layout(o)")]
+        det = manage[manage.index("function details(t)"):].split("\n", 1)[0]
+        esc = manage[manage.index("function esc(s)"):].split("\n", 1)[0]
+        r = subprocess.run(["node", "-e", LAY_HARNESS, json.dumps([status.WORK_JS, esc + "\n" + det + "\n" + fn, out, again])],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr)
+        return json.loads(r.stdout)
+
+    def say(self, code):
+        return pa.plain_failure(code)["say"]
+
+    def test_a_refused_change_says_nothing_was_moved_and_offers_show_why_only(self):
+        got = self.lresult({"ok": False, "outcome": "refused", "say": self.RAW})
+        self.assertEqual("layout", got["failure"])
+        self.assertTrue(got["text"].startswith(self.say("layout")))
+        self.assertEqual("Show why", got["button"])
+        self.assertEqual(self.RAW, got["details"])
+        self.assertFalse(got["open"])
+        self.assertNotRegex(got["text"].replace(self.RAW, ""), RAW)
+        self.assertNotIn("data-refresh", got["foot"])
+
+    def test_a_refused_plan_says_it_could_not_show_and_tries_again_by_asking_again(self):
+        got = self.lresult({"ok": False, "say": self.RAW}, again=True)
+        self.assertEqual("layout-look", got["failure"])
+        self.assertTrue(got["text"].startswith(self.say("layout-look")))
+        self.assertEqual("Try again", got["button"])
+        self.assertEqual(self.RAW, got["details"])
+        self.assertFalse(got["open"])
+
+    def test_a_change_the_record_cannot_settle_never_says_nothing_moved_and_offers_refresh(self):
+        cases = (({"ok": False, "outcome": "unknown", "say": self.RAW}, "unknown"),
+                 ({"ok": False, "outcome": "lost", "say": self.RAW}, "lost"),
+                 ({"ok": False, "plain": {"code": "unknown"}, "say": self.RAW}, "unknown"),
+                 ({"ok": True, "plain": {"code": "unrecorded"}, "say": "Changed in commit abc1234."}, "unrecorded"),
+                 (None, "lost"))
+        for out, code in cases:
+            with self.subTest(out=out):
+                got = self.lresult(out)
+                self.assertEqual(code, got["failure"])
+                self.assertTrue(got["text"].startswith(self.say(code)))
+                self.assertNotIn("Nothing", got["text"].split(self.RAW)[0])
+                self.assertNotIn("moved", got["text"].split(self.RAW)[0])
+                self.assertIn("data-refresh", got["foot"])
+                self.assertIsNone(got["undo"])
+                self.assertEqual({"sent": [{"rebuild": True}], "closed": 1}, json.loads(got["refreshed"]))
+
+    def test_a_crash_and_a_silence_keep_their_sentences_and_never_offer_a_second_try(self):
+        for out, code in (({"ok": False, "outcome": "crashed", "say": self.RAW}, "crashed"), ({"ok": False, "say": self.RAW}, "noreply")):
+            with self.subTest(code=code):
+                got = self.lresult(out)
+                self.assertEqual(code, got["failure"])
+                self.assertTrue(got["text"].startswith(self.say(code)))
+                self.assertIsNone(got["button"])                 # no Try again: the move writes and commits
+                self.assertIn("data-refresh", got["foot"])
+                self.assertEqual(self.RAW, got["details"])
+
+    def test_a_repeat_question_is_unknown_and_offers_refresh_not_a_second_send(self):
+        for out in ({"ok": False, "state": "asked", "say": "The same request was done a minute ago. Do you want it done a second time?"},
+                    {"ok": False, "again": "abc123", "say": "The same request was done a minute ago."}):
+            with self.subTest(out=out):
+                got = self.lresult(out)
+                self.assertEqual("unknown", got["failure"])
+                self.assertTrue(got["text"].startswith(self.say("unknown")))
+                self.assertIn("data-refresh", got["foot"])
+                self.assertIsNone(got["button"])
+
+    def test_a_wall_says_the_rules_sentence_alone(self):
+        wall = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+        got = self.lresult({"ok": False, "outcome": "refused", "say": wall})
+        self.assertEqual("wall", got["failure"])
+        self.assertEqual(wall, got["text"])
+        self.assertIsNone(got["details"])
+
+    def test_a_change_that_worked_keeps_its_line_and_its_undo(self):
+        got = self.lresult({"ok": True, "outcome": "saved", "say": "Moved 2 files. Changed in commit abc1234.\nThe rest."})
+        self.assertIn("Moved 2 files. Changed in commit abc1234. It was committed.", got["html"])
+        self.assertIsNone(got["failure"])
+        self.assertIn('"commit":"abc1234"', got["undo"])
+        self.assertIn("The rest.", got["details"] or got["html"])
+
+    def test_an_ok_reply_with_no_commit_is_not_a_change(self):
+        got = self.lresult({"ok": True, "outcome": "saved", "say": "Nothing to move."})
+        self.assertIn("Nothing moved. Nothing to move.", got["html"])
+        self.assertIsNone(got["undo"])
+
+    def test_the_dialog_asks_for_nothing_new_and_tries_again_only_by_looking(self):
+        src = (STATUS / "status.py").read_text(encoding="utf-8")
+        self.assertEqual(2, src.count("host.postMessage({act:Object.assign({},base"))
+        self.assertIn("lresult(d,o,out,again)", src)
+        self.assertIn("LAYW[op2]=function(out){lresult(d,o,out)}", src)      # the change gets no second try
 
 
 class TestSettingsRows(unittest.TestCase):

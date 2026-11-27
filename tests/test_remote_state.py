@@ -197,6 +197,7 @@ class Actions(Case):
     def test_off_removes_the_agent_stops_the_relay_and_clears_the_code(self):
         self.make_runtime_ready()
         self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
         self.assertTrue(self.run_act("pair")["ok"])
         self.la.plist_path().parent.mkdir(parents=True, exist_ok=True)
         self.la.plist_path().write_text("x")
@@ -208,6 +209,7 @@ class Actions(Case):
 
     def test_pair_gives_a_six_digit_code_and_keeps_only_its_hash(self):
         self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
         out = self.run_act("pair")
         self.assertTrue(out["ok"])
         self.assertRegex(out["code"], r"^\d{6}$")

@@ -913,10 +913,10 @@ class TestGuide(StatusCase):
         self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
         self.assertEqual(["Start here", "Understand", "Do", "Extras", "Look up"], re.findall(r'<div class="gd-sec"><h3>([^<]+)</h3>', guide))
         toc = re.findall(r'<li class="gd-it" data-p="guide-([^"]+)"', guide)
-        self.assertEqual(["try-it-safely", "first-steps", "terminal-setup", "first-session", "guided-session",
+        self.assertEqual(["using-the-app", "try-it-safely", "first-steps", "terminal-setup", "first-session", "guided-session",
                           "principles", "concepts", "architecture", "context", "enforced", "read-guard", "machines", "harnesses", "updating",
                           "extras-index"],
-                         toc[:15])
+                         toc[:16])
         self.assertEqual("commands", toc[toc.index("extras-toolkit") + 1])      # each extras page, then Look up
         self.assertIn('class="gd-q" type="search"', guide)
 

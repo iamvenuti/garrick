@@ -355,6 +355,16 @@ class TestAUsersOwnWordsAreNotAQuestion(WritesCase):
         self.assertIn("Nothing was saved again", run_op.receipt("todo-done", 1, "", "The same request was done 4 minutes ago: Ticked. " + q)["say"])
         self.assertTrue(run_op.receipt("todo-done", 0, "Ticked. " + q, "")["ok"])
 
+    def test_a_note_whose_words_hold_still_running_gets_the_receipt_of_an_action_that_ended(self):
+        said = ("The same request was done 4 minutes ago: Added to Inbox: Check whether the pump is still running. "
+                "It has not been done again. Do you want it done a second time?")
+        asked = {"ok": False, "state": "asked", "say": said, "op": "x", "again": "x"}
+        self.assertEqual(run_op.REPEAT_DONE, run_op.receipt("todo-add", 1, json.dumps(asked), "")["say"])
+        self.assertEqual(run_op.REPEAT_DONE, run_op.receipt("todo-add", 1, "", said)["say"])
+        running = dict(asked, say="The same request is still running, started 1 minute ago: Adding. It has not been sent again. "
+                                  "Do you want it done a second time once that one ends?")
+        self.assertEqual(run_op.REPEAT_RUNNING, run_op.receipt("todo-add", 1, json.dumps(running), "")["say"])
+
 
 class TestTheDeskIsSafe(WritesCase):
     def test_a_todo_with_changes_not_committed_is_not_overwritten(self):

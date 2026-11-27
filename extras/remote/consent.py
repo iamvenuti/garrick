@@ -103,7 +103,7 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
         classes = [c for c in ("read", "write") if data.get(c)]
         if "read" not in classes:
             return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect.", age(row, clock())), 400)
-        if not store.check_pairing_code(code, clock()):
+        if not store.check_pairing_code(code, clock(), str(row.get("rid") or "")):
             wait = store.consent_locked(clock())
             return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out.", age(row, clock())), 400)
         target = provider.finish(pid, classes)

@@ -22,6 +22,7 @@ import os
 import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -330,7 +331,22 @@ def view(ws: Path) -> Dict[str, Any]:
     return {"installed": True, "name": NAME, "label": PREVIEW, "status": cfg["status"], "port": cfg["port"],
             "address": cfg["address"], "role": role(ws), "refusal": refusal, "can_enable": not refusal,
             "steps": steps(ws, cfg, refusal), "grants": rows, "notice": notice,
-            "pairing": pairing_state()}
+            "pairing": pairing_state(), "requests": waiting_requests()}
+
+
+def _ago(seconds: float) -> str:
+    n = max(0, int(seconds)) // 60
+    return "less than a minute ago" if n < 1 else ("%d minute%s ago" % (n, "" if n == 1 else "s"))
+
+
+def waiting_requests() -> List[Dict[str, Any]]:
+    """The sign-in requests that wait for the owner, oldest first, as Settings lists them: a short id, the name the client gave and when
+    the request started. No link, no state and no code. Empty where they cannot be read."""
+    try:
+        now = time.time()
+        return [{"id": r["id"], "name": r["name"], "started": _ago(now - r["made"])} for r in sibling("store").waiting_requests(now)]
+    except Exception:
+        return []
 
 
 def pairing_state() -> Dict[str, Any]:

@@ -361,7 +361,7 @@ DECLARED: Dict[str, Op] = {
     # Remote access (preview): Settings' own switch, pairing code, reach and revoke, which change only at the Mac. The page
     # sends it and nothing else does (page_action.py's PAGE_ONLY); the handler is the extra's own System/remote/
     # settings_actions.py, and without the extra the verb is refused in a sentence. `action` is one of page_action.REMOTE_ACTIONS.
-    "remote": _op(("action", "grant", "zone", "read", "write", "address", "adapter", "acknowledged"), (), "machine", retry="safe"),
+    "remote": _op(("action", "grant", "zone", "read", "write", "address", "adapter", "acknowledged", "request"), (), "machine", retry="safe"),
 }
 # The verbs that keep a durable record: what the page sends under the zone
 # lock and commits a note. `OPS` is the name page_action.py has used since

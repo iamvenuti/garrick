@@ -163,8 +163,21 @@ def _pair(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         return _no("Remote access has no address yet. Set it up first.")
     if store.consent_locked():
         return _no("Too many wrong codes were tried. The sign-in page opens again in a few minutes.")
-    code, seconds = store.make_pairing_code()
-    return {"ok": True, "say": "Type this code on the sign-in page within five minutes. It works once.", "code": code, "seconds": seconds}
+    waiting = store.waiting_requests()
+    asked = str(req.get("request") or "").strip()
+    if asked:
+        picked = [r for r in waiting if r["id"] == asked]
+        if not picked:
+            return _no("That sign-in is not waiting any more. Start it again in your assistant, then choose Show a code.")
+    elif len(waiting) == 1:
+        picked = waiting
+    elif not waiting:
+        return _no("No sign-in is waiting. Start one in your assistant, then choose Show a code.")
+    else:
+        return _no("More than one sign-in is waiting. Pick the one you started, then choose Show a code.")
+    code, seconds = store.make_pairing_code(request=picked[0]["id"])
+    return {"ok": True, "say": "Type this code on the sign-in page of %s within five minutes. It works once, for that sign-in only." % picked[0]["name"],
+            "code": code, "seconds": seconds}
 
 
 def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:

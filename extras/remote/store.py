@@ -146,15 +146,27 @@ def handle_key() -> bytes:
 
 # --------------------------------------------------------------------------- the pairing code and the consent lock
 
-def make_pairing_code(now: Optional[float] = None) -> Tuple[str, int]:
-    """A new six-digit code, kept as a hash, good for five minutes and one use. A new code replaces the one before it.
-    Returns the code, to be shown once, and its life in seconds."""
+def make_pairing_code(now: Optional[float] = None, request: str = "") -> Tuple[str, int]:
+    """A new six-digit code, kept as a hash, good for five minutes and one use, and good for one sign-in request only: `request` is the
+    short id of the request it was made for (`waiting_requests`). A code with no request works for none. A new code replaces the one
+    before it. Returns the code, to be shown once, and its life in seconds."""
     now = time.time() if now is None else now
     code = "%06d" % secrets.randbelow(1000000)
     with txn(now) as db:
-        db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS}}
+        db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS, "request": str(request or "")}}
         db["consent"]["wrong"] = 0                       # a new code starts a new count
     return code, CODE_SECONDS
+
+
+def waiting_requests(now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """The sign-in requests that wait for the owner, oldest first: a short id of their own (never the link's secret), the name the client
+    gave and when the request started. Reads; writes nothing."""
+    now = time.time() if now is None else now
+    rows = []
+    for row in peek(now)["pending"].values():
+        if isinstance(row, dict) and row.get("rid"):
+            rows.append({"id": str(row["rid"]), "name": str(row.get("name") or ""), "made": float(row.get("made") or now)})
+    return sorted(rows, key=lambda r: r["made"])
 
 
 def pairing_state(now: Optional[float] = None) -> Dict[str, Any]:
@@ -162,7 +174,11 @@ def pairing_state(now: Optional[float] = None) -> Dict[str, Any]:
     db = peek(now)
     left = max([int(v["expires"] - now) for v in db["pairing"].values()] or [0])
     locked = db["consent"].get("locked_until", 0) - now
-    return {"waiting": left > 0, "seconds": left, "locked": int(locked) + 1 if locked > 0 else 0}
+    request = ""
+    for v in db["pairing"].values():
+        if isinstance(v, dict) and v.get("request"):
+            request = str(v["request"])
+    return {"waiting": left > 0, "seconds": left, "locked": int(locked) + 1 if locked > 0 else 0, "request": request}
 
 
 def consent_locked(now: Optional[float] = None) -> int:
@@ -173,9 +189,10 @@ def consent_locked(now: Optional[float] = None) -> int:
     return int(left) + 1 if left > 0 else 0
 
 
-def check_pairing_code(code: str, now: Optional[float] = None) -> bool:
-    """Try a code. The right one works once, and only while the page is open. A wrong one counts: the fifth in a row locks
-    the page for 15 minutes, and a locked page takes no code at all, the right one included."""
+def check_pairing_code(code: str, now: Optional[float] = None, request: str = "") -> bool:
+    """Try a code for one sign-in request. The right code for that request works once, and only while the page is open. A wrong one counts,
+    and so does a right code made for another request, which is not used up: the fifth in a row locks the page for 15 minutes, and a locked
+    page takes no code at all, the right one included."""
     now = time.time() if now is None else now
     with txn(now) as db:
         consent = db["consent"]
@@ -186,10 +203,12 @@ def check_pairing_code(code: str, now: Optional[float] = None) -> bool:
         text = str(code or "").strip()
         ok = False
         if len(text) == 6 and text.isdigit():
-            for known in list(db["pairing"]):
+            for known, entry in list(db["pairing"].items()):
                 if hmac.compare_digest(known, sha(text)):
-                    ok = True
-                    del db["pairing"][known]
+                    mine = entry.get("request") if isinstance(entry, dict) else ""
+                    if request and isinstance(mine, str) and mine and hmac.compare_digest(mine, str(request)):
+                        ok = True
+                        del db["pairing"][known]
         if ok:
             consent["wrong"] = 0
             return True

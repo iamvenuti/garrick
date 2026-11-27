@@ -213,10 +213,43 @@ class Marked(WritesCase):
             self.assertFalse(self.live().zone_allowed("Work"))               # and one already on is refused: fail closed
         self.assertTrue(self.live().zone_allowed("Work"))
 
+    def test_a_disk_with_no_folder_creation_time_gets_a_true_sentence_and_a_next_step(self):
+        real = os.stat
+        for case in ("no attribute", "float zero", "ns zero"):
+            def stub(path, *a, **k):
+                got = real(path, *a, **k)
+                if not str(path).endswith("Work"):
+                    return got
+                if case == "no attribute":
+                    return os.stat_result(tuple(got)[:10])
+                fields = tuple(got)[:10]
+                extra = {"st_birthtime": 0.0} if case == "float zero" else {"st_birthtime_ns": 0}
+                return _Bare(fields, extra)
+            with unittest.mock.patch.object(self.ctx.os, "stat", side_effect=stub):
+                other = self.store.create_grant("client-" + case, "Tablet", ["read"])
+                out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+            self.assertFalse(out["ok"], (case, out))
+            say = out["say"]
+            self.assertNotIn("could not be read", say, case)
+            self.assertIn("keeps no creation time for folders", say, case)
+            self.assertIn("made again under the same name", say, case)
+            self.assertIn("the Mac's own disk", say, case)
+
     def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
         for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
             self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))
         self.assertTrue(self.ctx.zone_marker(self.root, "Work"))
+
+
+class _Bare:
+    """A stat result with a birth time field of 0, to stand in for a disk that keeps none."""
+
+    def __init__(self, fields, extra):
+        real = os.stat_result(fields)
+        for name in ("st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size", "st_atime", "st_mtime", "st_ctime"):
+            setattr(self, name, getattr(real, name))
+        for name, value in extra.items():
+            setattr(self, name, value)
 
 
 def support_ids(text):

@@ -81,11 +81,11 @@ def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
     label = h["row_label"]
     if not v.get("installed"):
         ask = h["request_button"]("Ask my assistant to add it", ADD_REQUEST, workspace, "act sm")
-        body = (row(label("Remote access", "Not installed in this workspace."), '<span class="st idle" id="remote-missing">Not installed</span> ' + ask)
-                + '<p class="hint" id="remote-how">To add it, ask your assistant to copy remote access from your Garrick download into this workspace. '
-                  'Updating Garrick then keeps it current.</p>'
-                + '<details class="rdetails"><summary>Details</summary><p class="hint">Copy the folder extras/remote of your Garrick download to '
-                  'System/remote in this workspace, and delete System/remote/tests. Then reopen Settings.</p></details>')
+        body = (row(label("Remote access", "Not installed. Your assistant can add it."),
+                    '<span class="st idle" id="remote-missing">Not installed</span> ' + ask)
+                + '<details class="rdetails" id="remote-how"><summary>Details</summary><p class="rnote">To add it, ask your assistant to copy remote access '
+                  'from your Garrick download into this workspace: the folder extras/remote goes to System/remote, without its tests folder. '
+                  'Then reopen Settings. Updating Garrick then keeps it current.</p></details>')
         return '<section class="setsec" id="remote-settings" data-state="missing">%s%s%s</section>' % (head, tail, body)
     state = v["status"]
     if v.get("refusal"):

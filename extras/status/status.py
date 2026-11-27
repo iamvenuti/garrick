@@ -5708,6 +5708,8 @@ def waiting_rest(waiting: str) -> str:
     the line cuts can be read in full without a hover."""
     lead = re.match(r"\s*\*\*[^*]+\*\*", waiting)
     start = lead.end() if lead else 0
+    if waiting_badge(waiting) == waiting.strip():       # the badge fell back to the whole row: nothing is left to add
+        return ""
     rest = waiting[start:]
     cut = re.search(r"[:;]", rest)
     return rest[cut.start():].rstrip() if cut and rest[cut.start() + 1:].strip() else ""

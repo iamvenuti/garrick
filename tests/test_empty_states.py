@@ -165,6 +165,8 @@ class TestAReasonTheLineCutsReadsInFull(StatusCase):
         self.assertRegex(htmllib.unescape(card), r'<span class="ywait" tabindex="0" data-tip="Waiting on Theo Marsh: the volumes">Waiting on Theo Marsh<span class="yrest">: the volumes</span></span>')
         self.assertEqual("", status.waiting_rest("Theo Marsh"))
         self.assertEqual("", status.waiting_rest("Theo Marsh:"))
+        self.assertEqual("", status.waiting_rest(": the volumes"))        # the badge fell back to the whole row: nothing more to say
+        self.assertEqual("", status.waiting_rest("; the volumes"))
         self.assertEqual(": the volumes", status.waiting_rest("Theo Marsh: the volumes"))
         self.assertEqual("; the volumes: late", status.waiting_rest("**Theo Marsh**; the volumes: late"))
 

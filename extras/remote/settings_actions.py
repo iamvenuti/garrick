@@ -187,17 +187,21 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     if not zone["walled"]:
         return _no("%s is open, so every connection already reaches it." % zone["zone"])
     read, write = _flag(req.get("read")), _flag(req.get("write"))
-    now = grant.get("zones", {}).get(zone["zone"], {})
+    marker = ctx.zone_marker(ws, zone["zone"])
+    stored = (grant.get("zones") or {}).get(zone["zone"], {})
+    now = stored if ctx.entry_holds(ws, zone["zone"], stored) else {}       # an entry from another folder, or from before markers, is off
     turning_on = (read and not now.get("read")) or (write and not now.get("write"))
-    walled_now = {z["zone"] for z in known if z["walled"]}
-    others = [z for z, e in (grant.get("zones") or {}).items() if z != zone["zone"] and z in walled_now and (e.get("read") or e.get("write"))]
+    others = [z for z in ctx.live_zones(ws, grant) if z != zone["zone"]]
     if turning_on and others:
         return _no(ctx.ONE_WALLED)
     if turning_on and not _flag(req.get("acknowledged")):
         return _no("Read the notice first. Nothing was changed.")
     if write and "write" not in grant["classes"]:
         return _no("This connection was not allowed to write, so it cannot write in %s." % zone["zone"])
-    store.set_zone(gid, zone["zone"], read, write)
+    if (read or write) and not marker:
+        return _no("%s could not be read, so it was not turned on." % zone["zone"])
+    if not store.set_zone(gid, zone["zone"], read, write, marker=marker):
+        return _no("That connection is not active.")
     if not (read or write):
         return {"ok": True, "say": "%s is out of reach for this connection." % zone["zone"]}
     return {"ok": True, "say": "%s is now in reach for this connection. Chats that started before this need a new chat." % zone["zone"]}

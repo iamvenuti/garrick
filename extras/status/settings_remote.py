@@ -55,7 +55,8 @@ def _reach(g: dict, notice: str) -> str:
                     "" if "write" in g["classes"] else " disabled", since, E(notice.replace("{zone}", z["zone"]))))
     why = '<p class="hint bad rwhy">%s</p>' % E(g["reach_note"]) if g.get("reach_note") else ""
     return ('<details class="rreachbox"><summary>What it may reach</summary>%s<p class="hint">Walled zones are off until you turn them on '
-            'here, by name. Reads and writes are separate choices.</p><ul class="rreaches">%s</ul>'
+            'here, by name. Reads and writes are separate choices. A zone that was turned on before this version, or that was removed and made '
+            'again, stays off until you turn it on here again.</p><ul class="rreaches">%s</ul>'
             '<div class="rconfirm" hidden><button class="act sm" type="button" data-rconfirm="1">Turn on</button> '
             '<button class="act sm" type="button" data-rcancel="1">Cancel</button></div></details>' % (why, rows))
 

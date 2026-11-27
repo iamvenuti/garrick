@@ -275,15 +275,22 @@ def revoke(gid: str, now: Optional[float] = None) -> bool:
         return True
 
 
-def set_zone(gid: str, zone: str, read: bool, write: bool, now: Optional[float] = None) -> bool:
-    """Turn a zone's reads and writes on or off for a grant, with the day of the change. Both off takes the zone out."""
+def set_zone(gid: str, zone: str, read: bool, write: bool, now: Optional[float] = None, marker: str = "") -> bool:
+    """Turn a zone's reads and writes on or off for a grant, with the day of the change and the marker of the zone's folder. Both off takes
+    the zone out. Turning a zone on needs a marker: without one nothing is stored and False comes back. An earlier entry whose marker is
+    not this one belongs to another folder, so it counts for nothing and the days start again."""
     with txn(now) as db:
         g = db["grants"].get(gid)
         if not g or g.get("revoked"):
             return False
         old = g["zones"].get(zone, {})
+        if (read or write) and not (isinstance(marker, str) and marker):
+            return False
+        if old.get("marker") != marker:
+            old = {}
         day = today(now)
-        entry = {"read": (old.get("read") or day) if read else "", "write": (old.get("write") or day) if write else ""}
+        entry = {"read": (old.get("read") or day) if read else "", "write": (old.get("write") or day) if write else "",
+                 "marker": marker}
         if entry["read"] or entry["write"]:
             g["zones"][zone] = entry
         else:

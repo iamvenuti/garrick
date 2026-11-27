@@ -155,7 +155,7 @@ The sign-in page is open to the internet, so its lock is for everyone. After fiv
 
 Garrick keeps the service's software, its list of grants and its log in a folder for Garrick under your Library, never in the workspace and never in git. The service has its own Python 3.12 and its own packages, installed from a lock file whose hashes must all match. A hash that does not match stops the install. The log holds the time, the tool, the grant, the outcome and how long it took, and nothing else: no token, no code, no search words and no record's text. The service listens on this computer only, on port 8781 unless you change it.
 
-If you remove a zone and make a new one under the same name, the old entry in a connection's reach is dropped when Settings is opened or a call arrives while the zone is gone. If neither happens in that time, turn the zone off for that connection yourself.
+When you turn a walled zone on, Garrick keeps a marker of that zone's folder with the grant, and every call compares it. If you remove the zone and make a new one under the same name, the marker no longer fits, so the new zone starts with nothing, and you turn it on again in Settings. Editing files inside the zone does not change the marker. A zone turned on with Garrick 0.82.0 or earlier has no marker, so it stays out of reach until you turn it on again in Settings. If the marker cannot be read, the zone is out of reach.
 
 ## Pause, revoke and turn off
 

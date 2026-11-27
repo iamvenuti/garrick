@@ -115,7 +115,7 @@ class States(Case):
         self.install()
         self.turn_on()
         gid = self.store.create_grant("c1", "Maple phone", ["read", "write"])
-        self.store.set_zone(gid, "Work", True, False)
+        self.store.set_zone(gid, "Work", True, False, marker=mod("context").zone_marker(self.root, "Work"))
         out = self.draw()
         self.assertIn("Maple phone", out)
         self.assertIn('data-revoke="%s"' % gid, out)

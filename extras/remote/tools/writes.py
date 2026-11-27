@@ -38,6 +38,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import common, manifest, run_op
+from . import lifecycle
 
 sys.dont_write_bytecode = True
 
@@ -70,6 +71,9 @@ LONG = {"text": MOST_TODO, "line": MOST_TODO, "reason": 300, "title": MOST_TITLE
 NAMES = ("project", "thread")
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 FIELDS = ("project", "thread", "text", "title", "line", "date", "target", "reason", "items", "drop")
+TAKES.update(lifecycle.TAKES)                   # #724: check-name, new-project, new-thread, rename, move and undo
+MUST.update(lifecycle.MUST)
+FIELDS = FIELDS + lifecycle.MORE_FIELDS
 
 
 REACH_CHANGED_SAY = "That was prepared before the owner changed what this connection may reach. Prepare it again in a new chat."
@@ -171,6 +175,8 @@ class Writes:
     def clean(self, verb, given):
         """The fields of a request, checked: (fields, "") or (None, the words of the refusal). A field the verb does
         not take is refused by name, as operations.validate() does, never ignored."""
+        if verb in lifecycle.VERBS:
+            return lifecycle.clean(verb, given, FIELDS)
         fields = {}
         for name in given:
             if name not in FIELDS:
@@ -220,6 +226,8 @@ class Writes:
 
     def targets(self, verb, zone, fields):
         """The files an operation changes, from the zone, as the page action would change them."""
+        if verb in lifecycle.VERBS:
+            return lifecycle.targets(self, zone, verb, fields)
         if verb in ("note-add", "todo-add") or verb in run_op.LINE_VERBS:
             return ["Todo.md"]
         project, thread = fields["project"], fields.get("thread")
@@ -254,11 +262,13 @@ class Writes:
         fields, why = self.clean(verb, given)
         if fields is None:
             return say("not_prepared", why)
+        if verb in lifecycle.VERBS:
+            return lifecycle.prepare(self, verb, canonical, fields, operation_id)
         digest = payload_hash(verb, canonical, fields)
         with self.store.locked("prepare"):               # two prepares of one request at once are still one operation
             return self.prepared(verb, canonical, fields, digest, operation_id)
 
-    def prepared(self, verb, canonical, fields, digest, operation_id):
+    def prepared(self, verb, canonical, fields, digest, operation_id, extra=None):
         self.store.tidy()
         if operation_id not in (None, ""):
             if not common.op_id_ok(operation_id) or len(operation_id) != 16:
@@ -280,8 +290,10 @@ class Writes:
                 return self.view(rec)
         op = secrets.token_hex(8)
         rec = {"id": op, "grant": self.grant, "workspace": str(self.ws), "verb": verb, "zone": canonical, "fields": fields,
-               "hash": digest, "state": "prepared", "created": time.time(), "would": self.would(verb, canonical, fields),
+               "hash": digest, "state": "prepared", "created": time.time(),
+               "would": (extra or {}).get("would") or self.would(verb, canonical, fields),
                "receipt": None, "finished": None, "reach": self.reach_now()}
+        rec["fields"] = dict(fields, **{k: v for k, v in (extra or {}).items() if k.startswith("_")})   # a preview lives with the fields
         with self.store.locked(op):
             self.store.write(op, rec)
         return self.view(rec)
@@ -306,6 +318,8 @@ class Writes:
             return "reach"
         if self.reach_changed(rec):
             return "reach_changed"                            # prepared under another reach, or another folder of that zone
+        if verb in lifecycle.VERBS and lifecycle.guard(self, zone, verb, fields):
+            return lifecycle.NOT_A_PLACE                      # a link, or a place outside the zone, now
         zdir = self.ws / "Zones" / zone
         for rel in self.targets(verb, zone, fields):
             if self.wrapping(zone, rel, verb, fields):
@@ -366,7 +380,7 @@ class Writes:
         except (OSError, ValueError):
             return None
 
-    def execute(self, operation_id):
+    def execute(self, operation_id, confirmation=None):
         if not (common.op_id_ok(operation_id) and len(str(operation_id)) == 16):
             return say("not_found", NOT_FOUND)
         op = str(operation_id)
@@ -378,6 +392,10 @@ class Writes:
                 return say("not_found", NOT_FOUND)
             if rec["state"] != "prepared":
                 return self.view(self.settle(rec))        # the same id returns the first result: running, saved, refused
+            if rec["verb"] in lifecycle.CONFIRMED:
+                stopped = lifecycle.confirmed(self, rec, confirmation, PREPARED_KEEP)       # the owner's yes, for this one preview
+                if stopped is not None:
+                    return stopped
             why = self.refusal_before(rec)
             if why == "reach":
                 return common.write_reach_refusal()
@@ -389,6 +407,10 @@ class Writes:
                 rec.pop("would", None)
                 self.store.write(op, rec)
                 return self.view(rec)
+            if rec["verb"] in lifecycle.CONFIRMED:
+                stopped = lifecycle.unchanged(self, rec)                               # and the plan is still the one it was shown
+                if stopped is not None:
+                    return stopped
             rec.update({"state": "running", "started": time.time()})
             self.store.write(op, rec)
             worker = subprocess.Popen([sys.executable, str(Path(run_op.__file__).resolve()), str(self.store.root.parent), op],
@@ -455,13 +477,18 @@ class Writes:
     def view(self, rec):
         state, receipt = rec["state"], rec.get("receipt") or {}
         words = {
-            "prepared": "Prepared. Nothing has changed yet. Execute it to go ahead. " + rec.get("would", ""),
+            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview: it runs only on the owner's yes. "
+                         if rec["verb"] in lifecycle.CONFIRMED else "Prepared. Nothing has changed yet. Execute it to go ahead. ") + rec.get("would", ""),
             "running": "It is running. Ask for its status in a moment.",
         }.get(state) or receipt.get("say") or ""
         out = {"operation_id": rec["id"], "verb": rec["verb"], "zone": rec["zone"], "state": state, "saved": state == "saved",
                "say": words}
         if state == "prepared":
             out["would"] = rec.get("would", "")
+            if rec["verb"] in lifecycle.CONFIRMED:       # what the owner is asked about, and the token that says yes to this one
+                out["preview"] = (rec.get("fields") or {}).get("_preview", {})
+                out["confirmation"] = lifecycle.token(self, rec)
+                out["needs_confirmation"] = True
         if receipt.get("commit"):
             out["commit"] = receipt["commit"]
         if state == "saved":

@@ -277,7 +277,7 @@ DECLARED: Dict[str, Op] = {
     "new-thread": _op(("zone", "project", "name", "spoken",
                        "papers",
                        ), ("project", "name"), "zone", True, "safe"),
-    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
+    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken", "plan"),
                       ("kind", "name", "to"), "none"),
     "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.

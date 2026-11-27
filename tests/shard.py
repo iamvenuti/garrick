@@ -224,6 +224,9 @@ for _key in ("extras/status/status.py",):
 # app-0830 (#711): empty states and counts, on the built page.
 for _key in ("extras/status/status.py", "tests/test_empty_states.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_empty_states"]
+# life-0850 (#724): what a rename or a move would write, asked of the function the change writes with.
+for _key in ("template/System/tools/scaffold.py", "tests/test_scaffold_plan.py", "tests/test_scaffold_manage.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_scaffold_plan"]
 
 
 def touched(files, names=None):

@@ -8,20 +8,26 @@ It is separate from [phone access](phone-access.md), which uses your assistant p
 
 ## What it does now
 
-A connected assistant gets five read tools: `places`, `thread_state`, `search`, `read` and `owed`. For changes it gets three tools that work together: `prepare`, `execute` and `status`. They serve ten actions: a note, the six Todo actions, park, wake and checkpoint. Everything else is listed below with the release that plans it, so a partial service is never mistaken for a complete one. Of the verbs, 10 work now, 17 wait for your approval (which does not exist yet, so they are refused), 7 are internal and 33 are planned for a later release.
+A connected assistant gets five read tools: `places`, `thread_state`, `search`, `read` and `owed`. For changes it gets three tools that work together: `prepare`, `execute` and `status`. They serve seventeen actions: a note, the six Todo actions, park, wake, checkpoint and wrap, and six that check a name, make a project or a thread, rename, move and undo. Everything else is listed below with the release that plans it, so a partial service is never mistaken for a complete one. Of the verbs, 17 work now, 17 wait for your approval (which does not exist yet, so they are refused), 7 are internal and 26 are planned for a later release.
 
 <!-- manifest -->
 | What | Kind | Disposition | Planned | Why |
 |---|---|---|---|---|
+| `check-name` | verb | Served | now |  |
 | `checkpoint` | verb | Served | now |  |
+| `move` | verb | Served | now |  |
+| `new-project` | verb | Served | now |  |
+| `new-thread` | verb | Served | now |  |
 | `note-add` | verb | Served | now |  |
 | `park` | verb | Served | now |  |
+| `rename` | verb | Served | now |  |
 | `todo-add` | verb | Served | now |  |
 | `todo-date` | verb | Served | now |  |
 | `todo-done` | verb | Served | now |  |
 | `todo-edit` | verb | Served | now |  |
 | `todo-retire` | verb | Served | now |  |
 | `todo-undo` | verb | Served | now |  |
+| `undo` | verb | Served | now |  |
 | `wake` | verb | Served | now |  |
 | `recall` | skill | Served | now | Answered by the five read tools. |
 | `owed` | read tool | Served | now |  |
@@ -33,7 +39,7 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `chase` | verb | Owner approval | in a later release | Drafts a message to a person who owes an answer. |
 | `commit-files` | verb | Owner approval | in a later release | Commits files that the owner has not reviewed. |
 | `connected-service` | verb | Owner approval | in a later release | Turns a connected service on or off. |
-| `delete` | verb | Owner approval | in the next release | Deletes a project or a thread for good. |
+| `delete` | verb | Owner approval | in the next release | Deletes a project or a thread for good. It waits for the owner's approval at the Mac. |
 | `inbox-run` | verb | Owner approval | in a later release | Files the contents of an inbox. |
 | `intake-answer` | verb | Owner approval | in a later release | Answers a question about where a filed item belongs. |
 | `layout` | verb | Owner approval | in a later release | Changes how a project is laid out. |
@@ -49,7 +55,6 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `answer` | verb | Not yet | in a later release |  |
 | `ask-desktop` | verb | Not yet | in a later release |  |
 | `bring-back` | verb | Not yet | in a later release |  |
-| `check-name` | verb | Not yet | in the next release |  |
 | `close` | verb | Not yet | in a later release |  |
 | `continue` | verb | Not yet | in a later release |  |
 | `example` | verb | Not yet | in a later release |  |
@@ -58,9 +63,6 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `fix` | verb | Not yet | in the next release |  |
 | `later` | verb | Not yet | in a later release |  |
 | `memory-preview` | verb | Not yet | in a later release |  |
-| `move` | verb | Not yet | in the next release |  |
-| `new-project` | verb | Not yet | in the next release |  |
-| `new-thread` | verb | Not yet | in the next release |  |
 | `note-open` | verb | Not yet | in a later release |  |
 | `open` | verb | Not yet | in a later release |  |
 | `question-answer` | verb | Not yet | in a later release |  |
@@ -71,11 +73,9 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `question-open-sections` | verb | Not yet | in a later release |  |
 | `question-work` | verb | Not yet | in a later release |  |
 | `release-check` | verb | Not yet | in a later release |  |
-| `rename` | verb | Not yet | in the next release |  |
 | `start` | verb | Not yet | in a later release |  |
 | `stop-using` | verb | Not yet | in a later release |  |
 | `suggestion` | verb | Not yet | in a later release |  |
-| `undo` | verb | Not yet | in the next release |  |
 | `walls-unallow` | verb | Not yet | in a later release |  |
 | `work-file` | verb | Not yet | in a later release |  |
 | `wrap` | verb | Not yet | in the next release |  |
@@ -85,7 +85,7 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `meetings` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `nurture` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `setup` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
-| `threads` | skill | Not yet | in the next release | Park, wake and checkpoint are served. Wrap and the lifecycle verbs come next. |
+| `threads` | skill | Not yet | in the next release | Park, wake, checkpoint, wrap and the lifecycle verbs are served. The rest of the skill needs the job worker. |
 | `todo` | skill | Not yet | in a later release | The Todo verbs are served. The sweep needs the job worker. |
 | `update` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `count-card` | verb | Internal |  | Counts a card the status page showed. It has no meaning for a remote assistant. |
@@ -104,6 +104,35 @@ A change takes three calls. `prepare` says what would change and gives an operat
 Asking again with the same operation id gives the first result, so asking twice saves once. A changed request under the same id is refused. A change is refused when the file has edits that are not saved to history yet, or a wrap is running on the thread. Prepared changes wait an hour, and receipts are kept for seven days. A token whose scope was narrowed to read cannot write. A repeat that was already done gets the receipt "This was already done a few minutes ago. Nothing was saved again." If a change takes longer than seven minutes, the receipt says it may or may not have been saved, and asks you to check at the Mac. A note may hold up to 4,000 characters, and a Todo line up to 1,000. A note, a new action, park and wake leave a record in the zone's own history folder, written before the commit and closed after it, with the caller named as remote. If the service or its worker stops in the middle of one of these, the next status call reads the zone's history and says once whether the change was saved, was not saved, or cannot be told, and names the commit when it cannot. It never commits a second time. A change that has no such record, such as one begun before an update, says the save did not finish and asks you to check at the Mac. The five Todo line changes (tick, untick, new date, reword, retire) leave the same record, so a stop in the middle of one is settled the same way. A checkpoint makes no commit and has no record: a stop in the middle of one says the save did not finish.
 
 An assistant cannot change what it may see, cannot change a grant and cannot change a setting. Those change only in Settings, at the Mac.
+
+## Making, renaming, moving and undoing
+
+Six more actions run through the same three tools, and each one runs the same code as the Garrick.app page. A request the page would refuse is refused here in the page's words, before anything is prepared.
+
+- `check-name` says at once whether a name is free and valid in the zone, for a new project, a new thread, a rename or a move. It writes nothing and prepares nothing, so it has no operation id.
+- `new-project` makes a project, and its first thread if one is named. A party may be named, but only one that is already in the Parties table. Adding a party stays at the Mac, because a party decides which side of a wall a project is on. A name that needs a spoken form is refused with the page's question, and is made in a session instead.
+- `new-thread` makes a thread in a project.
+- `rename` renames a project or a thread, and every link to it in the zone, in one commit. It also leaves the old name as a heard name in the workspace's names table, as it does at the Mac.
+- `move` moves a thread to another project of its zone, with every link to it, in one commit.
+- `undo` takes back a rename, a move, a new project or a new thread that this connection made, in one commit, while it is still the last commit in that zone. It takes the commit id from the receipt of the change. A commit that this connection did not make is refused, even one the page's own Undo would take back: undo that one at the Mac.
+
+`delete` is not served. It waits for your approval at the Mac, which does not exist yet.
+
+A rename and a move show what would change before they run. The answer to `prepare` lists the paths that move, the notes that would be rewritten, and for each note a few of the lines that change, with a count of the rest. It also carries a `confirmation` value. Nothing runs until `execute` is called with that operation id and that value, and the assistant is told to ask for it only after you have seen the preview and said yes. The value is for that one prepared operation and the plan it showed. It works once. It expires with the prepared change, an hour after the preview. And it is refused when what would change is no longer what the preview showed, for example when a note that links to the thread was saved in the meantime: the check is made again at the moment of the confirmation, nothing is written, and the change is prepared again with a new preview. A rename or a move sent to `execute` with no value, or with the value of another change, writes nothing.
+
+A name here is one folder name and never a path: a name with a slash, a leading dot, `..` or a path to another place is refused. A project, a thread or a note that is a link is refused too, because a link may lead out of the zone. Every zone a request names is checked against the grant's write reach before anything is prepared, and again at `execute`. The refusal for a zone outside the reach is the one sentence given under Reach, and it names nothing in that zone. A refusal about a party does not list the parties of the workspace: it says that the party is not one this zone can use.
+
+Each of the six leaves a record in the zone's own history folder, as the five before them do. A retry with the same operation id returns the first receipt and makes no second commit, and a stop in the middle is settled from the zone's history.
+
+## Wrapping a thread
+
+A wrap leaves a thread at a resume point the next session can read cold. The assistant sends the words and the tool does the rest. The words are the Resume here block (a short account of where the thread stands, and all six rows: Live artifact, Rebuild with, Next action, Keep in mind, Waiting on and Deadline), the dated entry, the commit message, and the Todo lines to add or tick. Garrick takes the lock, writes the note and the Todo list, and saves everything as one commit through the zone's own checks, as a wrap at the Mac does. A key the tool does not take, or a missing one, fails the wrap and nothing is written.
+
+A wrap from here never writes a memory pointer, because that file is outside the workspace, on the Mac. It never takes a lock that the caller says it holds. A request that carries either one is refused in words, and nothing is written.
+
+A wrap stays inside the zones the connection may write to. A thread in a zone the connection does not reach is refused, and the answer names nothing in that zone. The project and the thread are folder names only: a path, or a link that leads out of the zone, is refused.
+
+Ask for the same operation twice and the second answer is the first receipt: no second dated entry is written. If the wrap stops after the commit and before the answer, the next status check settles it from the zone's history.
 
 ## Reach
 
@@ -180,7 +209,7 @@ If the Mac is off or asleep, you see the assistant's own error, not a sentence f
 
 ## What is not in this release
 
-Approvals from the phone, switching a reach from the phone, wrap, the lifecycle verbs, owner-only operations and long jobs. Sign-in with a passkey comes in a later release.
+Approvals from the phone, switching a reach from the phone, wrap, delete, adding a party, owner-only operations and long jobs. Sign-in with a passkey comes in a later release.
 
 ## What you lose without it
 

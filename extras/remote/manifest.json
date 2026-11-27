@@ -67,8 +67,8 @@
   {
    "name": "new-project",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
@@ -81,29 +81,29 @@
   {
    "name": "new-thread",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
    "name": "check-name",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
    "name": "rename",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
    "name": "move",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
@@ -111,7 +111,7 @@
    "kind": "verb",
    "disposition": "owner-approval",
    "release": "next",
-   "reason": "Deletes a project or a thread for good."
+   "reason": "Deletes a project or a thread for good. It waits for the owner's approval at the Mac."
   },
   {
    "name": "layout",
@@ -123,8 +123,8 @@
   {
    "name": "undo",
    "kind": "verb",
-   "disposition": "not-yet",
-   "release": "next",
+   "disposition": "served",
+   "release": "now",
    "reason": ""
   },
   {
@@ -559,7 +559,7 @@
    "kind": "skill",
    "disposition": "not-yet",
    "release": "next",
-   "reason": "Park, wake and checkpoint are served. Wrap and the lifecycle verbs come next."
+   "reason": "Park, wake, checkpoint, wrap and the lifecycle verbs are served. The rest of the skill needs the job worker."
   },
   {
    "name": "todo",

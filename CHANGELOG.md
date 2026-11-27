@@ -4,6 +4,28 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-11-27
+
+Every action that commits now leaves a record, so Garrick can tell what happened when it stopped halfway. Remote access also gets four follow-ups from the 0.83.0 review.
+
+**Upgrading.**
+- If Garrick stops in the middle of an action, such as a park, a Todo tick or a remote note, the next run looks at the zone's history and tells you once whether the action went through, did not, or cannot be told. In the last case it names the commit it found and does nothing on its own.
+- Each remote sign-in now has its own five tries. A stranger's wrong codes no longer lock you out of yours.
+
+### Added
+
+- **A record for every action that commits** (#716). Garrick writes the record before the commit and closes it after. The commit carries the action's id, so the zone's own history shows whether it went through. The record holds ids and hashes, never your words. Send the same action again with the same id and you get the first answer back. Nothing is committed twice. A remote assistant's writes use the same record, so a remote write cut off halfway is settled the same way as a click. The architecture page has a new section on how an action is recorded and settled.
+
+### Changed
+
+- **Remote access sign-in tries** (#717). Each sign-in request has its own five tries. The fifth wrong code closes that request and its code, and the others stay open. A shared ceiling of 30 wrong codes in 15 minutes still stops a flood, and it counts only sign-ins that nobody made a code for. Making a new code no longer resets a request's count.
+
+### Fixed
+
+- **A write after you change what a connection may reach** (#717). A write prepared before the change is still refused, and the reason now names the change. The same request prepared again in a new chat runs.
+- **A zone on a disk with no folder creation time** (#717). Settings now says that the disk keeps no folder creation time and gives a next step, where it used to say that the zone could not be read.
+- **The sign-in number** (#717). The remote access docs say what it proves: which row in Settings belongs to which sign-in page. It does not prove who opened that page.
+
 ## [0.83.0] - 2026-11-27
 
 This release closes the four findings the 0.82.0 review left open in remote access, so a pairing code now works for one sign-in only. The App says in plain words why a card is empty and what failed, and the public pages describe Garrick as it works now.

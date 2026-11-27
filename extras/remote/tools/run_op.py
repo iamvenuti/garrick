@@ -32,6 +32,8 @@ PAGE_PYTHON = "/usr/bin/python3"
 RUN_TIMEOUT = 420           # seconds: the lock wait (45), a commit and its wall check (300), and slack
 LINE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire")
 JSON_VERBS = ("note-add", "todo-add", "park", "wake")
+LIFE_VERBS = ("new-project", "new-thread", "rename", "move", "undo")      # #724: make, rename, move and undo (lifecycle.py)
+JSON_VERBS = JSON_VERBS + LIFE_VERBS
 LONG_WAY = "It took longer than expected and may or may not have been saved. Check the zone at the Mac before trying again."
 CRASHED = "The save did not finish. Nothing more was done. Check the zone at the Mac before trying again."
 
@@ -83,6 +85,8 @@ def command(ws: str, rec: dict):
             if f.get(field):
                 req[field] = f[field]
         return [python(), str(Path(ws) / "System" / "tools" / "scaffold.py"), "--root", ws, "checkpoint"], json.dumps(req)
+    if verb in LIFE_VERBS:
+        return base, json.dumps(life_request(rec))
     req = {"verb": verb, "zone": zone, "op": rec["id"]}
     for field in ("project", "thread", "text", "title", "target", "date"):
         if f.get(field) is not None:
@@ -91,6 +95,39 @@ def command(ws: str, rec: dict):
 
 
 LINE_FIELDS = {"todo-done": (), "todo-undo": (), "todo-date": ("date",), "todo-edit": ("text",), "todo-retire": ("reason",)}
+
+# The fields each of those verbs sends to the page action: its own, and no other. `plan`, `confirm`, `heading` and a party's
+# adding are never among them: a rename's confirmation is the service's, and is checked before this runs.
+LIFE_FIELDS = {"new-project": ("name", "party", "thread"), "new-thread": ("project", "name"), "rename": ("project", "thread", "to"),
+               "move": ("project", "thread", "to"), "undo": ("commit",)}
+PARTY_SAY = "That party is not one this zone can use. A party is added at the Mac."
+PARTY_WORDS = re.compile(r"is not a party tag in System/context\.md|is a party of ")
+
+
+def life_request(rec: dict) -> dict:
+    f = rec.get("fields") or {}
+    req = {"verb": rec["verb"], "zone": rec["zone"], "op": rec["id"]}
+    for field in LIFE_FIELDS[rec["verb"]]:
+        if f.get(field) is not None:
+            req[field] = f[field]
+    return req
+
+
+def clean_say(say: str) -> str:
+    """The words of the page action, but for the one refusal that lists the parties of every zone: a walled zone's names
+    are not read out to a connection that does not reach it."""
+    return PARTY_SAY if PARTY_WORDS.search(say or "") else say
+
+
+def life_receipt(made: dict, ws: str, rec: dict) -> dict:
+    """The receipt of one of those verbs: the words cleaned, and the commit a new project or thread made, which the page
+    action's reply does not carry, from the core's own commit record (the trailer on the commit names this operation)."""
+    made = dict(made, say=clean_say(made.get("say", "")))
+    if made.get("ok") and not made.get("commit") and rec["verb"] in ("new-project", "new-thread"):
+        got = core_outcome(ws, Path(ws) / "Zones" / rec["zone"], rec["id"])
+        if isinstance(got, dict) and got.get("result") == "done" and got.get("commit"):
+            made["commit"] = str(got["commit"])[:64]
+    return made
 
 
 def with_state(argv, stdin, env, ws):
@@ -215,6 +252,8 @@ def main(argv=None) -> int:
             stdin = with_state(argv_, stdin, env, ws)
         done = subprocess.run(argv_, input=stdin, capture_output=True, text=True, timeout=RUN_TIMEOUT, env=env, cwd=ws)
         made = receipt(rec["verb"], done.returncode, done.stdout, done.stderr)
+        if rec["verb"] in LIFE_VERBS:
+            made = life_receipt(made, ws, rec)
         state_now = "saved" if made["ok"] else "refused"
     except subprocess.TimeoutExpired:
         state_now, made = "unknown", {"ok": False, "say": LONG_WAY}

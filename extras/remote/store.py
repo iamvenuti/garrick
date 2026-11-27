@@ -146,13 +146,16 @@ def handle_key() -> bytes:
 
 # --------------------------------------------------------------------------- the pairing code and the consent lock
 
-def make_pairing_code(now: Optional[float] = None, request: str = "") -> Tuple[str, int]:
+def make_pairing_code(now: Optional[float] = None, request: str = "") -> Optional[Tuple[str, int]]:
     """A new six-digit code, kept as a hash, good for five minutes and one use, and good for one sign-in request only: `request` is the
     short id of the request it was made for (`waiting_requests`). A code with no request works for none. A new code replaces the one
-    before it. Returns the code, to be shown once, and its life in seconds."""
+    before it. Returns the code, to be shown once, and its life in seconds, or None when `request` names a request that is not waiting
+    any more (checked inside the same step that makes the code, so a request dropped a moment ago gets no code)."""
     now = time.time() if now is None else now
     code = "%06d" % secrets.randbelow(1000000)
     with txn(now) as db:
+        if request and not any(isinstance(v, dict) and v.get("rid") == request for v in db["pending"].values()):
+            return None
         db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS, "request": str(request or "")}}
         db["consent"]["wrong"] = 0                       # a new code starts a new count
     return code, CODE_SECONDS
@@ -336,7 +339,7 @@ def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> Optional[s
     now = time.time() if now is None else now
     pid = secrets.token_urlsafe(32)
     with txn(now) as db:
-        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)}
+        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)} - {None, ""}
         while len(db["pending"]) >= MAX_PENDING:
             order = sorted(((float(v.get("made", 0)) if isinstance(v, dict) else 0.0), k) for k, v in db["pending"].items()
                            if not (isinstance(v, dict) and v.get("rid") in held))

@@ -44,10 +44,11 @@ def minutes(seconds: int) -> str:
     return "%d minute%s" % (n, "" if n == 1 else "s")
 
 
-def form(pid: str, name: str, say: str = "", ago: int = 0) -> str:
+def form(pid: str, name: str, say: str = "", ago: int = 0, rid: str = "") -> str:
     note = '<p class="say">%s</p>' % html.escape(say) if say else ""
     return ('<h1>Connect an assistant</h1>%s<p>%s asks to connect to your Garrick workspace on this Mac.</p>'
             '<p>This sign-in was started %s. Go on only if you started it yourself a moment ago. If you did not, close this page.</p>'
+            '%s'
             '<form method="post" action="/consent"><input type="hidden" name="p" value="%s">'
             '<p>What may it do?</p>'
             '<label><input type="checkbox" name="read" value="1" checked> Read what your open zones hold</label>'
@@ -57,7 +58,10 @@ def form(pid: str, name: str, say: str = "", ago: int = 0) -> str:
             'aria-label="Code from your Mac" required autofocus></p>'
             '<p><button type="submit">Connect</button></p></form>'
             '<p class="muted">Zones that are walled stay out of reach unless you turn them on in Settings.</p>'
-            % (note, html.escape(name), ago_words(ago), html.escape(pid, quote=True)))
+            % (note, html.escape(name), ago_words(ago), ID % html.escape(rid) if rid else "", html.escape(pid, quote=True)))
+
+
+ID = '<p>This is sign-in <b>%s</b>. Settings must show the same sign-in when you make the code.</p>'
 
 
 def ago_words(seconds: int) -> str:
@@ -86,7 +90,7 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
         if not row:
             return GONE
         wait = store.consent_locked(clock())
-        return locked(wait) if wait else page(form(pid, row["name"], ago=age(row, clock())))
+        return locked(wait) if wait else page(form(pid, row["name"], ago=age(row, clock()), rid=str(row.get("rid") or "")))
 
     async def answer(request: Request) -> Response:
         sent = request.headers.get("origin")
@@ -102,10 +106,10 @@ def routes(provider, store, clock: Callable[[], float], origin: str):
             return locked(wait)
         classes = [c for c in ("read", "write") if data.get(c)]
         if "read" not in classes:
-            return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect.", age(row, clock())), 400)
+            return page(form(pid, row["name"], "It needs to be allowed to read. Tick that box to connect.", age(row, clock()), str(row.get("rid") or "")), 400)
         if not store.check_pairing_code(code, clock(), str(row.get("rid") or "")):
             wait = store.consent_locked(clock())
-            return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out.", age(row, clock())), 400)
+            return locked(wait) if wait else page(form(pid, row["name"], "That code is not right, or it has run out.", age(row, clock()), str(row.get("rid") or "")), 400)
         target = provider.finish(pid, classes)
         if target is None:
             return GONE

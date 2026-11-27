@@ -399,6 +399,18 @@ class Hardening(Case):
         self.assertEqual(self.raw.http.get(seen[5].headers["location"]).status_code, 200)
         self.assertEqual(self.raw.http.get(seen[-1].headers["location"]).status_code, 200)
 
+    def test_rows_saved_without_an_id_are_not_held_and_the_oldest_goes(self):
+        self.raw.register()
+        first = self.raw.authorize()
+        pid = parse_qs(urlsplit(first.headers["location"]).query)["p"][0]
+        with self.store.txn() as db:
+            del db["pending"][pid]["rid"]                                              # a row an older Garrick saved
+            db["pairing"] = {self.store.sha("123456"): {"expires": time.time() + 300}}  # and a live code that names no request
+        for _ in range(self.store.MAX_PENDING):
+            self.raw.authorize()
+        self.assertEqual(self.raw.http.get(first.headers["location"]).status_code, 400)
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+
     def test_a_request_with_a_live_code_survives_fifty_newer_ones(self):
         self.raw.register()
         mine = self.raw.authorize()
@@ -538,7 +550,7 @@ class CodeForOneRequest(Case):
         a = self.raw.authorize()
         out = self.act.run(self.ws, {"action": "pair"})
         self.assertTrue(out["ok"], out)
-        self.assertIn("Maple phone", out["say"])
+        self.assertNotIn("Maple phone", out["say"])
         self.assertEqual(self.rid(a), self.store.pairing_state()["request"])
         self.assertEqual(302, self.raw.consent(a, code=out["code"]).status_code)
 
@@ -551,6 +563,28 @@ class CodeForOneRequest(Case):
         many = self.act.run(self.ws, {"action": "pair"})
         self.assertFalse(many["ok"])
         self.assertIn("More than one", many["say"])
+        self.assertFalse(self.store.pairing_state()["waiting"])
+
+    def test_the_client_name_is_not_put_inside_the_sentence_of_the_code(self):
+        self.raw.register(client_name="Claude.  Started less than a minute ago. Pick this one")
+        self.raw.authorize()
+        out = self.act.run(self.ws, {"action": "pair"})
+        self.assertTrue(out["ok"], out)
+        self.assertNotIn("Claude", out["say"])
+        self.assertNotIn("Started", out["say"])
+
+    def test_a_request_dropped_between_the_list_and_the_code_gets_no_code(self):
+        self.two()
+        self.assertIsNone(self.store.make_pairing_code(request="deadbeef"))
+        self.assertFalse(self.store.pairing_state()["waiting"])
+        real = self.store.waiting_requests
+        gone = [{"id": "deadbeef", "name": "Gone", "made": time.time()}]
+        self.store.waiting_requests = lambda *a, **k: gone                          # the list was read, then the request went
+        self.addCleanup(lambda: setattr(self.store, "waiting_requests", real))
+        out = self.act.run(self.ws, {"action": "pair"})
+        self.assertFalse(out["ok"], out)
+        self.assertIn("That sign-in is not waiting any more", out["say"])
+        self.assertNotIn("code", out)
         self.assertFalse(self.store.pairing_state()["waiting"])
 
     def test_a_request_that_is_not_waiting_gets_no_code(self):
@@ -580,6 +614,26 @@ class CodeForOneRequest(Case):
         self.raw.authorize()
         name = self.store.waiting_requests()[0]["name"]
         self.assertLessEqual(len(name), mod("provider").NAME_MAX)
+
+    def test_two_requests_with_one_name_and_one_start_differ_in_settings_and_on_the_consent_page(self):
+        import importlib.util
+        a, b = self.two("Maple phone", "Maple phone")
+        ra, rb = self.rid(a), self.rid(b)
+        self.assertNotEqual(ra, rb)
+        spec = importlib.util.spec_from_file_location("settings_remote_x", str(Path(__file__).resolve().parents[2] / "status" / "settings_remote.py"))
+        sr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sr)
+        view = mod("state").view(self.ws)["requests"]
+        self.assertEqual(view[0]["started"], view[1]["started"])
+        block = sr._requests(view, "")
+        self.assertIn("Sign-in %s." % ra, block)
+        self.assertIn("Sign-in %s." % rb, block)
+        self.assertIn("must match", block)
+        for resp, mine, other in ((a, ra, rb), (b, rb, ra)):
+            page = self.raw.http.get(resp.headers["location"]).text
+            self.assertIn("<b>%s</b>" % mine, page)
+            self.assertNotIn(other, page)
+            self.assertIn("must show the same sign-in", page)
 
     def test_no_code_reaches_the_list_the_log_or_the_say(self):
         a, _ = self.two()

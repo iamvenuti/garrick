@@ -97,6 +97,25 @@ class Marked(WritesCase):
         self.assertNotEqual("saved", out.get("state"), out)
         self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
 
+    def test_a_handle_and_a_prepared_write_from_before_do_not_come_back_when_the_zone_is_turned_on_again(self):
+        s = self.live()
+        handle = s.new_handle()
+        made = writes.Writes(s).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.assertEqual("prepared", made.get("state"), made)
+        old_reach = s.reach_id()
+        self.remade()
+        self.assertTrue(self.turn_on_work()["ok"])                                           # the owner turns the new zone on
+        fresh = self.live()
+        self.assertTrue(fresh.zone_allowed("Work", write=True))
+        self.assertNotEqual(old_reach, fresh.reach_id())
+        with self.assertRaises(self.ctx.HandleRefused):
+            fresh.check_handle(handle)
+        out = writes.Writes(fresh).execute(made["operation_id"])
+        self.assertNotEqual("saved", out.get("state"), out)
+        self.assertNotEqual("running", out.get("state"), out)
+        self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
+        fresh.check_handle(fresh.new_handle())                                                # a new handle works
+
     def test_the_old_entry_does_not_come_back_when_a_walled_zone_is_turned_on_again(self):
         self.remade()
         self.assertFalse(self.live().zone_allowed("Work"))
@@ -156,6 +175,27 @@ class Marked(WritesCase):
         self.assertNotEqual(first, self.ctx.zone_marker(self.root, "Work"))
         self.assertEqual("", self.ctx.zone_marker(self.root, "Nowhere"))
         self.assertEqual("", self.ctx.zone_marker(self.root, "../System"))
+
+    def test_without_a_birth_time_the_zone_has_no_marker_and_cannot_be_turned_on(self):
+        real = os.stat
+
+        def bare(path, *a, **k):
+            got = real(path, *a, **k)
+            if str(path).endswith("Work"):
+                return os.stat_result(tuple(got)[:10])                       # no birth time field
+            return got
+        with unittest.mock.patch.object(self.ctx.os, "stat", side_effect=bare):
+            self.assertEqual("", self.ctx.zone_marker(self.root, "Work"))
+            other = self.store.create_grant("client-two", "Tablet", ["read"])
+            out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+            self.assertFalse(out["ok"], out)
+            self.assertFalse(self.live().zone_allowed("Work"))               # and one already on is refused: fail closed
+        self.assertTrue(self.live().zone_allowed("Work"))
+
+    def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
+        for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
+            self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))
+        self.assertTrue(self.ctx.zone_marker(self.root, "Work"))
 
 
 def support_ids(text):

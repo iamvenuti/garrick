@@ -175,8 +175,11 @@ def _pair(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         return _no("No sign-in is waiting. Start one in your assistant, then choose Show a code.")
     else:
         return _no("More than one sign-in is waiting. Pick the one you started, then choose Show a code.")
-    code, seconds = store.make_pairing_code(request=picked[0]["id"])
-    return {"ok": True, "say": "Type this code on the sign-in page of %s within five minutes. It works once, for that sign-in only." % picked[0]["name"],
+    made = store.make_pairing_code(request=picked[0]["id"])
+    if made is None:
+        return _no("That sign-in is not waiting any more. Start it again in your assistant, then choose Show a code.")
+    code, seconds = made
+    return {"ok": True, "say": "Type this code on the page of the sign-in you picked, within five minutes. It works once, for that sign-in only.",
             "code": code, "seconds": seconds}
 
 

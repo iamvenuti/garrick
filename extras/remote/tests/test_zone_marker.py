@@ -116,6 +116,27 @@ class Marked(WritesCase):
         self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
         fresh.check_handle(fresh.new_handle())                                                # a new handle works
 
+    def test_the_same_line_prepared_again_in_a_new_chat_runs_and_the_old_refusal_names_the_change(self):
+        s = self.live()
+        made = writes.Writes(s).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.remade()
+        self.assertTrue(self.turn_on_work()["ok"])
+        fresh = self.live()
+        old = writes.Writes(fresh).execute(made["operation_id"])
+        self.assertEqual("new_context_required", old.get("error"), old)
+        self.assertIn("changed what this connection may reach", old["say"])
+        self.assertNotIn("outside what this connection may reach", old["say"])
+        again = writes.Writes(fresh).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.assertEqual("prepared", again.get("state"), again)
+        self.assertNotEqual(made["operation_id"], again["operation_id"])
+        out = writes.Writes(fresh).execute(again["operation_id"])
+        self.assertNotIn("error", out, out)
+        self.assertIn(out.get("state"), ("running", "saved"), out)
+        stale = writes.Writes(fresh).execute(made["operation_id"])           # the old prepared write stays refused
+        self.assertEqual("new_context_required", stale.get("error"), stale)
+        by_id = writes.Writes(fresh).prepare("todo-add", "Work", operation_id=made["operation_id"], text="Ask Jo about the pallets")
+        self.assertEqual("changed", by_id.get("error") or by_id.get("state"), by_id)
+
     def test_the_old_entry_does_not_come_back_when_a_walled_zone_is_turned_on_again(self):
         self.remade()
         self.assertFalse(self.live().zone_allowed("Work"))

@@ -329,6 +329,13 @@ class ZoneMadeAgain(Case):
         self.assertIn("stays off until you turn it on here again", text)
         self.assertIn("Garrick 0.82.0 or earlier has no marker", (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text())
 
+    def test_the_docs_say_what_the_sign_in_number_proves_and_what_it_does_not(self):
+        text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
+        self.assertIn("shows which row in Settings belongs to which sign-in page", text)
+        self.assertIn("does not show who opened that page", text)
+        self.assertNotIn("keeps a stranger's link", text)                      # the number never kept a stranger's link from your code
+        self.assertIn("Pick the sign-in you started", text)
+
 
 class Handles(Case):
     def setUp(self):

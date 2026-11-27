@@ -105,7 +105,8 @@
   "v0.78.0",
   "v0.79.0",
   "v0.80.0",
-  "v0.81.0"
+  "v0.81.0",
+  "v0.82.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -253,7 +254,8 @@
    "17da2a9cf8a61de31afd0e7c5a0ec28246487be5edb66bed755110584ed85f45",
    "2cc92fba862638ad916a9bfecbafc710b68e136f66f6833eeffc4abe90fe7f30",
    "e06087a778d88e053e275c88c0d3f26c7b004bca8d2adbb387f9066c28518782",
-   "2a613df1a4eebb96017345d1da1f04a512a322a8377e01866683af5ed0069ed6"
+   "2a613df1a4eebb96017345d1da1f04a512a322a8377e01866683af5ed0069ed6",
+   "ff5c09e470b8b5bf5d0a519d2b4eab5dbe0c79338808cd9734ce4aa09abb56ed"
   ],
   "System/garrick-docs/architecture.md": [
    "fbec3ef6f66414a9e94772f1c9566372cee280794b87c70a7a66c80d0f7704aa",
@@ -384,7 +386,8 @@
    "993afeab3c740a70d7e73bdc99350f02c02f70ce92f3d935c6916ed4ebbda117",
    "ae25427c1bfb2d3f63001b41a901a2043236fdf4dea9c82aba97653fe501b3f8",
    "ff28ab68c15245658a6ce8a2fae986911b5afd08942e6136d27d9b991f93543c",
-   "51d110cffe88f837617f513a03dec6df5aa448788b78eed6d6dbb1f3cebc36f7"
+   "51d110cffe88f837617f513a03dec6df5aa448788b78eed6d6dbb1f3cebc36f7",
+   "beafa5b1df0930c3439c30c68a7028055608d6d69707cd8971c14d7cd5fb6a8b"
   ],
   "System/garrick-docs/context.md": [
    "823acaa34fa576bab05151a6c0ec0755dd588d670b3ba6efdf98cd922c489a40",
@@ -505,7 +508,8 @@
    "3b4de6dc197c2a9c1d6dc83e1ee8f2699af3ee8740dee3d3686e1b192df0b7d2",
    "4e5423b44c372646a0428c3fc248e7a124ee28351873defa45479819d1a6fa9a",
    "5830729c779e32fb4a9ff78401b2630d37f9956d15b71caab269d091cf0a0c71",
-   "043bcda30278124e5c8a045d68d998a235fe9333019c79bc75ee0647d2483419"
+   "043bcda30278124e5c8a045d68d998a235fe9333019c79bc75ee0647d2483419",
+   "4fef6e6aa47f7621eb3167f9ac1c8a95309fab15369b508e7da84982e110283b"
   ],
   "System/garrick-docs/extras/meeting-recorder.md": [
    "105bcc6d2822609199dc26811ee16c6114dcfb1447172729e07e4b01289a7fe0",
@@ -526,7 +530,11 @@
   ],
   "System/garrick-docs/extras/phone-access.md": [
    "51f7682258750447dcf5185d51c0f1919d4114f20777ceaf297d955ad670bf86",
-   "28a3f5252dac94e1196c11d062c1972939169305e59a66e1c454e7c314be2ce2"
+   "28a3f5252dac94e1196c11d062c1972939169305e59a66e1c454e7c314be2ce2",
+   "6ebe385e5256d9d47225304a88f5f9ef538c85a25d8f52307ba91bc84c64f9ae"
+  ],
+  "System/garrick-docs/extras/remote-access.md": [
+   "8ac1b617b510f606a50fbe3cedf37efd546ff942aaa28cb550bf8abbc36d9dbb"
   ],
   "System/garrick-docs/extras/scheduled-jobs.md": [
    "5364d910697cde74750b29afbe29f819a0bbe941befeb35a442bf4f668da8922",
@@ -950,6 +958,81 @@
    "ef205c4bded84181d8f80840626bc9e7aa541aee24aad36a81e02a12a0a0022b",
    "9c8a5a2916bba213e9324ce36616bf88d79a92374dd2e7bb051baddce61be5a0",
    "62f8c1d381d0a3f84adf7d9c4913f85d5b26332bf864576efff3b5a531776780"
+  ],
+  "System/remote/address.py": [
+   "2daddc064b6e79891dd6e8ec582d0d4a16b30ef6bac6537accd10df3c428dd82"
+  ],
+  "System/remote/consent.py": [
+   "36bbb4b9711eef6d7c1b0ffb65ca99b7aa3acded7c5e72d1fb47c89e72ef76b6"
+  ],
+  "System/remote/context.py": [
+   "f0ceadb628153c31acfa0cdf2418247f689697aba3914ad1d35d65932986bc59"
+  ],
+  "System/remote/launchagent.py": [
+   "70f0e07e340080371e51536eacdd953e27ddfa9eefeb8a3a2d8b90c8ac019431"
+  ],
+  "System/remote/limits.py": [
+   "1bcc8fc8254042ebfb50aa618e61178191d4fcd09109a1a64c005338f9d94a1d"
+  ],
+  "System/remote/logs.py": [
+   "5308b7d9fd6c99bd5b94f0033dd503a167f527f80e5b1f3ca8bab1a2b9646508"
+  ],
+  "System/remote/manifest.json": [
+   "960ee7669e921c90b7cfdf0a15a9ab7746c451066df804cc03ba9216e7a75aee"
+  ],
+  "System/remote/notice.md": [
+   "d23d1cf4835878053ae9550a514daa374e8daac383d1e55ee1248be85d7c7f33"
+  ],
+  "System/remote/provider.py": [
+   "3e1b617cca3eda7be78cf194ae04f4f13b19668a37f26c22119734a7f4e64ea2"
+  ],
+  "System/remote/requirements.in": [
+   "b2a3a41cb92969a57ba10746218731ed453fe6528322ddda667df989ac494035"
+  ],
+  "System/remote/requirements.lock": [
+   "ed43c30569b401918038c10f8e796a6a56b1a20fe5e8bfcb11dd49d7fccdc791"
+  ],
+  "System/remote/runtime.json": [
+   "4707d50aea9fbf7d565c863bb1a7f0338f227dedc8a297eab716efeafabe5385"
+  ],
+  "System/remote/service.py": [
+   "0608f8e1b93a80df0c6203194429c02a557ec66cdf5a942f2f72ed25c4e1d1f9"
+  ],
+  "System/remote/settings_actions.py": [
+   "e6238c6d9ea099876176785c1ab4e27f267c4c988c384b3c8f1bdcdde0e63891"
+  ],
+  "System/remote/setup_runtime.py": [
+   "a4782fb3ad1126fdf06a5601673f040bab9ab90137beac3e82026d9518b067b0"
+  ],
+  "System/remote/state.py": [
+   "47e5943d896c4bb1d742d0881ba9eea948d75a1a8e864e507555d0d63c71be62"
+  ],
+  "System/remote/store.py": [
+   "efddbc39cd0269a0fdc49b8dfe17ed5e83b2d81b23cebd38df77870f6a85e661"
+  ],
+  "System/remote/tools/__init__.py": [
+   "76892733a92a6668153a47246ee54ba38639766dfedcaff7a9b66b0fa9d43daa"
+  ],
+  "System/remote/tools/common.py": [
+   "bd27c13fa3ea489440645d840a1ef8820a9e38e4317b50d2994a3113e13ff89e"
+  ],
+  "System/remote/tools/manifest.py": [
+   "9847a1cd72d56f77221e5f35cfa8ee08d9ef9a382b5f82b43fceee4288fac6b4"
+  ],
+  "System/remote/tools/reads.py": [
+   "7f7785641f84226a678fa20184f8ab9c441096af25069222531a7bf7460a4eb4"
+  ],
+  "System/remote/tools/registry.py": [
+   "6b74570e827560ee71934aa03651be857b90ee13cc09a4ed31acce637719aec6"
+  ],
+  "System/remote/tools/run_op.py": [
+   "a11a9cc62a8c1d0895b10b57f4af43f5369626f1bdac44f0515b4dfbf7f5e1be"
+  ],
+  "System/remote/tools/writes.py": [
+   "0b55c4df14c7c07b2e0d5888f500cb5d763bb2d3f377fa8bc94595dd18fb3a57"
+  ],
+  "System/remote/tools/writes_registry.py": [
+   "905094fd9fa3d27570d879f3fbf0c2331afc15df8581efa850c6e63b4f43d0d7"
   ],
   "System/retention.md": [
    "5c8d944bfa69277ef3c4c55c33978724f4043375516a18642822a0c8d21f3eaf"
@@ -1565,7 +1648,8 @@
   "System/status/outbox.py": [
    "d3eecbd1199954197fe67409d52eaf4eb0c35d36cc4aad59c71f0c55ceeedd6e",
    "fbc70c44abb0fce4933ee7d36247bb64c40638b03e1c5ce263f464eee1c95193",
-   "8c195f2d0711e1ade1af99de4dcc0fae084e9ca0e314e27062d32370a7b19572"
+   "8c195f2d0711e1ade1af99de4dcc0fae084e9ca0e314e27062d32370a7b19572",
+   "d86c9747343a462896d0484cd416f018d0a994b5027b58808705dadc62cc8f33"
   ],
   "System/status/page_action.py": [
    "b8ac81caa5db2c8916098a166cc86bd008838d593e50d206451addc2baa5b940",
@@ -1628,7 +1712,8 @@
    "e7e0bbcaa9bb71c8b866943a2366605b1b7927cca2457fb022eafb57e89b4269",
    "fedceb04017691f3a151e7bb2b0eb4ecab7b3ad3179b0ce774b3d3e72607af04",
    "4bd469987c4306a562c77ef2c102ecce743a549fc21e7bb01ef095c08ae3e8bc",
-   "d68790fff6c7e9ec2122312963a33cf5b38bc3a82c748ac98659d94354a3d051"
+   "d68790fff6c7e9ec2122312963a33cf5b38bc3a82c748ac98659d94354a3d051",
+   "a641dc69bb33438e850afdfe62447e64ae3a4d284c6db3ca7103ed0cb66b657e"
   ],
   "System/status/parties_panel.py": [
    "6ed8253f652ddd87fc0b630978609f72b60cbce9cf827e440cc01e4ae446bdd9",
@@ -1670,6 +1755,9 @@
   "System/status/settings_readguard.py": [
    "4511c26e18ac317978c09ba924e0c2b7ba639219c61246aeceb22e9798883ac6",
    "5475ea6a94c6e729874ab27027e96b7edf634d19d4a8669e9fc54e0d0b53f412"
+  ],
+  "System/status/settings_remote.py": [
+   "97924ddf5f174f73a420e0eefd98fbfa7bf8cd7e925a26665afb61a6c60846ea"
   ],
   "System/status/status.py": [
    "0b7d93f7e9e642e84e6434455a9a2219152e6444eb2ccc71d7a463972ebe4e36",
@@ -1757,7 +1845,8 @@
    "842b5b1eac5f3f0194da6d5d6e320dffc262cd954285d60279418e3c1d6d9a8b",
    "a62b734eadba7ee5e25961c0e2fa190b28ffcd9101b2484f16f8a722b5cef0d8",
    "f5701d61cbc5505e9cc6a273ddfc8fcdee29749f6506a0e2f30e731f06eeefa2",
-   "63faf891c02a3a60ef71aad783d09824c111f966d518cc111aeb0ed26afc9882"
+   "63faf891c02a3a60ef71aad783d09824c111f966d518cc111aeb0ed26afc9882",
+   "958be30b54f8c47ebf030ad93fe653908b9ae88a8687f183131477c2fe6d9007"
   ],
   "System/status/telegram_delivery.py": [
    "878a0f94c90727485db4af11969ca77566db072f0b3a0f9e916093c819c450a0",
@@ -2084,7 +2173,8 @@
    "28de2615241ecd58fd36320c628ebfb31fd0d677c9877da0bf484377f88fd39e",
    "efb92a5c1e01444e01d5208cee4b1ef5e95ca7eca5e8693412bba35072a70070",
    "7d409b760372176e49bfc22cf0bff2dd3ca1649196a9877697639eda62a06070",
-   "e1df62c5ef843f577541ed576fcbe2096822bb65ed48b624682f6abaac968fad"
+   "e1df62c5ef843f577541ed576fcbe2096822bb65ed48b624682f6abaac968fad",
+   "010697af34e62ab0aaa90ddc10cd567a8bfebbd6871e035b15e27649198a4d54"
   ],
   "System/tools/probe.py": [
    "cf81236b20c6a525676de9e0f547412c83cbc094fa9a4831fa97c1746beafdbb",
@@ -2144,7 +2234,8 @@
    "c955ab3a39ddbaf3f8e5759ae36aca5a7bfdde1f14d71320ddd3da9f58d8388a"
   ],
   "System/tools/usage.py": [
-   "0d70c72025c566b5a8c93bc3139824773607f11ca8358c64eeca8f647f0e2a65"
+   "0d70c72025c566b5a8c93bc3139824773607f11ca8358c64eeca8f647f0e2a65",
+   "fb96d7cbe757fe45a856d9d72c2c1b950b27627a899fa7c4a605b2ade90b9dee"
   ],
   "System/tools/view.py": [
    "8a7f4ca162e5c36d6ce4061abdeb7ca223c57d43870c5cf7936726c0e0774c81",
@@ -2159,7 +2250,8 @@
    "96bd629f9668285d850bbe386efd6cbd874356aa0515b1b30897fa06bdaf7daa"
   ],
   "System/tools/view_settings.py": [
-   "db45d119d666c9bcd45e630dbab4d819d0c699d25906d40c98c418e986a92105"
+   "db45d119d666c9bcd45e630dbab4d819d0c699d25906d40c98c418e986a92105",
+   "390d349a71f2d726cd0974372191db0e9211b6549982aeec317f14a01ad9cfca"
   ],
   "System/tools/view_todo.py": [
    "6e829b520cb1cb31d526f1c39a0dd2baa66fe6a6dd739f46600a35668a5a65d9"

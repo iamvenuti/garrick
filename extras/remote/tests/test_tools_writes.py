@@ -366,7 +366,7 @@ class TestStoppedInTheMiddle(WritesCase):
         time.sleep(0.4)
         self.assertEqual(before, self.commits())
         self.assertNotIn("STOPBEFORE", (self.work / "Todo.md").read_text())
-        self.assertEqual([], self.ops().sweep(self.work))                # reported here, so not said again by the next run
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])   # the page's sweep says it once
 
     def test_stopped_after_the_commit_it_is_saved_with_that_commit_and_never_commits_twice(self):
         before = self.commits()
@@ -379,7 +379,7 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual("saved", self.w.execute(op)["state"])
         time.sleep(0.4)
         self.assertEqual(before + 1, self.commits())
-        self.assertEqual([], self.ops().sweep(self.work))
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])
 
     def test_stopped_after_the_commit_but_before_it_was_settled_it_is_saved_once(self):
         before = self.commits()
@@ -388,7 +388,7 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual(before + 1, self.commits())
         self.assertEqual("saved", self.w.execute(op)["state"])
         self.assertEqual(before + 1, self.commits())
-        self.assertEqual([], self.ops().sweep(self.work))
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])
 
     def test_a_commit_with_this_id_and_another_request_is_unknown_and_names_nothing_to_run(self):
         before = self.commits()
@@ -398,6 +398,27 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual("unknown", self.w.execute(op)["state"])
         time.sleep(0.4)
         self.assertEqual(before + 1, self.commits())
+
+    def test_the_core_is_not_asked_when_the_grant_no_longer_reaches_the_zone(self):
+        op = self.stopped("after", "REVOKED line")
+        self.s.change_reach(writable=())                                  # the owner took the zone out of reach
+        out = self.w.status(op)
+        self.assertEqual(("unknown", run_op.CRASHED), (out["state"], out["say"]), out)
+        self.assertNotIn("commit", out)
+
+    def test_the_core_is_not_asked_after_the_reach_changed_or_the_zone_was_replaced(self):
+        self.s.reach_id = lambda: "reach-one"
+        op = self.stopped("after", "REPLACED line")
+        self.s.reach_id = lambda: "reach-two"                              # the zone was made again, and turned on again
+        out = self.w.status(op)
+        self.assertEqual(("unknown", run_op.CRASHED), (out["state"], out["say"]), out)
+
+    def test_the_remote_read_never_uses_up_the_report_the_page_makes(self):
+        op = self.stopped("after", "ONCEPAGE line")
+        self.assertEqual("saved", self.w.status(op)["state"])
+        got = self.ops().sweep(self.work)                                  # the page's sweep still says it, once
+        self.assertEqual([op], [r["op"] for r in got])
+        self.assertEqual([], self.ops().sweep(self.work))
 
     def test_a_write_that_stopped_before_the_core_began_says_unknown_as_before(self):
         op = self.w.prepare("todo-add", "Work", text="NOCORE line")["operation_id"]

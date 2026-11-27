@@ -41,7 +41,7 @@ ASK = (
     "m = runpy.run_path(sys.argv[1])\n"
     "if not callable(m.get('outcome')) or not callable(m.get('prepare')):\n"
     "    sys.exit(3)\n"
-    "print(json.dumps(m['outcome'](sys.argv[2], sys.argv[3])))\n")
+    "print(json.dumps(m['outcome'](sys.argv[2], sys.argv[3], False)))\n")
 
 
 def core_outcome(ws, repo, op: str):

@@ -346,6 +346,7 @@ class ZoneMadeAgain(Case):
         self.assertIn("30 wrong codes in 15 minutes", text)
         self.assertIn("*Show a code* still works under it", text)
         self.assertIn("What a flood can still do", text)
+        self.assertIn("Behind a relay all callers count as one, so a flood of 30 calls to the sign-in page in 10 minutes closes it for everyone", text)
         self.assertNotIn("its lock is for everyone", text)
 
     def test_the_docs_say_how_a_stopped_write_is_settled_from_the_zones_own_record(self):

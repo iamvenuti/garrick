@@ -407,6 +407,8 @@ class Writes:
         says unknown, as it always did."""
         if rec.get("verb") not in run_op.JSON_VERBS or not common.op_id_ok(rec.get("id")):
             return None
+        if not self.may_write(rec["zone"]) or self.reach_changed(rec):
+            return None                                   # the grant no longer reaches that zone, or that folder: the core is not asked
         got = run_op.core_outcome(self.ws, self.ws / "Zones" / rec["zone"], rec["id"])
         if got is None:                                   # no record, an unreadable repository, an older operations.py: say unknown
             return None

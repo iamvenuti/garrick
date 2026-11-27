@@ -160,10 +160,15 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/refused"
           python3 - "$RUNNER_TEMP/changed.lock" <<'PY'
-          import sys
+          import re, sys
+          # pip accepts a file by any one of a package's hashes, so change every hash of one package: mcp, the one pip must fetch
           text = open("extras/remote/requirements.lock").read()
-          i = text.index("--hash=sha256:") + len("--hash=sha256:")
-          open(sys.argv[1], "w").write(text[:i] + ("0" if text[i] != "0" else "1") + text[i + 1:])
+          start = text.index("\nmcp==") + 1
+          end = text.index("\n    # via", start)
+          block = text[start:end]
+          changed = re.sub(r"--hash=sha256:([0-9a-f])", lambda m: "--hash=sha256:" + ("0" if m.group(1) != "0" else "1"), block)
+          assert changed != block
+          open(sys.argv[1], "w").write(text[:start] + changed + text[end:])
           PY
           if diff -q extras/remote/requirements.lock "$RUNNER_TEMP/changed.lock" >/dev/null; then echo "the lock was not changed"; exit 1; fi
           if "$RUNNER_TEMP/refused/bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r "$RUNNER_TEMP/changed.lock"; then

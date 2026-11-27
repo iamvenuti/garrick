@@ -601,6 +601,7 @@ Every failure the app can show has one plain sentence and one next step. The too
 | A follow-up could not be prepared | Waiting on you now, Follow-ups | The follow-up was not prepared, and nothing was sent. | *Show why*; the button is ready again |
 | The layout dialog could not show what would move | *Split into separate jobs* or *Join into one job*, the first step | Garrick could not show what would move. | *Try again*, which looks once more and writes nothing |
 | The layout change was refused | The same dialog, after *Move them* | Nothing was moved. | *Show why*; no second try is offered, since the change writes. A reply the record cannot confirm, a crash and a silence keep their own sentences instead, with *Refresh*, and never say that nothing moved |
+| A remote access change was refused or did not finish | Settings, Remote access | Remote access was not changed. | *Show why*; no second try is offered, since the request writes |
 | An action the list does not name | Any failed reply the table has no row for | This did not finish. | *Try again*, with the tool's text under *Details* |
 | Recall's index is old | Never: every search brings its index up to date before it reads, and a refresh that fails gives no results at all, never older ones, so no answer can rest on an old index | None | None: an *Index now* button would write, and none is added |
 

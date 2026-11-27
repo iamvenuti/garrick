@@ -85,12 +85,13 @@ LIST = {
              "TestTheUndoLine"),
     "layout-look": ("the layout dialog's first look failed: status.py MANAGE_JS lresult(), page_action.py layout look", "TestTheLayoutDialog"),
     "layout": ("the layout change was refused: status.py MANAGE_JS lresult(), page_action.py layout", "TestTheLayoutDialog"),
+    "remote": ("Settings, Remote access: a failed remote reply, drawn by settings_remote.py (remote-0830)", "TestThePanels"),
     "other": ("a failed reply the table has no row for", "TestTheOutcomes"),
 }
 
 # The rows the panels draw with GarrickFail (#511's rest), each with the block of status.py that draws it.
 PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow", "commit-files",
-          "commit-undo", "chase", "undo", "layout-look", "layout")
+          "commit-undo", "chase", "undo", "layout-look", "layout", "remote")
 
 # A row whose producer arrives with another branch of the same release: {code: the function that raises it}. Until that
 # function is in page_action.py the row needs no producer; once it is (on the release merge), it needs one like any row.

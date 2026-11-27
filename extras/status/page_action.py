@@ -6703,6 +6703,7 @@ FAILURES = (
     # The layout dialog (#511): its look only reads, so it may be asked again; its change writes, so it may not.
     ("layout-look", "Garrick could not show what would move.", "Try again", "retry", "Open the dialog and choose Try again."),
     ("layout", "Nothing was moved.", "Show why", "why", "Open the dialog and choose Show why."),
+    ("remote", "Remote access was not changed.", "Show why", "why", "Open Settings and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

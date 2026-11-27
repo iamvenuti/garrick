@@ -212,6 +212,9 @@ for _key in ("extras/status/settings_remote.py", "template/System/tools/view_set
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings", "test_remote_imports"]
 for _key in ("extras/status/status.py",):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings"]
+# app-0830 (#711): empty states and counts, on the built page.
+for _key in ("extras/status/status.py", "tests/test_empty_states.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_empty_states"]
 
 
 def touched(files, names=None):

@@ -1304,14 +1304,16 @@ def nurture_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[
 
 
 def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]],
-               queues: Optional[Dict[str, List[dict]]] = None, qdata: Optional[dict] = None, failed: bool = False) -> str:
+               queues: Optional[Dict[str, List[dict]]] = None, qdata: Optional[dict] = None, failed: bool = False,
+               clean: bool = False) -> str:
     """The Context card's lines (#542): one for each zone or wiki that holds something, such as *Work: 6 questions · 4 answers
     about 10 minutes*, with *Go through them*, which opens that place's queue (#535). A place with nothing has no line, and an
     answer waiting to be worked in is no line: closing the queue and the nightly run work it in (#550). Under the title, how many places need the user and
     nothing more, since two places' counts and minutes are never added; with no line at all, *Nothing needs you.*, said only
     once a Nurture record exists, which would otherwise be guessing. Each count is of one place's queue: its questions,
     verdicts, decisions and findings together. Without a queue (a page built without one) a line hands Nurture's request to
-    the assistant. Names of places, counts, minutes only: no path, project or finding text of any zone."""
+    the assistant. Names of places, counts, minutes only: no path, project or finding text of any zone. Before the first Nurture
+    record, `clean` (the quick check ran and lists nothing) lets the card say *Nothing needs you yet.* instead of showing a title alone (#711)."""
     if queues is None:
         if not history:
             return ""
@@ -1328,7 +1330,9 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
     if failed:              # the findings read failed: the wiki's own questions above, Nurture's lines for the rest, never "Nothing needs you."
         out += nurture_lines(ws, history, said)
     if not out:
-        return '<p class="hint nonee" id="nsum">Nothing needs you.</p>' if history and not failed else ""
+        if history and not failed:
+            return '<p class="hint nonee" id="nsum">Nothing needs you.</p>'
+        return '<p class="hint nonee" id="nsum">Nothing needs you yet.</p>' if clean and not history and not failed else ""
     zones = ('<label class="nzone">Zone <select id="nzone" aria-label="Zone"><option value="*">All</option>%s</select></label>'
              % "".join('<option value="%s">%s</option>' % (E(sc), E(scope_title(sc, said))) for sc in places) if len(places) > 1 else "")
     return ('<div class="nhead"><p class="hint nsum" id="nsum" data-some="1">%s need%s you.</p>%s</div>%s'
@@ -2039,6 +2043,9 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # a sibling's name (garrick_lib.sounds_alike, ported here word for word): the
 # New project and New thread dialogs name what is already there as a name is
 # typed, and leave the choice to make another.
+# What the line under the Threads card says about its rows. A card with no thread has no row to explain, so it drops it (#711).
+THREADS_LEGEND = (" · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty"
+                  " · Dot: a session is open in it")
 FIND_MAX = 60     # matches drawn at once; the line above them says how many more
 FIND_BOX = ('<div class="tfind" role="search"><input type="search" id="tfind" placeholder="Find a project or thread" '
             'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-controls="tfound" '
@@ -5695,6 +5702,17 @@ def waiting_badge(waiting: str) -> str:
     return clause.strip() or waiting
 
 
+def waiting_rest(waiting: str) -> str:
+    """What follows the badge's clause in a Waiting on row (#711): the colon or semicolon and the words after it, as the row
+    wrote them; "" when the clause is the whole row. The card shows it when the reason is focused or tapped, so a reason
+    the line cuts can be read in full without a hover."""
+    lead = re.match(r"\s*\*\*[^*]+\*\*", waiting)
+    start = lead.end() if lead else 0
+    rest = waiting[start:]
+    cut = re.search(r"[:;]", rest)
+    return rest[cut.start():].rstrip() if cut and rest[cut.start() + 1:].strip() else ""
+
+
 def work_name_for(r: dict) -> str:
     """The name the home gives a thread: its project's where the project is
     one thread, "Project, Thread" where it has more. page_action.py's
@@ -7904,7 +7922,9 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         chip = todo_chip(row, today, "yw")
         pop = todo_pop(row, today, acting, "yw")
         # the whole reason, when the line is cut, on hover and on focus (the page's own tip shows both)
-        reason = ('<span class="ywait" tabindex="0" data-tip="%s">%s</span>' % (E(whole), word)) if word else ""
+        rest = "" if w.get("mine") or not w["waiting"] else waiting_rest(w["waiting"])
+        reason = ('<span class="ywait" tabindex="0" data-tip="%s">%s%s</span>'
+                  % (E(whole), word, '<span class="yrest">%s</span>' % md_inline(rest) if rest else "")) if word else ""
         sep = '<span class="ydot" aria-hidden="true">\u00b7</span>' if word and chip else ""
         why = ('<span class="ywhy">%s%s%s</span>' % (reason, sep, '<span class="tchips">%s</span>' % chip if chip else "")) if word or chip \
             else ""
@@ -7935,6 +7955,7 @@ YOURWORK_CSS = r"""
 .ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .ywhy{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;max-width:100%}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px;flex:none;white-space:nowrap}.ywhy .chip{margin:0;white-space:nowrap}
 .ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}.ywait:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.yrest{display:none}.ywait:focus{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}.ywait:focus .yrest{display:inline}
 .ystate:empty{display:none}.ypath{white-space:nowrap}.yfoot{display:flex;justify-content:center;padding:10px 0 0}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:var(--fs-meta);font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ysplit{display:inline-flex;align-items:stretch}.ysplit>.act{border-top-right-radius:0;border-bottom-right-radius:0}
@@ -8343,7 +8364,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                                                        "file": f["file"]} if f["both"] else None}))
         detail[f["text"]] = {"label": "See the file"}
     attn.sort(key=lambda a: a[0] != "critical")
-    worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
     # Where each trouble shows (#443): on its own card, so a tab carries a dot for the cards it holds. A newer Garrick
     # and a drifted shared file show at the head of the Repositories card; a thread's row, on its own.
     troubled = [(k, "repos" if isinstance(h, dict) or h.startswith("https://") else "waiting-now" if h.startswith("file:") else h.lstrip("#"), t) for k, t, h in attn]
@@ -8539,8 +8559,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     stale = ('<p class="muted">Garrick needs updating before it can list your work.</p>'
              if any(z.get("needs_update") for z in T.values()) else "")
     threads_card = card("threads", "Threads", "",
-                        '%s<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do · Bar and number: days since the newest thread moved, toward sixty · Dot: a session is open in it</p></div>'
-                        % (stale, new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
+                        '%s<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked%s</p></div>'
+                        % (stale, new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n,
+                           THREADS_LEGEND if live or parked_n else ""))
 
 
     # ---- checks
@@ -8585,7 +8606,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         fq = None
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
-                       need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None)
+                       need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None,
+                                  clean=listed and not found)
                        + kept_by_you(allowed, said_scope, keeps) + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat(), work_places) if fq else ""
@@ -8742,6 +8764,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     on_context = bool(qdata and checks_card)           # Checks sits under the findings it explains (#443)
     here = [checks_card] if on_context else []
     machinery = [c for c in (jobs_card, calls_card, None if on_context else checks_card, repos_card, wikis_card) if c]
+    # The Status tab's badge counts what the tab draws (#711): the trouble that shows on one of the cards it holds. A trouble on the
+    # Overview (the inboxes, a thread's row) or on the Context tab (the check's, once the card sits under its findings) is no
+    # item of this tab, so it is not in its count. `troubled` names each trouble's card, as the trouble list the page keeps does.
+    status_ids = {cid for cid, c in (("jobs", jobs_card), ("calls", calls_card), ("checks", None if on_context else checks_card),
+                                      ("repos", repos_card), ("wikis", wikis_card)) if c}
+    on_status = [t for t in troubled if t[1] in status_ids]
     def slots(name, left="", right=""):
         return ('<div class="grid"><div class="slot stack left" data-slot="%s-left">%s</div>'
                 '<div class="slot stack right" data-slot="%s-right">%s</div></div>' % (name, left, name, right))
@@ -8786,7 +8814,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo%s</button>'
                % tab_badge("tabn-late", late, " action is late", " actions are late", True, keep=any(late_by.values())) if todo_tab else "",
-               tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", worst == "critical"),
+               tab_badge("tabn-status", len(on_status), " thing needs attention", " things need attention", any(t[0] == "critical" for t in on_status)),
                questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls,
                  machine_said(ws))

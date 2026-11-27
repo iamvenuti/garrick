@@ -4,6 +4,44 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-11-27
+
+This release closes the four findings the 0.82.0 review left open in remote access, so a pairing code now works for one sign-in only. The App says in plain words why a card is empty and what failed, and the public pages describe Garrick as it works now.
+
+**Upgrading.**
+- A remote assistant that waits to sign in is now picked in Settings before a code is made, and the code works for that sign-in only.
+- A walled zone turned on for a remote assistant in 0.82.0 reaches nothing until you turn it on again in Settings. Garrick now checks that the zone's folder is the one you turned on.
+- A remote chat that was open during the update asks once for a new chat.
+- The Guide opens on a new short page about using the App. The long page is one link away.
+
+### Changed
+
+- **Remote access sign-in** (#708).
+  - Settings lists the sign-ins that wait, each with the name the assistant gave, when it started and a short sign-in number. The sign-in page shows the same number, so you can tell your own sign-in from another. *Show a code* makes a code for the one you pick, and with one waiting it is picked for you. A code typed into another sign-in is refused and counts as a wrong code.
+  - At most 50 sign-ins wait at once. When the list is full, the oldest one goes, never the one you made a code for. If yours went, start the sign-in again.
+  - A walled zone that you remove and make again under the same name starts with nothing. A connection reaches it only after you turn it on again in Settings, and a chat or an action prepared before then still does not reach it.
+  - A walled zone on a disk that keeps no folder creation time cannot be turned on for remote access. A zone on a disk whose device number changes, such as some external disks, goes off until you turn it on again.
+- **The layout dialog says what failed** (#511). Splitting or joining a project now says, in one sentence with one next step, whether the change was refused, could not be shown or could not be confirmed. The tool's own text is under *Details*. When Garrick cannot tell whether files moved, it says so and offers *Refresh*, never a second try. A failed change in Settings, *Remote access*, is shown the same way.
+- **Empty cards and counts explain themselves** (#711).
+  - Before the first Nurture run, the Context tab says that nothing needs you yet.
+  - An empty Threads card no longer explains rows it does not have.
+  - The Status tab's number counts only what the tab shows.
+  - In *Your work*, a waiting reason that the line cuts opens to its whole text when you tap it or move to it with the keyboard.
+- **The public pages** (#709). The README, the architecture page, the App's reference page and the adoption ladder describe Resume as it works now: a new session opens with the request typed, not sent. They say the Mac app is the only place the buttons act, and they put walls around zones. The installer's closing line counts zones and says which are walled.
+
+### Added
+
+- **Using the Garrick App** (#710), a short page that opens first in the Guide. It covers the Overview, picking up a piece of work, what needs you, Todo and Settings.
+
+### Fixed
+
+- **A repeat receipt** (#708). A remote action asked again after it ended no longer says it is still running when the note's own words hold that phrase.
+
+### Tests
+
+- A test fails when a current page names a retired host, card or wall model.
+- A test holds the new guide page's length and keeps it free of file names, commands and issue numbers.
+
 ## [0.82.0] - 2026-11-27
 
 This release adds remote access, as a preview. It is an optional extra. An assistant on your phone, or on another computer, can read your workspace and save notes and Todo actions. The workspace stays on your Mac. What each connected assistant may reach is set at the Mac, and walled zones stay out until you turn one on by name. Every action now records who asked for it, and a note sent twice by a retry is saved once.

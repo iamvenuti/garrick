@@ -824,7 +824,7 @@ class TestFailuresInPlainWords(NodeCase):
     # The rows a panel of its own draws with GarrickFail (#511's rest): their replies do not reach the box, so the test names
     # the row as a reply that carries it would; test_failures_plain draws each in its panel.
     PANELS = ("release-check", "release-update", "count", "note-read", "note-open", "finding", "walls-look", "walls-allow",
-              "commit-files", "commit-undo", "chase", "undo")
+              "commit-files", "commit-undo", "chase", "undo", "layout-look", "layout")
 
     def test_every_row_of_the_table_shows_its_sentence_and_its_button(self):
         """#511: one test per row of page_action's FAILURES, read by the page as FW. The sentence and the button show; the

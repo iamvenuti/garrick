@@ -157,6 +157,11 @@ class Marked(WritesCase):
         self.assertEqual("", self.ctx.zone_marker(self.root, "Nowhere"))
         self.assertEqual("", self.ctx.zone_marker(self.root, "../System"))
 
+    def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
+        for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
+            self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))
+        self.assertTrue(self.ctx.zone_marker(self.root, "Work"))
+
 
 def support_ids(text):
     import re

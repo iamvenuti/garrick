@@ -117,7 +117,7 @@ def zone_marker(ws: Path, zone: str) -> str:
     try:
         base = Path(ws) / "Zones"
         folder = base / str(zone)
-        if not str(zone).strip() or folder.parent != base:
+        if str(zone) in ("", ".", "..") or not str(zone).strip() or folder.parent != base or folder.name != str(zone):
             return ""
         st = os.stat(str(folder))
         if not stat.S_ISDIR(st.st_mode):

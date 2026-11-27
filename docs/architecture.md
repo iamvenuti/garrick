@@ -173,6 +173,22 @@ The root's `.gitignore` leaves `Zones/` and `Wikis/` out, so each repository has
 
 Your folders stay as they are. A project can point at a folder you already keep, with `folder:` in its hub, and Garrick reads it and writes nothing there unless you ask it to. Garrick's own record is plain Markdown in folders on your Mac, and updates keep your edits.
 
+### How an action is recorded and settled
+
+Every action that makes a commit (a park, a rename, a Todo tick, a note, a wrap, a write from a remote assistant) has its own record, and that record is written before the commit and closed after it. The Garrick App, a session and the remote access extra all go through the same code in `System/tools/operations.py`, so they leave the same record.
+
+**What the record holds.** An operation id, the verb, the zone, a hash of what was asked, the commit the zone was at when the action began, who sent it, the times and where it got to. It holds none of your words: no note text and no Todo line text. It sits in the zone's own git folder, `.git/garrick-ops/`, so it travels with the zone, is never committed, and a session working in another zone never reads it. A copy of the action's id and hash also goes into the commit's message as two last lines, `Garrick-Op` and `Garrick-Payload`. Git's own history is then the proof of whether the commit was made.
+
+**What happens in each case.** When an action ends, Garrick settles its record from git: one commit carries this id and this hash, so it is done, and the record names that commit; or none does and the zone is where it was, so it is not done. If Garrick was stopped in the middle (the Mac slept, the process was killed, the power went), the next run, or the next time the page asks what is running, does the same reading from git and says what it found, once:
+
+- the commit is there: it was done, with that commit named;
+- the commit is not there and nothing else changed: it was not done, and you can do it again;
+- anything else, such as a commit with that id but another hash, two commits with it, a zone that something else changed in the meantime, or a repository Garrick cannot read: Garrick says it cannot tell, names the commit it found, and runs nothing.
+
+**One action, one commit.** Sending the same action again with the same id gives back the first answer and makes no second commit. The same id with different words is refused. A record that was edited by hand, or forged, no longer matches its seal, and nothing runs on it.
+
+**What you see.** If Garrick stopped in the middle of something, the page, when it asks what is running, gets a plain sentence for it, and shows it for the actions it keeps a list for: it went through, it did not and nothing changed, or it cannot tell and which commit to look at. Software older or newer than this one on the same workspace keeps working: the side that lacks the record carries on as before, without it.
+
 ## Underneath
 
 Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue. Garrick has no model of its own: **the model** reads the files, follows **the rules** and **the skills**, runs **the tools** and writes the notes. Beside it, **the commit check** refuses some of what the rules forbid, whatever the model intended.

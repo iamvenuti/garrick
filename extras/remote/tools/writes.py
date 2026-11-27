@@ -399,13 +399,39 @@ class Writes:
 
     # ------------------------------------------------------------ status
 
+    def core_receipt(self, rec):
+        """What the commit record of the core says became of this operation: (state, receipt) or None. page_action.py keeps that
+        record in the zone's own git folder for each verb that commits and carries this operation's id (#716), so a worker that stopped
+        in the middle is settled here from the zone's history, once. None when the core has no record calls, the verb sends no id, or
+        there is no record of this operation (a write begun by an older Garrick, or stopped before page_action began): the caller then
+        says unknown, as it always did."""
+        if rec.get("verb") not in run_op.JSON_VERBS or not common.op_id_ok(rec.get("id")):
+            return None
+        got = run_op.core_outcome(self.ws, self.ws / "Zones" / rec["zone"], rec["id"])
+        if got is None:                                   # no record, an unreadable repository, an older operations.py: say unknown
+            return None
+        result = got.get("result")
+        say = str(got.get("say") or "")[:600]
+        if result == "done":
+            made = {"ok": True, "say": say or "Done."}
+            if got.get("commit"):
+                made["commit"] = str(got["commit"])[:64]
+            return "saved", made
+        if result == "not-done":
+            return "refused", {"ok": False, "say": say or "It was not saved. Nothing was changed."}
+        if result == "unsure":
+            return "unknown", {"ok": False, "say": say or run_op.CRASHED}
+        return None
+
     def settle(self, rec):
-        """A running operation whose worker is gone is unknown, never saved and never run again."""
+        """A running operation whose worker is gone is settled from the zone's own record of the commit when it has one (saved, not
+        saved, or cannot be told), and unknown otherwise. It is never run again."""
         if rec.get("state") == "running" and time.time() - float(rec.get("started") or 0) > UNKNOWN_AFTER \
                 and not self.store.worker_alive(rec["id"]):
             fresh = self.store.read(rec["id"]) or rec
             if fresh.get("state") == "running":
-                fresh.update({"state": "unknown", "receipt": {"ok": False, "say": run_op.CRASHED}, "finished": time.time()})
+                said = self.core_receipt(fresh) or ("unknown", {"ok": False, "say": run_op.CRASHED})
+                fresh.update({"state": said[0], "receipt": said[1], "finished": time.time()})
                 fresh.pop("fields", None)
                 fresh.pop("would", None)
                 self.store.write(rec["id"], fresh)

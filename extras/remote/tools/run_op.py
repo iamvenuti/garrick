@@ -36,6 +36,30 @@ LONG_WAY = "It took longer than expected and may or may not have been saved. Che
 CRASHED = "The save did not finish. Nothing more was done. Check the zone at the Mac before trying again."
 
 
+ASK = (
+    "import json, runpy, sys\n"
+    "m = runpy.run_path(sys.argv[1])\n"
+    "if not callable(m.get('outcome')) or not callable(m.get('prepare')):\n"
+    "    sys.exit(3)\n"
+    "print(json.dumps(m['outcome'](sys.argv[2], sys.argv[3])))\n")
+
+
+def core_outcome(ws, repo, op: str):
+    """What the workspace's own commit record says became of `op` in `repo`: the receipt as a dict, or None when there is none to read
+    (an operations.py without the record's calls, no record of this operation, a repository git cannot read). Run as a process of its
+    own, as page_action.py is: the service never loads the core's code into itself."""
+    path = Path(ws) / "System" / "tools" / "operations.py"
+    if not path.is_file():
+        return None
+    try:
+        done = subprocess.run([python(), "-I", "-c", ASK, str(path), str(repo), op], capture_output=True, text=True, timeout=60,
+                              stdin=subprocess.DEVNULL, cwd=str(ws))
+        got = json.loads(done.stdout) if done.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return got if isinstance(got, dict) else None
+
+
 def python() -> str:
     return PAGE_PYTHON if os.access(PAGE_PYTHON, os.X_OK) else sys.executable
 

@@ -306,6 +306,148 @@ class TestRetries(WritesCase):
         self.assertNotIn("KEEPNOT", json.dumps(self.w.store.read(op)))
 
 
+CHILD = textwrap.dedent('''
+    import importlib.util, os, subprocess, sys, json
+    spec = importlib.util.spec_from_file_location("o", sys.argv[1]); ops = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ops)
+    repo, point, req, op = sys.argv[2], sys.argv[3], json.loads(sys.argv[4]), sys.argv[5]
+    def git(*a):
+        subprocess.run(["git", "-C", repo] + list(a), check=True, capture_output=True)
+    def work(trailers):
+        if point == "before":
+            os._exit(9)
+        if point == "other":
+            trailers = "Garrick-Op: " + op + "\\nGarrick-Payload: " + "0" * 64
+        with open(os.path.join(repo, "Todo.md"), "a") as f:
+            f.write("- [ ] " + req["text"] + "\\n")
+        git("add", "Todo.md")
+        git("commit", "-q", "-m", "Add a line", "-m", trailers)
+        if point in ("after", "other"):
+            os._exit(9)
+        return "ok"
+    if point == "unsettled":
+        ops.settle = lambda *a, **k: os._exit(9)
+    ops.prepare(repo, req["verb"], req, op=op, via="remote")
+    ops.execute(repo, op, work)
+''')
+
+
+class TestStoppedInTheMiddle(WritesCase):
+    """O1 (#716): a write that stops before, after, or after the commit but before it is settled is settled once from the zone's
+    own record of the commit, and never committed twice."""
+
+    def stopped(self, point, text, payload_text=None):
+        made = self.w.prepare("todo-add", "Work", text=text)
+        op = made["operation_id"]
+        req = {"verb": "todo-add", "zone": "Work", "op": op, "text": payload_text or text}
+        done = subprocess.run([sys.executable, "-I", "-c", CHILD, str(self.root / "System" / "tools" / "operations.py"), str(self.work),
+                               point, json.dumps(req), op], capture_output=True, text=True,
+                              env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull))
+        self.assertEqual(9, done.returncode, done.stderr)
+        rec = self.w.store.read(op)
+        rec.update({"state": "running", "started": time.time() - 600})
+        self.w.store.write(op, rec)
+        return op
+
+    def ops(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_ops_test", str(self.root / "System" / "tools" / "operations.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_stopped_before_the_commit_it_is_reported_not_saved_once_and_never_runs_again(self):
+        before = self.commits()
+        op = self.stopped("before", "STOPBEFORE line")
+        out = self.w.status(op)
+        self.assertEqual(("refused", False), (out["state"], out["saved"]), out)
+        self.assertEqual(out["say"], self.w.status(op)["say"])
+        self.assertEqual("refused", self.w.execute(op)["state"])
+        time.sleep(0.4)
+        self.assertEqual(before, self.commits())
+        self.assertNotIn("STOPBEFORE", (self.work / "Todo.md").read_text())
+        self.assertEqual([], self.ops().sweep(self.work))                # reported here, so not said again by the next run
+
+    def test_stopped_after_the_commit_it_is_saved_with_that_commit_and_never_commits_twice(self):
+        before = self.commits()
+        op = self.stopped("after", "STOPAFTER line")
+        out = self.w.status(op)
+        self.assertEqual(("saved", True), (out["state"], out["saved"]), out)
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("STOPAFTER"))
+        self.assertEqual(out["say"], self.w.status(op)["say"])
+        self.assertEqual("saved", self.w.execute(op)["state"])
+        time.sleep(0.4)
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual([], self.ops().sweep(self.work))
+
+    def test_stopped_after_the_commit_but_before_it_was_settled_it_is_saved_once(self):
+        before = self.commits()
+        op = self.stopped("unsettled", "STOPUNSETTLED line")
+        self.assertEqual("saved", self.w.status(op)["state"])
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual("saved", self.w.execute(op)["state"])
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual([], self.ops().sweep(self.work))
+
+    def test_a_commit_with_this_id_and_another_request_is_unknown_and_names_nothing_to_run(self):
+        before = self.commits()
+        op = self.stopped("other", "ASKED line")
+        out = self.w.status(op)
+        self.assertEqual(("unknown", False), (out["state"], out["saved"]), out)
+        self.assertEqual("unknown", self.w.execute(op)["state"])
+        time.sleep(0.4)
+        self.assertEqual(before + 1, self.commits())
+
+    def test_a_write_that_stopped_before_the_core_began_says_unknown_as_before(self):
+        op = self.w.prepare("todo-add", "Work", text="NOCORE line")["operation_id"]
+        rec = self.w.store.read(op)
+        rec.update({"state": "running", "started": time.time() - 600})
+        self.w.store.write(op, rec)
+        out = self.w.status(op)
+        self.assertEqual(("unknown", run_op.CRASHED), (out["state"], out["say"]))
+
+    def test_a_remote_write_is_recorded_by_the_core_with_the_remote_caller_and_settled_done(self):
+        op, out = self.go("todo-add", text="RECORDED line")
+        self.assertEqual("saved", out["state"], out)
+        rec = json.loads((self.work / ".git" / "garrick-ops" / (op + ".json")).read_text())
+        self.assertEqual(("todo-add", "settled", "done", "remote"), (rec["verb"], rec["state"], rec["result"], rec["via"]))
+        self.assertNotIn("RECORDED", json.dumps(rec))                     # the record holds no words of the request
+        self.assertIn("Garrick-Op: " + op, git(self.work, "log", "-1", "--format=%B"))
+
+    def test_a_write_prepared_by_the_older_extra_before_the_update_still_runs_or_says_why(self):
+        made = self.w.prepare("todo-add", "Work", text="OLDPREP line")
+        op = made["operation_id"]
+        rec = self.w.store.read(op)
+        rec.pop("reach", None)                                          # a record as 0.82.0 left it
+        self.w.store.write(op, rec)
+        out = self.w.execute(op)
+        self.assertIn(out.get("state") or out.get("error"), ("running", "new_context_required"), out)
+        if out.get("state"):
+            self.assertEqual("saved", self.wait(op)["state"])
+            self.assertEqual(1, (self.work / "Todo.md").read_text().count("OLDPREP"))
+        else:
+            self.assertTrue(out["say"])
+        stuck = self.w.prepare("todo-add", "Work", text="OLDRUN line")["operation_id"]      # one that was running when the update came
+        rec = self.w.store.read(stuck)
+        rec.update({"state": "running", "started": time.time() - 600})
+        self.w.store.write(stuck, rec)
+        said = self.w.status(stuck)
+        self.assertEqual(("unknown", run_op.CRASHED), (said["state"], said["say"]))
+
+    def test_the_reach_check_still_holds_on_this_path_and_a_refused_write_leaves_no_record(self):
+        self.s.reach_id = lambda: "reach-one"
+        made = self.w.prepare("todo-add", "Work", text="REACHLESS line")
+        self.s.reach_id = lambda: "reach-two"
+        before = self.commits()
+        out = self.w.execute(made["operation_id"])
+        self.assertEqual(common.NEW_REACH, out["error"])
+        self.assertIn("changed what this connection may reach", out["say"])
+        time.sleep(0.3)
+        self.assertEqual(before, self.commits())
+        self.assertFalse((self.work / ".git" / "garrick-ops" / (made["operation_id"] + ".json")).exists())
+
+
 class TestTheRecord(WritesCase):
     def test_an_unknown_id_makes_no_file(self):
         files = lambda: sorted(p.name for p in self.w.store.root.iterdir() if p.name != "prepare.lock")     # the one fixed lock

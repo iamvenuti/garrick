@@ -40,6 +40,7 @@ RAW = re.compile(r"(?i)(/\w|\.py\b|\bgit\b|traceback|\bexit \d|--\w)")
 LIST = {
     "wall": ("the record's `refused` outcome, when the zone's wall check refused it: operations.py say()", "TestTheOutcomes"),
     "refused": ("the record's `refused` outcome: page_action.py perform(), operations.py finish()", "TestTheOutcomes"),
+    "lock": ("a git lock that outlasted the short wait: page_action.py git(), committing()", "TestTheOutcomes"),
     "crashed": ("the record's `crashed` outcome: page_action.py perform()", "TestTheOutcomes"),
     "unknown": ("the record's `unknown` outcome: operations.py, a worker that died", "TestTheOutcomes"),
     "lost": ("the record's `lost` outcome: status.py's page script, no reply in time", "TestTheOutcomes"),

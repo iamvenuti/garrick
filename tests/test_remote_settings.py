@@ -137,6 +137,17 @@ class States(Case):
         self.assertNotIn('type="radio"', block)
         self.assertIn("Choose Show a code for this sign-in.", block)
 
+    def test_an_older_extra_with_no_list_gets_no_list_and_no_request_field(self):
+        mod_sr = status.settings_mod("settings_remote")
+        view = {"installed": True, "status": "on", "port": 8781, "address": {"url": "https://home.example.test", "adapter": "own"},
+                "steps": [], "grants": [], "pairing": {}, "notice": ""}                # what 0.82.0's state.view gives: no requests key
+        helpers = {"set_head": lambda *a: "", "help_text": lambda *a: "", "set_row": lambda *a, **k: "", "row_label": lambda *a, **k: "",
+                   "request_button": lambda *a, **k: ""}
+        self.assertNotIn("remote-requests", mod_sr.section(view, helpers, str(self.root)))
+        self.assertIn("remote-requests", mod_sr.section(dict(view, requests=[]), helpers, str(self.root)))
+        js = mod_sr.JS
+        self.assertIn("q.action==='pair'&&sec.querySelector('#remote-requests')", js)     # no list drawn: no `request` is sent
+
     def test_the_list_says_it_is_as_of_the_last_refresh(self):
         self.install()
         self.turn_on()

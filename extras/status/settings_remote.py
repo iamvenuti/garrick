@@ -136,7 +136,7 @@ def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
     details = ('<details class="rdetails"><summary>Details</summary><p class="hint">The service listens on this computer only, on port %d. '
                'The relay or your own address carries the traffic to it.</p></details>' % int(v["port"]))
     pill = row(label("Remote access", "Preview"), '<span class="st %s" id="remote-pill">%s</span>' % ("good" if state == "on" else "idle", STATES[state]))
-    asking = _requests(v.get("requests") or [], str(pairing.get("request") or ""))
+    asking = _requests(v["requests"], str(pairing.get("request") or "")) if "requests" in v else ""      # an older extra has no list: none is drawn
     code = ('<p class="rcode" id="remote-code" aria-live="polite" hidden>Your code: <b class="rdigits"></b> '
             '<small>It works once, for five minutes.</small></p>')
     return ('<section class="setsec" id="remote-settings" data-state="%s" data-notice="%s">%s%s%s%s%s%s%s%s%s%s%s%s%s'
@@ -187,7 +187,7 @@ var left=secs||300;clearInterval(tick);tick=setInterval(function(){left--;if(lef
 var awaiting=null;
 sec.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
 if(b.dataset.raction){var q={verb:'remote',action:b.dataset.raction};
-if(q.action==='pair'){var pick=sec.querySelector('input[name=remote-request]:checked'),one=sec.querySelectorAll('#remote-reqlist .rreq');
+if(q.action==='pair'&&sec.querySelector('#remote-requests')){var pick=sec.querySelector('input[name=remote-request]:checked'),one=sec.querySelectorAll('#remote-reqlist .rreq');
 if(pick)q.request=pick.value;else if(one.length===1)q.request=one[0].dataset.request}
 if(q.action==='enable'){q.adapter=ad?ad.value:'relay';if(q.adapter==='own')q.address=url?url.value.trim():''}
 send(q);return}

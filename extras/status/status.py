@@ -1962,6 +1962,7 @@ var go=d.querySelector('[data-go]');go.disabled=false}
    second try. Only the look, which writes nothing, offers Try again (`again`). */
 function lcode(out,again){var say=String((out&&out.say)||''),pc=out&&out.plain&&out.plain.code||'',oc=out&&out.outcome||'';
 if(!out)return'lost';if(/^A wall holds /.test(say))return'wall';
+if(out.again||out.state==='asked')return'unknown';
 if(/^(unknown|lost|unrecorded)$/.test(pc))return pc;if(/^(unknown|lost)$/.test(oc))return oc;
 if(again)return out.ok?'':'layout-look';if(pc==='crashed'||oc==='crashed')return'crashed';
 if(out.ok)return'';return oc==='refused'||pc==='refused'?'layout':'noreply'}
@@ -5708,6 +5709,8 @@ def waiting_rest(waiting: str) -> str:
     the line cuts can be read in full without a hover."""
     lead = re.match(r"\s*\*\*[^*]+\*\*", waiting)
     start = lead.end() if lead else 0
+    if waiting_badge(waiting) == waiting.strip():       # the badge fell back to the whole row: nothing is left to add
+        return ""
     rest = waiting[start:]
     cut = re.search(r"[:;]", rest)
     return rest[cut.start():].rstrip() if cut and rest[cut.start() + 1:].strip() else ""
@@ -7924,7 +7927,7 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         # the whole reason, when the line is cut, on hover and on focus (the page's own tip shows both)
         rest = "" if w.get("mine") or not w["waiting"] else waiting_rest(w["waiting"])
         reason = ('<span class="ywait" tabindex="0" data-tip="%s">%s%s</span>'
-                  % (E(whole), word, '<span class="yrest">%s</span>' % md_inline(rest) if rest else "")) if word else ""
+                  % (E(whole), word, '<span class="ycue" aria-hidden="true">\u2026</span><span class="yrest">%s</span>' % md_inline(rest) if rest else "")) if word else ""
         sep = '<span class="ydot" aria-hidden="true">\u00b7</span>' if word and chip else ""
         why = ('<span class="ywhy">%s%s%s</span>' % (reason, sep, '<span class="tchips">%s</span>' % chip if chip else "")) if word or chip \
             else ""
@@ -7955,7 +7958,7 @@ YOURWORK_CSS = r"""
 .ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .ywhy{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;max-width:100%}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px;flex:none;white-space:nowrap}.ywhy .chip{margin:0;white-space:nowrap}
 .ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}.ywait:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
-.yrest{display:none}.ywait:focus{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}.ywait:focus .yrest{display:inline}
+.yrest{display:none}.ywait:focus{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}.ywait:focus .yrest{display:inline}.ywait:focus .ycue{display:none}
 .ystate:empty{display:none}.ypath{white-space:nowrap}.yfoot{display:flex;justify-content:center;padding:10px 0 0}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:var(--fs-meta);font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ysplit{display:inline-flex;align-items:stretch}.ysplit>.act{border-top-right-radius:0;border-bottom-right-radius:0}

@@ -643,6 +643,16 @@ class TestTheLayoutDialog(unittest.TestCase):
                 self.assertIn("data-refresh", got["foot"])
                 self.assertEqual(self.RAW, got["details"])
 
+    def test_a_repeat_question_is_unknown_and_offers_refresh_not_a_second_send(self):
+        for out in ({"ok": False, "state": "asked", "say": "The same request was done a minute ago. Do you want it done a second time?"},
+                    {"ok": False, "again": "abc123", "say": "The same request was done a minute ago."}):
+            with self.subTest(out=out):
+                got = self.lresult(out)
+                self.assertEqual("unknown", got["failure"])
+                self.assertTrue(got["text"].startswith(self.say("unknown")))
+                self.assertIn("data-refresh", got["foot"])
+                self.assertIsNone(got["button"])
+
     def test_a_wall_says_the_rules_sentence_alone(self):
         wall = "A wall holds some material back from this project, so I have not used it. Nothing was written."
         got = self.lresult({"ok": False, "outcome": "refused", "say": wall})

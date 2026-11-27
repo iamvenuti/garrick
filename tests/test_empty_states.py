@@ -147,7 +147,7 @@ class TestAReasonTheLineCutsReadsInFull(StatusCase):
         w = self.wait(self.page(), "Interviews")
         self.assertIn('tabindex="0"', w)                                       # a tap or the keyboard focuses it: no new control
         self.assertIn('data-tip="Waiting on %s' % self.LONG.split(":")[0], htmllib.unescape(w))
-        self.assertRegex(htmllib.unescape(w), r'Waiting on Theo Marsh<span class="yrest">: a very long wait for the volumes')
+        self.assertRegex(htmllib.unescape(w), r'Waiting on Theo Marsh<span class="ycue" aria-hidden="true">\u2026</span><span class="yrest">: a very long wait for the volumes')
         self.assertIn("before the March review</span>", w)
         self.assertNotRegex(w, r"<(details|summary|button|a)\b")
 
@@ -158,13 +158,17 @@ class TestAReasonTheLineCutsReadsInFull(StatusCase):
         for word in ("white-space:normal", "overflow:visible", "overflow-wrap:anywhere"):
             self.assertIn(word, focus)
         self.assertIn("display:inline", css.split(".ywait:focus .yrest{")[1].split("}")[0])
+        self.assertIn("display:none", css.split(".ywait:focus .ycue{")[1].split("}")[0])      # the cue goes when the rest shows
+        self.assertNotIn(":hover", css.split(".yrest{")[1].split("\n")[0])                     # only focus opens it
         self.assertIn("white-space:nowrap", css.split(".ywait{")[1].split("}")[0])           # closed, the line is as tall as before
 
     def test_a_short_reason_is_as_it_was(self):
         card = self.card(self.page())
-        self.assertRegex(htmllib.unescape(card), r'<span class="ywait" tabindex="0" data-tip="Waiting on Theo Marsh: the volumes">Waiting on Theo Marsh<span class="yrest">: the volumes</span></span>')
+        self.assertRegex(htmllib.unescape(card), r'<span class="ywait" tabindex="0" data-tip="Waiting on Theo Marsh: the volumes">Waiting on Theo Marsh<span class="ycue" aria-hidden="true">\u2026</span><span class="yrest">: the volumes</span></span>')
         self.assertEqual("", status.waiting_rest("Theo Marsh"))
         self.assertEqual("", status.waiting_rest("Theo Marsh:"))
+        self.assertEqual("", status.waiting_rest(": the volumes"))        # the badge fell back to the whole row: nothing more to say
+        self.assertEqual("", status.waiting_rest("; the volumes"))
         self.assertEqual(": the volumes", status.waiting_rest("Theo Marsh: the volumes"))
         self.assertEqual("; the volumes: late", status.waiting_rest("**Theo Marsh**; the volumes: late"))
 

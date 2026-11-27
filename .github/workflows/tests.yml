@@ -27,6 +27,7 @@ jobs:
     outputs:
       full: ${{ steps.pick.outputs.full }}
       modules: ${{ steps.pick.outputs.modules }}
+      remote: ${{ steps.pick.outputs.remote }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,9 +48,15 @@ jobs:
               modules=$(echo "$picked" | tr '\n' ' ')
             fi
           fi
+          # The remote access extra has a job of its own: it runs on its own runtime, from its own lock.
+          remote=false
+          if [ "$EVENT" = pull_request ] && git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qE '^(extras/remote/|extras/status/page_action\.py|extras/status/ask_tools\.py|template/System/tools/operations\.py|template/System/tools/scaffold\.py)'; then
+            remote=true
+          fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "modules=$modules" >> "$GITHUB_OUTPUT"
-          echo "full=$full modules=$modules"
+          echo "remote=$remote" >> "$GITHUB_OUTPUT"
+          echo "full=$full modules=$modules remote=$remote"
 
   branch:
     name: macOS, touched modules
@@ -130,6 +137,48 @@ jobs:
           GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
         run: $PY tests/shard.py ${{ matrix.shard }}/4 --jobs 3
 
+  remote:
+    # Remote access (preview), an extra with its own runtime: a pinned interpreter and packages from a lock with hashes. The job makes the runtime
+    # from the lock alone, shows that a changed hash stops the install, then runs the extra's own tests with it, the end-to-end one included
+    # (the SDK's own OAuth client on loopback, against a fixture workspace). Nothing here reaches a relay or opens a public address.
+    name: Remote access extra, macOS
+    needs: plan
+    if: needs.plan.outputs.full == 'true' || needs.plan.outputs.remote == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Make the runtime from the lock
+        run: |
+          python -m venv "$RUNNER_TEMP/runtime"
+          "$RUNNER_TEMP/runtime/bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r extras/remote/requirements.lock
+          echo "GARRICK_REMOTE_RUNTIME=$RUNNER_TEMP/runtime/bin/python" >> "$GITHUB_ENV"
+      - name: A changed hash stops the install
+        run: |
+          python -m venv "$RUNNER_TEMP/refused"
+          python3 - "$RUNNER_TEMP/changed.lock" <<'PY'
+          import re, sys
+          # pip accepts a file by any one of a package's hashes, so change every hash of one package: mcp, the one pip must fetch
+          text = open("extras/remote/requirements.lock").read()
+          start = text.index("\nmcp==") + 1
+          end = text.index("\n    # via", start)
+          block = text[start:end]
+          changed = re.sub(r"--hash=sha256:([0-9a-f])", lambda m: "--hash=sha256:" + ("0" if m.group(1) != "0" else "1"), block)
+          assert changed != block
+          open(sys.argv[1], "w").write(text[:start] + changed + text[end:])
+          PY
+          if diff -q extras/remote/requirements.lock "$RUNNER_TEMP/changed.lock" >/dev/null; then echo "the lock was not changed"; exit 1; fi
+          if "$RUNNER_TEMP/refused/bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r "$RUNNER_TEMP/changed.lock"; then
+            echo "A changed hash did not stop the install."; exit 1
+          fi
+      - name: Run the extra's tests with the runtime
+        working-directory: extras/remote/tests
+        run: |
+          "$GARRICK_REMOTE_RUNTIME" -m unittest discover -p "test_*.py"
+
   concept:
     # #654: a pull request that adds a concept to docs/concepts.md links the decision behind it.
     # Pure Python, and it reads the description from the event, never from the shell.
@@ -146,16 +195,17 @@ jobs:
     # The one result to wait for, and the one for branch protection to name: it fails if the
     # branch job or any shard did, and passes when one of them ran and the other was skipped.
     name: Tests
-    needs: [plan, branch, test, concept]
+    needs: [plan, branch, test, concept, remote]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Everything that ran passed
         run: |
           plan="${{ needs.plan.result }}"; branch="${{ needs.branch.result }}"; test="${{ needs.test.result }}"; concept="${{ needs.concept.result }}"
-          echo "plan=$plan branch=$branch shards=$test concept=$concept"
+          remote="${{ needs.remote.result }}"
+          echo "plan=$plan branch=$branch shards=$test concept=$concept remote=$remote"
           if [ "$plan" != success ]; then echo "The plan failed."; exit 1; fi
-          for r in "$branch" "$test" "$concept"; do
+          for r in "$branch" "$test" "$concept" "$remote"; do
             case "$r" in success|skipped) ;; *) echo "A job did not pass: $r."; exit 1 ;; esac
           done
           if [ "$branch" != success ] && [ "$test" != success ]; then echo "Nothing ran."; exit 1; fi
@@ -164,7 +214,7 @@ jobs:
   rerun:
     # A job that got no runner ("not acquired by Runner") reruns once. A test failure never does.
     name: Rerun a lost runner
-    needs: [branch, test]
+    needs: [branch, test, remote]
     if: failure()
     runs-on: ubuntu-latest
     permissions:

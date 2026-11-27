@@ -171,9 +171,9 @@ class TestOneGrid(LayoutCase):
 
 
 class TestTheListOfSections(LayoutCase):
-    SEVEN = ["Opening work", "Ask", "Notifications", "Older pages", "Walls", "Look", "About"]
+    SEVEN = ["Opening work", "Ask", "Notifications", "Older pages", "Walls", "Remote access", "Look", "About"]     # the eighth is Remote access (preview)
 
-    def test_seven_sections_seven_entries_and_no_group_heading_with_the_graph_on_or_off(self):
+    def test_every_section_has_one_entry_and_no_group_heading_with_the_graph_on_or_off(self):
         for graph in (True, False):
             with self.subTest(graph=graph):
                 args = list(self.args())

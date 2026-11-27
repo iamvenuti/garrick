@@ -322,7 +322,7 @@ class TheWorkflow(unittest.TestCase):
         text = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
         self.assertIn("python3 tests/concept_gate.py", text)
         self.assertRegex(text, r"(?s)concept:.*?github\.event_name == 'pull_request'.*?fetch-depth: 0")
-        self.assertRegex(text, r"needs: \[plan, branch, test, concept\]")
+        self.assertRegex(text, r"needs: \[plan, branch, test, concept, remote\]")   # the remote access extra's job is awaited as well
         self.assertIn("edited", text)
 
 

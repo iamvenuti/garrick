@@ -91,6 +91,18 @@ class TestReport(Case):
         self.assertIn("Work: saved 2", asks)         # the ticked line, from the journal, and the added note, from the log
         self.assertIn("Home: saved 1", asks)
 
+    def test_a_note_the_journal_keeps_is_counted_once_and_one_it_let_go_of_from_the_log(self):
+        """note-add, todo-edit and todo-retire are in the journal since 0.82.0 (#701). A log row is left out only when a journal
+        row counts it, so the three are counted once when both hold them and once when only the log does."""
+        (self.jobs / "operations.jsonl").write_text(self.row("c1" * 4, "note-add", "Work", "saved", via="ask") + "\n")
+        self.log('2026-11-20 09:00:00  note-add zone="Work"  ->  ok: Added.  (ask)',          # older: the journal has let go of it
+                 '2026-11-21 09:08:00  note-add zone="Work"  ->  ok: Added.  (ask)',          # the journal has this one
+                 '2026-11-21 09:09:00  todo-edit zone="Work"  ->  ok: Reworded.  (ask)')      # never journaled
+        said, _ = self.text()
+        asks = said.split("Ask actions, by outcome, for each zone")[1]
+        self.assertIn("Work: saved 3", asks)
+        self.assertNotIn("saved 4", asks)
+
     def test_no_figure_adds_two_zones_together(self):
         self.log(*('2026-11-21 09:0%d:00  wrap zone="%s"  ->  ok: Saved.  (page)' % (i, z)
                    for i, z in enumerate(("Work", "Home", "Work"))))

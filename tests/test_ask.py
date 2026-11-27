@@ -628,10 +628,35 @@ class StandInCase(AskCase):
         self.addCleanup(os.environ.pop, "FAKE_ARGS", None)
         self.addCleanup(os.environ.pop, "FAKE_ANSWERS", None)
 
+    def tearDown(self):
+        # A server a test started in a thread is stopped here, before the temporary folder goes. A cleanup the test added
+        # runs after tearDown, so the server was still writing in the jobs folder while it was removed ("Directory not empty").
+        for t in getattr(self, "_served", []):
+            if t.is_alive():
+                ask.call(self.root, "stop", start=False)
+                t.join(10)
+        super().tearDown()
+
     def serve_in_thread(self):
         import threading
         t = threading.Thread(target=ask.serve, args=(self.root,), daemon=True)
         t.start()
+        self._served = getattr(self, "_served", []) + [t]
+        # Wait until the server listens. ask.call() starts a detached server of its own when it finds none, and on a slow
+        # runner it did, before this thread had bound the socket: that second process kept writing in the jobs folder
+        # while the test removed it ("Directory not empty").
+        import socket
+        import time
+        until = time.time() + 20
+        while time.time() < until:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                probe.connect(str(ask.sock_path(self.root)))
+                break
+            except OSError:
+                time.sleep(0.02)
+            finally:
+                probe.close()
         return t
 
 
@@ -747,6 +772,7 @@ class TestWarmSession(StandInCase):
 
     def test_one_server_per_workspace(self):
         import socket
+        import time
         import threading
         path = ask.sock_path(self.root)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -767,6 +793,7 @@ class TestWarmSession(StandInCase):
 
     def test_a_server_that_never_answers(self):
         import socket
+        import time
         import threading
         import time
         path = ask.sock_path(self.root)
@@ -793,6 +820,7 @@ class TestWarmSession(StandInCase):
 
     def test_a_client_that_leaves_mid_turn(self):
         import socket
+        import time
         self.answers.write_text(json.dumps(['{"say": "Two projects.", "do": []}']))
         t = self.serve_in_thread()
         try:
@@ -1051,6 +1079,7 @@ class TestOneConnection(ServerCase):
 
     def connect(self, request):
         import socket
+        import time
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         c.connect(str(ask.sock_path(self.root)))
         c.sendall((json.dumps(request) + "\n").encode("utf-8"))

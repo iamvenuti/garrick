@@ -375,6 +375,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "machine-role", "read-guard",
          "connected-service", "channel-answers",
          "count-card",
+         "remote",
          "wrap", "session-url")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -1922,6 +1923,50 @@ def machine_lib(ws: Path):
     """System/tools/machine.py, found as outbox.py finds it: the workspace's, else the one beside this folder, else a clone's."""
     box = outbox_lib()
     return box._machine(ws) if box is not None else None
+
+
+REMOTE_ACTIONS = ("enable", "pause", "resume", "off", "pair", "zone", "revoke")
+REMOTE_NOT_INSTALLED = "Remote access is not installed."
+
+
+def remote_module(ws: Path):
+    """System/remote/settings_actions.py of the remote access extra, loaded from this workspace by its path; None when it is
+    not there. A link is followed only where it stays inside the workspace's own System/remote folder."""
+    folder = ws / "System" / "remote"
+    path = folder / "settings_actions.py"
+    try:
+        real = path.resolve()
+        if not path.is_file() or not str(real).startswith(str(folder.resolve()) + os.sep):
+            return None
+        spec = importlib.util.spec_from_file_location("garrick_remote_settings_actions_%x" % abs(hash(str(real))), str(real))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod if callable(getattr(mod, "run", None)) else None
+    except Exception:
+        return None
+
+
+def remote_access(ws: Path, req: dict) -> dict:
+    """Settings › Remote access: one of enable, pause, resume, off, pair, zone, revoke, done by the extra's own
+    settings_actions.run(ws, req) -> dict. Only the app's bridge sends it (PAGE_ONLY), so no remote caller, session or
+    ask box turns remote access on, widens a grant's reach or reads a pairing code. Without the extra it refuses."""
+    action = req.get("action")
+    if not isinstance(action, str) or action not in REMOTE_ACTIONS:
+        raise Refused("Remote access does not know that action.")
+    mod = remote_module(ws)
+    if mod is None:
+        raise Refused(REMOTE_NOT_INSTALLED)
+    try:
+        got = mod.run(ws, dict(req))
+    except Refused:
+        raise
+    except Exception as e:
+        raise Refused("Remote access could not do that: %s." % type(e).__name__)
+    if not isinstance(got, dict) or not isinstance(got.get("say"), str):
+        raise Refused("Remote access gave no answer.")
+    if got.get("ok") is False:
+        raise Refused(got["say"])
+    return {k: v for k, v in got.items() if k != "ok"}
 
 
 def set_machine_role(ws: Path, req: dict) -> dict:
@@ -6426,6 +6471,8 @@ def act(ws: Path, req, today=None, now=None):
         return set_connected_service(ws, req)
     if req["verb"] == "channel-answers":
         return set_channel_answers(ws, req)
+    if req["verb"] == "remote":
+        return remote_access(ws, req)
     if req["verb"] == "wrap":
         return wrap_thread(ws, req)
     if req["verb"] == "suggestion":
@@ -6461,7 +6508,7 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
                "todo-retire",
                "wrap")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
-CALLERS = ("page", "ask", "session", "outbox")
+CALLERS = ("page", "ask", "session", "outbox", "remote")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
 PAGE_ONLY = ("walls-look", "walls-allow",
              "commit-files",
@@ -6472,7 +6519,33 @@ PAGE_ONLY = ("walls-look", "walls-allow",
              "machine-role", "read-guard",
          "connected-service", "channel-answers",
              "count-card",
-             "session-url")
+             "session-url",
+             "remote")
+
+
+# What a remote assistant is refused (#701), on top of everything `via != "page"` is refused already (PAGE_ONLY, a party,
+# a page-only answer). Its rights are never above a session's, so it loses more than a session does: the verbs the engine
+# keeps away from a Telegram session (named in engine.py, above INTAKE: a rename, a move, a delete, an undo, the
+# settings, a job, and what reaches the network), and every verb whose scope is the machine (a tab, an app, a job).
+# The scope is read from operations.DECLARED, so a verb added there is judged when it is declared.
+KEPT_FROM_TELEGRAM = ("rename", "move", "delete", "undo", "settings", "run", "release-check", "release-update")
+REMOTE_REFUSED = "this is done at the Mac, not from a remote assistant"
+
+
+def remote_refusal(req, ops=None):
+    """The sentence that refuses `req` to a remote caller, or None. Fails closed: a request that is no dict, or whose verb
+    is not declared, is refused too."""
+    verb = req.get("verb") if isinstance(req, dict) else None
+    declared = getattr(ops, "DECLARED", None) if ops is not None else None
+    if not isinstance(verb, str):
+        return REMOTE_REFUSED
+    if verb in PAGE_ONLY or verb == "new-project-party" or verb in KEPT_FROM_TELEGRAM or verb in CMUX_VERBS:
+        return REMOTE_REFUSED
+    if page_only_answer(req):
+        return REMOTE_REFUSED
+    if declared is not None and (verb not in declared or declared[verb].scope == "machine"):
+        return REMOTE_REFUSED
+    return None
 
 
 # ---- The page's own route (#618 leftover) -------------------------------------------------
@@ -6531,7 +6604,10 @@ def page_route(ws: Path) -> bool:
 def caller(declared, ws: Path) -> str:
     """Who the command line's `--via` says is asking, as far as it can be believed. A shell is a session. `page` holds
     only when page_route() agrees; `ask` and `outbox` are in-process callers, never a command line, so a declared one is
-    a session too. Anything else is a session."""
+    a session too. `remote` is believed: it has fewer rights than a session (remote_refusal), so claiming it gains nothing.
+    Anything else is a session."""
+    if declared == "remote":
+        return "remote"
     return "page" if declared == "page" and page_route(ws) else "session"
 
 
@@ -6700,12 +6776,17 @@ def ask_for_page(ws: Path) -> bool:
         return False
 
 
-def perform(ws: Path, req, ops=None, via: str = "page"):
+_NO_CALLER = object()
+
+
+def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     """One request, as a click sends it and as the ask box does: through the
     durable record where operations.py keeps one for its verb, so that a
     request repeating one the record holds is joined, answered or asked
     about (operations.start()) rather than done again. Never raises.
-    `via` names the caller, one of CALLERS: it goes into the record.
+    `via` names the caller, one of CALLERS: it goes into the record. It has no default, so that a new caller cannot
+    take the page's rights by leaving it out: a call without it raises TypeError. A word that is not in CALLERS has no
+    page right, as before (#701).
 
     An action that changed something the page shows ends with the page
     request (ask_for_page), once, after the commit, and
@@ -6718,6 +6799,8 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
     global CURRENT
+    if via is _NO_CALLER:
+        raise TypeError("perform() needs via=: name the caller, one of %s" % ", ".join(CALLERS))
     out, logged, run, outcome, why = None, None, None, None, ""
     try:
         try:
@@ -6725,6 +6808,8 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
             queued = outbox_gate(ws, req, via)
             if queued is not None:
                 return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)
+            if via == "remote" and remote_refusal(req, ops):
+                raise Refused(REMOTE_REFUSED)
             if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).
@@ -6930,7 +7015,7 @@ def main(argv=None) -> int:
                 said = ops.read(jobs_dir())
             print(json.dumps(said, ensure_ascii=False))             # a read: nothing to log
             return 0
-        out, logged, _ = perform(ws, req, ops, via)
+        out, logged, _ = perform(ws, req, ops, via=via)
     except Refused as e:
         out = {"ok": False, "say": str(e)}
     except Exception as e:              # a fault still answers in JSON, and is logged

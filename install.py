@@ -146,6 +146,9 @@ EXTRAS = (
     ("jobs", "the scheduled jobs", (("extras/jobs", "System/jobs", ()),)),
     ("cmux", "desk, for cmux", (("extras/cmux", "System/cmux", ("desk",)),
                                 ("extras/cmux/desk", "System/skills/desk", ()))),
+    # Remote access (preview): copied in, never switched on. Turning it on, fetching its runtime and starting its service are the owner's,
+    # at the Mac, in Settings. Its own tests stay in the repository.
+    ("remote", "remote access (preview)", (("extras/remote", "System/remote", ("tests",)),)),
 )
 # How long the first build of the status page may take before the installer
 # gives up on it and says how to build it by hand.

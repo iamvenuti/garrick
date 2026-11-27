@@ -36,6 +36,9 @@ and says so, when that one failed:
               the morning summary reads "each", and the sweep's dry run gives each zone its own summary (#686)
     refused   a save the wall check refuses is not shown as saved
     ask       the fixed Ask set (ask_set.json) on the demo workspace
+    remote    remote access (preview): the service starts on loopback and the SDK's own OAuth client signs in, lists the tools and calls
+              one (the extra's end-to-end test); it needs GARRICK_REMOTE_RUNTIME, the interpreter made from the extra's lock, and
+              is skipped without it
 
 --model stub (the default, and what CI runs) does a step that needs a model with
 a stand-in that calls the same tools and checks the same outcome, and says in the
@@ -71,7 +74,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 ASK_SET = HERE / "ask_set.json"
 
-STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "hooks", "mornings", "refused", "ask")
+STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "correct", "update", "names", "hooks", "mornings", "refused", "ask", "remote")
 # The demo's thread this run wraps, the call it files, and the fact it corrects.
 ZONE, PROJECT, THREAD = "Birch", "Birch Entry", "Launch Plan"
 SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-northern-lane-for-birch"
@@ -918,6 +921,24 @@ class Run:
 
     compared = None
 
+    def step_remote(self, s):
+        """Remote access (preview): start the service on loopback and drive it with an independent MCP client, the SDK's own, the whole
+        sign-in included (register, pairing code, token, initialize, tools/list, a read, a note, a retry, a walled zone refused). It needs the
+        extra's runtime, made from its lock: GARRICK_REMOTE_RUNTIME names its interpreter. Without one the step is skipped and says why; it
+        never fetches anything."""
+        runtime = os.environ.get("GARRICK_REMOTE_RUNTIME", "")
+        if not runtime or not Path(runtime).is_file():
+            raise Skip("needs the remote access runtime: set GARRICK_REMOTE_RUNTIME to the interpreter made from extras/remote/requirements.lock")
+        folder = self.cand / "extras" / "remote" / "tests"
+        if not (folder / "test_e2e.py").is_file():
+            raise Fail("the candidate has no end-to-end test for the remote access service")
+        env = dict(self.env, GARRICK_REMOTE_HOME=str(self.tmp / "remote-state"), PYTHONDONTWRITEBYTECODE="1")
+        r = sh([runtime, "-m", "unittest", "test_e2e", "test_signin"], cwd=folder, env=env, timeout=600, check=False)
+        tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or [""]
+        if r.returncode != 0:
+            raise Fail("the service did not hold: %s" % " ".join(tail)[:200])
+        s.note("the service answered an independent MCP client on loopback: %s" % " ".join(tail)[:80])
+
     # -- the run
 
     def go(self):
@@ -932,7 +953,8 @@ class Run:
                   "brief": "Ask for a brief", "wrap": "Wrap a thread", "restart": "Restart the page builder",
                   "resume": "Resume the thread", "correct": "Correct one fact", "update": "Update from the previous tag", "names": "Move People and Aliases to names.md",
                   "hooks": "Refresh the kept hooks", "mornings": "One summary per zone after the update",
-                  "refused": "A refused save", "ask": "The fixed Ask set"}
+                  "refused": "A refused save", "ask": "The fixed Ask set",
+                  "remote": "Remote access: the service and an independent client"}
         needs = {"file": "demo", "brief": "demo", "wrap": "demo", "restart": "demo", "resume": "wrap", "correct": "demo",
                  "refused": "demo", "ask": "demo"}
         chosen = self.args.steps.split(",") if self.args.steps else list(STEPS)

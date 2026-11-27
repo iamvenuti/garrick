@@ -168,6 +168,10 @@ for _key, _mods in (("template/System/tools/next_up.py", ["test_morning_brief"])
                     ("install.py", ["test_morning_brief"]),
                     ("tests/test_next_up.py", ["test_morning_brief"])):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+# tools-0820 (#702): the remote access manifest is held against the declared verbs and the shipped skills.
+for _key in ("extras/remote/manifest.json", "extras/remote/tools/manifest.py", "template/System/tools/operations.py",
+             "docs/extras/remote-access.md"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_manifest"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",
@@ -196,6 +200,18 @@ for _key in ("template/System/tools/view.py", "extras/status/status.py", "docs/a
 TOUCH_MAP["extras/status/workspace_find.py"] = ["test_view_rest", "test_status", "test_status_find", "test_status_finder", "test_threads_card"]
 TOUCH_MAP["template/System/tools/view_app.py"] = ["test_view_rest", "test_view_model", "test_status", "test_status_more", "test_status_work",
                                                  "test_overview_work", "test_context_card", "test_inbox_run", "test_finding_queue"]
+
+# core-0820 (#701): the remote caller and the durable record of a note, a reworded line and a retired one.
+for _key in ("extras/status/page_action.py", "template/System/tools/operations.py", "extras/status/outbox.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_caller", "test_remote_verb", "test_remote_record"]
+# remote-0820 (#695, #696, #697, #698): remote access (preview), an extra with its own runtime. A change to the extra runs the core modules that
+# read it on the Python macOS ships; the extra's own tests need its runtime and have a job of their own (tests.yml, "Remote access extra").
+TOUCH_MAP["extras/remote/"] = ["test_remote_state", "test_remote_runtime", "test_remote_address", "test_remote_imports", "test_remote_context",
+                               "test_remote_settings", "test_remote_notice"]
+for _key in ("extras/status/settings_remote.py", "template/System/tools/view_settings.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings", "test_remote_imports"]
+for _key in ("extras/status/status.py",):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_settings"]
 
 
 def touched(files, names=None):

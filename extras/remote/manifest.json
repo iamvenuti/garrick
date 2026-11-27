@@ -1,0 +1,579 @@
+{
+ "version": 1,
+ "rows": [
+  {
+   "name": "park",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "wake",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-done",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-undo",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-date",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-add",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-edit",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "todo-retire",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "note-add",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "new-project",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "new-project-party",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Adds a party, which decides which side of a wall a project is on."
+  },
+  {
+   "name": "new-thread",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "check-name",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "rename",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "move",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "delete",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "next",
+   "reason": "Deletes a project or a thread for good."
+  },
+  {
+   "name": "layout",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Changes how a project is laid out."
+  },
+  {
+   "name": "undo",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "settings",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Changes the workspace settings, such as Ask's own level."
+  },
+  {
+   "name": "release-check",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "release-update",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Replaces the software that serves the request."
+  },
+  {
+   "name": "memory-preview",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "note-read",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "It reads a path without asking which zone the path is in. The read tools replace it."
+  },
+  {
+   "name": "note-open",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "session-url",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "Opens a session in an app on this computer. It has no meaning for a remote assistant."
+  },
+  {
+   "name": "answer",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "later",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-answer",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-later",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-close",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-decide",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-work",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-done",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "question-open-sections",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "walls-unallow",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "walls-look",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Shows the words a wall holds back, and only the owner may see them."
+  },
+  {
+   "name": "walls-allow",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Changes what a wall lets through, and only the owner may decide that."
+  },
+  {
+   "name": "finding",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "inbox-run",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Files the contents of an inbox."
+  },
+  {
+   "name": "intake-answer",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Answers a question about where a filed item belongs."
+  },
+  {
+   "name": "continue",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "ask-desktop",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "suggestion",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "start",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "stop-using",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "bring-back",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "files",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "files-stop",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "The service cancels long work itself, in a later release."
+  },
+  {
+   "name": "files-progress",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "The service reports the progress of long work itself, in a later release."
+  },
+  {
+   "name": "work-file",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "example",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "fix",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "run",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Starts a scheduled job on this computer."
+  },
+  {
+   "name": "open",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "close",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": ""
+  },
+  {
+   "name": "checkpoint",
+   "kind": "verb",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "commit-files",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Commits files that the owner has not reviewed."
+  },
+  {
+   "name": "chase",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Drafts a message to a person who owes an answer."
+  },
+  {
+   "name": "operations",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "The service reads the record of operations itself, to answer a status call."
+  },
+  {
+   "name": "outbox-drop",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Drops a queued action for good."
+  },
+  {
+   "name": "machine-role",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Sets the role of this computer."
+  },
+  {
+   "name": "read-guard",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Changes what an assistant may read."
+  },
+  {
+   "name": "connected-service",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Turns a connected service on or off."
+  },
+  {
+   "name": "channel-answers",
+   "kind": "verb",
+   "disposition": "owner-approval",
+   "release": "later",
+   "reason": "Changes how a channel answers."
+  },
+  {
+   "name": "wrap",
+   "kind": "verb",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": ""
+  },
+  {
+   "name": "count-card",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "Counts a card the status page showed. It has no meaning for a remote assistant."
+  },
+  {
+   "name": "remote",
+   "kind": "verb",
+   "disposition": "internal",
+   "release": "none",
+   "reason": "changes only at the Mac"
+  },
+  {
+   "name": "places",
+   "kind": "read-tool",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "thread_state",
+   "kind": "read-tool",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "search",
+   "kind": "read-tool",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "read",
+   "kind": "read-tool",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "owed",
+   "kind": "read-tool",
+   "disposition": "served",
+   "release": "now",
+   "reason": ""
+  },
+  {
+   "name": "intake",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "interview",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "knowledge",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "meetings",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "nurture",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "recall",
+   "kind": "skill",
+   "disposition": "served",
+   "release": "now",
+   "reason": "Answered by the five read tools."
+  },
+  {
+   "name": "setup",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  },
+  {
+   "name": "threads",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "next",
+   "reason": "Park, wake and checkpoint are served. Wrap and the lifecycle verbs come next."
+  },
+  {
+   "name": "todo",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "The Todo verbs are served. The sweep needs the job worker."
+  },
+  {
+   "name": "update",
+   "kind": "skill",
+   "disposition": "not-yet",
+   "release": "later",
+   "reason": "Needs the job worker, which comes in a later release."
+  }
+ ]
+}

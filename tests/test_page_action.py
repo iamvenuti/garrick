@@ -1569,7 +1569,7 @@ class TestJournal(ActionCase):
         self.wait_for(mark)
         reply = self.run_script({"verb": "operations"})
         self.assertEqual((True, True), (reply["ok"], reply["durable"]))
-        self.assertEqual(["park", "todo-add", "todo-date", "todo-done", "todo-undo", "wake"], reply["verbs"])
+        self.assertEqual(["note-add", "park", "todo-add", "todo-date", "todo-done", "todo-edit", "todo-retire", "todo-undo", "wake"], reply["verbs"])
         (running,) = reply["ops"]
         self.assertEqual(("a19f3c80", "running", "checking", "todo-add", "Work", None),
                          (running["op"], running["state"], running["phase"], running["verb"], running["zone"], running["outcome"]))
@@ -2128,9 +2128,9 @@ class TestNotePreview(ActionCase):
             self.read("Wikis/Meetings/wiki/people/rowan-ash.md")
         self.assertEqual("rowan-ash is not there any more: it was moved, renamed or deleted after the page was built",
                          str(said.exception))
-        out, _, why = pa.perform(self.root, {"verb": "note-read", "path": "Wikis/Meetings/wiki/people/rowan-ash.md"})
+        out, _, why = pa.perform(self.root, {"verb": "note-read", "path": "Wikis/Meetings/wiki/people/rowan-ash.md"}, via="page")
         self.assertEqual({"ok": False, "say": why, "missing": True}, out)
-        out, _, _ = pa.perform(self.root, {"verb": "note-read", "path": "System/context.md"})
+        out, _, _ = pa.perform(self.root, {"verb": "note-read", "path": "System/context.md"}, via="page")
         self.assertNotIn("missing", out)                    # refused, not gone: the page keeps its Open
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads a file whatever its mode")
@@ -2567,7 +2567,7 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
         # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "connected-service", "channel-answers", "count-card", "session-url"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files", "chase", "layout", "outbox-drop", "inbox-run", "intake-answer", "machine-role", "read-guard", "connected-service", "channel-answers", "count-card", "session-url", "remote"), pa.PAGE_ONLY)        # *Commit them* (#595), *Chase* (#603), layout (#604), a held outbox request (#612)
         # The wrap (#645) is a session's verb, documented in commands.md under Opening and wrapping, with its receipt.
         self.assertIn("System/tools/wrap.py", (REPO / "docs" / "commands.md").read_text(encoding="utf-8"))
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY and v != "wrap"), sorted(documented))

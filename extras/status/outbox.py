@@ -460,7 +460,7 @@ def replay(ws: Path, now: Optional[dt.datetime] = None, perform=None) -> Dict[st
                     continue
                 env = {k: v for k, v in env.items() if k != "op"}      # it ended without saving: this replay does it again
                 _write_json(path, env)
-            out, logged, _ = perform(ws, dict(req), ops, "outbox")
+            out, logged, _ = perform(ws, dict(req), ops, via="outbox")
             try:
                 pa.audit(req, bool(out.get("ok")), logged or out.get("say") or "", via="outbox")
             except Exception:

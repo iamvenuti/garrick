@@ -72,6 +72,9 @@
   "test_pathspec_commit": 5.8,
   "test_read_guard": 21.0,
   "test_reading": 1.5,
+  "test_remote_caller": 20.0,
+  "test_remote_record": 30.0,
+  "test_remote_verb": 10.0,
   "test_release": 8.0,
   "test_scaffold_manage": 148.4,
   "test_settings_actions": 20.0,
@@ -107,5 +110,12 @@
   "test_work_files": 66.1,
   "test_work_in": 5.0,
   "test_your_work": 114.7,
-  "test_zone_guard": 6.0
+  "test_zone_guard": 6.0,
+  "test_remote_address": 7.0,
+  "test_remote_context": 6.0,
+  "test_remote_imports": 2.0,
+  "test_remote_notice": 0.1,
+  "test_remote_runtime": 4.0,
+  "test_remote_settings": 12.0,
+  "test_remote_state": 6.0
 }

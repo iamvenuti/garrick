@@ -107,11 +107,12 @@ def _bump(table: Dict[str, Dict[str, int]], zone: str, outcome: str) -> None:
     row[outcome] = row.get(outcome, 0) + 1
 
 
-def read_journal(folder: Path, since: dt.date, workspace: str) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], str]:
+def read_journal(folder: Path, since: dt.date, workspace: str, kept: Optional[Dict[Tuple[str, str], int]] = None) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], str]:
     """(wraps, ask) from operations.jsonl, each zone -> outcome -> count, and why not when it cannot be read. One entry per
     operation, its last record; a record of another workspace, or one that has not finished, is left out. The journal
     keeps only the verbs in operations.RECORDED, never a wrap, so `wraps` is always empty: a wrap row in the file is
-    not counted."""
+    not counted. `kept`, when given, is filled with how many ask actions the journal counted for each (verb, zone), so
+    that the action log can leave out exactly those and count the rest."""
     path = folder / "operations.jsonl"
     wraps: Dict[str, Dict[str, int]] = {}
     ask: Dict[str, Dict[str, int]] = {}
@@ -140,13 +141,18 @@ def read_journal(folder: Path, since: dt.date, workspace: str) -> Tuple[Dict[str
         zone = rec.get("zone") if isinstance(rec.get("zone"), str) and rec.get("zone") else "(no zone)"
         if rec.get("via") == "ask" and rec.get("verb") in _operations().RECORDED:
             _bump(ask, zone, outcome)
+            if kept is not None:
+                kept[(rec["verb"], zone)] = kept.get((rec["verb"], zone), 0) + 1
     return wraps, ask, ""
 
 
-def read_action_log(folder: Path, since: dt.date, journaled=frozenset()) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], str]:
+def read_action_log(folder: Path, since: dt.date, journaled=frozenset(), kept: Optional[Dict[Tuple[str, str], int]] = None) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], str]:
     """(wraps, ask) from page-actions.log. The log says ok or refused only, so a wrap that did not save is counted as
-    refused here, whatever it was. A verb the journal keeps (`journaled`) is counted from the journal alone, so no
-    action is counted twice."""
+    refused here, whatever it was. An ask action of a verb the journal keeps (`journaled`) is counted from the journal
+    when the journal holds it, and from the log when it does not (an action made before the journal kept that verb, or
+    one the journal has let go of): `kept` says how many the journal counted for each (verb, zone), and that many of
+    the newest log rows are left out, so no action is counted twice and none is lost. Without `kept`, every row of a
+    journaled verb is left out, as before."""
     path = folder / "page-actions.log"
     wraps: Dict[str, Dict[str, int]] = {}
     ask: Dict[str, Dict[str, int]] = {}
@@ -156,7 +162,8 @@ def read_action_log(folder: Path, since: dt.date, journaled=frozenset()) -> Tupl
         return wraps, ask, "no action log"
     except OSError:
         return wraps, ask, "the action log does not read"
-    for line in lines:
+    left = dict(kept) if kept is not None else None
+    for line in reversed(lines):             # newest first: the journal keeps the newest, so it takes them first
         m = LOG_LINE.match(line)
         if not m or m.group(1) < since.isoformat():
             continue
@@ -168,7 +175,14 @@ def read_action_log(folder: Path, since: dt.date, journaled=frozenset()) -> Tupl
             zone = "(no zone)"
         outcome = "saved" if ok == "ok" else "refused"
         if verb in journaled:
-            continue
+            if left is None:
+                continue
+            if via == "ask":
+                if left.get((verb, zone or "(no zone)"), 0) > 0:
+                    left[(verb, zone or "(no zone)")] -= 1
+                    continue
+            else:
+                continue
         if verb == "wrap":
             _bump(wraps, zone or "(no zone)", outcome)
         if via == "ask":
@@ -214,8 +228,9 @@ def report(root: Path, days: int = 30, today: Optional[dt.date] = None, folder: 
             opens = card_opens(counts, since.isoformat())
             out += ["  %-14s %d" % (card, n) for card, n in sorted(opens.items(), key=lambda kv: (-kv[1], kv[0]))] or ["  none in this period"]
     workspace = _workspace_id(root)
-    jw, ja, why_j = read_journal(folder, since, workspace)
-    lw, la, why_l = read_action_log(folder, since, set(_operations().RECORDED))
+    kept: Dict[Tuple[str, str], int] = {}
+    jw, ja, why_j = read_journal(folder, since, workspace, kept)
+    lw, la, why_l = read_action_log(folder, since, set(_operations().RECORDED), kept)
     for why in (why_j, why_l):
         if why:
             failed.append(why)

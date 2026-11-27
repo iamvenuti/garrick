@@ -318,8 +318,12 @@ CHILD = textwrap.dedent('''
             os._exit(9)
         if point == "other":
             trailers = "Garrick-Op: " + op + "\\nGarrick-Payload: " + "0" * 64
-        with open(os.path.join(repo, "Todo.md"), "a") as f:
-            f.write("- [ ] " + req["text"] + "\\n")
+        if req["verb"] == "todo-done":
+            text = open(os.path.join(repo, "Todo.md")).read().replace("- [ ] Acme Corp: Invoice for September", "- [x] Acme Corp: Invoice for September")
+            open(os.path.join(repo, "Todo.md"), "w").write(text)
+        else:
+            with open(os.path.join(repo, "Todo.md"), "a") as f:
+                f.write("- [ ] " + req["text"] + "\\n")
         git("add", "Todo.md")
         git("commit", "-q", "-m", "Add a line", "-m", trailers)
         if point in ("after", "other"):
@@ -336,10 +340,10 @@ class TestStoppedInTheMiddle(WritesCase):
     """O1 (#716): a write that stops before, after, or after the commit but before it is settled is settled once from the zone's
     own record of the commit, and never committed twice."""
 
-    def stopped(self, point, text, payload_text=None):
-        made = self.w.prepare("todo-add", "Work", text=text)
+    def stopped(self, point, text, payload_text=None, verb="todo-add", **fields):
+        made = self.w.prepare(verb, "Work", **(fields or {"text": text}))
         op = made["operation_id"]
-        req = {"verb": "todo-add", "zone": "Work", "op": op, "text": payload_text or text}
+        req = {"verb": verb, "zone": "Work", "op": op, "text": payload_text or text}
         done = subprocess.run([sys.executable, "-I", "-c", CHILD, str(self.root / "System" / "tools" / "operations.py"), str(self.work),
                                point, json.dumps(req), op], capture_output=True, text=True,
                               env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull))
@@ -366,7 +370,7 @@ class TestStoppedInTheMiddle(WritesCase):
         time.sleep(0.4)
         self.assertEqual(before, self.commits())
         self.assertNotIn("STOPBEFORE", (self.work / "Todo.md").read_text())
-        self.assertEqual([], self.ops().sweep(self.work))                # reported here, so not said again by the next run
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])   # the page's sweep says it once
 
     def test_stopped_after_the_commit_it_is_saved_with_that_commit_and_never_commits_twice(self):
         before = self.commits()
@@ -379,7 +383,7 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual("saved", self.w.execute(op)["state"])
         time.sleep(0.4)
         self.assertEqual(before + 1, self.commits())
-        self.assertEqual([], self.ops().sweep(self.work))
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])
 
     def test_stopped_after_the_commit_but_before_it_was_settled_it_is_saved_once(self):
         before = self.commits()
@@ -388,7 +392,7 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual(before + 1, self.commits())
         self.assertEqual("saved", self.w.execute(op)["state"])
         self.assertEqual(before + 1, self.commits())
-        self.assertEqual([], self.ops().sweep(self.work))
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])
 
     def test_a_commit_with_this_id_and_another_request_is_unknown_and_names_nothing_to_run(self):
         before = self.commits()
@@ -398,6 +402,53 @@ class TestStoppedInTheMiddle(WritesCase):
         self.assertEqual("unknown", self.w.execute(op)["state"])
         time.sleep(0.4)
         self.assertEqual(before + 1, self.commits())
+
+    def test_the_core_is_not_asked_when_the_grant_no_longer_reaches_the_zone(self):
+        op = self.stopped("after", "REVOKED line")
+        self.s.change_reach(writable=())                                  # the owner took the zone out of reach
+        out = self.w.status(op)
+        self.assertEqual(("unknown", run_op.CRASHED), (out["state"], out["say"]), out)
+        self.assertNotIn("commit", out)
+
+    def test_the_core_is_not_asked_after_the_reach_changed_or_the_zone_was_replaced(self):
+        self.s.reach_id = lambda: "reach-one"
+        op = self.stopped("after", "REPLACED line")
+        self.s.reach_id = lambda: "reach-two"                              # the zone was made again, and turned on again
+        out = self.w.status(op)
+        self.assertEqual(("unknown", run_op.CRASHED), (out["state"], out["say"]), out)
+
+    def test_the_remote_read_never_uses_up_the_report_the_page_makes(self):
+        op = self.stopped("after", "ONCEPAGE line")
+        self.assertEqual("saved", self.w.status(op)["state"])
+        got = self.ops().sweep(self.work)                                  # the page's sweep still says it, once
+        self.assertEqual([op], [r["op"] for r in got])
+        self.assertEqual([], self.ops().sweep(self.work))
+
+    def test_a_todo_tick_that_stops_in_the_middle_is_settled_from_the_core_record_once(self):
+        before = self.commits()
+        op = self.stopped("after", "", verb="todo-done", line="Invoice for September")
+        out = self.w.status(op)
+        self.assertEqual(("saved", True), (out["state"], out["saved"]), out)
+        self.assertEqual(before + 1, self.commits())
+        self.assertRegex((self.work / "Todo.md").read_text(), r"- \[x\].*Invoice for September")
+        self.assertEqual("saved", self.w.execute(op)["state"])
+        time.sleep(0.4)
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])       # S6: the remote read marked nothing
+
+    def test_each_todo_line_verb_sends_the_remote_id_and_leaves_a_record_under_it(self):
+        steps = (("todo-done", dict(line="Invoice for September")), ("todo-undo", dict(line="Invoice for September")),
+                 ("todo-edit", dict(line="Invoice for September", text="Invoice LINEOP")),
+                 ("todo-date", dict(line="Invoice LINEOP", date="2026-12-30")),
+                 ("todo-retire", dict(line="Invoice LINEOP", reason="LINEOPRETIRE")))
+        for verb, fields in steps:
+            with self.subTest(verb=verb):
+                op, out = self.go(verb, **fields)
+                self.assertEqual("saved", out["state"], out)
+                rec = json.loads((self.work / ".git" / "garrick-ops" / (op + ".json")).read_text())
+                self.assertEqual((verb, "settled", "done", "remote"), (rec["verb"], rec["state"], rec["result"], rec["via"]))
+        argv = run_op.command(str(self.root), {"id": "0123456789abcdef", "verb": "todo-done", "zone": "Work", "fields": {"line": "x"}})[0]
+        self.assertIn("--op=0123456789abcdef", argv)
 
     def test_a_write_that_stopped_before_the_core_began_says_unknown_as_before(self):
         op = self.w.prepare("todo-add", "Work", text="NOCORE line")["operation_id"]

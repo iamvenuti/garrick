@@ -346,13 +346,15 @@ class ZoneMadeAgain(Case):
         self.assertIn("30 wrong codes in 15 minutes", text)
         self.assertIn("*Show a code* still works under it", text)
         self.assertIn("What a flood can still do", text)
+        self.assertIn("Behind a relay all callers count as one, so a flood of 30 calls to the sign-in page in 10 minutes closes it for everyone", text)
         self.assertNotIn("its lock is for everyone", text)
 
     def test_the_docs_say_how_a_stopped_write_is_settled_from_the_zones_own_record(self):
         text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
         self.assertIn("next status call reads the zone's history and says once whether the change was saved, was not saved, or cannot be told", text)
         self.assertIn("It never commits a second time", text)
-        self.assertIn("The five Todo line changes and a checkpoint are not linked", text)
+        self.assertIn("The five Todo line changes (tick, untick, new date, reword, retire) leave the same record", text)
+        self.assertIn("A checkpoint makes no commit and has no record", text)
 
 class Handles(Case):
     def setUp(self):

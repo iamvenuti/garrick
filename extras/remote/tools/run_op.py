@@ -41,7 +41,7 @@ ASK = (
     "m = runpy.run_path(sys.argv[1])\n"
     "if not callable(m.get('outcome')) or not callable(m.get('prepare')):\n"
     "    sys.exit(3)\n"
-    "print(json.dumps(m['outcome'](sys.argv[2], sys.argv[3])))\n")
+    "print(json.dumps(m['outcome'](sys.argv[2], sys.argv[3], False)))\n")
 
 
 def core_outcome(ws, repo, op: str):
@@ -72,7 +72,7 @@ def command(ws: str, rec: dict):
     page = str(Path(ws) / "System" / "status" / "page_action.py")
     base = [python(), page, "--workspace", ws, "--via", VIA]
     if verb in LINE_VERBS:
-        argv = base + [verb, "--zone=" + zone, "--file=Todo.md", "--line=" + f["line"]]
+        argv = base + [verb, "--zone=" + zone, "--file=Todo.md", "--line=" + f["line"], "--op=" + rec["id"]]   # the same id the record is read by
         for field in ("date", "text", "reason"):
             if f.get(field) is not None and field in LINE_FIELDS[verb]:
                 argv.append("--%s=%s" % (field, f[field]))

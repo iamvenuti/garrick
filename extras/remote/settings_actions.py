@@ -213,7 +213,7 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     if write and "write" not in grant["classes"]:
         return _no("This connection was not allowed to write, so it cannot write in %s." % zone["zone"])
     if (read or write) and not marker:
-        if (Path(ws) / "Zones" / zone["zone"]).is_dir():                     # the folder is there; the disk gives no creation time for it
+        if ctx.keeps_no_birth_time(ws, zone["zone"]):                        # the folder is there; the disk gives no creation time for it
             return _no("%s is on a disk that keeps no creation time for folders. Garrick needs it to tell this folder from one made "
                        "again under the same name, so it was not turned on. Keep the zone on a disk that records it, such as the "
                        "Mac's own disk." % zone["zone"])

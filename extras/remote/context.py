@@ -110,6 +110,25 @@ def open_zones(ws: Path) -> List[str]:
     return [z["zone"] for z in zones(ws) if not z["walled"]]
 
 
+def keeps_no_birth_time(ws: Path, zone: str) -> bool:
+    """True only when the zone's folder is there and the system really gives no birth time for it (no field, or 0). Any other reason
+    for an empty marker (a name that does not fit, a stat that fails, a file in its place) is False."""
+    try:
+        base = Path(ws) / "Zones"
+        folder = base / str(zone)
+        if str(zone) in ("", ".", "..") or not str(zone).strip() or folder.parent != base or folder.name != str(zone):
+            return False
+        st = os.stat(str(folder))
+        if not stat.S_ISDIR(st.st_mode):
+            return False
+        born = getattr(st, "st_birthtime_ns", None)
+        if born is None:
+            born = int((getattr(st, "st_birthtime", 0) or 0) * 1000000000)
+        return not born
+    except (OSError, ValueError):
+        return False
+
+
 def zone_marker(ws: Path, zone: str) -> str:
     """A marker of one zone's folder: it changes when the folder is removed and made again, and not when something inside it is edited.
     It is made of the folder's device, its inode and its birth time. "" when the folder cannot be read or the system gives no birth time:

@@ -235,6 +235,14 @@ class Marked(WritesCase):
             self.assertIn("made again under the same name", say, case)
             self.assertIn("the Mac's own disk", say, case)
 
+    def test_any_other_empty_marker_keeps_could_not_be_read(self):
+        other = self.store.create_grant("client-other", "Tablet", ["read"])
+        with unittest.mock.patch.object(self.ctx, "zone_marker", return_value=""):      # a folder that is there, a stat that is fine
+            out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+        self.assertFalse(out["ok"], out)
+        self.assertIn("could not be read", out["say"])
+        self.assertNotIn("creation time", out["say"])
+
     def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
         for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
             self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))

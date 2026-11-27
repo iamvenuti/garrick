@@ -173,9 +173,9 @@ JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,sec=document.getElementById('remote-settings');
 if(!sec||!sec.dataset.state||sec.dataset.state==='missing'||sec.dataset.state==='refused')return;
 var said=document.getElementById('remote-said'),pending=null,tick=null;
-function tell(t,bad){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');
+function tell(t,bad,code){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');
 if(window.GarrickFailClear)GarrickFailClear(said);
-if(bad&&window.GarrickFail){said.textContent='';GarrickFail(said,'remote',String(t||''));return}
+if(bad&&window.GarrickFail){said.textContent='';GarrickFail(said,code||'remote',String(t||''));return}
 said.textContent=String(t||'')}
 function send(q){if(!host||pending)return false;pending=q;host.postMessage({act:q});return true}
 var ad=document.getElementById('remote-adapter'),own=document.getElementById('remote-own'),url=document.getElementById('remote-url');
@@ -203,7 +203,8 @@ if(i.checked){awaiting={li:li,box:i};li.querySelector('.rnotice').hidden=false;v
 send({verb:'remote',action:'zone',grant:li.dataset.grant,zone:li.dataset.zone,read:li.querySelector('[data-rr=read]').checked,
 write:li.querySelector('[data-rr=write]').checked,acknowledged:false})});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&q.verb==='remote'){pending=null;out=out||{ok:false,say:'That did not work.'};tell(out.say,!out.ok);
+if(q&&q.verb==='remote'){pending=null;var none=!out,odd=!none&&/^(unknown|lost|crashed)$/.test(String((out.plain&&out.plain.code)||out.outcome||''));
+out=out||{ok:false,say:'That did not work.'};tell(out.say,!out.ok,none?'lost':odd?'unknown':'remote');
 if(out.ok){var a=q.action;if(a==='enable'||a==='resume')setState('on');else if(a==='pause')setState('paused');else if(a==='off')setState('off');
 else if(a==='pair'&&out.code)showCode(out.code,out.seconds);
 else if(a==='revoke'){var g=sec.querySelector('.rgrant[data-grant="'+q.grant+'"]');if(g)g.remove()}

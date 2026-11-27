@@ -111,11 +111,13 @@ class TestEveryCommittingVerb(Base):
             if not spec.commits or verb in ("new-project-party",):
                 continue
             scope = spec.scope
-            repo = self.zone if scope == "zone" else self.ws
-            pa.act = committer(self.ws, scope=scope)
+            repo = self.zone if scope == "zone" or verb == "finding" else self.ws      # an answer to a finding commits in the page's own zone
+            pa.act = committer(self.ws, scope="zone" if repo == self.zone else "workspace")
             op = ops.mint_op()
             before = commits(repo)
             req = {"verb": verb, "zone": "Work", "op": op}
+            if verb == "finding":
+                req = {"verb": verb, "path": "Zones/Work/Todo.md", "op": op}
             out, _, _ = pa.perform(self.ws, req, ops, via="page")
             self.assertTrue(out["ok"], (verb, out))
             self.assertEqual(commits(repo), before + 1, verb)
@@ -280,14 +282,90 @@ class TestCrashThroughPerform(Base):
         pa.sweep_receipts(self.ws, ops)
         self.assertEqual([o["outcome"] for o in ops.read(self.root / "jobs", workspace=str(self.ws))["ops"]], ["saved"])
 
-    def test_the_operations_request_carries_what_it_settled(self):
+    def operations_request(self, via):
+        """The `operations` request through main(), as a caller of that kind sends it: (the reply, what was printed)."""
+        import io
+        from contextlib import redirect_stdout
+        saved = pa.caller
+        pa.caller = lambda declared, ws: via
+        try:
+            sys.stdin = io.StringIO(json.dumps({"verb": "operations"}))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                pa.main(["--workspace", str(self.ws)])
+        finally:
+            pa.caller = saved
+            sys.stdin = sys.__stdin__
+        return json.loads(buf.getvalue())
+
+    def test_the_operations_request_carries_what_it_settled_to_the_page(self):
         self.stop_at("after")
-        pa.act = None
-        out = subprocess.run([sys.executable, "-I", str(PA_PATH), "--workspace", str(self.ws)], input=json.dumps({"verb": "operations"}),
-                             env=dict(os.environ), capture_output=True, text=True)
-        said = json.loads(out.stdout)
+        said = self.operations_request("page")
         self.assertEqual([r["result"] for r in said["settled"]], ["done"])
         self.assertIn("It did go through", said["settled"][0]["say"])
+        self.assertNotIn("settled", self.operations_request("page"))             # said once
+
+    def test_w1_no_other_caller_reads_marks_or_hears_a_settlement(self):
+        self.stop_at("after")
+        for via in ("session", "remote", "ask", "outbox"):
+            self.assertNotIn("settled", self.operations_request(via), via)
+        rec = json.loads((self.zone / ".git" / "garrick-ops" / (self.OP + ".json")).read_text())
+        self.assertEqual(rec["state"], "running")                                  # nothing was settled or marked
+        self.assertEqual([r["result"] for r in self.operations_request("page")["settled"]], ["done"])
+
+
+class TestFixRound(Base):
+    def test_c1_a_finding_records_in_the_zone_it_commits_in(self):
+        pa.act = committer(self.ws, scope="zone")
+        req = {"verb": "finding", "kind": "todo-long", "path": "Zones/Work/Todo.md", "answer": "split", "op": "abcabcabcabcabca"}
+        out, _, _ = pa.perform(self.ws, dict(req), ops, via="page")
+        self.assertTrue(out["ok"], out)
+        rec = json.loads((self.zone / ".git" / "garrick-ops" / "abcabcabcabcabca.json").read_text())
+        self.assertEqual((rec["result"], rec["commit"]), ("done", git(self.zone, "rev-parse", "HEAD")))
+        self.assertFalse((self.ws / ".git" / "garrick-ops" / "abcabcabcabcabca.json").exists())
+        n = commits(self.zone)
+        again, _, _ = pa.perform(self.ws, dict(req), ops, via="page")
+        self.assertTrue(again["ok"] and again.get("receipt"))
+        self.assertEqual(commits(self.zone), n)
+
+    def test_c1_a_finding_that_names_no_repository_keeps_no_record(self):
+        pa.act = lambda ws, req, *a, **k: "Done."
+        for path in ("System/rules.md", "Zones/Work", "Zones/../x.md", "Zones/Nowhere/x.md", None):
+            pa.perform(self.ws, {"verb": "finding", "kind": "other", "path": path, "answer": "later", "op": "abcabcabcabcabca"}, ops, via="page")
+        self.assertFalse((self.ws / ".git" / "garrick-ops").exists())
+        self.assertFalse((self.zone / ".git" / "garrick-ops").exists())
+
+    def test_s2_an_execute_that_ran_nothing_is_never_said_saved(self):
+        pa.act = committer(self.ws)
+        real = ops.execute
+        ops.execute = lambda repo, op, work: (None, ops._receipt({"op": op, "state": "running"}))
+        try:
+            out, _, _ = pa.perform(self.ws, {"verb": "rename", "zone": "Work", "project": "A", "thread": "B", "to": "C", "op": "abcabcabcabcabca"}, ops, via="page")
+        finally:
+            ops.execute = real
+        self.assertFalse(out["ok"])
+        self.assertEqual(commits(self.zone), 1)
+
+    def test_op_on_the_command_line_is_checked_and_retried_to_the_first_receipt(self):
+        import io
+        from contextlib import redirect_stdout
+        pa.act = committer(self.ws)
+
+        def run(*extra):
+            buf = io.StringIO()
+            with redirect_stdout(buf), redirect_stdout(buf):
+                code = pa.main(["--workspace", str(self.ws), "--via", "session", "rename", "--zone", "Work", "--project", "A",
+                                "--thread", "B", "--to", "C"] + list(extra))
+            return code, buf.getvalue()
+        code, said = run("--op", "NOT-HEX")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(commits(self.zone), 1)
+        self.assertEqual(run("--op", "abcabcabcabcabca")[0], 0)
+        self.assertEqual(commits(self.zone), 2)
+        code, said = run("--op", "abcabcabcabcabca")
+        self.assertEqual(code, 0)
+        self.assertEqual(commits(self.zone), 2)
+        self.assertIn("Garrick-Op: abcabcabcabcabca", git(self.zone, "log", "-1", "--format=%B"))
 
 
 if __name__ == "__main__":

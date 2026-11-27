@@ -21,9 +21,9 @@ REPO = Path(__file__).resolve().parent.parent
 # (what is retired, the words that name it, pages where the words are history and so allowed)
 RETIRED = (
     ("Resume opens Claude with its answer already shown (since 0.80.0 a new session opens, request typed, not sent)",
-     re.compile(r"Claude's answer already on screen|with the answer already on screen"), ("docs/concepts.md",)),
-    ("the Obsidian plugin as a host that acts", re.compile(r"Mac app and in Obsidian, its buttons|in Obsidian, its buttons act"),
-     ()),
+     re.compile(r"Claude's answer already on screen|with the answer already on screen|Claude's answer to where it stands already on screen"), ("docs/concepts.md",)),
+    ("the Obsidian plugin as a host that acts",
+     re.compile(r"in the Mac app and in Obsidian|Mac app and in Obsidian, its buttons|in Obsidian, its buttons act", re.I), ()),
     ("the Obsidian status plugin as the page's host", re.compile(r"Obsidian (status )?plugin"), ("docs/updating.md",)),
     ("the wall model by party", re.compile(r"walls? between (the )?parties|walled part(y|ies)|\d+ part(y|ies) \(\d+ walled\)"
                                            r"|Walls between the parties", re.I), ()),

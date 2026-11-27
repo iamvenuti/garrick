@@ -1962,6 +1962,7 @@ var go=d.querySelector('[data-go]');go.disabled=false}
    second try. Only the look, which writes nothing, offers Try again (`again`). */
 function lcode(out,again){var say=String((out&&out.say)||''),pc=out&&out.plain&&out.plain.code||'',oc=out&&out.outcome||'';
 if(!out)return'lost';if(/^A wall holds /.test(say))return'wall';
+if(out.again||out.state==='asked')return'unknown';
 if(/^(unknown|lost|unrecorded)$/.test(pc))return pc;if(/^(unknown|lost)$/.test(oc))return oc;
 if(again)return out.ok?'':'layout-look';if(pc==='crashed'||oc==='crashed')return'crashed';
 if(out.ok)return'';return oc==='refused'||pc==='refused'?'layout':'noreply'}

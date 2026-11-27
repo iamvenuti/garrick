@@ -161,8 +161,6 @@ def _pair(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         return _no("Turn remote access on first.")
     if not st.address()["url"]:
         return _no("Remote access has no address yet. Set it up first.")
-    if store.consent_locked():
-        return _no("Too many wrong codes were tried. The sign-in page opens again in a few minutes.")
     waiting = store.waiting_requests()
     asked = str(req.get("request") or "").strip()
     if asked:

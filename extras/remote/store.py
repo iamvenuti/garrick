@@ -40,6 +40,18 @@ def _state():
     return mod
 
 
+def _limits():
+    key = "garrick_remote_limits"
+    mod = sys.modules.get(key)
+    if mod is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(key, str(Path(__file__).resolve().parent / "limits.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[key] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
 AUTH_FILE = "auth.json"
 LOCK_FILE = "auth.lock"
 KEY_FILE = "handle.key"
@@ -53,8 +65,6 @@ PENDING_SECONDS = 10 * 60                # a sign-in request waits for the owner
 UNFINISHED_SECONDS = 60 * 60             # a registration that never completes is dropped after an hour
 MAX_UNFINISHED = 200                     # and no more than this many wait at once
 MAX_PENDING = 50                         # sign-in requests that wait for the owner at once; a new one pushes out the oldest
-LOCK_AFTER = 5                           # wrong codes before the consent page locks
-LOCK_SECONDS = 15 * 60
 
 _THREAD_LOCK = threading.RLock()
 
@@ -157,7 +167,6 @@ def make_pairing_code(now: Optional[float] = None, request: str = "") -> Optiona
         if request and not any(isinstance(v, dict) and v.get("rid") == request for v in db["pending"].values()):
             return None
         db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS, "request": str(request or "")}}
-        db["consent"]["wrong"] = 0                       # a new code starts a new count
     return code, CODE_SECONDS
 
 
@@ -184,25 +193,38 @@ def pairing_state(now: Optional[float] = None) -> Dict[str, Any]:
     return {"waiting": left > 0, "seconds": left, "locked": int(locked) + 1 if locked > 0 else 0, "request": request}
 
 
-def consent_locked(now: Optional[float] = None) -> int:
-    """Seconds left before the consent page takes a code again; 0 when it is open."""
+def _coded(db: Dict[str, Any], request: str) -> bool:
+    """Whether a live code was made for this request: the one the owner started, and so outside the flood ceiling."""
+    return bool(request) and any(isinstance(v, dict) and v.get("request") == request for v in db["pairing"].values())
+
+
+def consent_locked(now: Optional[float] = None, request: str = "") -> int:
+    """Seconds left before the consent page takes a code again, for a request; 0 when it is open. The flood ceiling closes the page only
+    to a request that no code was made for: with no request named, it is the ceiling's own state. A request with a code is never locked."""
     now = time.time() if now is None else now
     db = peek(now)
+    if _coded(db, str(request or "")):
+        return 0
     left = db["consent"].get("locked_until", 0) - now
     return int(left) + 1 if left > 0 else 0
 
 
 def check_pairing_code(code: str, now: Optional[float] = None, request: str = "") -> bool:
-    """Try a code for one sign-in request. The right code for that request works once, and only while the page is open. A wrong one counts,
-    and so does a right code made for another request, which is not used up: the fifth in a row locks the page for 15 minutes, and a locked
-    page takes no code at all, the right one included."""
+    """Try a code for one sign-in request. The right code for that request works once. A wrong try, and a right code made for another
+    request (which is not used up), counts on the request it was typed on: the fifth closes that request and the code made for it, and the
+    other requests stay open. The same wrong tries on requests that no code was made for also count toward one shared ceiling against a
+    flood; once it is reached, such a request takes no code for a while. A request that a code was made for is outside the ceiling. With no
+    code waiting at all there is nothing to guess, so a wrong try is not counted."""
     now = time.time() if now is None else now
+    limits = _limits()
     with txn(now) as db:
         consent = db["consent"]
-        if consent.get("locked_until", 0) > now:
+        mine_coded = _coded(db, str(request or ""))
+        if not mine_coded and consent.get("locked_until", 0) > now:
             return False
         if not db["pairing"]:
             return False                                 # no code waits: nothing to guess, so a wrong try is not counted
+        key = next((k for k, v in db["pending"].items() if isinstance(v, dict) and request and v.get("rid") == request), None)
         text = str(code or "").strip()
         ok = False
         if len(text) == 6 and text.isdigit():
@@ -213,12 +235,22 @@ def check_pairing_code(code: str, now: Optional[float] = None, request: str = ""
                         ok = True
                         del db["pairing"][known]
         if ok:
-            consent["wrong"] = 0
             return True
-        consent["wrong"] = int(consent.get("wrong", 0)) + 1
-        if consent["wrong"] >= LOCK_AFTER:
-            consent["wrong"] = 0
-            consent["locked_until"] = now + LOCK_SECONDS
+        if key is not None:
+            row = db["pending"][key]
+            row["wrong"] = int(row.get("wrong", 0)) + 1
+            if row["wrong"] >= limits.CONSENT_TRIES_PER_REQUEST:
+                del db["pending"][key]                   # this request is closed, and so is the code that was made for it
+                for known, entry in list(db["pairing"].items()):
+                    if isinstance(entry, dict) and entry.get("request") == request:
+                        del db["pairing"][known]
+        if not mine_coded:
+            if now - float(consent.get("since", 0)) > limits.CONSENT_FLOOD_WINDOW:
+                consent["wrong"], consent["since"] = 0, now
+            consent["wrong"] = int(consent.get("wrong", 0)) + 1
+            if consent["wrong"] >= limits.CONSENT_FLOOD_CEILING:
+                consent["wrong"] = 0
+                consent["locked_until"] = now + limits.CONSENT_FLOOD_LOCK
         return False
 
 

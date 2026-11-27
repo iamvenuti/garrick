@@ -337,6 +337,17 @@ class ZoneMadeAgain(Case):
         self.assertIn("Pick the sign-in you started", text)
 
 
+    def test_the_docs_give_each_sign_in_its_own_tries_and_the_ceiling_the_limits_file_holds(self):
+        text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
+        limits = mod("limits")
+        self.assertEqual((5, 30, 900, 900), (limits.CONSENT_TRIES_PER_REQUEST, limits.CONSENT_FLOOD_CEILING,
+                                             limits.CONSENT_FLOOD_WINDOW, limits.CONSENT_FLOOD_LOCK))
+        self.assertIn("Each sign-in request has its own five tries", text)
+        self.assertIn("30 wrong codes in 15 minutes", text)
+        self.assertIn("*Show a code* still works under it", text)
+        self.assertIn("What a flood can still do", text)
+        self.assertNotIn("its lock is for everyone", text)
+
 class Handles(Case):
     def setUp(self):
         super().setUp()

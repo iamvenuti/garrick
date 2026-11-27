@@ -117,7 +117,7 @@ def section(v: dict, h: Dict[str, Callable], workspace: str) -> str:
     address = ('<p class="raddr" id="remote-address">Your address: <b>%s</b></p>' % E(addr["url"])) if addr.get("url") else ""
     pairing = v.get("pairing") or {}
     waiting = '<p class="hint" id="remote-waiting">A code is waiting.</p>' if pairing.get("waiting") else ""
-    locked = ('<p class="hint bad" id="remote-locked">The sign-in page is locked for a while after too many wrong codes.</p>'
+    locked = ('<p class="hint bad" id="remote-locked">Many wrong codes were tried. A sign-in with no code made for it takes none for a while. Show a code still works.</p>'
               if pairing.get("locked") else "")
     setup = ('<div class="rsetup r-off" id="remote-setup"><label class="rlabel">How will your assistant reach this Mac?'
              '<select id="remote-adapter" class="menu-style"><option value="relay"%s>Through a relay</option>'

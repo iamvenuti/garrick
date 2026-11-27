@@ -172,7 +172,10 @@ JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,sec=document.getElementById('remote-settings');
 if(!sec||!sec.dataset.state||sec.dataset.state==='missing'||sec.dataset.state==='refused')return;
 var said=document.getElementById('remote-said'),pending=null,tick=null;
-function tell(t,bad){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');said.textContent=String(t||'')}
+function tell(t,bad){if(!said)return;said.hidden=false;said.className='hint rsaid'+(bad?' bad':'');
+if(window.GarrickFailClear)GarrickFailClear(said);
+if(bad&&window.GarrickFail){said.textContent='';GarrickFail(said,'remote',String(t||''));return}
+said.textContent=String(t||'')}
 function send(q){if(!host||pending)return false;pending=q;host.postMessage({act:q});return true}
 var ad=document.getElementById('remote-adapter'),own=document.getElementById('remote-own'),url=document.getElementById('remote-url');
 function adapter(){if(own)own.hidden=!ad||ad.value!=='own'}

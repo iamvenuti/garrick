@@ -144,6 +144,16 @@ class States(Case):
         self.assertIn('id="remote-norequests">No sign-in is waiting. Start one in your assistant, then choose Show a code.', out)
         self.assertNotIn('class="rreq"', out)
 
+    def test_a_failed_reply_is_drawn_by_the_pages_failure_row_never_as_raw_text(self):
+        js = (EXTRA.parent / "status" / "settings_remote.py").read_text()
+        tell = js.split("function tell(", 1)[1].split("\nvar ad=", 1)[0]
+        self.assertIn("GarrickFail(said,'remote',String(t||''))", tell)           # the sentence, the tool's text under Details
+        self.assertIn("GarrickFailClear(said)", tell)                              # a later success takes the drawing away
+        self.assertLess(tell.index("GarrickFail(said"), tell.index("said.textContent=String(t||'')}"))
+        self.assertIn("tell(out.say,!out.ok)", js)
+        built = (EXTRA.parent / "status" / "status.py").read_text()
+        self.assertIn("window.GarrickFail=function", built)                         # the page defines it, with a default row for an unknown code
+
     def test_the_show_a_code_button_sends_the_picked_request(self):
         out = (EXTRA.parent / "status" / "settings_remote.py").read_text()
         self.assertIn("input[name=remote-request]:checked", out)

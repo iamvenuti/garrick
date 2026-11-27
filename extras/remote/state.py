@@ -309,6 +309,11 @@ def view(ws: Path) -> Dict[str, Any]:
     except OSError:
         notice = ""
     rows = []
+    try:
+        for g in grants(ws):
+            sibling("context").prune_absent(ws, g["id"])
+    except Exception:
+        pass
     for g in grants(ws):
         reach = []
         try:

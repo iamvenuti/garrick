@@ -130,7 +130,7 @@ def reach_of(ws: Path, grant: Dict[str, Any]) -> Dict[str, FrozenSet[str]]:
             readable.add(zone)
         if entry.get("write"):
             writable.add(zone)
-    held = [z for z, e in (grant.get("zones") or {}).items() if z in known and isinstance(e, dict) and (e.get("read") or e.get("write"))]
+    held = [z for z, e in (grant.get("zones") or {}).items() if known.get(z) and isinstance(e, dict) and (e.get("read") or e.get("write"))]
     if len(held) > 1:                                                  # one connection reaches one walled zone: with two stored, none
         readable = {z for z, walled in known.items() if not walled}
         writable = set(readable)
@@ -144,15 +144,24 @@ TOO_MANY = "This connection holds more than one walled zone, so it reaches none 
 
 def reach_note(ws: Path, grant: Dict[str, Any]) -> str:
     """Why a grant's walled zones are all out of reach, or "" when they are not."""
-    known = {z["zone"] for z in zones(ws)}
-    held = [z for z, e in (grant.get("zones") or {}).items() if z in known and isinstance(e, dict) and (e.get("read") or e.get("write"))]
+    known = {z["zone"]: z["walled"] for z in zones(ws)}
+    held = [z for z, e in (grant.get("zones") or {}).items() if known.get(z) and isinstance(e, dict) and (e.get("read") or e.get("write"))]
     return TOO_MANY if len(held) > 1 else ""
+
+
+def prune_absent(ws: Path, gid: str) -> None:
+    """Drop the walled-zone entries of a grant for zones the workspace no longer has. Nothing is dropped when the zone list cannot be read."""
+    known = [z["zone"] for z in zones(ws)]
+    grant = _grant(gid)
+    if known and grant and any(z not in known for z in (grant.get("zones") or {})):
+        _sib("store").prune_zones(gid, known)
 
 
 def reach_rows(ws: Path, gid: str) -> List[Dict[str, Any]]:
     """What Settings shows of a grant's reach: each zone, whether it is walled, whether the grant reads it and writes it, and
     the day the owner turned a walled zone on. Open zones are in the reach of every grant; the owner cannot take them out
     here, so the row says so."""
+    prune_absent(ws, gid)
     grant = _grant(gid)
     if grant is None:
         return []

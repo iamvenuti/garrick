@@ -1305,7 +1305,9 @@ def _decide(repo, rec: dict, ran_ok) -> dict:
         if now is None:
             result = "unsure"
         elif now == (rec.get("head") or ""):
-            result = "not-done"
+            gd = git_dir(repo)
+            # A commit may be running still, in a process the dead worker left behind: git holds the index lock until it ends.
+            result = "unsure" if gd is None or (gd / "index.lock").exists() else "not-done"
         elif ran_ok:
             result, change["commit"], change["by_head"] = "done", now, True
         else:

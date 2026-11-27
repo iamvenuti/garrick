@@ -294,6 +294,11 @@ class TestCrash(Base):
         self.assertEqual((got["result"], got["found"]), ("unsure", [sha]))
         self.assertIn(sha[:7], got["say"])
 
+    def test_a_commit_that_may_still_be_running_is_unsure_not_not_done(self):
+        self.stop_at("before")
+        (self.repo / ".git" / "index.lock").write_text("")      # git's own lock, held while a commit runs
+        self.assertEqual(ops.outcome(self.repo, OP, mark=False)["result"], "unsure")
+
     def test_two_commits_with_one_id_are_unsure(self):
         self.stop_at("after")
         commit_with(self.repo, ops.trailers(OP, ops.payload_hash("park", REQ)), name="two.md")

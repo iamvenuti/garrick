@@ -4,6 +4,35 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-11-27
+
+This release adds remote access, as a preview. It is an optional extra. An assistant on your phone, or on another computer, can read your workspace and save notes and Todo actions. The workspace stays on your Mac. What each connected assistant may reach is set at the Mac, and walled zones stay out until you turn one on by name. Every action now records who asked for it, and a note sent twice by a retry is saved once.
+
+**Upgrading.**
+- Remote access is new and a preview. It is off until you turn it on in Settings, and nothing changes until then.
+- `perform()` now needs its caller. This matters only to code that calls it.
+
+### Added
+
+- **Remote access (preview)** (#695, #696, #697, #698, #699, #700, #702). An optional extra in `extras/remote/`, with its own Python and packages from a lock with hashes. It is checked before it is used and fetched only when you turn it on. To add it, copy `extras/remote` to `System/remote` in your workspace, or use *Ask my assistant to add it* in Settings. An update keeps it current from then on.
+  - Settings has a *Remote access* section, labelled Preview. It has On, Off and Pause, each setup step, a pairing code, the connected assistants with *Revoke*, and what each one may reach.
+  - An assistant signs in once with a six-digit code that Settings shows. The code lasts five minutes and works once, and five wrong codes lock sign-in for fifteen minutes. Access tokens last ten minutes and are tied to your address.
+  - Each connection reaches the open zones, Knowledge and Garrick's docs. A walled zone joins only when you turn it on at the Mac, by name, after a notice of what leaves the Mac, with reads and writes as separate choices. One connection reaches one walled zone. No tool changes what a connection reaches.
+  - Five read tools (places, a thread's state, search, read, what is owed) give the answers Ask gives at the desk. Ten actions (a note, the six Todo actions, park, wake and checkpoint) are prepared, run once and answered with a receipt. Asking twice saves once.
+  - It runs on a solo or server computer only, listens on this Mac only, and works through a relay or an HTTPS address you already have. The relay adapter is not yet tested on a real Mac, so an address of your own is the tested path.
+  - The service log keeps the time, the tool, the connection, the outcome and how long it took. It never keeps a token, a code or a record's text.
+  - A manifest names, for each thing Garrick can do, whether a remote assistant can do it now, later, only with your approval, or never. A test fails when a new verb is missing from it.
+- **The docs page** *Remote access (preview)* (#703). It covers what remote access does, what leaves the Mac, what Garrick cannot enforce, setup, pause and revoke, and the limits. The phone access page points to it.
+
+### Changed
+
+- **Every action names its caller** (#701). `perform()` takes `via` with no default, and every caller names itself. A new `remote` caller has no right a session lacks. Page-only actions, a new party, the actions kept from Telegram and the actions on the Mac are all refused for it.
+- **A note, a reworded Todo line and a retired one are recorded** (#701), as the other Todo actions already were. A retry sends the first answer back and saves nothing twice, also after a restart. The same request sent again within a few minutes asks whether you mean it.
+
+### Not yet
+
+- Two checks need a person and are still open: the address after a restart and after sleep, through the real relay, and a phone run by voice.
+
 ## [0.81.0] - 2026-11-24
 
 This release changes how the Garrick App gets what it shows. The core now reads almost everything on the page and the App draws it. In the Context queue, a failed Undo says what failed.

@@ -856,9 +856,9 @@ def install(cfg, target, force=False, quiet=False):
     say(f"  Zones: {', '.join(z['name'] for z in cfg['zones'])}, each its own folder and history.")
     say("  Two memories, Meetings and Knowledge, under Wikis, both empty for now.")
     say("  Each zone has an Inbox folder: drop mail or any file there, and say \"process the inbox\".")
-    walled = [p for p in cfg["parties"] if p["walled"]]
-    say(f"  {count(cfg['parties'], 'party', 'parties')} ({len(walled)} walled) in System/context.md "
-        f"and {count(cfg['people'], 'person', 'people')} in System/names.md.")
+    walled = [z for z in cfg["zones"] if zone_walled(z, cfg["parties"])]
+    say(f"  {count(cfg['zones'], 'zone', 'zones')} ({len(walled)} walled) and {count(cfg['parties'], 'party', 'parties')} "
+        f"in System/context.md, {count(cfg['people'], 'person', 'people')} in System/names.md.")
     for warning in merge_hook_warnings:
         say(f"  {warning}")
     if wiki_hook_warning:

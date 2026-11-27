@@ -15,7 +15,7 @@ The words on this page are defined in [Concepts](concepts.md). [How Garrick keep
 
 **The Garrick App** is the control panel over your zones, projects and threads: where each stands, what is due, and what is waiting on you. It is not where the work happens. It opens a piece of work in the app you work in, and the work is done there.
 
-The Garrick App opens on your work, most recent first, each piece with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
+The Garrick App opens on your work, most recent first, each piece with its next action. *Claude* and *Codex* each open a new session in the desktop app, in the folder of that piece of work, with the request to open it typed in and not sent: you press Enter.
 
 Below that is **the full page**, in tabs, fewer when a tab has nothing to show:
 
@@ -31,7 +31,7 @@ The layers below do not depend on it. Without the Garrick App, the same work is 
 
 #### The Garrick App's actions
 
-In the Mac app and in Obsidian, its buttons act: they tick, date and add Todo lines, park and wake threads, make, rename and delete projects and threads, and hand a piece of work to Claude. In a browser the page can change nothing, so there the buttons copy what to say instead.
+In the Mac app, its buttons act: they tick, date and add Todo lines, park and wake threads, make, rename and delete projects and threads, and open a piece of work in Claude, Codex or cmux. In a browser the page can change nothing, so there the buttons copy what to say instead.
 
 Every action, from a button, the Ask box or a skill, goes through `page_action.py` in the status extra, and every one is declared in one table, `DECLARED` in `System/tools/operations.py`. A row per verb names the fields a request may carry, which of them say what the request is, what it may touch, whether it commits, whether a retry is safe, and what must still be true for it to run. Validation is closed: a request that carries a field its verb does not declare is refused, and the field is named. Park, wake and the four Todo verbs, the subset `OPS`, also keep a durable record in `operations.jsonl` in the jobs folder, so a reloaded page can find an action still running or learn how it ended, and so the same request sent again is recognised: joined or answered inside a double click's window, and past it, for as long as any client could still be waiting, asked about rather than done twice. That folder is outside the workspace, so the record is never committed; the notes and git stay the record of what changed. A launcher, such as *Claude*, is reported the same honest way: the page says only that it is opening, and the Mac app, which alone knows how it went, says what opened. A Mac app built before that change says nothing back, so the opening line is all there is until it is rebuilt.
 

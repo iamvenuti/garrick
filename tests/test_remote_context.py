@@ -189,6 +189,67 @@ class OneWalledZone(Case):
         self.assertTrue(self.session(gid).zone_allowed("Work"))
 
 
+class OnlyWalledNow(Case):
+    """N2: a zone that was walled and is open now does not count as the connection's walled zone."""
+
+    def open_work(self):
+        path = self.ws / "System" / "context.md"
+        path.write_text(path.read_text().replace("| Work | Things of work | yes |", "| Work | Things of work | no |"))
+
+    def test_a_zone_that_is_open_now_does_not_block_a_second_walled_zone(self):
+        gid = self.grant()
+        self.assertTrue(self.zone(gid, "Work", read=True)["ok"])
+        self.open_work()
+        self.assertTrue(self.zone(gid, "Vault", read=True)["ok"])
+        s = self.session(gid)
+        self.assertTrue(s.zone_allowed("Vault") and s.zone_allowed("Work"))        # Work is open for everyone now
+        self.assertEqual(self.state.view(self.ws)["grants"][0]["reach_note"], "")
+
+    def test_the_owner_can_clear_an_entry_for_a_zone_that_is_open_now(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.open_work()
+        self.assertFalse(self.zone(gid, "Work", read=True)["ok"])                  # it is open: nothing to turn on
+        self.assertTrue(self.zone(gid, "Work", read=False, ack=False)["ok"])       # but the old entry can be cleared
+        self.assertEqual(self.store.get_grant(gid)["zones"], {})
+
+    def test_two_held_zones_with_one_open_now_still_reach_the_walled_one(self):
+        gid = self.grant()
+        with self.store.txn() as db:
+            db["grants"][gid]["zones"] = {"Work": {"read": "2026-11-26", "write": ""}, "Vault": {"read": "2026-11-26", "write": ""}}
+        self.open_work()
+        self.assertTrue(self.session(gid).zone_allowed("Vault"))
+        self.assertEqual(self.state.view(self.ws)["grants"][0]["reach_note"], "")
+
+
+class ReadingDropsAbsentZones(Case):
+    def remove_work(self):
+        path = self.ws / "System" / "context.md"
+        path.write_text(path.read_text().replace("| Work | Things of work | yes |\n", ""))
+
+    def test_opening_settings_drops_the_entry_of_a_zone_that_left(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.remove_work()
+        self.state.view(self.ws)
+        self.assertEqual(self.store.get_grant(gid)["zones"], {})
+
+    def test_reach_rows_drops_it_too(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        self.remove_work()
+        self.ctx.reach_rows(self.ws, gid)
+        self.assertEqual(self.store.get_grant(gid)["zones"], {})
+
+    def test_an_unreadable_zone_list_drops_nothing(self):
+        gid = self.grant()
+        self.zone(gid, "Work", read=True)
+        (self.ws / "System" / "tools").unlink()
+        self.state.view(self.ws)
+        self.ctx.reach_rows(self.ws, gid)
+        self.assertIn("Work", self.store.get_grant(gid)["zones"])
+
+
 class Scopes(Case):
     def test_a_session_is_never_wider_than_its_token(self):
         gid = self.grant()                                    # the grant may read and write

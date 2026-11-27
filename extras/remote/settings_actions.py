@@ -181,12 +181,16 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     if not found:
         return _no("That zone is not in this workspace.")
     zone = found[0]
+    if not zone["walled"] and not (_flag(req.get("read")) or _flag(req.get("write"))) and (grant.get("zones") or {}).get(zone["zone"]):
+        store.set_zone(gid, zone["zone"], False, False)                      # an old entry for a zone that is open now: clear it
+        return {"ok": True, "say": "%s is open, and its old setting for this connection is cleared." % zone["zone"]}
     if not zone["walled"]:
         return _no("%s is open, so every connection already reaches it." % zone["zone"])
     read, write = _flag(req.get("read")), _flag(req.get("write"))
     now = grant.get("zones", {}).get(zone["zone"], {})
     turning_on = (read and not now.get("read")) or (write and not now.get("write"))
-    others = [z for z, e in (grant.get("zones") or {}).items() if z != zone["zone"] and (e.get("read") or e.get("write"))]
+    walled_now = {z["zone"] for z in known if z["walled"]}
+    others = [z for z, e in (grant.get("zones") or {}).items() if z != zone["zone"] and z in walled_now and (e.get("read") or e.get("write"))]
     if turning_on and others:
         return _no(ctx.ONE_WALLED)
     if turning_on and not _flag(req.get("acknowledged")):

@@ -399,6 +399,18 @@ class Hardening(Case):
         self.assertEqual(self.raw.http.get(seen[5].headers["location"]).status_code, 200)
         self.assertEqual(self.raw.http.get(seen[-1].headers["location"]).status_code, 200)
 
+    def test_rows_saved_without_an_id_are_not_held_and_the_oldest_goes(self):
+        self.raw.register()
+        first = self.raw.authorize()
+        pid = parse_qs(urlsplit(first.headers["location"]).query)["p"][0]
+        with self.store.txn() as db:
+            del db["pending"][pid]["rid"]                                              # a row an older Garrick saved
+            db["pairing"] = {self.store.sha("123456"): {"expires": time.time() + 300}}  # and a live code that names no request
+        for _ in range(self.store.MAX_PENDING):
+            self.raw.authorize()
+        self.assertEqual(self.raw.http.get(first.headers["location"]).status_code, 400)
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+
     def test_a_request_with_a_live_code_survives_fifty_newer_ones(self):
         self.raw.register()
         mine = self.raw.authorize()

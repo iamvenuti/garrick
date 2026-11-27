@@ -339,7 +339,7 @@ def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> Optional[s
     now = time.time() if now is None else now
     pid = secrets.token_urlsafe(32)
     with txn(now) as db:
-        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)}
+        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)} - {None, ""}
         while len(db["pending"]) >= MAX_PENDING:
             order = sorted(((float(v.get("made", 0)) if isinstance(v, dict) else 0.0), k) for k, v in db["pending"].items()
                            if not (isinstance(v, dict) and v.get("rid") in held))

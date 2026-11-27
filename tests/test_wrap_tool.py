@@ -671,6 +671,33 @@ class SameVerdictsAsTheHandWrap(Base):
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
+class CommitTrailers(Base):
+    """The tool puts the operation's id in its commit when the page action hands it over (#716, #723), in that shape only."""
+
+    GOOD = "Garrick-Op: 0123456789abcdef\nGarrick-Payload: " + "a" * 64
+
+    def wrapped(self, value):
+        env = dict(os.environ)
+        env.pop("GARRICK_COMMIT_TRAILERS", None)
+        if value is not None:
+            env["GARRICK_COMMIT_TRAILERS"] = value
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual("saved", self.run_wrap()["outcome"])
+        return git(self.work, "log", "-1", "--format=%B")
+
+    def test_the_shape_it_takes_is_added_to_the_commit(self):
+        said = self.wrapped(self.GOOD)
+        self.assertIn("Garrick-Op: 0123456789abcdef", said)
+        self.assertEqual("Northwind, Pricing: draft sent; waiting on volumes", said.splitlines()[0])
+
+    def test_anything_else_or_nothing_leaves_the_commit_as_it_was(self):
+        for value in (None, "", "Garrick-Op: x", self.GOOD + "\nFoo: bar"):
+            with self.subTest(value=value):
+                self.setUp()
+                self.assertNotIn("Garrick-Op", self.wrapped(value))
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
 class PageRoute(Base):
     """The page_action.py executor routes the wrap verb to the same tool, with the words in `input`."""
 
@@ -742,6 +769,28 @@ class PageRoute(Base):
         data = {k: data[k] for k in ("resume", "entry", "message")}
         data.update(words)
         return {"verb": "wrap", "zone": "Work", "project": "Northwind", "thread": "Pricing", "input": data}
+
+    def test_a_wrap_with_an_operation_id_carries_it_in_its_commit_and_a_retry_runs_nothing(self):
+        import operations
+        git_env = mock.patch.dict(os.environ)          # the fixtures' GIT_CONFIG_COUNT, without its keys, is a git error for the record's own calls
+        git_env.start()
+        self.addCleanup(git_env.stop)
+        for name in [k for k in os.environ if k.startswith("GIT_CONFIG_") and k != "GIT_CONFIG_GLOBAL" and k != "GIT_CONFIG_NOSYSTEM"]:
+            os.environ.pop(name)
+        req = dict(self.request(entry="Words kept once."), op="0123456789abcdef")
+        first = self.pa.perform(self.root, dict(req), operations, via="remote")[0]
+        self.assertTrue(first["ok"], first)
+        self.assertEqual(first["commit"], git(self.work, "rev-parse", "--short", "HEAD").strip())
+        self.assertIn("Garrick-Op: 0123456789abcdef", git(self.work, "log", "-1", "--format=%B"))
+        again = self.pa.perform(self.root, dict(req), operations, via="remote")[0]
+        self.assertTrue(again["ok"] and again.get("receipt"), again)
+        self.assertEqual(2, self.count())
+        self.assertEqual(1, self.thread.read_text(encoding="utf-8").count("Words kept once."))
+
+    def test_a_wrap_without_a_record_commits_as_it_always_did(self):
+        import operations
+        self.pa.perform(self.root, self.request(), operations, via="session")
+        self.assertNotIn("Garrick-Op", git(self.work, "log", "-1", "--format=%B"))
 
     def test_the_words_may_not_name_another_thread_than_the_request(self):
         reply = self.send(words={"thread": "Other"})

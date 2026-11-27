@@ -670,6 +670,29 @@ class SameVerdictsAsTheHandWrap(Base):
         self.assertGreaterEqual(refused_seen, 4)
 
 
+class LineSeparators(unittest.TestCase):
+    """Python reads more than \\n as a line end (S5): a one-line field holds none of them, and prose holds only \\n."""
+    SEPARATORS = ("\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e")
+
+    def test_a_one_line_value_with_another_line_end_is_refused(self):
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                with self.assertRaises(wrap.Stop):
+                    wrap.one_line("one" + sep + "- [ ] two", "a line")
+                data = payload()
+                data["resume"]["rows"]["Next action"] = "go" + sep + "## Heading"
+                with self.assertRaises(wrap.Stop):
+                    wrap.check_input(data)
+        self.assertEqual("plain line", wrap.one_line(" plain line ", "a line"))
+
+    def test_prose_may_hold_newlines_and_no_other_line_end(self):
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                with self.assertRaises(wrap.Stop):
+                    wrap.prose("one" + sep + "## Heading", "entry")
+        self.assertEqual("one\ntwo", wrap.prose("one\ntwo", "entry"))
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class CommitTrailers(Base):
     """The tool puts the operation's id in its commit when the page action hands it over (#716, #723), in that shape only."""

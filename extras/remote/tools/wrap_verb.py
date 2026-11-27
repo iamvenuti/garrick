@@ -28,6 +28,7 @@ NEVER = {
     "lock": "A wrap from here takes its own lock. A request cannot say that one is held. Leave lock out.",
 }
 MOST_PROSE, MOST_LINE, MOST_MESSAGE, MOST_TODO_LINE, MOST_TODO_LINES = 6000, 2000, 300, 200, 20
+LINE_ENDS = "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"     # what str.splitlines() reads as a line end besides "\n"
 LAYOUT = re.compile(r"^(#{1,6}\s|---+\s*$|\||<!--)")
 
 
@@ -42,7 +43,7 @@ def never(given) -> str:
 def one_line(value, what, most) -> str:
     if not isinstance(value, str) or not value.strip():
         return "%s is empty or is not text." % what
-    if "\n" in value or "\r" in value:
+    if "\n" in value or any(c in value for c in LINE_ENDS) or len(value.splitlines()) > 1:
         return "%s must be one line." % what
     if len(value) > most:
         return "%s is too long." % what
@@ -52,8 +53,8 @@ def one_line(value, what, most) -> str:
 def prose(value, what) -> str:
     if not isinstance(value, str) or not value.strip():
         return "%s is empty or is not text." % what
-    if len(value) > MOST_PROSE or "\r" in value:
-        return "%s is too long, or has carriage returns." % what
+    if len(value) > MOST_PROSE or any(c in value for c in LINE_ENDS):
+        return "%s is too long, or has a line end other than a new line." % what
     for line in value.splitlines():
         if LAYOUT.match(line.strip()):
             return "%s has a line that would change the note's layout." % what

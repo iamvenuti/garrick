@@ -319,6 +319,17 @@ class TestRefusedWritesNothing(WrapCase):
             with self.subTest(over=str(over)[:60]):
                 self.refused(**self.given(**over))
 
+    def test_a_line_end_python_reads_but_the_note_does_not_is_refused_in_a_one_line_field(self):
+        rows = WORDS["resume"]["rows"]
+        for sep in ("\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e"):
+            with self.subTest(sep=repr(sep)):
+                self.refused(**self.given(resume={"stands": "x", "rows": dict(rows, **{"Next action": "go" + sep + "## Heading"})}))
+                self.refused(**self.given(todo={"add": ["one" + sep + "- [ ] two"]}))
+                self.refused(**self.given(todo={"tick": ["one" + sep + "two"]}))
+                self.refused(**self.given(message="m" + sep + "n"))
+                self.refused(**self.given(entry="fine" + sep + "## Heading"))
+                self.refused(**self.given(resume={"stands": "fine" + sep + "x", "rows": rows}))
+
     def test_a_project_or_thread_that_is_not_a_folder_name_is_refused(self):
         for bad in ("..", "../Personal", "a/b", "/etc", "/Users/x", ".hidden", "_x", "a\\b", "Threads"):
             with self.subTest(bad=bad):

@@ -120,10 +120,13 @@ def failed(why: str) -> Stop:
 # The input
 
 
+LINE_ENDS = "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"     # what str.splitlines() reads as a line end besides "\n"
+
+
 def one_line(value, field: str, limit: int = 2000) -> str:
     if not isinstance(value, str) or not value.strip():
         raise failed("%s is empty or is not text" % field)
-    if "\n" in value or "\r" in value:
+    if "\n" in value or any(c in value for c in LINE_ENDS) or len(value.splitlines()) > 1:
         raise failed("%s must be one line" % field)
     if len(value) > limit:
         raise failed("%s is too long" % field)
@@ -135,8 +138,8 @@ def prose(value, field: str, limit: int = 6000) -> str:
     change the note's structure."""
     if not isinstance(value, str) or not value.strip():
         raise failed("%s is empty or is not text" % field)
-    if len(value) > limit or "\r" in value:
-        raise failed("%s is too long, or has carriage returns" % field)
+    if len(value) > limit or any(c in value for c in LINE_ENDS):
+        raise failed("%s is too long, or has a line end other than a new line" % field)
     for line in value.splitlines():
         flat = line.strip()
         if re.match(r"^(#{1,6}\s|---+\s*$|\||<!--)", flat):

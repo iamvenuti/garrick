@@ -308,7 +308,12 @@ class TestAllow(WallsPageCase):
         for folder in ("template/System/skills", "docs", "template/System/garrick-docs"):
             for path in (REPO / folder).rglob("*") if (REPO / folder).is_dir() else []:
                 if path.is_file() and path.suffix in (".md", ".py", ".json", ".txt"):
-                    self.assertIsNone(re.search(r"walls-allow(?!ed)", path.read_text(encoding="utf-8", errors="ignore")), str(path))
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    if path == REPO / "docs" / "extras" / "remote-access.md":
+                        # Only the generated table of the remote access manifest, which must list every verb: there it names
+                        # `walls-allow` as one a remote assistant can never run. The rest of the page is read as any other.
+                        text = re.sub(r"<!-- manifest -->.*?<!-- /manifest -->", "", text, flags=re.S)
+                    self.assertIsNone(re.search(r"walls-allow(?!ed)", text), str(path))
         for path in (REPO / "extras" / "status").glob("ask*"):
             self.assertIsNone(re.search(r"walls-allow(?!ed)", path.read_text(encoding="utf-8", errors="ignore")), str(path))
 

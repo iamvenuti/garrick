@@ -329,6 +329,32 @@ class ZoneMadeAgain(Case):
         self.assertIn("stays off until you turn it on here again", text)
         self.assertIn("Garrick 0.82.0 or earlier has no marker", (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text())
 
+    def test_the_docs_say_what_the_sign_in_number_proves_and_what_it_does_not(self):
+        text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
+        self.assertIn("shows which row in Settings belongs to which sign-in page", text)
+        self.assertIn("does not show who opened that page", text)
+        self.assertNotIn("keeps a stranger's link", text)                      # the number never kept a stranger's link from your code
+        self.assertIn("Pick the sign-in you started", text)
+
+
+    def test_the_docs_give_each_sign_in_its_own_tries_and_the_ceiling_the_limits_file_holds(self):
+        text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
+        limits = mod("limits")
+        self.assertEqual((5, 30, 900, 900), (limits.CONSENT_TRIES_PER_REQUEST, limits.CONSENT_FLOOD_CEILING,
+                                             limits.CONSENT_FLOOD_WINDOW, limits.CONSENT_FLOOD_LOCK))
+        self.assertIn("Each sign-in request has its own five tries", text)
+        self.assertIn("30 wrong codes in 15 minutes", text)
+        self.assertIn("*Show a code* still works under it", text)
+        self.assertIn("What a flood can still do", text)
+        self.assertIn("Behind a relay all callers count as one, so a flood of 30 calls to the sign-in page in 10 minutes closes it for everyone", text)
+        self.assertNotIn("its lock is for everyone", text)
+
+    def test_the_docs_say_how_a_stopped_write_is_settled_from_the_zones_own_record(self):
+        text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
+        self.assertIn("next status call reads the zone's history and says once whether the change was saved, was not saved, or cannot be told", text)
+        self.assertIn("It never commits a second time", text)
+        self.assertIn("The five Todo line changes (tick, untick, new date, reword, retire) leave the same record", text)
+        self.assertIn("A checkpoint makes no commit and has no record", text)
 
 class Handles(Case):
     def setUp(self):

@@ -439,6 +439,9 @@ _OPS_LIBS: dict = {}
 # The action in hand, for the two places that know a phase: when the zone's lock
 # is had, and when the wall check starts. None for anything without a record.
 CURRENT = None
+# The commit record of the action in hand (operations.py, #716): the repository it is for and the trailers its commit
+# there carries. None for anything that makes no commit or keeps no record.
+RECORD = None
 
 
 class Refused(Exception):
@@ -758,12 +761,29 @@ def commit_refusal(zone: Path) -> Optional[str]:
     return "commits in %s would not run the wall check: git would take its hooks from %s" % (zone.name, hooks)
 
 
+def with_trailers(zone: Path, args) -> tuple:
+    """A commit in the repository the action in hand keeps its record for carries the operation's id and payload
+    as a second message paragraph, so that git's history is the evidence of whether it was made (#716)."""
+    rec = RECORD
+    args = tuple(args)
+    if rec is None or not args or args[0] != "commit" or "-m" not in args:
+        return args
+    try:
+        if Path(str(zone)).resolve() != rec["repo"]:
+            return args
+    except OSError:
+        return args
+    at = args.index("-m") + 2
+    return args[:at] + ("-m", rec["trailers"]) + args[at:]
+
+
 def git(zone: Path, *args, timeout: float = None):
     """One git command in the zone: (exit code, what it said). It runs in a
     process group of its own, so a hook that hangs, or a signing key waiting
     for its passphrase, is stopped with it when the time is up: politely
     first, so git takes away its own index.lock. Past the time, the code is None."""
     timeout = GIT_TIMEOUT if timeout is None else timeout
+    args = with_trailers(zone, args)
     try:
         p = subprocess.Popen(["git", "-C", str(zone)] + list(args), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True, env=own_repo_env(zone))
@@ -2485,6 +2505,13 @@ def field(req: dict, key: str, required: bool = True) -> Optional[str]:
     return value.strip()
 
 
+def record_env() -> dict:
+    """The trailers of the action in hand, for a tool that makes its own commit (scaffold.py's rename, move, layout and
+    delete), so that its commit names the operation as the page's own do (#716). Empty without a record."""
+    rec = RECORD
+    return {"GARRICK_COMMIT_TRAILERS": rec["trailers"]} if rec is not None else {}
+
+
 def scaffold(ws: Path, *args) -> str:
     """Run the workspace's scaffold.py: what it said, or Refused with its reason.
     A rename or a deletion commits through the wall check, so it has a
@@ -2498,7 +2525,7 @@ def scaffold(ws: Path, *args) -> str:
     try:
         r = subprocess.run([sys.executable, str(tool), "--root", str(ws)] + list(args), capture_output=True, text=True,
                            timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL,
-                           env=dict(os.environ, **{CALLER_BUILDS_PAGE: "1"}))
+                           env=dict(os.environ, **{CALLER_BUILDS_PAGE: "1"}, **record_env()))
     except subprocess.TimeoutExpired:
         raise Refused("scaffold.py was still running after %s, most likely in the wall check of its commit, and was "
                       "stopped; its change may be left staged, so look at git status in the zone before trying again"
@@ -6806,6 +6833,7 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     if via is _NO_CALLER:
         raise TypeError("perform() needs via=: name the caller, one of %s" % ", ".join(CALLERS))
     out, logged, run, outcome, why = None, None, None, None, ""
+    receipt = None
     try:
         try:
             joined = None
@@ -6838,9 +6866,17 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
                 logged = "%s (%s)" % (joined["say"], joined["state"])
             else:
                 CURRENT = run
-                done = act(ws, req)
-                outcome = "saved"
-                if isinstance(done, dict):
+                done, receipt = record_and_act(ws, req, via, ops, run)
+                if receipt is not None:         # settled before: its first receipt, and nothing run (#716)
+                    out = receipt_reply(receipt)
+                    logged = out["say"]
+                    outcome, why = ("saved", "") if out["ok"] else ("unknown" if receipt.get("result") == "unsure" else "refused", out["say"])
+                    done = None
+                else:
+                    outcome = "saved"
+                if receipt is not None:
+                    pass
+                elif isinstance(done, dict):
                     logged = done.pop("logged", None)
                     out = dict({"ok": True}, **done)
                 else:
@@ -6853,7 +6889,10 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
             outcome, why = "crashed", "%s: %s" % (type(e).__name__, e)
         if run is not None and outcome is not None:
             named = out.get("failure") if isinstance(out, dict) else None
+            sentence = out["say"] if receipt_said(out) else None
             out = run.finish(outcome, req, why=why, said=out["say"] if outcome == "saved" else "")
+            if sentence:
+                out["say"] = sentence           # the record's own sentence names the commit
             if named:
                 out["failure"] = named          # the row of FAILURES the refusal named, which the record's reply drops
         if builds_page(req):
@@ -6864,6 +6903,126 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why
+
+
+def receipt_reply(receipt: dict) -> dict:
+    """The reply to a request whose operation the commit record settled before: the first receipt, and nothing run."""
+    ok = receipt.get("result") == "done"
+    reply = {"ok": ok, "say": receipt.get("say") or "", "op": receipt["op"], "receipt": True,
+             "state": "completed" if ok else "failed"}
+    if ok:
+        reply["outcome"] = "saved"
+        reply["commit"] = receipt.get("commit") or ""
+    return reply
+
+
+def receipt_said(out) -> bool:
+    return isinstance(out, dict) and out.get("receipt") is True
+
+
+def commit_repo(ws: Path, req, ops) -> Optional[tuple]:
+    """(the repository, the verb) of a request that commits and has a commit record to keep, else None: the zone's
+    repository for a verb of the zone, the workspace's for one of the workspace (#716). An operations.py with no
+    record, or a request that names no zone that is there, has none, and runs as it did."""
+    if not isinstance(req, dict) or not callable(getattr(ops, "prepare", None)):
+        return None
+    verb = req.get("verb")
+    spec = getattr(ops, "DECLARED", {}).get(verb)
+    if spec is None or not spec.commits or only_looks(req):
+        return None
+    try:
+        if spec.scope == "zone":
+            return zone_dir(ws, req.get("zone")), verb
+        if verb == "finding":
+            repo = finding_repo(ws, req)
+            return (repo, verb) if repo is not None else None
+        if spec.scope == "workspace":
+            return Path(ws).resolve(), verb
+    except Refused:
+        return None
+    return None
+
+
+def finding_repo(ws: Path, req) -> Optional[Path]:
+    """The repository an answer to a finding commits in: the zone or the wiki its path is in, and no other. None when
+    the request does not name one, so that no record is kept rather than a false one (#716)."""
+    rel = req.get("path")
+    if not isinstance(rel, str) or "\\" in rel or "\0" in rel:
+        return None
+    parts = rel.split("/")
+    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or parts[1] in ("", ".", "..") or ".." in parts:
+        return None
+    repo = (Path(ws) / parts[0] / parts[1]).resolve()
+    if repo.parent != (Path(ws) / parts[0]).resolve() or not repo.is_dir():
+        return None
+    return repo
+
+
+def record_and_act(ws: Path, req, via: str, ops, run=None):
+    """act(), with its commit recorded: prepared before it, settled from git after it (#716). Returns (act's
+    result, None), or (None, the receipt) when the operation was settled before and nothing may run. The
+    record is best effort, as the audit log is, except for what it refuses: another request under the same id,
+    and a record that does not match its seal."""
+    global RECORD
+    plan = commit_repo(ws, req, ops)
+    if plan is None:
+        return act(ws, req), None
+    repo, verb = plan
+    op = run.op if run is not None else req.get("op")
+    try:
+        receipt = ops.prepare(repo, verb, req, op=op or "", via=via if via in CALLERS else "", workspace=str(ws))
+    except ops.BadOp as e:
+        raise Refused(str(e))
+    except Exception:
+        return act(ws, req), None
+    if not receipt.get("recorded"):
+        return act(ws, req), None
+    if not receipt.get("run"):
+        return None, receipt
+
+    ran = []
+
+    def work(trailers):
+        global RECORD
+        ran.append(1)
+        RECORD = {"repo": repo.resolve(), "trailers": trailers}
+        return act(ws, req)
+    try:
+        done, got = ops.execute(repo, receipt["op"], work)
+    finally:
+        RECORD = None
+    if not ran:                         # lost the race, or git already holds the commit: nothing ran, and nothing is said saved
+        return None, got
+    return done, None
+
+
+def sweep_receipts(ws: Path, ops) -> list:
+    """Settle, from git, each operation a worker left running in the workspace's repositories, and say each once. The
+    status page's own record of one it knew is corrected to match, so that a reload shows what became of it."""
+    if not callable(getattr(ops, "sweep", None)):
+        return []
+    repos = [Path(ws)] + sorted(p for p in (Path(ws) / "Zones").glob("*") if p.is_dir() and not p.name.startswith("."))
+    out = []
+    for repo in repos:
+        try:
+            if not (repo / ".git").exists():
+                continue
+            out.extend(ops.sweep(repo))
+        except Exception:
+            continue
+    try:
+        journal = ops.Journal(jobs_dir())
+        latest = journal.latest()
+        for r in out:
+            before = latest.get(r["op"])
+            if before is None or before.get("outcome") == "saved" or r["result"] == "unsure":
+                continue                        # one that says it saved stands; unsure is what the journal says for a dead worker
+            outcome = {"done": "saved", "not-done": "crashed"}.get(r["result"], "unknown")
+            with journal.lock():
+                journal.append(dict(before, state=ops.state_for(outcome), phase="", done=time.time(), outcome=outcome, say=r["say"]))
+    except Exception:
+        pass
+    return [{k: r.get(k) for k in ("op", "verb", "zone", "result", "commit", "say")} for r in out]
 
 
 _OUTBOX = None
@@ -6992,6 +7151,8 @@ def command_parser() -> argparse.ArgumentParser:
                  "heading", "separate", "join", "resume-from",
                  "papers"):
         ap.add_argument("--" + name)
+    ap.add_argument("--op", help="the operation's id, 8 to 32 lowercase hex characters: a retry that sends the same one "
+                                 "gets the first answer back and commits nothing twice")
     return ap
 
 
@@ -7006,6 +7167,10 @@ def main(argv=None) -> int:
             raise Refused("not a Garrick workspace")
         if cli:
             req = session_request(ws, args)
+            if args.op is not None:
+                if not re.fullmatch(r"[0-9a-f]{8,32}", args.op):
+                    raise Refused("not an operation id")
+                req["op"] = args.op
         else:
             try:
                 req = json.loads(sys.stdin.read())
@@ -7013,10 +7178,13 @@ def main(argv=None) -> int:
                 raise Refused("not a request")
         ops = ops_lib(ws)
         if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
+            settled = sweep_receipts(ws, ops) if via == "page" else []     # from git, for the page only: no other caller reads, says or marks one (#716)
             try:
                 said = ops.read(jobs_dir(), workspace=str(ws))      # this workspace's own operations (#641)
             except TypeError:                                       # an older operations.py reads them all, as it always did
                 said = ops.read(jobs_dir())
+            if settled:
+                said["settled"] = settled
             print(json.dumps(said, ensure_ascii=False))             # a read: nothing to log
             return 0
         out, logged, _ = perform(ws, req, ops, via=via)

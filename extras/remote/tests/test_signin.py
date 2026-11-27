@@ -249,7 +249,7 @@ class Tokens(Case):
 
 
 class Consent(Case):
-    def test_five_wrong_codes_lock_the_page_and_even_the_right_code_is_then_refused(self):
+    def test_five_wrong_codes_close_that_request_and_even_the_right_code_is_then_refused(self):
         self.raw.register()
         a = self.raw.authorize()
         right = self.act.run(self.ws, {"action": "pair"})["code"]
@@ -259,19 +259,24 @@ class Consent(Case):
             self.assertEqual(r.status_code, 400, i)
         fifth = self.raw.consent(a, code=wrong)
         self.assertEqual(fifth.status_code, 429)
-        locked = self.raw.consent(a, code=right)
-        self.assertEqual(locked.status_code, 429)
-        self.assertNotIn("location", locked.headers)
-        self.assertEqual(self.raw.http.get(a.headers["location"]).status_code, 429)
-        self.assertEqual(self.act.run(self.ws, {"action": "pair"})["ok"], False)             # no new code while it is locked
+        self.assertIn("closed", fifth.text)
+        closed = self.raw.consent(a, code=right)
+        self.assertEqual(closed.status_code, 400)
+        self.assertNotIn("location", closed.headers)
+        self.assertEqual(self.raw.http.get(a.headers["location"]).status_code, 400)
+        self.assertEqual(self.store.waiting_requests(), [])
+        self.assertFalse(self.store.pairing_state()["waiting"])                               # its code went with it
 
-    def test_the_page_opens_again_after_fifteen_minutes(self):
+    def test_the_flood_ceiling_ends_after_fifteen_minutes(self):
         self.raw.register()
         a = self.raw.authorize()
-        for _ in range(5):
-            self.raw.consent(a, code="123456")
+        self.act.run(self.ws, {"action": "pair"})
+        with self.store.txn() as db:
+            db["consent"]["locked_until"] = time.time() + 600
+        self.assertTrue(self.store.consent_locked() > 0)
         with self.store.txn() as db:
             db["consent"]["locked_until"] = time.time() - 1
+        self.assertEqual(0, self.store.consent_locked())
         good = self.act.run(self.ws, {"action": "pair"})["code"]
         self.assertEqual(self.raw.consent(a, code=good).status_code, 302)
 
@@ -444,17 +449,16 @@ class Hardening(Case):
         code = self.act.run(self.ws, {"action": "pair"})["code"]                       # and the owner can still connect
         self.assertEqual(self.raw.consent(a, code=code).status_code, 302)
 
-    def test_a_new_code_resets_the_count(self):
+    def test_a_new_code_does_not_give_a_request_more_tries(self):
         self.raw.register()
         a = self.raw.authorize()
         self.act.run(self.ws, {"action": "pair"})
         for _ in range(4):
             self.raw.consent(a, code="000001")
-        with self.store.txn() as db:
-            self.assertEqual(db["consent"]["wrong"], 4)
+        pid = next(iter(self.store.peek()["pending"]))
+        self.assertEqual(self.store.peek()["pending"][pid]["wrong"], 4)
         self.act.run(self.ws, {"action": "pair"})
-        with self.store.txn() as db:
-            self.assertEqual(db["consent"]["wrong"], 0)
+        self.assertEqual(self.store.peek()["pending"][pid]["wrong"], 4)
 
     def test_a_flood_on_the_token_route_is_slowed_never_refused(self):
         limiter = mod("limits").routes()["/token"]
@@ -520,24 +524,67 @@ class CodeForOneRequest(Case):
             self.assertNotIn(secret, shown)
         self.assertNotEqual(pid, row["rid"])
 
-    def test_a_code_made_for_one_request_typed_on_another_is_refused_and_counts(self):
+    def test_a_code_made_for_one_request_typed_on_another_is_refused_and_counts_on_the_request_it_was_typed_on(self):
         a, b = self.two()
         code = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
         wrong = self.raw.consent(b, code=code)
         self.assertEqual(400, wrong.status_code)
         self.assertNotIn("location", wrong.headers)
-        with self.store.txn() as db:
-            self.assertEqual(1, db["consent"]["wrong"])
+        pending = self.store.peek()["pending"]
+        counts = {v["name"]: v.get("wrong", 0) for v in pending.values()}
+        self.assertEqual({"Maple phone": 0, "Cedar tablet": 1}, counts)
         self.assertEqual(self.store.pairing_state()["waiting"], True)               # the code was not used up
         self.assertEqual(302, self.raw.consent(a, code=code).status_code)          # and it still works on its own request
 
-    def test_five_codes_for_another_request_lock_the_page(self):
-        a, b = self.two()
-        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
-        for _ in range(4):
-            self.assertEqual(400, self.raw.consent(b, code=code).status_code)
-        self.assertEqual(429, self.raw.consent(b, code=code).status_code)
-        self.assertEqual(429, self.raw.consent(a, code=code).status_code)          # locked for everyone
+    def test_five_wrong_codes_on_a_strangers_request_leave_the_owners_request_open(self):
+        owner, stranger = self.two("Maple phone", "Cedar tablet")
+        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(owner)})["code"]
+        wrong = "000000" if code != "000000" else "111111"
+        seen = [self.raw.consent(stranger, code=wrong).status_code for _ in range(5)]
+        self.assertEqual([400, 400, 400, 400, 429], seen)
+        self.assertEqual(["Maple phone"], [r["name"] for r in self.store.waiting_requests()])   # the stranger's request is closed
+        self.assertEqual(0, self.store.consent_locked(), "one request's tries are not the owner's lock")
+        self.assertEqual(200, self.raw.http.get(owner.headers["location"]).status_code)
+        self.assertEqual(302, self.raw.consent(owner, code=code).status_code)       # and the owner's own code works
+
+    def test_a_flood_across_many_requests_still_hits_the_shared_ceiling(self):
+        owner, _ = self.two("Maple phone", "Cedar tablet")
+        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(owner)})["code"]
+        limits = mod("limits")
+        floods = []
+        for i in range(limits.CONSENT_FLOOD_CEILING // limits.CONSENT_TRIES_PER_REQUEST + 1):
+            self.raw.register(client_name="Flood %d" % i)
+            floods.append(self.raw.authorize())
+        wrong = "000000" if code != "000000" else "111111"
+        for response in floods:
+            for _ in range(limits.CONSENT_TRIES_PER_REQUEST):
+                self.store.check_pairing_code(wrong, request=self.rid(response))
+        self.assertGreater(self.store.consent_locked(), 0)                          # the ceiling is reached
+        self.raw.register(client_name="Late stranger")
+        late = self.raw.authorize()
+        self.assertEqual(429, self.raw.consent(late, code=wrong).status_code)       # a request with no code takes none now
+        self.assertFalse(self.store.check_pairing_code(code, request=self.rid(late)))
+        self.assertEqual(0, self.store.consent_locked(request=self.rid(owner)))
+        shown = self.act.run(self.ws, {"action": "pair", "request": self.rid(owner)})   # Show a code still works under the ceiling
+        self.assertTrue(shown["ok"], shown)
+        self.assertEqual(302, self.raw.consent(owner, code=shown["code"]).status_code)  # and the owner connects
+
+    def test_wrong_codes_below_the_ceiling_do_not_lock_the_page(self):
+        limits = mod("limits")
+        owner, _ = self.two()
+        self.act.run(self.ws, {"action": "pair", "request": self.rid(owner)})
+        for i in range(limits.CONSENT_FLOOD_CEILING // limits.CONSENT_TRIES_PER_REQUEST - 1):
+            self.raw.register(client_name="Flood %d" % i)
+            r = self.raw.authorize()
+            for _ in range(limits.CONSENT_TRIES_PER_REQUEST):
+                self.store.check_pairing_code("000000", request=self.rid(r))
+        self.assertEqual(0, self.store.consent_locked())
+
+    def test_tries_on_a_request_with_no_code_for_anyone_are_not_counted(self):
+        self.raw.register()
+        a = self.raw.authorize()
+        self.store.check_pairing_code("123456", request=self.rid(a))
+        self.assertEqual(0, self.store.peek()["pending"][next(iter(self.store.peek()["pending"]))].get("wrong", 0))
 
     def test_a_code_made_for_a_request_works_once_on_that_request(self):
         a, b = self.two()

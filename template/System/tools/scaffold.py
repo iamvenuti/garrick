@@ -895,6 +895,17 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augus
           "November", "December")
 
 
+def commit_trailers():
+    """`-m <trailers>` for a commit made on behalf of a recorded action: the operation's id and payload hash, which
+    the status page's page_action.py hands over in GARRICK_COMMIT_TRAILERS (#716), so that the commit names the
+    action as the page's own commits do. Nothing else is taken from the environment, and a value of another shape
+    is left out."""
+    text = os.environ.get("GARRICK_COMMIT_TRAILERS", "")
+    if re.fullmatch(r"Garrick-Op: [0-9a-f]{8,32}\nGarrick-Payload: [0-9a-f]{64}", text):
+        return ["-m", text]
+    return []
+
+
 def git_ok(args, cwd):
     try:
         return git(args, cwd)
@@ -1269,7 +1280,7 @@ def cmd_rename(root, args, today):
         problem = wall_hook_problem(zone_dir)
         if problem:
             raise Refusal(f"{problem}, so nothing was committed.")
-        git(["commit", "-q", "-m", f"{what}: renamed {new}"], zone_dir)
+        git(["commit", "-q", "-m", f"{what}: renamed {new}", *commit_trailers()], zone_dir)
     except (GitError, Refusal, OSError) as exc:
         # Everything here was tracked and clean, and nothing was staged before: put back what HEAD holds.
         git_value(["reset", "-q"], zone_dir)
@@ -1632,7 +1643,7 @@ def cmd_move(root, args, today):
             raise Refusal(f"{problem}, so nothing was committed.")
         # The trailers are what `undo` knows a move by, and where it finds the paths to put back.
         git(["commit", "-q", "-m", f"{name}: moved to {target.name}", "-m",
-             f"{MOVE_ACTION}\n{MOVE_PATHS} {rel_old}={rel_new}"], zone_dir)
+             f"{MOVE_ACTION}\n{MOVE_PATHS} {rel_old}={rel_new}", *commit_trailers()], zone_dir)
     except (GitError, Refusal, OSError) as exc:
         left = undo_failed_move(zone_dir, rel_old, rel_new, moved, touched, created, threads, made_threads)
         why = " ".join(str(exc).split())
@@ -2037,7 +2048,7 @@ def cmd_layout(root, args, today):
         problem = wall_hook_problem(zone_dir)
         if problem:
             raise Refusal(f"{problem}, so nothing was committed.")
-        git(["commit", "-q", "-m", f"{pname}: layout, {what}", "-m", f"{LAYOUT_ACTION}\nGarrick-Moved-Files: {len(moves)}"], zone_dir)
+        git(["commit", "-q", "-m", f"{pname}: layout, {what}", "-m", f"{LAYOUT_ACTION}\nGarrick-Moved-Files: {len(moves)}", *commit_trailers()], zone_dir)
     except (GitError, Refusal, OSError) as exc:
         git_value(["reset", "-q"], zone_dir)
         git_value(["checkout", "HEAD", "--", rel(project_dir)] + [rel(p) for p in outside], zone_dir)
@@ -2130,7 +2141,7 @@ def cmd_delete(root, args, today):
         problem = wall_hook_problem(zone_dir)
         if problem:
             raise Refusal(f"{problem}, so nothing was committed.")
-        git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}"], zone_dir)
+        git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}", *commit_trailers()], zone_dir)
     except (GitError, Refusal) as exc:
         git_value(["reset", "-q"], zone_dir)
         git_value(["checkout", "HEAD", "--", rel] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)

@@ -103,6 +103,18 @@ class States(Case):
         self.assertIn("roaming", out)
         self.assertNotIn("data-raction", out)
 
+    def test_the_lock_line_says_a_flood_never_locks_the_sign_in_the_owner_started(self):
+        import time
+        self.install()
+        self.turn_on()
+        self.assertNotIn("remote-locked", self.draw())
+        with self.store.txn() as db:
+            db["consent"]["locked_until"] = time.time() + 600
+        out = self.draw()
+        self.assertIn('id="remote-locked"', out)
+        self.assertIn("A sign-in with no code made for it takes none for a while. Show a code still works.", out)
+        self.assertNotIn("page is locked", out)
+
     def test_a_pairing_code_waiting_is_said_without_the_code(self):
         self.install()
         self.turn_on()

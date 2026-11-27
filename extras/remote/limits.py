@@ -19,6 +19,16 @@ sys.dont_write_bytecode = True
 OK, SLOW, REFUSE = "ok", "slow", "refuse"
 MAX_CALLERS = 4096
 
+# Wrong codes on the consent page. A code works only on the sign-in request it was made for, so a wrong try on any other request is a
+# guess that cannot succeed. Each request has its own budget of tries: the fifth wrong code closes that request and the others stay open.
+# The shared ceiling is only a stop for a flood across many requests: it counts wrong tries on requests that no code was made for, and
+# when it is reached, such a request takes no code for a while. A request that a code was made for is outside the ceiling, and so is
+# *Show a code*, so a flood cannot lock the owner out of the sign-in they started.
+CONSENT_TRIES_PER_REQUEST = 5
+CONSENT_FLOOD_CEILING = 30        # wrong tries on requests with no code, across all requests, inside the window below
+CONSENT_FLOOD_WINDOW = 15 * 60    # seconds; a count older than this starts again
+CONSENT_FLOOD_LOCK = 15 * 60      # seconds that requests with no code take no code once the ceiling is reached
+
 
 class Limiter:
     """Counts hits in a sliding window. `soft` hits are free; up to `hard` are slowed; past that they are refused."""

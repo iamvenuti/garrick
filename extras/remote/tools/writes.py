@@ -72,6 +72,9 @@ ISO = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 FIELDS = ("project", "thread", "text", "title", "line", "date", "target", "reason", "items", "drop")
 
 
+REACH_CHANGED_SAY = "That was prepared before the owner changed what this connection may reach. Prepare it again in a new chat."
+
+
 def say(code, words):
     return common.refusal(code, words)
 
@@ -268,9 +271,12 @@ class Writes:
                     return say("not_found", NOT_FOUND)
                 if rec.get("hash") != digest:
                     return say("changed", "That operation id belongs to a different request. Prepare a new one.")
+                if rec.get("state") == "prepared" and self.reach_changed(rec):
+                    return say("changed", REACH_CHANGED_SAY)
                 return self.view(rec)
         for rec in self.store.all():                     # the same request prepared twice, and not yet run, is one operation
-            if rec.get("grant") == self.grant and rec.get("hash") == digest and rec.get("state") == "prepared":
+            if rec.get("grant") == self.grant and rec.get("hash") == digest and rec.get("state") == "prepared" \
+                    and not self.reach_changed(rec):     # one made under an earlier reach is not that operation: a new one is made
                 return self.view(rec)
         op = secrets.token_hex(8)
         rec = {"id": op, "grant": self.grant, "workspace": str(self.ws), "verb": verb, "zone": canonical, "fields": fields,
@@ -287,14 +293,19 @@ class Writes:
         fn = getattr(self.session, "reach_id", None)
         return str(fn()) if callable(fn) else ""
 
+    def reach_changed(self, rec) -> bool:
+        """Whether a record was prepared under another reach than the Session's now. A Session with no reach id never differs."""
+        now = self.reach_now()
+        return bool(now) and rec.get("reach") != now
+
     def refusal_before(self, rec):
         """Why an operation may not run now, or "". The reach as it is now, then the desk: a wrap that is running, and
         changes that git does not hold yet."""
         zone, verb, fields = rec["zone"], rec["verb"], rec["fields"]
         if not self.may_write(zone):
             return "reach"
-        if self.reach_now() and rec.get("reach") != self.reach_now():
-            return "reach"                                    # prepared under another reach, or another folder of that zone
+        if self.reach_changed(rec):
+            return "reach_changed"                            # prepared under another reach, or another folder of that zone
         zdir = self.ws / "Zones" / zone
         for rel in self.targets(verb, zone, fields):
             if self.wrapping(zone, rel, verb, fields):
@@ -370,6 +381,8 @@ class Writes:
             why = self.refusal_before(rec)
             if why == "reach":
                 return common.write_reach_refusal()
+            if why == "reach_changed":
+                return common.refusal(common.NEW_REACH, REACH_CHANGED_SAY)
             if why:
                 rec.update({"state": "refused", "receipt": {"ok": False, "say": why}, "finished": time.time()})
                 rec.pop("fields", None)
@@ -386,13 +399,41 @@ class Writes:
 
     # ------------------------------------------------------------ status
 
+    def core_receipt(self, rec):
+        """What the commit record of the core says became of this operation: (state, receipt) or None. page_action.py keeps that
+        record in the zone's own git folder for each verb that commits and carries this operation's id (#716), so a worker that stopped
+        in the middle is settled here from the zone's history, once. None when the core has no record calls, the verb sends no id, or
+        there is no record of this operation (a write begun by an older Garrick, or stopped before page_action began): the caller then
+        says unknown, as it always did."""
+        if rec.get("verb") not in run_op.JSON_VERBS + run_op.LINE_VERBS or not common.op_id_ok(rec.get("id")):
+            return None
+        if not self.may_write(rec["zone"]) or self.reach_changed(rec):
+            return None                                   # the grant no longer reaches that zone, or that folder: the core is not asked
+        got = run_op.core_outcome(self.ws, self.ws / "Zones" / rec["zone"], rec["id"])
+        if got is None:                                   # no record, an unreadable repository, an older operations.py: say unknown
+            return None
+        result = got.get("result")
+        say = str(got.get("say") or "")[:600]
+        if result == "done":
+            made = {"ok": True, "say": say or "Done."}
+            if got.get("commit"):
+                made["commit"] = str(got["commit"])[:64]
+            return "saved", made
+        if result == "not-done":
+            return "refused", {"ok": False, "say": say or "It was not saved. Nothing was changed."}
+        if result == "unsure":
+            return "unknown", {"ok": False, "say": say or run_op.CRASHED}
+        return None
+
     def settle(self, rec):
-        """A running operation whose worker is gone is unknown, never saved and never run again."""
+        """A running operation whose worker is gone is settled from the zone's own record of the commit when it has one (saved, not
+        saved, or cannot be told), and unknown otherwise. It is never run again."""
         if rec.get("state") == "running" and time.time() - float(rec.get("started") or 0) > UNKNOWN_AFTER \
                 and not self.store.worker_alive(rec["id"]):
             fresh = self.store.read(rec["id"]) or rec
             if fresh.get("state") == "running":
-                fresh.update({"state": "unknown", "receipt": {"ok": False, "say": run_op.CRASHED}, "finished": time.time()})
+                said = self.core_receipt(fresh) or ("unknown", {"ok": False, "say": run_op.CRASHED})
+                fresh.update({"state": said[0], "receipt": said[1], "finished": time.time()})
                 fresh.pop("fields", None)
                 fresh.pop("would", None)
                 self.store.write(rec["id"], fresh)

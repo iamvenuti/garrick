@@ -116,6 +116,27 @@ class Marked(WritesCase):
         self.assertNotIn("Ask Jo about the pallets", (self.work / "Todo.md").read_text())
         fresh.check_handle(fresh.new_handle())                                                # a new handle works
 
+    def test_the_same_line_prepared_again_in_a_new_chat_runs_and_the_old_refusal_names_the_change(self):
+        s = self.live()
+        made = writes.Writes(s).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.remade()
+        self.assertTrue(self.turn_on_work()["ok"])
+        fresh = self.live()
+        old = writes.Writes(fresh).execute(made["operation_id"])
+        self.assertEqual("new_context_required", old.get("error"), old)
+        self.assertIn("changed what this connection may reach", old["say"])
+        self.assertNotIn("outside what this connection may reach", old["say"])
+        again = writes.Writes(fresh).prepare("todo-add", "Work", text="Ask Jo about the pallets")
+        self.assertEqual("prepared", again.get("state"), again)
+        self.assertNotEqual(made["operation_id"], again["operation_id"])
+        out = writes.Writes(fresh).execute(again["operation_id"])
+        self.assertNotIn("error", out, out)
+        self.assertIn(out.get("state"), ("running", "saved"), out)
+        stale = writes.Writes(fresh).execute(made["operation_id"])           # the old prepared write stays refused
+        self.assertEqual("new_context_required", stale.get("error"), stale)
+        by_id = writes.Writes(fresh).prepare("todo-add", "Work", operation_id=made["operation_id"], text="Ask Jo about the pallets")
+        self.assertEqual("changed", by_id.get("error") or by_id.get("state"), by_id)
+
     def test_the_old_entry_does_not_come_back_when_a_walled_zone_is_turned_on_again(self):
         self.remade()
         self.assertFalse(self.live().zone_allowed("Work"))
@@ -192,10 +213,51 @@ class Marked(WritesCase):
             self.assertFalse(self.live().zone_allowed("Work"))               # and one already on is refused: fail closed
         self.assertTrue(self.live().zone_allowed("Work"))
 
+    def test_a_disk_with_no_folder_creation_time_gets_a_true_sentence_and_a_next_step(self):
+        real = os.stat
+        for case in ("no attribute", "float zero", "ns zero"):
+            def stub(path, *a, **k):
+                got = real(path, *a, **k)
+                if not str(path).endswith("Work"):
+                    return got
+                if case == "no attribute":
+                    return os.stat_result(tuple(got)[:10])
+                fields = tuple(got)[:10]
+                extra = {"st_birthtime": 0.0} if case == "float zero" else {"st_birthtime_ns": 0}
+                return _Bare(fields, extra)
+            with unittest.mock.patch.object(self.ctx.os, "stat", side_effect=stub):
+                other = self.store.create_grant("client-" + case, "Tablet", ["read"])
+                out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+            self.assertFalse(out["ok"], (case, out))
+            say = out["say"]
+            self.assertNotIn("could not be read", say, case)
+            self.assertIn("keeps no creation time for folders", say, case)
+            self.assertIn("made again under the same name", say, case)
+            self.assertIn("the Mac's own disk", say, case)
+
+    def test_any_other_empty_marker_keeps_could_not_be_read(self):
+        other = self.store.create_grant("client-other", "Tablet", ["read"])
+        with unittest.mock.patch.object(self.ctx, "zone_marker", return_value=""):      # a folder that is there, a stat that is fine
+            out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+        self.assertFalse(out["ok"], out)
+        self.assertIn("could not be read", out["say"])
+        self.assertNotIn("creation time", out["say"])
+
     def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
         for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
             self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))
         self.assertTrue(self.ctx.zone_marker(self.root, "Work"))
+
+
+class _Bare:
+    """A stat result with a birth time field of 0, to stand in for a disk that keeps none."""
+
+    def __init__(self, fields, extra):
+        real = os.stat_result(fields)
+        for name in ("st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size", "st_atime", "st_mtime", "st_ctime"):
+            setattr(self, name, getattr(real, name))
+        for name, value in extra.items():
+            setattr(self, name, value)
 
 
 def support_ids(text):

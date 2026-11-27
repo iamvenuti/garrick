@@ -90,14 +90,22 @@ REPEAT_DONE = "This was already done a few minutes ago. Nothing was saved again.
 REPEAT_RUNNING = "The same request is still running. Nothing was sent again."
 
 
-def repeat_receipt(reply, text: str):
+QUESTIONS = ("Do you want it done a second time?", "Do you want it done a second time once that one ends?")
+
+
+def repeat_receipt(reply, text: str, code: int = 1):
     """A repeat that the page action's record answers with a question ("Do you want it done a second time?") is a
     plain receipt here: nothing ran, nothing was saved, and no model can answer the question, so none is passed on."""
     asked = isinstance(reply, dict) and (reply.get("state") == "asked" or "again" in reply)
-    if not (asked or "done a second time" in text):
-        return None
-    said = str((reply or {}).get("say") or "") if isinstance(reply, dict) else text
-    return {"ok": False, "say": REPEAT_RUNNING if "still running" in (said or text) else REPEAT_DONE}
+    if isinstance(reply, dict):
+        said = str(reply.get("say") or "")
+        if not asked:
+            return None                  # a reply that parses is decided by its own fields, never by the words a line carries
+    else:
+        said = text
+        if code == 0 or not text.rstrip().endswith(QUESTIONS):
+            return None                  # plain text: only a failed run that ends with the fixed question
+    return {"ok": False, "say": REPEAT_RUNNING if "still running" in said else REPEAT_DONE}
 
 
 def receipt(verb: str, code: int, out: str, err: str) -> dict:
@@ -107,7 +115,7 @@ def receipt(verb: str, code: int, out: str, err: str) -> dict:
         first = json.loads(out) if out.startswith("{") else None
     except ValueError:
         first = None
-    made = repeat_receipt(first, out if code == 0 else (err or out))
+    made = repeat_receipt(first, out if code == 0 else (err or out), code)
     if made is not None:
         return made
     if verb == "checkpoint" or (out.startswith("{") and verb in JSON_VERBS):

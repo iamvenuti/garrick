@@ -150,7 +150,7 @@ class States(Case):
         self.assertIn("GarrickFail(said,code||'remote',String(t||''))", tell)           # the sentence, the tool's text under Details
         self.assertIn("GarrickFailClear(said)", tell)                              # a later success takes the drawing away
         self.assertLess(tell.index("GarrickFail(said"), tell.index("said.textContent=String(t||'')}"))
-        self.assertIn("tell(out.say,!out.ok)", js)
+        self.assertIn("tell(out.say,!out.ok,", js)
         built = (EXTRA.parent / "status" / "status.py").read_text()
         self.assertIn("window.GarrickFail=function", built)                         # the page defines it, with a default row for an unknown code
 

@@ -553,6 +553,20 @@ class CodeForOneRequest(Case):
         self.assertIn("More than one", many["say"])
         self.assertFalse(self.store.pairing_state()["waiting"])
 
+    def test_a_request_dropped_between_the_list_and_the_code_gets_no_code(self):
+        self.two()
+        self.assertIsNone(self.store.make_pairing_code(request="deadbeef"))
+        self.assertFalse(self.store.pairing_state()["waiting"])
+        real = self.store.waiting_requests
+        gone = [{"id": "deadbeef", "name": "Gone", "made": time.time()}]
+        self.store.waiting_requests = lambda *a, **k: gone                          # the list was read, then the request went
+        self.addCleanup(lambda: setattr(self.store, "waiting_requests", real))
+        out = self.act.run(self.ws, {"action": "pair"})
+        self.assertFalse(out["ok"], out)
+        self.assertIn("That sign-in is not waiting any more", out["say"])
+        self.assertNotIn("code", out)
+        self.assertFalse(self.store.pairing_state()["waiting"])
+
     def test_a_request_that_is_not_waiting_gets_no_code(self):
         self.two()
         out = self.act.run(self.ws, {"action": "pair", "request": "00000000"})

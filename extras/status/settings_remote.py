@@ -84,10 +84,11 @@ def _requests(rows: List[dict], coded: str) -> str:
     many = len(rows) > 1
     items = ""
     for i, r in enumerate(rows):
-        label = '<b>%s</b> <small>Started %s.</small>' % (E(r["name"]), E(r["started"]))
+        label = '<b>%s</b> <small>Sign-in %s. Started %s.</small>' % (E(r["name"]), E(r["id"]), E(r["started"]))
         pick = ('<input type="radio" name="remote-request" value="%s"%s> ' % (E(r["id"]), " checked" if r["id"] == coded else "")) if many else ""
         items += '<li class="rreq" data-request="%s"><label class="rchk">%s%s</label></li>' % (E(r["id"]), pick, label)
-    ask = "Pick the sign-in you started, then choose Show a code." if many else "Choose Show a code for this sign-in."
+    ask = ("Pick the sign-in you started, then choose Show a code." if many else "Choose Show a code for this sign-in.") \
+        + " The sign-in number must match the one on the sign-in page."
     return ('<div class="rrequests" id="remote-requests"><p class="hint">%s</p><ul class="rreqs" id="remote-reqlist">%s</ul></div>'
             % (E(ask), items))
 

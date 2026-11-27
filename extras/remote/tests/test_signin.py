@@ -581,6 +581,26 @@ class CodeForOneRequest(Case):
         name = self.store.waiting_requests()[0]["name"]
         self.assertLessEqual(len(name), mod("provider").NAME_MAX)
 
+    def test_two_requests_with_one_name_and_one_start_differ_in_settings_and_on_the_consent_page(self):
+        import importlib.util
+        a, b = self.two("Maple phone", "Maple phone")
+        ra, rb = self.rid(a), self.rid(b)
+        self.assertNotEqual(ra, rb)
+        spec = importlib.util.spec_from_file_location("settings_remote_x", str(Path(__file__).resolve().parents[2] / "status" / "settings_remote.py"))
+        sr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sr)
+        view = mod("state").view(self.ws)["requests"]
+        self.assertEqual(view[0]["started"], view[1]["started"])
+        block = sr._requests(view, "")
+        self.assertIn("Sign-in %s." % ra, block)
+        self.assertIn("Sign-in %s." % rb, block)
+        self.assertIn("must match", block)
+        for resp, mine, other in ((a, ra, rb), (b, rb, ra)):
+            page = self.raw.http.get(resp.headers["location"]).text
+            self.assertIn("<b>%s</b>" % mine, page)
+            self.assertNotIn(other, page)
+            self.assertIn("must show the same sign-in", page)
+
     def test_no_code_reaches_the_list_the_log_or_the_say(self):
         a, _ = self.two()
         out = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})

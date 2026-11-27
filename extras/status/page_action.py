@@ -6845,6 +6845,10 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
                 return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)
             if via == "remote" and remote_refusal(req, ops):
                 raise Refused(REMOTE_REFUSED)
+            if via == "remote" and isinstance(req, dict) and req.get("verb") == "wrap" and isinstance(req.get("input"), dict) \
+                    and ("memory" in req["input"] or "lock" in req["input"]):
+                # A remote caller holds no lock, and a memory pointer is a file outside the workspace, on the Mac (#723).
+                raise Refused("a wrap from a remote assistant takes neither memory nor lock: leave them out")
             if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).

@@ -2632,7 +2632,7 @@ STATE_OF_PLAY_RE = re.compile(r"(?mi)^##[ \t]+State of play[ \t]*$")
 SECTION_RE = re.compile(r"(?m)^##[ \t]+")
 # A path into the Meetings wiki, written as a path: `Wikis/Meetings/...` or
 # `Meetings/...`. A bare [[link]] that answers to a page there is resolved.
-MEETINGS_IN_PATH_RE = re.compile(r"""(?m)(?:^|(?<=[\s"'`(\[<=:,;{]))~?/(?:[^/\n"'`<>|)\]}]+/)*[^/\s"'`<>|)\]}]*""")
+MEETINGS_IN_PATH_RE = re.compile(r"(?i)(?:\bWikis[\\/])?\bMeetings[\\/]")
 # A Decided line as the tool writes it: the words quoted, then who said them
 # and when. Either half missing and the decision has no source.
 DECIDED_RE = re.compile(r'^"(?P<said>[^"]*)"(?P<by>.*)$')

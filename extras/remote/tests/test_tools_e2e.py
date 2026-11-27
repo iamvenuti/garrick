@@ -105,7 +105,7 @@ class RealTools(ServiceCase):
                     out["work_read"] = await call("places", {"zone": "Work"})
                     out["work_place"] = await call("thread_state", {"place": "Birch/Pricing"})
                     out["work_write"] = await call("prepare", {"verb": "note-add", "zone": "Work", "project": "Birch", "text": "x"})
-                    out["wrap"] = await call("prepare", {"verb": "wrap", "zone": "Home"})
+                    out["wrap"] = await call("prepare", {"verb": "delete", "zone": "Home"})
                     made = await call("prepare", {"verb": "note-add", "zone": "Home", "project": "Cedar", "thread": "Kitchen",
                                                   "text": "The plumber comes on Tuesday. E2EMARK"})
                     out["made"] = made

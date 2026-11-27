@@ -32,6 +32,7 @@ PAGE_PYTHON = "/usr/bin/python3"
 RUN_TIMEOUT = 420           # seconds: the lock wait (45), a commit and its wall check (300), and slack
 LINE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire")
 JSON_VERBS = ("note-add", "todo-add", "park", "wake")
+JSON_VERBS = JSON_VERBS + ("wrap",)           # the wrap's reply is the page action's, as a park's is
 LONG_WAY = "It took longer than expected and may or may not have been saved. Check the zone at the Mac before trying again."
 CRASHED = "The save did not finish. Nothing more was done. Check the zone at the Mac before trying again."
 
@@ -83,6 +84,12 @@ def command(ws: str, rec: dict):
             if f.get(field):
                 req[field] = f[field]
         return [python(), str(Path(ws) / "System" / "tools" / "scaffold.py"), "--root", ws, "checkpoint"], json.dumps(req)
+    if verb == "wrap":                    # the words go in `input`, as the page action reads them; the tool checks them again
+        req = {"verb": "wrap", "zone": zone, "op": rec["id"], "project": f["project"],
+               "input": {k: f[k] for k in ("resume", "entry", "message", "todo", "checkpoint") if f.get(k) is not None}}
+        if f.get("thread"):
+            req["thread"] = f["thread"]
+        return base, json.dumps(req)
     req = {"verb": verb, "zone": zone, "op": rec["id"]}
     for field in ("project", "thread", "text", "title", "target", "date"):
         if f.get(field) is not None:

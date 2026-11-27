@@ -92,12 +92,12 @@ class TestTheCounts(unittest.TestCase):
         self.m = manifest.load()
 
     def test_the_counts_are_the_ones_the_issue_gives_and_one_internal_more(self):
-        self.assertEqual({"served": 10, "owner-approval": 17, "internal": 7, "not-yet": 33}, manifest.counts(self.m))
+        self.assertEqual({"served": 11, "owner-approval": 17, "internal": 7, "not-yet": 32}, manifest.counts(self.m))
         self.assertEqual(len(operations.DECLARED), sum(manifest.counts(self.m).values()))
 
-    def test_the_ten_served_verbs(self):
+    def test_the_eleven_served_verbs(self):
         self.assertEqual(sorted(["note-add", "todo-add", "todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire",
-                                 "park", "wake", "checkpoint"]), sorted(manifest.served_verbs(self.m)))
+                                 "park", "wake", "checkpoint", "wrap"]), sorted(manifest.served_verbs(self.m)))
 
     def test_the_five_read_tools_are_served_apart(self):
         self.assertEqual(["places", "thread_state", "search", "read", "owed"], sorted(
@@ -123,8 +123,9 @@ class TestAnAnswerForAVerbNotServed(unittest.TestCase):
         self.m = manifest.load()
 
     def test_a_not_yet_verb_gets_a_plain_reason_and_its_release(self):
-        self.assertEqual("wrap is not available from a remote assistant yet. It is planned in the next release.",
-                         manifest.answer(self.m, "wrap"))
+        self.assertEqual("question-answer is not available from a remote assistant yet. It is planned in a later release.",
+                         manifest.answer(self.m, "question-answer"))
+        self.assertEqual("That is not something this service does.", manifest.answer(self.m, "wrap"))     # a served verb
         self.assertIn("in a later release", manifest.answer(self.m, "question-answer"))
 
     def test_an_owner_approval_verb_says_so(self):

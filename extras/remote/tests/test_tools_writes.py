@@ -70,10 +70,10 @@ class WritesCase(support.ToolsCase):
 
 class TestPrepare(WritesCase):
     def test_a_verb_that_is_not_served_gets_a_plain_reason_and_its_release(self):
-        for verb in ("wrap", "delete", "note-read", "settings", "rename"):
+        for verb in ("question-answer", "delete", "note-read", "settings", "rename"):
             out = self.w.prepare(verb, "Work")
             self.assertEqual("not_available", out["error"], verb)
-        self.assertIn("planned in the next release", self.w.prepare("wrap", "Work")["say"])
+        self.assertIn("planned in a later release", self.w.prepare("question-answer", "Work")["say"])
 
     def test_the_verbs_are_the_manifests_served_verbs(self):
         self.assertEqual(sorted(manifest.served_verbs(manifest.load())), sorted(writes.TAKES))

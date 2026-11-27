@@ -96,7 +96,14 @@ repository it changes, which settles from git's own history. The calls:
         never committed, and is never read by a session in another zone.
         The same op with the same request returns what the first one did; the
         same op with another request raises BadOp. Raises BadOp for a record
-        whose seal does not match its fields (a forged or hand-edited one).
+        that is a link, cannot be read, or whose seal does not match its
+        fields: the seal catches a damaged or misplaced record, not one
+        written on purpose. Git is the gate, not the file: before a fresh
+        record is written, and again before `work`, the whole history is read
+        for a commit that carries the op, and any such commit settles the
+        operation (`done` for exactly one with this payload, else `unsure`)
+        and returns `run` false. A busy record (its lock held for ten seconds)
+        raises BadOp.
     execute(repo, op, work) -> (what work returned, receipt)
         Takes the operation's run lock, marks it `running`, calls
         `work(trailers)`, and settles from git whatever work did, a raise
@@ -1071,7 +1078,9 @@ def read(folder, now: Optional[float] = None, workspace="") -> dict:
 
 # The commit record (#716) -----------------------------------------------
 # See the docstring. One JSON file per operation in `<git dir>/garrick-ops/`,
-# settled from the commit trailers git's own history holds.
+# settled from the commit trailers git's own history holds. Git is the gate,
+# never the file: before an operation runs, the whole history is read for a
+# commit that already carries its id.
 
 RECORD_API = 1
 RECORD_DIR = "garrick-ops"
@@ -1079,9 +1088,11 @@ TRAILER_OP = "Garrick-Op"
 TRAILER_PAYLOAD = "Garrick-Payload"
 RESULTS = ("done", "not-done", "unsure")
 RECORD_STATES = ("prepared", "running", "settled")
+LOCK_WAIT = 10.0                # seconds a call waits for the record folder's lock before it is refused as busy
 RECORD_KEEP = 30 * 86400        # seconds: a settled and reported record is kept this long
-HISTORY = 300                   # commits read when the commit the record started from is no longer in the history
 NOT_FIELDS = ("confirm", "op", "verb")      # what a request carries that is not what it asks for
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _GIT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
 RECEIPT_SAYINGS = {
@@ -1096,6 +1107,13 @@ RECEIPT_SAYINGS = {
 }
 
 
+def _zone_of(verb: str, req: dict) -> str:
+    """The zone a record names: only a verb of a zone has one."""
+    if DECLARED[verb].scope != "zone":
+        return ""
+    return req.get("zone") if isinstance(req.get("zone"), str) else ""
+
+
 def payload_hash(verb: str, req: dict) -> str:
     """sha256 of the canonical JSON of the verb, the zone and every field the verb declares (the words of a note
     included), `confirm` and the op excluded. Only the hash is ever kept. A missing field and an empty one
@@ -1106,11 +1124,11 @@ def payload_hash(verb: str, req: dict) -> str:
         if k in NOT_FIELDS or k == "zone":
             continue
         fields[k] = _norm(k, req.get(k))
-    if "keys" in fields or "key" in fields and verb in ("todo-done", "todo-undo"):
+    if "keys" in fields or ("key" in fields and verb in ("todo-done", "todo-undo")):
         lines = sorted(lines_of(req), key=str)
         fields.pop("keys", None)
         fields["key"] = lines[0] if len(lines) == 1 else (lines or None)
-    body = {"verb": verb, "zone": _norm("zone", req.get("zone")), "fields": fields}
+    body = {"verb": verb, "zone": _norm("zone", req.get("zone")) if spec.scope == "zone" else None, "fields": fields}
     canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
@@ -1161,15 +1179,21 @@ def head_of(repo) -> Optional[str]:
 
 
 def _dir(repo, make: bool = False) -> Optional[Path]:
+    """The record folder of a repository. None when it is a link, is not a folder, or is not inside the git
+    directory: a call that names one zone never reads or writes another's."""
     gd = git_dir(repo)
     if gd is None:
         return None
     d = gd / RECORD_DIR
-    if make:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-        except OSError:
+    try:
+        if d.is_symlink():
             return None
+        if make:
+            d.mkdir(mode=0o700, exist_ok=True)
+        if d.exists() and (not d.is_dir() or d.resolve().parent != gd.resolve()):
+            return None
+    except OSError:
+        return None
     return d
 
 
@@ -1179,35 +1203,40 @@ def _seal(rec: dict) -> str:
 
 
 @contextlib.contextmanager
-def _locked(d: Path, name: str = ".lock", wait: float = 10.0):
-    fd = None
+def _locked(d: Path, name: str = ".lock", wait: Optional[float] = None):
+    """The record folder's lock. Past `wait` the record is busy: BadOp, never a go-ahead without the lock."""
     try:
-        fd = os.open(str(d / name), os.O_RDWR | os.O_CREAT, 0o600)
-        deadline = time.time() + wait
+        fd = os.open(str(d / name), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+    except (OSError, AttributeError):
+        raise BadOp("the record cannot be opened")
+    try:
+        deadline = time.time() + (LOCK_WAIT if wait is None else wait)
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError:
                 if time.time() >= deadline:
-                    break
+                    raise BadOp("the record is busy")
                 time.sleep(0.02)
-    except (OSError, AttributeError):
-        pass
-    try:
         yield
     finally:
-        if fd is not None:
-            os.close(fd)
+        os.close(fd)
 
 
 def _load(d: Path, op: str) -> Optional[dict]:
-    """The record, or None when there is none. Raises BadOp for one whose seal does not match: it was changed by
-    hand or forged, and nothing runs on it."""
+    """The record, or None when there is none. Raises BadOp for one that is a link, cannot be read, or whose seal
+    does not match: it was damaged, misplaced or changed, and nothing runs on it. The seal catches that, not a record
+    written on purpose: git, read before every run, is the gate."""
     try:
-        rec = json.loads((d / (op + ".json")).read_text(encoding="utf-8"))
+        fd = os.open(str(d / (op + ".json")), os.O_RDONLY | NOFOLLOW)
     except FileNotFoundError:
         return None
+    except OSError:
+        raise BadOp("the record of this operation cannot be read")
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            rec = json.loads(f.read())
     except (OSError, ValueError):
         raise BadOp("the record of this operation cannot be read")
     if not isinstance(rec, dict) or rec.get("op") != op or rec.get("seal") != _seal(rec) or rec.get("state") not in RECORD_STATES:
@@ -1217,15 +1246,24 @@ def _load(d: Path, op: str) -> Optional[dict]:
 
 def _save(d: Path, rec: dict) -> None:
     rec = dict(rec, seal=_seal(rec))
-    tmp = d / ("%s.json.%d.tmp" % (rec["op"], os.getpid()))
-    tmp.write_text(json.dumps(rec, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-    os.replace(str(tmp), str(d / (rec["op"] + ".json")))
+    tmp = d / ("%s.%s.tmp" % (rec["op"], secrets.token_hex(6)))
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(rec, sort_keys=True, separators=(",", ":")))
+        os.replace(str(tmp), str(d / (rec["op"] + ".json")))
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _alive(d: Path, op: str) -> bool:
     """Is a worker holding this operation's run lock?"""
     try:
-        fd = os.open(str(d / (op + ".run")), os.O_RDWR)
+        fd = os.open(str(d / (op + ".run")), os.O_RDWR | NOFOLLOW)
     except OSError:
         return False
     try:
@@ -1261,57 +1299,58 @@ def _unrecorded(op: str, verb: str, zone: str) -> dict:
             "new": False, "recorded": False, "say": "", "payload": None, "head": None}
 
 
-def _carrying(repo, op: str, since: str):
-    """The commits that carry this op, as [(sha, payload)], and whether git could be read. Looks only at the
-    commits made since `since`, or the latest HISTORY ones when that commit is not in the history any more."""
-    spans = []
-    if since:
-        spans.append([since + "..HEAD"])
-    spans.append(["-n", str(HISTORY), "HEAD"])
-    for span in spans:
-        code, out = _git(repo, "log", "--format=%H%x1f%B%x1e", *span)
-        if code != 0:
-            if span[0] == "-n" and head_of(repo) == "":
-                return [], True      # no commit yet, so none carries the op
+def _carrying(repo, op: str):
+    """The commits of the whole history that carry this op, as [(sha, payload)], and whether git could be read.
+    Read with NUL separators, which no commit message holds, and only shas of 40 or 64 hex characters count.
+    A commit counts when the op is on the last paragraph of its message, as a trailer."""
+    code, out = _git(repo, "log", "-z", "--format=%H%x00%B", "--fixed-strings", "--grep", "%s: %s" % (TRAILER_OP, op))
+    if code != 0:
+        return [], head_of(repo) == ""      # no commit yet: none carries the op
+    parts = out.split("\0")
+    found = []
+    for i in range(0, len(parts) - 1, 2):
+        sha, body = parts[i].strip(), parts[i + 1]
+        if not SHA_RE.fullmatch(sha):
             continue
-        found = []
-        for chunk in out.split("\x1e"):
-            if "\x1f" not in chunk:
-                continue
-            sha, body = chunk.split("\x1f", 1)
-            last = body.strip().split("\n\n")[-1]
-            ids = re.findall(r"^%s: ([0-9a-f]{8,32})$" % TRAILER_OP, last, re.M)
-            if op in ids:
-                pay = re.findall(r"^%s: ([0-9a-f]{64})$" % TRAILER_PAYLOAD, last, re.M)
-                found.append((sha.strip(), pay[0] if len(pay) == 1 else ""))
-        return found, True
-    return [], False
+        last = body.strip().split("\n\n")[-1]
+        if op in re.findall(r"^%s: ([0-9a-f]{8,32})$" % TRAILER_OP, last, re.M):
+            pay = re.findall(r"^%s: ([0-9a-f]{64})$" % TRAILER_PAYLOAD, last, re.M)
+            found.append((sha, pay[0] if len(pay) == 1 else ""))
+    return found, True
+
+
+def _from_history(repo, rec: dict) -> Optional[dict]:
+    """The record settled from a commit that already carries its op, `done` for exactly one with this payload and
+    `unsure` for anything else; None when no commit carries it. A repository that cannot be read is `unsure`."""
+    found, readable = _carrying(repo, rec["op"])
+    shas = [sha for sha, _ in found]
+    if readable and not found:
+        return None
+    if readable and len(found) == 1 and found[0][1] == rec["payload"]:
+        result, commit = "done", found[0][0]
+    else:
+        result, commit = "unsure", ""
+    return dict(rec, state="settled", result=result, commit=commit, found=shas, by_head=False, by="next-run",
+                settled=time.time(), reported=False)
 
 
 def _decide(repo, rec: dict, ran_ok) -> dict:
     """The record, settled from git. Never guesses: what git cannot answer is `unsure`."""
-    found, readable = _carrying(repo, rec["op"], rec.get("head") or "")
-    shas = [sha for sha, _ in found]
-    change = {"found": shas, "commit": "", "by_head": False}
-    if not readable:
+    got = _from_history(repo, rec)
+    if got is not None:
+        return dict(got, by=rec.get("by", got["by"]), reported=rec.get("reported", False))
+    now = head_of(repo)
+    change = {"found": [], "commit": "", "by_head": False}
+    if now is None:
         result = "unsure"
-    elif found:
-        if len(found) == 1 and found[0][1] == rec["payload"]:
-            result, change["commit"] = "done", found[0][0]
-        else:
-            result = "unsure"
+    elif now == (rec.get("head") or ""):
+        gd = git_dir(repo)
+        # A commit may be running still, in a process the dead worker left behind: git holds the index lock until it ends.
+        result = "unsure" if gd is None or (gd / "index.lock").exists() else "not-done"
+    elif ran_ok:
+        result, change["commit"], change["by_head"] = "done", now, True
     else:
-        now = head_of(repo)
-        if now is None:
-            result = "unsure"
-        elif now == (rec.get("head") or ""):
-            gd = git_dir(repo)
-            # A commit may be running still, in a process the dead worker left behind: git holds the index lock until it ends.
-            result = "unsure" if gd is None or (gd / "index.lock").exists() else "not-done"
-        elif ran_ok:
-            result, change["commit"], change["by_head"] = "done", now, True
-        else:
-            result, change["found"] = "unsure", [now]
+        result, change["found"] = "unsure", [now]
     return dict(rec, state="settled", result=result, settled=time.time(), **change)
 
 
@@ -1323,7 +1362,7 @@ def prepare(repo, verb: str, req: dict, op: str = "", via: str = "", workspace="
         op = mint_op()
     elif not valid_op(op):
         raise BadOp("not an operation id")
-    zone = req.get("zone") if isinstance(req.get("zone"), str) else ""
+    zone = _zone_of(verb, req)
     if fcntl is None:
         return _unrecorded(op, verb, zone)
     d = _dir(repo, make=True)
@@ -1354,17 +1393,25 @@ def prepare(repo, verb: str, req: dict, op: str = "", via: str = "", workspace="
         fresh = {"op": op, "verb": verb, "zone": zone, "payload": payload, "head": head, "state": "prepared",
                  "result": None, "commit": "", "found": [], "prepared": now, "settled": None, "via": via if via in CALLERS else "",
                  "workspace": workspace_id(workspace), "reported": False, "by": "", "api": RECORD_API}
+        hist = _from_history(repo, fresh)       # git is the gate: a commit that carries the op settles it, whatever the file says
+        if hist is not None:
+            _save(d, hist)
+            return _receipt(hist)
         _save(d, fresh)
         _prune(d, now)
         return _receipt(fresh, run=True)
 
 
 def _verified(repo, rec: dict) -> dict:
-    """A settled `done` record whose commit git still holds with this op and payload; anything else is `unsure`."""
-    found, readable = _carrying(repo, rec["op"], "")
-    if readable and [sha for sha, pay in found if pay == rec["payload"]] == [rec.get("commit")]:
+    """A settled `done` record whose commit git still holds: with this op and payload, or, for a commit made without
+    trailers, still in the history of HEAD. Anything else is `unsure`."""
+    found, readable = _carrying(repo, rec["op"])
+    commit = rec.get("commit")
+    if readable and [sha for sha, pay in found if pay == rec["payload"]] == [commit] and len(found) == 1:
         return rec
-    return dict(rec, result="unsure", found=[sha for sha, _ in found] or [rec.get("commit")])
+    if readable and not found and rec.get("by_head") and commit and _git(repo, "merge-base", "--is-ancestor", commit, "HEAD")[0] == 0:
+        return rec
+    return dict(rec, result="unsure", found=[sha for sha, _ in found] or [commit])
 
 
 def _prune(d: Path, now: float) -> None:
@@ -1373,29 +1420,35 @@ def _prune(d: Path, now: float) -> None:
     except OSError:
         return
     for p in names:
+        op = p.name[:-5]
+        if not valid_op(op):
+            continue
         try:
-            rec = json.loads(p.read_text(encoding="utf-8"))
-            if rec.get("state") == "settled" and rec.get("reported") and now - (rec.get("settled") or now) > RECORD_KEEP:
+            rec = _load(d, op)
+            if rec is not None and rec.get("state") == "settled" and rec.get("reported") and now - (rec.get("settled") or now) > RECORD_KEEP:
                 p.unlink()
-                (d / (rec["op"] + ".run")).unlink()
-        except (OSError, ValueError, KeyError):
+                (d / (op + ".run")).unlink()
+        except (OSError, BadOp):
             continue
 
 
 def execute(repo, op: str, work):
     """Run `work(trailers)` for a prepared operation, then settle it from git. Returns (what work returned,
     receipt). `work` is not called, and its result is None, when the operation is not prepared, is running
-    elsewhere, or is settled; the receipt says which. What `work` raises is raised again, after settling."""
+    elsewhere, is settled, or a commit that carries its id is already in the history; the receipt says which.
+    What `work` raises is raised again, after settling."""
     d = _dir(repo)
     if d is None or not valid_op(op) or fcntl is None:
         raise BadOp("no record of this operation")
     try:
-        fd = os.open(str(d / (op + ".run")), os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(str(d / (op + ".run")), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
     except OSError:
         raise BadOp("no record of this operation")
+    held = False
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = True
         except OSError:
             with _locked(d):
                 return None, _receipt(_load(d, op) or {"op": op, "state": "running"})
@@ -1405,6 +1458,10 @@ def execute(repo, op: str, work):
                 raise BadOp("no record of this operation")
             if rec["state"] != "prepared":
                 return None, _receipt(rec)
+            hist = _from_history(repo, rec)     # git is the gate, read again just before the work
+            if hist is not None:
+                _save(d, hist)
+                return None, _receipt(hist)
             rec = dict(rec, state="running", started=time.time())
             _save(d, rec)
         done, err = None, None
@@ -1412,15 +1469,19 @@ def execute(repo, op: str, work):
             done = work(trailers(op, rec["payload"]))
         except BaseException as e:
             err = e
-        receipt = settle(repo, op, ran_ok=err is None)
+        try:
+            receipt = settle(repo, op, ran_ok=err is None)
+        except BadOp:                           # busy: it stays `running`, and the next run settles it from git
+            receipt = _receipt(dict(rec, state="running"))
         if err is not None:
             raise err
         return done, receipt
     finally:
-        try:
-            (d / (op + ".run")).unlink()
-        except OSError:
-            pass
+        if held:
+            try:
+                (d / (op + ".run")).unlink()
+            except OSError:
+                pass
         os.close(fd)
 
 
@@ -1454,7 +1515,7 @@ def outcome(repo, op: str, mark: bool = True) -> dict:
         if rec["state"] == "running" and not _alive(d, op):
             rec = _decide(repo, dict(rec, by="next-run"), None)
             rec["reported"] = False
-        if rec["state"] == "prepared" or (rec["state"] == "running"):
+        if rec["state"] in ("prepared", "running"):
             return _receipt(rec)
         new = not rec.get("reported")
         if new and mark:
@@ -1476,12 +1537,10 @@ def sweep(repo) -> List[dict]:
         if not valid_op(op):
             continue
         try:
-            rec = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            rec = _load(d, op)
+        except BadOp:
             continue
-        if rec.get("state") == "settled" and rec.get("reported"):
-            continue
-        if rec.get("state") == "prepared":
+        if rec is None or rec.get("state") == "prepared" or (rec.get("state") == "settled" and rec.get("reported")):
             continue                    # prepared and not started: nothing ran, and the caller may still run it
         try:
             got = outcome(repo, op)

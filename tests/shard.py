@@ -179,7 +179,8 @@ for _key in ("extras/remote/manifest.json", "extras/remote/tools/manifest.py", "
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_remote_manifest"]
 # ops-0840 (#716): the commit record is settled from git, and every committing verb is held to it.
 for _key in ("extras/status/page_action.py", "template/System/tools/operations.py"):
-    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_op_record", "test_op_record_perform"]
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_op_record", "test_op_record_perform", "test_op_record_scaffold"]
+TOUCH_MAP["template/System/tools/scaffold.py"] = TOUCH_MAP.get("template/System/tools/scaffold.py", []) + ["test_op_record_scaffold"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

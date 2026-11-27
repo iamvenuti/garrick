@@ -119,6 +119,8 @@ line saying why, and exits 1. `checkpoint` prints JSON either way.
 
 import argparse
 import datetime
+import difflib
+import hashlib
 import json
 import os
 import re
@@ -1195,6 +1197,41 @@ def rename_history(zone_dir, moved, old, new):
     return out
 
 
+PLAN_FILES = 40         # notes a plan lists: the count is the whole, the list is cut here
+PLAN_EDITS = 3          # edited lines shown for each note
+
+
+def plan_of(zone_dir, paths, notes, after, rewritten, extra=None, texts=None):
+    """What a rename or a move would write, as JSON, and nothing written: the paths that change, and for each note
+    its lines that change. `rewritten(path, text)` is the very function the change itself writes with, asked for each
+    note at the place it will have, `after(path)`, so a plan is never a second guess at what the change does."""
+    files, whole = [], hashlib.sha256()
+    for path in notes:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        there = after(path)
+        changed = rewritten(there, (texts or {}).get(path, text))        # a hub's line is taken out or put in first
+        if changed == text:
+            continue
+        whole.update(("\0" + there.relative_to(zone_dir).as_posix() + "\0" + changed).encode("utf-8"))
+        was, now = text.split("\n"), changed.split("\n")
+        edits, lines = [], 0
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, was, now, autojunk=False).get_opcodes():
+            if tag != "equal":
+                lines += max(i2 - i1, j2 - j1)
+                edits.append({"was": " ".join(was[i1:i2])[:160], "now": " ".join(now[j1:j2])[:160]})
+        files.append({"path": there.relative_to(zone_dir).as_posix(), "lines": lines, "edits": edits})
+    # The digest is of every note as it would be written, not only the lines the plan lists, so that a caller can tell a plan has changed.
+    whole.update(json.dumps([paths, extra or {}], ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    shown = [dict(f, edits=f["edits"][:PLAN_EDITS]) for f in files[:PLAN_FILES]]
+    plan = {"paths": paths, "count": len(files), "files": shown,
+            "digest": whole.hexdigest()}
+    plan.update(extra or {})
+    return json.dumps(plan, ensure_ascii=False, sort_keys=True)
+
+
 def cmd_rename(root, args, today):
     zone_dir, project_dir, thread_dir, note = target_of(root, args)
     new = args.to.strip()
@@ -1236,6 +1273,46 @@ def cmd_rename(root, args, today):
     moved = zone_dir / rel_new
     touched = set()
     what = f"{project_dir.name}, {old}" if is_thread else old
+    new_note = moved / f"{new}.md"
+
+    def rewritten(path, text):
+        """One note as the rename leaves it: `path` is where the note is once the folder has moved. The write below
+        and the plan (--plan) both ask this, so what a plan lists is what the rename writes."""
+        changed = relink(text, swaps, prefixes, old, new, heads)
+        if not is_thread and moved in path.parents:
+            # `parent:` names the project only in a thread's own note and a note at the project's
+            # top; a thread's working note names its thread, which may share the project's name.
+            own = path.parent == moved or (path.parent.parent == moved / "Threads"
+                                           and path.name == path.parent.name + ".md")
+            changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(old)),
+                             lambda m: f'{m.group(1)}: "[[{new}]]"', changed)
+        if path == new_note:
+            changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
+            # The old spoken form goes with the old name, which becomes a heard alias below.
+            if spoken or is_sayable(new)[0]:
+                changed = set_spoken(changed, spoken)
+            changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
+            # the link line: relink moved each path with the folder; the file name and its label follow the note
+            changed = re.sub(r"\[\[([^\]|]*/history/)%s history (\d{4}-Q[1-4])\]\]" % re.escape(old),
+                             lambda m: f"[[{m.group(1)}{new} history {m.group(2)}]]", changed)
+            changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
+            changed = dated_entry(changed, f"Renamed from {old}.", today)
+        return changed
+
+    if getattr(args, "plan", False):
+        def after(path):                                    # where a tracked file is once the folder has moved
+            try:
+                rel = path.relative_to(folder)
+            except ValueError:
+                return path
+            return moved / (f"{new}.md" if rel.as_posix() == f"{old}.md" else rel.as_posix())
+        kept = sorted(os.listdir(folder / "history")) if (folder / "history").is_dir() else []
+        history = [{"from": (folder / "history" / n).relative_to(zone_dir).as_posix(),
+                    "to": (moved / "history" / f"{new} history {m.group(1)}.md").relative_to(zone_dir).as_posix()}
+                   for n in kept for m in [re.fullmatch(re.escape(old) + r" history (\d{4}-Q[1-4])\.md", n)] if m]
+        paths = [{"from": rel_old, "to": rel_new},
+                 {"from": f"{rel_old}/{old}.md", "to": f"{rel_new}/{new}.md"}] + history
+        return plan_of(zone_dir, paths, notes, after, rewritten)
     clear_machine_made(zone_dir, folder, made)
     try:
         # The folder and its note, through git, so history follows.
@@ -1246,7 +1323,6 @@ def cmd_rename(root, args, today):
         else:
             git_ok(["mv", rel_old, rel_new], zone_dir)
         git_ok(["mv", f"{rel_new}/{old}.md", f"{rel_new}/{new}.md"], zone_dir)
-        new_note = moved / f"{new}.md"
         touched.add(new_note)
         touched.update(rename_history(zone_dir, moved, old, new))
         for path in zone_notes(zone_dir):
@@ -1254,25 +1330,7 @@ def cmd_rename(root, args, today):
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue                                    # not text it can rewrite; its links, if any, stay
-            changed = relink(text, swaps, prefixes, old, new, heads)
-            if not is_thread and moved in path.parents:
-                # `parent:` names the project only in a thread's own note and a note at the project's
-                # top; a thread's working note names its thread, which may share the project's name.
-                own = path.parent == moved or (path.parent.parent == moved / "Threads"
-                                               and path.name == path.parent.name + ".md")
-                changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(old)),
-                                 lambda m: f'{m.group(1)}: "[[{new}]]"', changed)
-            if path == new_note:
-                changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
-                # The old spoken form goes with the old name, which becomes a heard alias below.
-                if spoken or is_sayable(new)[0]:
-                    changed = set_spoken(changed, spoken)
-                changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
-                # the link line: relink moved each path with the folder; the file name and its label follow the note
-                changed = re.sub(r"\[\[([^\]|]*/history/)%s history (\d{4}-Q[1-4])\]\]" % re.escape(old),
-                                 lambda m: f"[[{m.group(1)}{new} history {m.group(2)}]]", changed)
-                changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
-                changed = dated_entry(changed, f"Renamed from {old}.", today)
+            changed = rewritten(path, text)
             if changed != text:
                 touched.add(path)
                 path.write_text(changed, encoding="utf-8")
@@ -1586,6 +1644,43 @@ def cmd_move(root, args, today):
     made_threads = not threads.exists()
     created = []
     unresolved = []
+
+    def rewritten(path, text):
+        """One note as the move leaves it: `path` is where the note is once the thread has moved. The write below and
+        the plan (--plan) both ask this, so what a plan lists is what the move writes."""
+        changed = relink(text, swaps, prefixes, name, name, heads)
+        p_new = path.relative_to(zone_dir).as_posix()
+        p_old = rel_old + p_new[len(rel_new):] if p_new == rel_new or p_new.startswith(rel_new + "/") else p_new
+        changed = md_relink(changed, p_old, p_new, rel_old, rel_new, zone_dir, zone_dir.name, name, unresolved)
+        if moved in path.parents or path.parent == moved:
+            own = path == new_note
+            changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(project_dir.name)),
+                             lambda m: f'{m.group(1)}: "[[{target.name}]]"', changed)
+        if path == new_note:
+            changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
+            changed = dated_entry(changed, f"Moved from {project_dir.name} to {target.name}.", today)
+        return changed
+
+    if getattr(args, "plan", False):
+        def after(path):                                    # where a tracked file is once the thread has moved
+            try:
+                return moved / path.relative_to(thread_dir).as_posix()
+            except ValueError:
+                return path
+        cut, h2, subhead, block = cut_hub_line(hub, zone_dir.name, project_dir.name, name)
+        if block is None or h2 is None:
+            raise Refusal(f"The thread's line in {hub.name} cannot be told apart from the others, so it is not moved. "
+                          "Make that line the only one that starts with a link to the thread, under a ## heading, then move it.")
+        block = [relink(l, swaps, prefixes, name, name, heads) for l in block]
+        texts = {hub: re.sub(r"(?m)^updated: .*$", f"updated: {today}", cut, count=1),
+                 target_hub: re.sub(r"(?m)^updated: .*$", f"updated: {today}", put_hub_line(target_hub, h2, subhead, block), count=1)}
+        rows = []
+        if ledger.is_file():
+            rows = [r for r in ledger.read_text(encoding="utf-8").split("\n") if r.startswith("|") and f"Threads/{name}/" in r]
+        paths = [{"from": rel_old, "to": rel_new}]
+        return plan_of(zone_dir, paths, notes, after, rewritten, texts=texts,
+                       extra={"hubs": {"leaves": hub.relative_to(zone_dir).as_posix(), "enters": target_hub.relative_to(zone_dir).as_posix()},
+                              "ledger_rows": len(rows)})
     clear_machine_made(zone_dir, thread_dir, made)
     try:
         threads.mkdir(exist_ok=True)
@@ -1623,17 +1718,7 @@ def cmd_move(root, args, today):
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            changed = relink(text, swaps, prefixes, name, name, heads)
-            p_new = path.relative_to(zone_dir).as_posix()
-            p_old = rel_old + p_new[len(rel_new):] if p_new == rel_new or p_new.startswith(rel_new + "/") else p_new
-            changed = md_relink(changed, p_old, p_new, rel_old, rel_new, zone_dir, zone_dir.name, name, unresolved)
-            if moved in path.parents or path.parent == moved:
-                own = path == new_note
-                changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(project_dir.name)),
-                                 lambda m: f'{m.group(1)}: "[[{target.name}]]"', changed)
-            if path == new_note:
-                changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
-                changed = dated_entry(changed, f"Moved from {project_dir.name} to {target.name}.", today)
+            changed = rewritten(path, text)
             if changed != text:
                 touched.add(path)
                 path.write_text(changed, encoding="utf-8")
@@ -2653,6 +2738,9 @@ def main(argv=None):
     mv.add_argument("--thread", required=True, help="the thread to move")
     mv.add_argument("--to", required=True, help="the project it goes to, in the same zone")
     mv.add_argument("--no-state", dest="no_state", action="store_true", help=argparse.SUPPRESS)
+    for each in (r, mv):
+        each.add_argument("--plan", action="store_true",
+                          help="say what the change would write, as JSON, and make nothing")
     ly = sub.add_parser("layout", help="split a project into separate jobs, or join it into one job, and carry the files")
     ly.add_argument("--zone", required=True)
     ly.add_argument("--project", required=True)

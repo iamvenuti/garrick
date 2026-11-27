@@ -2606,6 +2606,8 @@ def manage(ws: Path, req: dict) -> str:
         kind = req.get("kind")
         if kind not in ("project", "thread", "rename", "move"):
             raise Refused("not a kind of name: %r" % kind)
+        if req.get("plan") is not None and (kind not in ("rename", "move") or req.get("plan") is not True):
+            raise Refused("plan is for the check of a rename or a move: say plan true, or leave it out")
         req = dict(req, verb={"project": "new-project", "thread": "new-thread"}.get(kind, kind))
         return manage_args(ws, zone, req, check=True)
     with zone_lock(zone):
@@ -2726,11 +2728,13 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if not thread:
             raise Refused("no thread given: only a thread moves")
         if check:
-            return scaffold(ws, "move", *which, "--to", to, *flag)
+            said = scaffold(ws, "move", *which, "--to", to, *flag)
+            return with_plan(ws, "move", which, to, said) if req.get("plan") is True else said
         return moved_here(ws, zone, project, thread, to, which)
     if verb == "rename":
         if check:
-            return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+            said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+            return with_plan(ws, "rename", which, field(req, "to"), said) if req.get("plan") is True else said
         return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
@@ -2740,6 +2744,17 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
         return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def with_plan(ws: Path, verb: str, which: list, to: str, said: str) -> dict:
+    """The check of a rename or a move with what it would write (#724): the same words, and beside them the plan
+    scaffold.py makes with the function the change itself writes with, which writes nothing. It refuses in the
+    change's own words where the change would refuse (changes not committed, a hub line it cannot tell apart)."""
+    try:
+        plan = json.loads(scaffold(ws, verb, *which, "--to", to, "--plan"))
+    except ValueError:
+        raise Refused("the plan could not be read, so nothing is shown as going to change")
+    return {"say": said, "plan": plan}
 
 
 def said_all(said: str, most: int = 1200) -> str:
@@ -6556,6 +6571,9 @@ PAGE_ONLY = ("walls-look", "walls-allow",
 # settings, a job, and what reaches the network), and every verb whose scope is the machine (a tab, an app, a job).
 # The scope is read from operations.DECLARED, so a verb added there is judged when it is declared.
 KEPT_FROM_TELEGRAM = ("rename", "move", "delete", "undo", "settings", "run", "release-check", "release-update")
+# Of those, what a remote assistant may do since 0.85.0 (#724): the extra serves them behind a preview the owner
+# confirms and a reach of its own. A rename, a move and an undo of one; never a delete, a setting or a job.
+REMOTE_MAY = ("rename", "move", "undo")
 REMOTE_REFUSED = "this is done at the Mac, not from a remote assistant"
 
 
@@ -6566,7 +6584,8 @@ def remote_refusal(req, ops=None):
     declared = getattr(ops, "DECLARED", None) if ops is not None else None
     if not isinstance(verb, str):
         return REMOTE_REFUSED
-    if verb in PAGE_ONLY or verb == "new-project-party" or verb in KEPT_FROM_TELEGRAM or verb in CMUX_VERBS:
+    if verb in PAGE_ONLY or verb == "new-project-party" or (verb in KEPT_FROM_TELEGRAM and verb not in REMOTE_MAY) \
+            or verb in CMUX_VERBS:
         return REMOTE_REFUSED
     if page_only_answer(req):
         return REMOTE_REFUSED

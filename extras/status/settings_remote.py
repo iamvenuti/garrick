@@ -73,7 +73,7 @@ def _grants(rows: List[dict], notice: str) -> str:
     return '<ul class="rgrants" id="remote-grants">%s</ul>' % items
 
 
-REQUEST_NONE = "No sign-in is waiting. Start one in your assistant, then choose Show a code."
+REQUEST_NONE = "No sign-in was waiting when this page was last refreshed. Start one in your assistant, then choose Show a code."
 
 
 def _requests(rows: List[dict], coded: str) -> str:
@@ -88,7 +88,7 @@ def _requests(rows: List[dict], coded: str) -> str:
         pick = ('<input type="radio" name="remote-request" value="%s"%s> ' % (E(r["id"]), " checked" if r["id"] == coded else "")) if many else ""
         items += '<li class="rreq" data-request="%s"><label class="rchk">%s%s</label></li>' % (E(r["id"]), pick, label)
     ask = ("Pick the sign-in you started, then choose Show a code." if many else "Choose Show a code for this sign-in.") \
-        + " The sign-in number must match the one on the sign-in page."
+        + " The sign-in number must match the one on the sign-in page. This list is as of the last refresh."
     return ('<div class="rrequests" id="remote-requests"><p class="hint">%s</p><ul class="rreqs" id="remote-reqlist">%s</ul></div>'
             % (E(ask), items))
 

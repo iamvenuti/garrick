@@ -137,11 +137,17 @@ class States(Case):
         self.assertNotIn('type="radio"', block)
         self.assertIn("Choose Show a code for this sign-in.", block)
 
+    def test_the_list_says_it_is_as_of_the_last_refresh(self):
+        self.install()
+        self.turn_on()
+        self.store.put_pending({"client": "c1", "name": "Maple phone"})
+        self.assertIn("This list is as of the last refresh.", self.draw())
+
     def test_with_none_waiting_the_page_says_so_in_one_sentence(self):
         self.install()
         self.turn_on()
         out = self.draw()
-        self.assertIn('id="remote-norequests">No sign-in is waiting. Start one in your assistant, then choose Show a code.', out)
+        self.assertIn('id="remote-norequests">No sign-in was waiting when this page was last refreshed. Start one in your assistant, then choose Show a code.', out)
         self.assertNotIn('class="rreq"', out)
 
     def test_a_failed_reply_is_drawn_by_the_pages_failure_row_never_as_raw_text(self):

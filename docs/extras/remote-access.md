@@ -29,6 +29,7 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `todo-undo` | verb | Served | now |  |
 | `undo` | verb | Served | now |  |
 | `wake` | verb | Served | now |  |
+| `wrap` | verb | Served | now |  |
 | `recall` | skill | Served | now | Answered by the five read tools. |
 | `owed` | read tool | Served | now |  |
 | `places` | read tool | Served | now |  |
@@ -78,7 +79,6 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `suggestion` | verb | Not yet | in a later release |  |
 | `walls-unallow` | verb | Not yet | in a later release |  |
 | `work-file` | verb | Not yet | in a later release |  |
-| `wrap` | verb | Not yet | in the next release |  |
 | `intake` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `interview` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `knowledge` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |

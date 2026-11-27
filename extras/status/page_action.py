@@ -6394,7 +6394,7 @@ def wrap_thread(ws: Path, req) -> dict:
             data[key] = req[key]
     try:
         done = subprocess.run([sys.executable, "-B", str(tool), "--root", str(ws), "--json"], input=json.dumps(data),
-                              capture_output=True, text=True, timeout=600)
+                              capture_output=True, text=True, timeout=600, env=dict(os.environ, **record_env()))
         got = json.loads(done.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise Refused("the wrap did not answer; look at git status in the zone before trying again")
@@ -6402,7 +6402,10 @@ def wrap_thread(ws: Path, req) -> dict:
         raise Refused("the wrap did not answer in words this page reads")
     if got["outcome"] != "saved":
         raise Refused(got["say"])
-    return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+    made = {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+    if isinstance(got.get("commit"), str) and got["commit"]:
+        made["commit"] = got["commit"]
+    return made
 
 
 _USAGE = None

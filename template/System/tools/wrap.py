@@ -398,6 +398,16 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + list(args), cwd=str(repo), env=gl.own_repo_env(), capture_output=True, text=True)
 
 
+def commit_trailers() -> List[str]:
+    """`-m <trailers>` for a commit made on behalf of a recorded action: the operation's id and payload hash, which the
+    status page's page_action.py hands over in GARRICK_COMMIT_TRAILERS (#716), so that git's history says whether the
+    wrap was committed. Only that exact shape is taken; anything else is left out, as scaffold.py does."""
+    text = os.environ.get("GARRICK_COMMIT_TRAILERS", "")
+    if re.fullmatch(r"Garrick-Op: [0-9a-f]{8,32}\nGarrick-Payload: [0-9a-f]{64}", text):
+        return ["-m", text]
+    return []
+
+
 def literal(path: str) -> str:
     return ":(literal)" + path
 
@@ -662,7 +672,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
         if stray:
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
             raise failed("other files were already staged in the %s zone, so nothing was committed" % job["zone"])
-        done = git(zone, "commit", "-q", "-m", job["message"])
+        done = git(zone, "commit", "-q", "-m", job["message"], *commit_trailers())
         if done.returncode != 0:
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
             said = (done.stderr + "\n" + done.stdout)

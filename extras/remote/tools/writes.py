@@ -37,7 +37,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import common, manifest, run_op
+from . import common, manifest, run_op, wrap_verb
 from . import lifecycle
 
 sys.dont_write_bytecode = True
@@ -61,16 +61,19 @@ TAKES = {
     "park": ("project", "thread"),
     "wake": ("project", "thread"),
     "checkpoint": ("project", "thread", "items", "drop"),
+    "wrap": wrap_verb.TAKES,
 }
 MUST = {
     "note-add": ("project", "text"), "todo-add": ("text",), "todo-done": ("line",), "todo-undo": ("line",),
     "todo-date": ("line", "date"), "todo-edit": ("line", "text"), "todo-retire": ("line", "reason"),
     "park": ("project",), "wake": ("project",), "checkpoint": ("project", "thread"),
+    "wrap": wrap_verb.MUST,
 }
 LONG = {"text": MOST_TODO, "line": MOST_TODO, "reason": 300, "title": MOST_TITLE, "target": 2 * MOST_NAME}
 NAMES = ("project", "thread")
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
-FIELDS = ("project", "thread", "text", "title", "line", "date", "target", "reason", "items", "drop")
+FIELDS = ("project", "thread", "text", "title", "line", "date", "target", "reason", "items", "drop",
+          "resume", "entry", "message", "todo", "checkpoint")
 TAKES.update(lifecycle.TAKES)                   # #724: check-name, new-project, new-thread, rename, move and undo
 MUST.update(lifecycle.MUST)
 FIELDS = FIELDS + lifecycle.MORE_FIELDS
@@ -175,6 +178,8 @@ class Writes:
     def clean(self, verb, given):
         """The fields of a request, checked: (fields, "") or (None, the words of the refusal). A field the verb does
         not take is refused by name, as operations.validate() does, never ignored."""
+        if wrap_verb.never(given):                       # memory and lock are never passed on, whichever verb carries them
+            return None, wrap_verb.never(given)
         if verb in lifecycle.VERBS:
             return lifecycle.clean(verb, given, FIELDS)
         fields = {}
@@ -222,6 +227,10 @@ class Writes:
                 return None, "drop is a short list of item ids."
         if verb == "checkpoint" and not ("items" in fields or "drop" in fields):
             return None, "checkpoint needs items or drop."
+        if verb == "wrap":
+            why = wrap_verb.shape(fields)
+            if why:
+                return None, why
         return fields, ""
 
     def targets(self, verb, zone, fields):
@@ -230,8 +239,15 @@ class Writes:
             return lifecycle.targets(self, zone, verb, fields)
         if verb in ("note-add", "todo-add") or verb in run_op.LINE_VERBS:
             return ["Todo.md"]
+        if verb == "wrap":
+            return [wrap_verb.note_rel(fields), "Todo.md"]
         project, thread = fields["project"], fields.get("thread")
         return ["%s/Threads/%s/%s.md" % (project, thread, thread)] if thread else ["%s/%s.md" % (project, project)]
+
+    @staticmethod
+    def todo_lines(f):
+        todo = f.get("todo") or {}
+        return len(todo.get("add") or []) + len(todo.get("tick") or [])
 
     def would(self, verb, zone, f):
         where = "%s, %s" % (zone, " / ".join(x for x in (f.get("project"), f.get("thread")) if x)) if f.get("project") else zone
@@ -245,6 +261,8 @@ class Writes:
             "todo-retire": "Retire the line that says \"%s\" to the expired list. Nothing is deleted." % f.get("line", "")[:120],
             "park": "Park %s." % where,
             "wake": "Wake %s." % where,
+            "wrap": "Wrap %s: write the Resume here block and a dated entry, change %d Todo line%s, and save it as one commit."
+                    % (where, self.todo_lines(f), "" if self.todo_lines(f) == 1 else "s"),
             "checkpoint": "Record %d checkpoint item%s in the thread note of %s. The next wrap at the desk folds them into the Resume here block."
                           % (len(f.get("items") or []), "" if len(f.get("items") or []) == 1 else "s", where),
         }[verb]
@@ -264,6 +282,8 @@ class Writes:
             return say("not_prepared", why)
         if verb in lifecycle.VERBS:
             return lifecycle.prepare(self, verb, canonical, fields, operation_id)
+        if verb == "wrap" and not wrap_verb.inside(self.ws / "Zones" / canonical, fields):
+            return say("not_prepared", "That project or thread is not a folder of this zone.")
         digest = payload_hash(verb, canonical, fields)
         with self.store.locked("prepare"):               # two prepares of one request at once are still one operation
             return self.prepared(verb, canonical, fields, digest, operation_id)
@@ -321,6 +341,8 @@ class Writes:
         if verb in lifecycle.VERBS and lifecycle.guard(self, zone, verb, fields):
             return lifecycle.NOT_A_PLACE                      # a link, or a place outside the zone, now
         zdir = self.ws / "Zones" / zone
+        if verb == "wrap" and not wrap_verb.inside(zdir, fields):
+            return "That project or thread is not a folder of this zone. Nothing was changed."
         for rel in self.targets(verb, zone, fields):
             if self.wrapping(zone, rel, verb, fields):
                 return "A wrap is running on that thread at the desk. Try again when it has finished."
@@ -360,8 +382,8 @@ class Writes:
             return True
         if not done.stdout.strip():
             return False
-        if rec["verb"] != "checkpoint":
-            return True
+        if rec["verb"] not in ("checkpoint", "wrap") or (rec["verb"] == "wrap" and rel == "Todo.md"):
+            return True                       # a wrap folds the checkpoint its note holds; the zone's Todo list is never someone's edit
         return self.sha(zdir / rel) != self.kept(rec["zone"], rel)
 
     @staticmethod

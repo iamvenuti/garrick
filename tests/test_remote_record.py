@@ -26,6 +26,10 @@ NEW = ("note-add", "todo-edit", "todo-retire")
 class RecordCase(notes.NoteCase):
     def setUp(self):
         super().setUp()
+        # A save asks for a build of the status page: a detached process that waits ten seconds (`--settle`) and then writes into the
+        # workspace. It outlives the test and writes while tearDown removes the folder (Errno 66, Directory not empty). Nothing here
+        # reads the page, so the request is not made; the reply is then the one a caller gets where the page cannot be asked for.
+        self.pa.ask_for_page = lambda ws: False
         base.write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
                    "- [ ] [[Pricing]]: Send the revised terms 📅 2026-10-09\n- [ ] Acme Corp: Invoice for September\n\n## Done\n")
         notes.git(self.work, "add", "-A")

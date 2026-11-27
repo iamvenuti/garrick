@@ -72,7 +72,7 @@ def command(ws: str, rec: dict):
     page = str(Path(ws) / "System" / "status" / "page_action.py")
     base = [python(), page, "--workspace", ws, "--via", VIA]
     if verb in LINE_VERBS:
-        argv = base + [verb, "--zone=" + zone, "--file=Todo.md", "--line=" + f["line"]]
+        argv = base + [verb, "--zone=" + zone, "--file=Todo.md", "--line=" + f["line"], "--op=" + rec["id"]]   # the same id the record is read by
         for field in ("date", "text", "reason"):
             if f.get(field) is not None and field in LINE_FIELDS[verb]:
                 argv.append("--%s=%s" % (field, f[field]))

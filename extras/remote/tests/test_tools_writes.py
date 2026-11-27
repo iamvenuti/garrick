@@ -318,8 +318,12 @@ CHILD = textwrap.dedent('''
             os._exit(9)
         if point == "other":
             trailers = "Garrick-Op: " + op + "\\nGarrick-Payload: " + "0" * 64
-        with open(os.path.join(repo, "Todo.md"), "a") as f:
-            f.write("- [ ] " + req["text"] + "\\n")
+        if req["verb"] == "todo-done":
+            text = open(os.path.join(repo, "Todo.md")).read().replace("- [ ] Acme Corp: Invoice for September", "- [x] Acme Corp: Invoice for September")
+            open(os.path.join(repo, "Todo.md"), "w").write(text)
+        else:
+            with open(os.path.join(repo, "Todo.md"), "a") as f:
+                f.write("- [ ] " + req["text"] + "\\n")
         git("add", "Todo.md")
         git("commit", "-q", "-m", "Add a line", "-m", trailers)
         if point in ("after", "other"):
@@ -336,10 +340,10 @@ class TestStoppedInTheMiddle(WritesCase):
     """O1 (#716): a write that stops before, after, or after the commit but before it is settled is settled once from the zone's
     own record of the commit, and never committed twice."""
 
-    def stopped(self, point, text, payload_text=None):
-        made = self.w.prepare("todo-add", "Work", text=text)
+    def stopped(self, point, text, payload_text=None, verb="todo-add", **fields):
+        made = self.w.prepare(verb, "Work", **(fields or {"text": text}))
         op = made["operation_id"]
-        req = {"verb": "todo-add", "zone": "Work", "op": op, "text": payload_text or text}
+        req = {"verb": verb, "zone": "Work", "op": op, "text": payload_text or text}
         done = subprocess.run([sys.executable, "-I", "-c", CHILD, str(self.root / "System" / "tools" / "operations.py"), str(self.work),
                                point, json.dumps(req), op], capture_output=True, text=True,
                               env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull))
@@ -419,6 +423,32 @@ class TestStoppedInTheMiddle(WritesCase):
         got = self.ops().sweep(self.work)                                  # the page's sweep still says it, once
         self.assertEqual([op], [r["op"] for r in got])
         self.assertEqual([], self.ops().sweep(self.work))
+
+    def test_a_todo_tick_that_stops_in_the_middle_is_settled_from_the_core_record_once(self):
+        before = self.commits()
+        op = self.stopped("after", "", verb="todo-done", line="Invoice for September")
+        out = self.w.status(op)
+        self.assertEqual(("saved", True), (out["state"], out["saved"]), out)
+        self.assertEqual(before + 1, self.commits())
+        self.assertRegex((self.work / "Todo.md").read_text(), r"- \[x\].*Invoice for September")
+        self.assertEqual("saved", self.w.execute(op)["state"])
+        time.sleep(0.4)
+        self.assertEqual(before + 1, self.commits())
+        self.assertEqual([op], [r["op"] for r in self.ops().sweep(self.work)])       # S6: the remote read marked nothing
+
+    def test_each_todo_line_verb_sends_the_remote_id_and_leaves_a_record_under_it(self):
+        steps = (("todo-done", dict(line="Invoice for September")), ("todo-undo", dict(line="Invoice for September")),
+                 ("todo-edit", dict(line="Invoice for September", text="Invoice LINEOP")),
+                 ("todo-date", dict(line="Invoice LINEOP", date="2026-12-30")),
+                 ("todo-retire", dict(line="Invoice LINEOP", reason="LINEOPRETIRE")))
+        for verb, fields in steps:
+            with self.subTest(verb=verb):
+                op, out = self.go(verb, **fields)
+                self.assertEqual("saved", out["state"], out)
+                rec = json.loads((self.work / ".git" / "garrick-ops" / (op + ".json")).read_text())
+                self.assertEqual((verb, "settled", "done", "remote"), (rec["verb"], rec["state"], rec["result"], rec["via"]))
+        argv = run_op.command(str(self.root), {"id": "0123456789abcdef", "verb": "todo-done", "zone": "Work", "fields": {"line": "x"}})[0]
+        self.assertIn("--op=0123456789abcdef", argv)
 
     def test_a_write_that_stopped_before_the_core_began_says_unknown_as_before(self):
         op = self.w.prepare("todo-add", "Work", text="NOCORE line")["operation_id"]

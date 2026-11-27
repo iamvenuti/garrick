@@ -405,7 +405,7 @@ class Writes:
         in the middle is settled here from the zone's history, once. None when the core has no record calls, the verb sends no id, or
         there is no record of this operation (a write begun by an older Garrick, or stopped before page_action began): the caller then
         says unknown, as it always did."""
-        if rec.get("verb") not in run_op.JSON_VERBS or not common.op_id_ok(rec.get("id")):
+        if rec.get("verb") not in run_op.JSON_VERBS + run_op.LINE_VERBS or not common.op_id_ok(rec.get("id")):
             return None
         if not self.may_write(rec["zone"]) or self.reach_changed(rec):
             return None                                   # the grant no longer reaches that zone, or that folder: the core is not asked

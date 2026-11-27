@@ -353,7 +353,8 @@ class ZoneMadeAgain(Case):
         text = (EXTRA.parent.parent / "docs" / "extras" / "remote-access.md").read_text()
         self.assertIn("next status call reads the zone's history and says once whether the change was saved, was not saved, or cannot be told", text)
         self.assertIn("It never commits a second time", text)
-        self.assertIn("The five Todo line changes and a checkpoint are not linked", text)
+        self.assertIn("The five Todo line changes (tick, untick, new date, reword, retire) leave the same record", text)
+        self.assertIn("A checkpoint makes no commit and has no record", text)
 
 class Handles(Case):
     def setUp(self):

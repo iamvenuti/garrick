@@ -157,6 +157,22 @@ class Marked(WritesCase):
         self.assertEqual("", self.ctx.zone_marker(self.root, "Nowhere"))
         self.assertEqual("", self.ctx.zone_marker(self.root, "../System"))
 
+    def test_without_a_birth_time_the_zone_has_no_marker_and_cannot_be_turned_on(self):
+        real = os.stat
+
+        def bare(path, *a, **k):
+            got = real(path, *a, **k)
+            if str(path).endswith("Work"):
+                return os.stat_result(tuple(got)[:10])                       # no birth time field
+            return got
+        with unittest.mock.patch.object(self.ctx.os, "stat", side_effect=bare):
+            self.assertEqual("", self.ctx.zone_marker(self.root, "Work"))
+            other = self.store.create_grant("client-two", "Tablet", ["read"])
+            out = self.act.run(self.root, {"action": "zone", "grant": other, "zone": "Work", "read": True, "acknowledged": True})
+            self.assertFalse(out["ok"], out)
+            self.assertFalse(self.live().zone_allowed("Work"))               # and one already on is refused: fail closed
+        self.assertTrue(self.live().zone_allowed("Work"))
+
     def test_a_zone_named_dot_or_dot_dot_has_no_marker(self):
         for name in ("", ".", "..", " ", "Work/..", "Work/.", "./Work"):
             self.assertEqual("", self.ctx.zone_marker(self.root, name), repr(name))

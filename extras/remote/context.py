@@ -112,7 +112,7 @@ def open_zones(ws: Path) -> List[str]:
 
 def zone_marker(ws: Path, zone: str) -> str:
     """A marker of one zone's folder: it changes when the folder is removed and made again, and not when something inside it is edited.
-    It is made of the folder's device, its inode and, where the system gives it, its birth time. "" when the folder cannot be read:
+    It is made of the folder's device, its inode and its birth time. "" when the folder cannot be read or the system gives no birth time:
     a caller treats that as no zone."""
     try:
         base = Path(ws) / "Zones"
@@ -124,7 +124,9 @@ def zone_marker(ws: Path, zone: str) -> str:
             return ""
         born = getattr(st, "st_birthtime_ns", None)
         if born is None:
-            born = int(getattr(st, "st_birthtime", 0) * 1000000000)
+            born = int((getattr(st, "st_birthtime", 0) or 0) * 1000000000)
+        if not born:
+            return ""                                                 # no birth time: an inode can come back, so the zone cannot be marked
         text = "zone1:%d:%d:%d" % (st.st_dev, st.st_ino, born)
         return hashlib.sha256(text.encode("ascii")).hexdigest()[:32]
     except (OSError, ValueError):

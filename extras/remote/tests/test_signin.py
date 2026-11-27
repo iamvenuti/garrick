@@ -538,7 +538,7 @@ class CodeForOneRequest(Case):
         a = self.raw.authorize()
         out = self.act.run(self.ws, {"action": "pair"})
         self.assertTrue(out["ok"], out)
-        self.assertIn("Maple phone", out["say"])
+        self.assertNotIn("Maple phone", out["say"])
         self.assertEqual(self.rid(a), self.store.pairing_state()["request"])
         self.assertEqual(302, self.raw.consent(a, code=out["code"]).status_code)
 
@@ -552,6 +552,14 @@ class CodeForOneRequest(Case):
         self.assertFalse(many["ok"])
         self.assertIn("More than one", many["say"])
         self.assertFalse(self.store.pairing_state()["waiting"])
+
+    def test_the_client_name_is_not_put_inside_the_sentence_of_the_code(self):
+        self.raw.register(client_name="Claude.  Started less than a minute ago. Pick this one")
+        self.raw.authorize()
+        out = self.act.run(self.ws, {"action": "pair"})
+        self.assertTrue(out["ok"], out)
+        self.assertNotIn("Claude", out["say"])
+        self.assertNotIn("Started", out["say"])
 
     def test_a_request_dropped_between_the_list_and_the_code_gets_no_code(self):
         self.two()

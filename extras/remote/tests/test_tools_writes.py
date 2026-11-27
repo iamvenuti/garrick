@@ -339,6 +339,23 @@ class TestTheRecord(WritesCase):
         self.assertNotIn("?", run_op.receipt("note-add", 1, json.dumps(running), "")["say"])
 
 
+class TestAUsersOwnWordsAreNotAQuestion(WritesCase):
+    def test_a_line_that_says_done_a_second_time_is_saved_and_says_so(self):
+        text = "Ask Jo whether the survey is to be done a second time"
+        made = run_op.receipt("todo-add", 0, json.dumps({"ok": True, "say": "Added to Inbox: " + text}), "")
+        self.assertTrue(made["ok"])
+        plain = run_op.receipt("todo-done", 0, "Ticked: " + text, "")
+        self.assertTrue(plain["ok"])
+        op, out = self.go("todo-add", text=text)
+        self.assertEqual("saved", out["state"], out)
+        self.assertIn(text, (self.work / "Todo.md").read_text())
+
+    def test_the_fixed_question_at_the_end_of_a_failed_plain_text_answer_is_a_repeat(self):
+        q = "It has not been done again. Do you want it done a second time?"
+        self.assertIn("Nothing was saved again", run_op.receipt("todo-done", 1, "", "The same request was done 4 minutes ago: Ticked. " + q)["say"])
+        self.assertTrue(run_op.receipt("todo-done", 0, "Ticked. " + q, "")["ok"])
+
+
 class TestTheDeskIsSafe(WritesCase):
     def test_a_todo_with_changes_not_committed_is_not_overwritten(self):
         todo = self.work / "Todo.md"

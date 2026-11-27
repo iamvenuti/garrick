@@ -163,8 +163,21 @@ def _pair(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
         return _no("Remote access has no address yet. Set it up first.")
     if store.consent_locked():
         return _no("Too many wrong codes were tried. The sign-in page opens again in a few minutes.")
-    code, seconds = store.make_pairing_code()
-    return {"ok": True, "say": "Type this code on the sign-in page within five minutes. It works once.", "code": code, "seconds": seconds}
+    waiting = store.waiting_requests()
+    asked = str(req.get("request") or "").strip()
+    if asked:
+        picked = [r for r in waiting if r["id"] == asked]
+        if not picked:
+            return _no("That sign-in is not waiting any more. Start it again in your assistant, then choose Show a code.")
+    elif len(waiting) == 1:
+        picked = waiting
+    elif not waiting:
+        return _no("No sign-in is waiting. Start one in your assistant, then choose Show a code.")
+    else:
+        return _no("More than one sign-in is waiting. Pick the one you started, then choose Show a code.")
+    code, seconds = store.make_pairing_code(request=picked[0]["id"])
+    return {"ok": True, "say": "Type this code on the sign-in page of %s within five minutes. It works once, for that sign-in only." % picked[0]["name"],
+            "code": code, "seconds": seconds}
 
 
 def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,17 +200,21 @@ def _zone(ws: Path, req: Dict[str, Any]) -> Dict[str, Any]:
     if not zone["walled"]:
         return _no("%s is open, so every connection already reaches it." % zone["zone"])
     read, write = _flag(req.get("read")), _flag(req.get("write"))
-    now = grant.get("zones", {}).get(zone["zone"], {})
+    marker = ctx.zone_marker(ws, zone["zone"])
+    stored = (grant.get("zones") or {}).get(zone["zone"], {})
+    now = stored if ctx.entry_holds(ws, zone["zone"], stored) else {}       # an entry from another folder, or from before markers, is off
     turning_on = (read and not now.get("read")) or (write and not now.get("write"))
-    walled_now = {z["zone"] for z in known if z["walled"]}
-    others = [z for z, e in (grant.get("zones") or {}).items() if z != zone["zone"] and z in walled_now and (e.get("read") or e.get("write"))]
+    others = [z for z in ctx.live_zones(ws, grant) if z != zone["zone"]]
     if turning_on and others:
         return _no(ctx.ONE_WALLED)
     if turning_on and not _flag(req.get("acknowledged")):
         return _no("Read the notice first. Nothing was changed.")
     if write and "write" not in grant["classes"]:
         return _no("This connection was not allowed to write, so it cannot write in %s." % zone["zone"])
-    store.set_zone(gid, zone["zone"], read, write)
+    if (read or write) and not marker:
+        return _no("%s could not be read, so it was not turned on." % zone["zone"])
+    if not store.set_zone(gid, zone["zone"], read, write, marker=marker):
+        return _no("That connection is not active.")
     if not (read or write):
         return {"ok": True, "say": "%s is out of reach for this connection." % zone["zone"]}
     return {"ok": True, "say": "%s is now in reach for this connection. Chats that started before this need a new chat." % zone["zone"]}

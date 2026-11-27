@@ -95,6 +95,11 @@ class Served:
         return self.url + "/mcp"
 
 
+def request_of(pid: str) -> str:
+    """The short id Settings names a waiting sign-in request by, from the id in its link: what the owner picks to make a code for it."""
+    return mod("store").peek()["pending"][pid]["rid"]
+
+
 def sign_in_by_hand(base: str, ws, act, scope="read", writes=False, client_name="Test phone", follow_code=True):
     """What the owner does on the consent page: returns a function the SDK client's redirect handler calls with the authorization address."""
     result: Dict[str, Any] = {}
@@ -105,8 +110,9 @@ def sign_in_by_hand(base: str, ws, act, scope="read", writes=False, client_name=
             page = r.headers["location"]
             result["page"] = page
             await http.get(page)
-            code = act.run(ws, {"action": "pair"})["code"]
-            data = {"p": parse_qs(urlsplit(page).query)["p"][0], "code": code, "read": "1"}
+            pid = parse_qs(urlsplit(page).query)["p"][0]
+            code = act.run(ws, {"action": "pair", "request": request_of(pid)})["code"]
+            data = {"p": pid, "code": code, "read": "1"}
             if writes:
                 data["write"] = "1"
             done = await http.post(base + "/consent", data=data)
@@ -167,7 +173,7 @@ class Raw:
         page = authorize_response.headers["location"]
         pid = parse_qs(urlsplit(page).query)["p"][0]
         if code is None:
-            code = mod("settings_actions").run(self.case.ws, {"action": "pair"})["code"]
+            code = mod("settings_actions").run(self.case.ws, {"action": "pair", "request": request_of(pid)})["code"]
         data = {"p": pid, "code": code}
         if read:
             data["read"] = "1"

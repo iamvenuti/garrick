@@ -90,6 +90,7 @@ REPEAT_DONE = "This was already done a few minutes ago. Nothing was saved again.
 REPEAT_RUNNING = "The same request is still running. Nothing was sent again."
 
 
+RUNNING_START = "The same request is still running"      # how the page action opens a repeat of a request that has not ended
 QUESTIONS = ("Do you want it done a second time?", "Do you want it done a second time once that one ends?")
 
 
@@ -105,7 +106,7 @@ def repeat_receipt(reply, text: str, code: int = 1):
         said = text
         if code == 0 or not text.rstrip().endswith(QUESTIONS):
             return None                  # plain text: only a failed run that ends with the fixed question
-    return {"ok": False, "say": REPEAT_RUNNING if "still running" in said else REPEAT_DONE}
+    return {"ok": False, "say": REPEAT_RUNNING if said.lstrip().startswith(RUNNING_START) else REPEAT_DONE}
 
 
 def receipt(verb: str, code: int, out: str, err: str) -> dict:

@@ -93,6 +93,7 @@ class TestDispatch(RemoteVerbCase):
         self.install()
         for req in ({"action": "enable", "adapter": "own", "address": "https://mcp.acme.example"},
                     {"action": "zone", "grant": "g1", "zone": "Work", "read": True, "write": False, "acknowledged": True},
+                    {"action": "pair", "request": "ab12cd34"},
                     {"action": "revoke", "grant": "g1"}):
             with self.subTest(req=req):
                 self.assertTrue(self.go(req)["ok"], req)

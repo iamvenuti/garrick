@@ -52,7 +52,7 @@ AUTHCODE_SECONDS = 2 * 60                # an authorization code, from consent t
 PENDING_SECONDS = 10 * 60                # a sign-in request waits for the owner this long
 UNFINISHED_SECONDS = 60 * 60             # a registration that never completes is dropped after an hour
 MAX_UNFINISHED = 200                     # and no more than this many wait at once
-MAX_PENDING = 50                         # sign-in requests that wait for the owner at once
+MAX_PENDING = 50                         # sign-in requests that wait for the owner at once; a new one pushes out the oldest
 LOCK_AFTER = 5                           # wrong codes before the consent page locks
 LOCK_SECONDS = 15 * 60
 
@@ -146,15 +146,27 @@ def handle_key() -> bytes:
 
 # --------------------------------------------------------------------------- the pairing code and the consent lock
 
-def make_pairing_code(now: Optional[float] = None) -> Tuple[str, int]:
-    """A new six-digit code, kept as a hash, good for five minutes and one use. A new code replaces the one before it.
-    Returns the code, to be shown once, and its life in seconds."""
+def make_pairing_code(now: Optional[float] = None, request: str = "") -> Tuple[str, int]:
+    """A new six-digit code, kept as a hash, good for five minutes and one use, and good for one sign-in request only: `request` is the
+    short id of the request it was made for (`waiting_requests`). A code with no request works for none. A new code replaces the one
+    before it. Returns the code, to be shown once, and its life in seconds."""
     now = time.time() if now is None else now
     code = "%06d" % secrets.randbelow(1000000)
     with txn(now) as db:
-        db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS}}
+        db["pairing"] = {sha(code): {"expires": now + CODE_SECONDS, "request": str(request or "")}}
         db["consent"]["wrong"] = 0                       # a new code starts a new count
     return code, CODE_SECONDS
+
+
+def waiting_requests(now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """The sign-in requests that wait for the owner, oldest first: a short id of their own (never the link's secret), the name the client
+    gave and when the request started. Reads; writes nothing."""
+    now = time.time() if now is None else now
+    rows = []
+    for row in peek(now)["pending"].values():
+        if isinstance(row, dict) and row.get("rid"):
+            rows.append({"id": str(row["rid"]), "name": str(row.get("name") or ""), "made": float(row.get("made") or now)})
+    return sorted(rows, key=lambda r: r["made"])
 
 
 def pairing_state(now: Optional[float] = None) -> Dict[str, Any]:
@@ -162,7 +174,11 @@ def pairing_state(now: Optional[float] = None) -> Dict[str, Any]:
     db = peek(now)
     left = max([int(v["expires"] - now) for v in db["pairing"].values()] or [0])
     locked = db["consent"].get("locked_until", 0) - now
-    return {"waiting": left > 0, "seconds": left, "locked": int(locked) + 1 if locked > 0 else 0}
+    request = ""
+    for v in db["pairing"].values():
+        if isinstance(v, dict) and v.get("request"):
+            request = str(v["request"])
+    return {"waiting": left > 0, "seconds": left, "locked": int(locked) + 1 if locked > 0 else 0, "request": request}
 
 
 def consent_locked(now: Optional[float] = None) -> int:
@@ -173,9 +189,10 @@ def consent_locked(now: Optional[float] = None) -> int:
     return int(left) + 1 if left > 0 else 0
 
 
-def check_pairing_code(code: str, now: Optional[float] = None) -> bool:
-    """Try a code. The right one works once, and only while the page is open. A wrong one counts: the fifth in a row locks
-    the page for 15 minutes, and a locked page takes no code at all, the right one included."""
+def check_pairing_code(code: str, now: Optional[float] = None, request: str = "") -> bool:
+    """Try a code for one sign-in request. The right code for that request works once, and only while the page is open. A wrong one counts,
+    and so does a right code made for another request, which is not used up: the fifth in a row locks the page for 15 minutes, and a locked
+    page takes no code at all, the right one included."""
     now = time.time() if now is None else now
     with txn(now) as db:
         consent = db["consent"]
@@ -186,10 +203,12 @@ def check_pairing_code(code: str, now: Optional[float] = None) -> bool:
         text = str(code or "").strip()
         ok = False
         if len(text) == 6 and text.isdigit():
-            for known in list(db["pairing"]):
+            for known, entry in list(db["pairing"].items()):
                 if hmac.compare_digest(known, sha(text)):
-                    ok = True
-                    del db["pairing"][known]
+                    mine = entry.get("request") if isinstance(entry, dict) else ""
+                    if request and isinstance(mine, str) and mine and hmac.compare_digest(mine, str(request)):
+                        ok = True
+                        del db["pairing"][known]
         if ok:
             consent["wrong"] = 0
             return True
@@ -275,15 +294,22 @@ def revoke(gid: str, now: Optional[float] = None) -> bool:
         return True
 
 
-def set_zone(gid: str, zone: str, read: bool, write: bool, now: Optional[float] = None) -> bool:
-    """Turn a zone's reads and writes on or off for a grant, with the day of the change. Both off takes the zone out."""
+def set_zone(gid: str, zone: str, read: bool, write: bool, now: Optional[float] = None, marker: str = "") -> bool:
+    """Turn a zone's reads and writes on or off for a grant, with the day of the change and the marker of the zone's folder. Both off takes
+    the zone out. Turning a zone on needs a marker: without one nothing is stored and False comes back. An earlier entry whose marker is
+    not this one belongs to another folder, so it counts for nothing and the days start again."""
     with txn(now) as db:
         g = db["grants"].get(gid)
         if not g or g.get("revoked"):
             return False
         old = g["zones"].get(zone, {})
+        if (read or write) and not (isinstance(marker, str) and marker):
+            return False
+        if old.get("marker") != marker:
+            old = {}
         day = today(now)
-        entry = {"read": (old.get("read") or day) if read else "", "write": (old.get("write") or day) if write else ""}
+        entry = {"read": (old.get("read") or day) if read else "", "write": (old.get("write") or day) if write else "",
+                 "marker": marker}
         if entry["read"] or entry["write"]:
             g["zones"][zone] = entry
         else:
@@ -304,13 +330,20 @@ def prune_zones(gid: str, known) -> None:
 # --------------------------------------------------------------------------- sign-in requests and codes
 
 def put_pending(data: Dict[str, Any], now: Optional[float] = None) -> Optional[str]:
-    """Keep a sign-in request while the owner decides. None when too many already wait: they expire, so a flood runs out."""
+    """Keep a sign-in request while the owner decides, and give it a short random id of its own (`rid`) for Settings to name it by. When 50
+    already wait, the oldest goes and this one stays, so a flood of new sign-ins cannot shut the owner out. The request that a live pairing
+    code was made for is never the one that goes."""
     now = time.time() if now is None else now
     pid = secrets.token_urlsafe(32)
     with txn(now) as db:
-        if len(db["pending"]) >= MAX_PENDING:
-            return None
-        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS, made=now)
+        held = {v.get("request") for v in db["pairing"].values() if isinstance(v, dict)}
+        while len(db["pending"]) >= MAX_PENDING:
+            order = sorted(((float(v.get("made", 0)) if isinstance(v, dict) else 0.0), k) for k, v in db["pending"].items()
+                           if not (isinstance(v, dict) and v.get("rid") in held))
+            if not order:
+                return None                                  # nothing may go: refuse the new one, as before
+            del db["pending"][order[0][1]]
+        db["pending"][pid] = dict(data, expires=now + PENDING_SECONDS, made=now, rid=secrets.token_hex(4))
     return pid
 
 

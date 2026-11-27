@@ -277,18 +277,19 @@ class Consent(Case):
 
     def test_a_code_works_once(self):
         self.raw.register()
-        code = self.act.run(self.ws, {"action": "pair"})["code"]
         a = self.raw.authorize()
+        code = self.act.run(self.ws, {"action": "pair"})["code"]
         self.assertEqual(self.raw.consent(a, code=code).status_code, 302)
         self.assertEqual(self.raw.consent(self.raw.authorize(), code=code).status_code, 400)
 
     def test_a_code_runs_out_after_five_minutes(self):
         self.raw.register()
+        a = self.raw.authorize()
         code = self.act.run(self.ws, {"action": "pair"})["code"]
         with self.store.txn() as db:
             for v in db["pairing"].values():
                 v["expires"] = time.time() - 1
-        self.assertEqual(self.raw.consent(self.raw.authorize(), code=code).status_code, 400)
+        self.assertEqual(self.raw.consent(a, code=code).status_code, 400)
 
     def test_read_must_be_ticked(self):
         self.raw.register()
@@ -386,13 +387,32 @@ class Hardening(Case):
         self.assertTrue(set(kept) <= set(mod("provider").KEEP), set(kept))
         self.assertNotIn("logo_uri", kept)
 
-    def test_the_waiting_sign_in_requests_are_capped(self):
+    def test_the_waiting_sign_in_requests_are_capped_and_the_oldest_goes_first(self):
         self.raw.register()
         seen = []
         for _ in range(55):
             seen.append(self.raw.authorize())
-        self.assertEqual(sum("/consent?p=" in r.headers["location"] for r in seen), self.store.MAX_PENDING)
-        self.assertIn("temporarily_unavailable", seen[-1].headers["location"])
+        self.assertTrue(all("/consent?p=" in r.headers["location"] for r in seen))              # every new one is kept
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+        self.assertEqual(self.raw.http.get(seen[0].headers["location"]).status_code, 400)       # the oldest ran out
+        self.assertEqual(self.raw.http.get(seen[4].headers["location"]).status_code, 400)
+        self.assertEqual(self.raw.http.get(seen[5].headers["location"]).status_code, 200)
+        self.assertEqual(self.raw.http.get(seen[-1].headers["location"]).status_code, 200)
+
+    def test_a_request_with_a_live_code_survives_fifty_newer_ones(self):
+        self.raw.register()
+        mine = self.raw.authorize()
+        rid = next(iter(self.store.peek()["pending"].values()))["rid"]
+        with self.store.txn() as db:
+            db["pairing"] = {self.store.sha("123456"): {"expires": time.time() + 300, "request": rid}}
+        newer = [self.raw.authorize() for _ in range(52)]
+        self.assertTrue(all("/consent?p=" in r.headers["location"] for r in newer))
+        self.assertEqual(self.raw.http.get(mine.headers["location"]).status_code, 200)
+        self.assertEqual(len(self.store.peek()["pending"]), self.store.MAX_PENDING)
+        with self.store.txn() as db:                                                           # code gone: it is the oldest, so it goes
+            db["pairing"] = {}
+        self.raw.authorize()
+        self.assertEqual(self.raw.http.get(mine.headers["location"]).status_code, 400)
 
     def test_a_long_state_or_challenge_is_refused(self):
         self.raw.register()
@@ -451,6 +471,122 @@ class Hardening(Case):
         with self.store.txn() as db:
             db["pending"][pid]["made"] -= 300
         self.assertIn("5 minutes ago", self.raw.http.get(a.headers["location"]).text)
+
+
+class CodeForOneRequest(Case):
+    """S11: the pairing code the owner makes works for the sign-in request they picked, and for no other."""
+
+    def two(self, name_a="Maple phone", name_b="Cedar tablet"):
+        self.raw.register(client_name=name_a)
+        a = self.raw.authorize()
+        self.raw.register(client_name=name_b)
+        b = self.raw.authorize()
+        return a, b
+
+    def rid(self, response):
+        return self.rid_of(parse_qs(urlsplit(response.headers["location"]).query)["p"][0])
+
+    def rid_of(self, pid):
+        return self.store.peek()["pending"][pid]["rid"]
+
+    def test_the_waiting_requests_are_listed_with_the_client_name_and_when_they_started(self):
+        self.two()
+        rows = self.store.waiting_requests()
+        self.assertEqual(["Maple phone", "Cedar tablet"], [r["name"] for r in rows])
+        for r in rows:
+            self.assertEqual({"id", "name", "made"}, set(r))
+        view = mod("state").view(self.ws)["requests"]
+        self.assertEqual(["Maple phone", "Cedar tablet"], [r["name"] for r in view])
+        self.assertTrue(all(r["started"] == "less than a minute ago" for r in view))
+
+    def test_a_request_id_is_not_the_link_or_any_secret_of_the_sign_in(self):
+        a, _ = self.two()
+        pid = parse_qs(urlsplit(a.headers["location"]).query)["p"][0]
+        row = self.store.peek()["pending"][pid]
+        shown = repr(mod("state").view(self.ws)["requests"]) + repr(self.store.waiting_requests())
+        for secret in (pid, row["challenge"], row["state"], row["redirect"]):
+            self.assertNotIn(secret, shown)
+        self.assertNotEqual(pid, row["rid"])
+
+    def test_a_code_made_for_one_request_typed_on_another_is_refused_and_counts(self):
+        a, b = self.two()
+        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
+        wrong = self.raw.consent(b, code=code)
+        self.assertEqual(400, wrong.status_code)
+        self.assertNotIn("location", wrong.headers)
+        with self.store.txn() as db:
+            self.assertEqual(1, db["consent"]["wrong"])
+        self.assertEqual(self.store.pairing_state()["waiting"], True)               # the code was not used up
+        self.assertEqual(302, self.raw.consent(a, code=code).status_code)          # and it still works on its own request
+
+    def test_five_codes_for_another_request_lock_the_page(self):
+        a, b = self.two()
+        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
+        for _ in range(4):
+            self.assertEqual(400, self.raw.consent(b, code=code).status_code)
+        self.assertEqual(429, self.raw.consent(b, code=code).status_code)
+        self.assertEqual(429, self.raw.consent(a, code=code).status_code)          # locked for everyone
+
+    def test_a_code_made_for_a_request_works_once_on_that_request(self):
+        a, b = self.two()
+        code = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
+        self.assertEqual(302, self.raw.consent(a, code=code).status_code)
+        self.assertEqual(400, self.raw.consent(b, code=code).status_code)
+
+    def test_with_one_request_waiting_it_is_picked_without_a_choice(self):
+        self.raw.register(client_name="Maple phone")
+        a = self.raw.authorize()
+        out = self.act.run(self.ws, {"action": "pair"})
+        self.assertTrue(out["ok"], out)
+        self.assertIn("Maple phone", out["say"])
+        self.assertEqual(self.rid(a), self.store.pairing_state()["request"])
+        self.assertEqual(302, self.raw.consent(a, code=out["code"]).status_code)
+
+    def test_with_none_or_several_waiting_a_code_is_not_made_until_one_is_picked(self):
+        none = self.act.run(self.ws, {"action": "pair"})
+        self.assertFalse(none["ok"])
+        self.assertIn("No sign-in is waiting", none["say"])
+        self.assertFalse(self.store.pairing_state()["waiting"])
+        self.two()
+        many = self.act.run(self.ws, {"action": "pair"})
+        self.assertFalse(many["ok"])
+        self.assertIn("More than one", many["say"])
+        self.assertFalse(self.store.pairing_state()["waiting"])
+
+    def test_a_request_that_is_not_waiting_gets_no_code(self):
+        self.two()
+        out = self.act.run(self.ws, {"action": "pair", "request": "00000000"})
+        self.assertFalse(out["ok"])
+        self.assertFalse(self.store.pairing_state()["waiting"])
+
+    def test_a_code_with_no_request_works_for_none(self):
+        self.raw.register()
+        a = self.raw.authorize()
+        code, _ = self.store.make_pairing_code()                                   # a code that names no request
+        self.assertEqual(400, self.raw.consent(a, code=code).status_code)
+        with self.store.txn() as db:                                               # and one saved by an older Garrick, as a bare entry
+            db["pairing"] = {self.store.sha("123456"): {"expires": time.time() + 300}}
+        self.assertEqual(400, self.raw.consent(a, code="123456").status_code)
+
+    def test_a_new_code_for_another_request_replaces_the_first(self):
+        a, b = self.two()
+        first = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})["code"]
+        second = self.act.run(self.ws, {"action": "pair", "request": self.rid(b)})["code"]
+        self.assertEqual(400, self.raw.consent(a, code=first).status_code)
+        self.assertEqual(302, self.raw.consent(b, code=second).status_code)
+
+    def test_the_name_in_the_list_is_cut_and_escaped_like_the_consent_page(self):
+        self.raw.register(client_name="<b>x</b>" + "n" * 100)
+        self.raw.authorize()
+        name = self.store.waiting_requests()[0]["name"]
+        self.assertLessEqual(len(name), mod("provider").NAME_MAX)
+
+    def test_no_code_reaches_the_list_the_log_or_the_say(self):
+        a, _ = self.two()
+        out = self.act.run(self.ws, {"action": "pair", "request": self.rid(a)})
+        shown = repr(mod("state").view(self.ws)) + out["say"]
+        self.assertNotIn(out["code"], shown)
+        self.assertNotIn(out["code"], (self.state.home() / "auth.json").read_text())
 
 
 class Documents(Case):
@@ -532,6 +668,7 @@ class Documents(Case):
 class Logs(Case):
     def test_no_token_code_or_text_reaches_the_log(self):
         tokens = self.raw.sign_in()
+        self.raw.authorize()
         code = self.act.run(self.ws, {"action": "pair"})["code"]
         self.raw.mcp(tokens["access_token"], body={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                                    "params": {"name": "stub-who", "arguments": {}}})

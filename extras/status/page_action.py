@@ -496,6 +496,12 @@ def clock(name: str):
 
 GIT_TIMEOUT = clock("GIT_TIMEOUT")
 COMMIT_TIMEOUT = clock("COMMIT_TIMEOUT")
+# A git command that meets the zone's index.lock waits and tries again (#722): at most LOCK_TRIES more tries, LOCK_PAUSE
+# seconds apart, so about four seconds in all. Only that lock: a command that failed for any other reason is not tried again.
+LOCK_TRIES = 8
+LOCK_PAUSE = 0.5
+LOCK_REFUSAL = "Not saved: another program was using this zone's history. Try again in a moment."    # operations.py's, if it has one
+LOCK_STALE = 300            # seconds: a lock file older than this may be left over from a program that stopped
 
 
 def refuse_undeclared(ws: Path, req: dict) -> None:
@@ -777,7 +783,41 @@ def with_trailers(zone: Path, args) -> tuple:
     return args[:at] + ("-m", rec["trailers"]) + args[at:]
 
 
+def lock_said(said) -> bool:
+    """Whether git said it could not take the zone's index.lock."""
+    text = str(said or "")
+    return "index.lock" in text and ("Unable to create" in text or "Another git process" in text)
+
+
 def git(zone: Path, *args, timeout: float = None):
+    """One git command in the zone, tried again a few times if another program holds its index.lock (#722).
+    Nothing is written before git takes the lock, so a second try cannot write twice."""
+    for tries in range(LOCK_TRIES + 1):
+        code, said = git_once(zone, *args, timeout=timeout)
+        if code is None or code == 0 or tries == LOCK_TRIES or not lock_said(said):
+            return code, said
+        time.sleep(LOCK_PAUSE)
+    return code, said
+
+
+def lock_why(zone: Path) -> str:
+    """The words for a lock that outlasted the wait: the headline, and, when the lock file is old, that it may be
+    stale and which file it is. The file's name is for Details; the page's headline is the first sentence only."""
+    why = LOCK_REFUSAL
+    code, out = git_once(zone, "rev-parse", "--git-path", "index.lock", timeout=10)
+    path = Path(out.strip()) if code == 0 and out.strip() else Path(".git") / "index.lock"
+    path = path if path.is_absolute() else Path(zone) / path
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return why
+    if age >= LOCK_STALE:
+        why += " The lock file %s is %s old and may be stale: if no other program is using this zone, remove it." % (
+            path, how_long(age))
+    return why
+
+
+def git_once(zone: Path, *args, timeout: float = None):
     """One git command in the zone: (exit code, what it said). It runs in a
     process group of its own, so a hook that hangs, or a signing key waiting
     for its passphrase, is stopped with it when the time is up: politely
@@ -827,6 +867,8 @@ def committing(zone: Path, rel, message: str) -> tuple:
         if code is None:
             return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code != 0:
+        if code is not None and lock_said(said):
+            return code, lock_why(zone)
         why = said.strip().splitlines() if code is not None else [said]
         return code or 1, why[-1] if why else "git refused"
     return 0, ""
@@ -6730,6 +6772,7 @@ FAILURES = (
     # The layout dialog (#511): its look only reads, so it may be asked again; its change writes, so it may not.
     ("layout-look", "Garrick could not show what would move.", "Try again", "retry", "Open the dialog and choose Try again."),
     ("layout", "Nothing was moved.", "Show why", "why", "Open the dialog and choose Show why."),
+    ("lock", LOCK_REFUSAL, "Try again", "retry", "Open the page and choose Try again."),
     ("remote", "Remote access was not changed.", "Show why", "why", "Open Settings and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
@@ -6742,6 +6785,8 @@ def failure_code(out: dict, req) -> str:
     say = str(out.get("say") or "")
     if say.startswith("A wall holds "):
         return "wall"
+    if LOCK_REFUSAL in " ".join(say.split()):
+        return "lock"
     if out.get("failure") in FAILURE_CODES:
         return out["failure"]           # a refusal that names its own row, as the two Settings actions do
     if isinstance(req, dict) and req.get("verb") == "continue":

@@ -1952,10 +1952,26 @@ h+=details(out.say);d.querySelector('#lay-plan').innerHTML=h;
 function set(){b.dataset.request='In '+o.project+', place the file "'+lbase(f[0])+'" in the papers of the '+s.value+' thread. Its threads are '+p.threads.join(', ')+'.'}
 s.onchange=set;set()});
 var go=d.querySelector('[data-go]');go.disabled=false}
-function lresult(d,o,out){var said=String((out&&out.say)||''),first=said.split('\n')[0],ok=!!(out&&out.ok),moved=ok&&/Changed in commit ([0-9a-f]{7,40})/.exec(said);
-var line=moved?first.replace(/\.$/,'')+'. It was committed.':ok?'Nothing moved. '+first:'Nothing moved. '+said.split(/\n|: /)[0].replace(/\.?$/,'.');
-var box=d.querySelector('#lay-plan');box.innerHTML='<p class="'+(ok?'':'mg-msg bad')+'" role="status">'+esc(line)+'</p>'+details(said);
-var r=d.querySelector('.mg-row');r.innerHTML='<button class="act primary" type="button" data-cancel>Close</button>';r.querySelector('[data-cancel]').onclick=function(){d.close()};
+/* A failed reply, in plain words (#511): the row of FAILURES that fits the outcome, and never "nothing moved" for a reply that cannot say so.
+   No reply, `unknown`, `lost` and `unrecorded` keep their own sentences, and so do `crashed`, `noreply` and a wall; the tool's text is
+   under Details, closed. A move writes and commits, so a crash or a silence may have moved something: those offer Refresh, never a
+   second try. Only the look, which writes nothing, offers Try again (`again`). */
+function lcode(out,again){var say=String((out&&out.say)||''),pc=out&&out.plain&&out.plain.code||'',oc=out&&out.outcome||'';
+if(!out)return'lost';if(/^A wall holds /.test(say))return'wall';
+if(/^(unknown|lost|unrecorded)$/.test(pc))return pc;if(/^(unknown|lost)$/.test(oc))return oc;
+if(again)return out.ok?'':'layout-look';if(pc==='crashed'||oc==='crashed')return'crashed';
+if(out.ok)return'';return oc==='refused'||pc==='refused'?'layout':'noreply'}
+function lresult(d,o,out,again){var said=String((out&&out.say)||''),first=said.split('\n')[0],ok=!!(out&&out.ok),code=lcode(out,again);
+var moved=!code&&ok&&/Changed in commit ([0-9a-f]{7,40})/.exec(said);
+var box=d.querySelector('#lay-plan'),r=d.querySelector('.mg-row'),line=moved?first.replace(/\.$/,'')+'. It was committed.':'Nothing moved. '+first;
+var refresh=/^(unknown|lost|unrecorded|crashed|noreply)$/.test(code);
+if(code&&window.GarrickFail){box.innerHTML='';var p=document.createElement('p');p.className='mg-msg bad';p.setAttribute('role','status');box.appendChild(p);
+GarrickFail(p,code,said,again&&code==='layout-look'?again:null)}
+else if(code)box.innerHTML='<p class="mg-msg bad" role="status">'+esc(code==='lost'?'This page did not hear back, so we cannot tell whether this went through.':'Nothing was moved.')+'</p>'+(said?details(said):'');
+else box.innerHTML='<p class="'+(ok?'':'mg-msg bad')+'" role="status">'+esc(line)+'</p>'+details(said);
+r.innerHTML=(refresh?'<button class="act" type="button" data-refresh>Refresh</button>':'')+'<button class="act primary" type="button" data-cancel>Close</button>';
+r.querySelector('[data-cancel]').onclick=function(){d.close()};
+if(refresh)r.querySelector('[data-refresh]').onclick=function(){d.close();host.postMessage({rebuild:true})};
 if(moved){try{localStorage.setItem('garrick-undo',JSON.stringify({zone:o.zone,commit:moved[1],what:line.replace(/\.$/,''),until:Date.now()+60000}))}catch(e){}}}
 function layout(o){if(!o||!o.zone||!o.project||!(o.heading||o.join)){say('That change needs a project.');return}
 var title=o.heading?'Split '+o.project+' into separate jobs':'Join '+o.project+' into one job',
@@ -1963,13 +1979,18 @@ base={verb:'layout',zone:o.zone,project:o.project};if(o.heading)base.heading=tru
 if(!act){var d0=dialog(title,'<p>'+esc(o.heading?'Each top-level file goes to the one thread whose note names it.':'Each thread’s papers move up into the project’s, and its Resume here block comes back.')+' In the Garrick app this shows what would move first.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>Copy the phrase</button>');d0.querySelector('[data-go]').onclick=function(){d0.close();copy(lphrase(o),'Copied “'+lphrase(o)+'”. Paste it to your assistant.')};return}
 var held=window.GarrickBusy&&GarrickBusy(o.zone);if(held){say(o.zone+' is still busy: '+held+' Try again when it is done.');return}
-var d=dialog(title,'<div id="lay-plan" role="status" aria-live="polite"><p>Checking what would move…</p></div>',CANCEL+'<button class="act primary" type="button" data-go disabled>Move them</button>');
-var op=lop();LAYW[op]=function(out){if(out&&out.ok&&out.plan)lplan(d,o,out);else lresult(d,o,out)};
-host.postMessage({act:Object.assign({},base,{check:true,plan:true,op:op})});
-d.querySelector('[data-go]').onclick=function(){if(busy(d,o.zone))return;var go=d.querySelector('[data-go]'),op2=lop();go.disabled=true;
+var foot=CANCEL+'<button class="act primary" type="button" data-go disabled>Move them</button>';
+var d=dialog(title,'<div id="lay-plan" role="status" aria-live="polite"><p>Checking what would move…</p></div>',foot);
+function look(){var op=lop();LAYW[op]=function(out){if(out&&out.ok&&out.plan)lplan(d,o,out);else lresult(d,o,out,again)};
+host.postMessage({act:Object.assign({},base,{check:true,plan:true,op:op})})}
+/* Try again after a look that failed: the same look, with the dialog as it was */
+function again(){d.querySelector('#lay-plan').innerHTML='<p>Checking what would move…</p>';d.querySelector('.mg-row').innerHTML=foot;
+d.querySelector('[data-cancel]').onclick=function(){d.close()};bindGo();look()}
+function bindGo(){d.querySelector('[data-go]').onclick=function(){if(busy(d,o.zone))return;var go=d.querySelector('[data-go]'),op2=lop();go.disabled=true;
 d.querySelector('#lay-plan').insertAdjacentHTML('afterbegin','<p role="status">Moving…</p>');LAYW[op2]=function(out){lresult(d,o,out)};
 var from=d.querySelector('#lay-resume input:checked'),more={op:op2};if(from)more.resume_from=from.value;
 host.postMessage({act:Object.assign({},base,more)})}}
+bindGo();look()}
 window.GarrickLayout=layout;
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}

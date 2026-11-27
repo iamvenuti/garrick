@@ -6700,6 +6700,9 @@ FAILURES = (
     ("commit-undo", "The commit was not undone.", "Show why", "why", "Open the page and choose Show why."),
     ("chase", "The follow-up was not prepared, and nothing was sent.", "Show why", "why", "Open the page and choose Show why."),
     ("undo", "The change was not undone.", "Show why", "why", "Open the question and choose Show why."),
+    # The layout dialog (#511): its look only reads, so it may be asked again; its change writes, so it may not.
+    ("layout-look", "Garrick could not show what would move.", "Try again", "retry", "Open the dialog and choose Try again."),
+    ("layout", "Nothing was moved.", "Show why", "why", "Open the dialog and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
 FAILURE_CODES = tuple(row[0] for row in FAILURES)

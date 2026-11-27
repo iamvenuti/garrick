@@ -142,6 +142,11 @@ for _key, _mods in (("extras/status/settings_guard.py", ["test_guard_hooks", "te
                     ("template/System/tools/garrick_lib.py", ["test_start_small"]),
                     ("template/System/tools/history.py", ["test_start_small"])):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + _mods
+# docs-0830 (#709, #710): the retired-claims check reads every current page.
+for _key in ("README.md", "install.py", "docs/", "docs/assets/adoption-ladder.html"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_retired_claims"]
+for _key in ("docs/", "docs/using-the-app.md", "extras/status/guide.py", "install.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_using_the_app"]
 # settings-0790 (#650): Settings' data has a reader in the core.
 for _key, _mods in (("template/System/tools/view_settings.py", ["test_view_settings", "test_view_model", "test_status", "test_settings_ui"]),
                     ("tests/test_view_settings.py", ["test_view_settings"])):

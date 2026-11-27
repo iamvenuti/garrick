@@ -366,6 +366,46 @@ class TestRefusedWritesNothing(WrapCase):
         return made["operation_id"], self.wait(made["operation_id"])
 
 
+class TestTheWallHoldsThingsBack(WrapCase):
+    """A wrap the zone's wall hook refuses answers with the rule's sentence only (L2): no zone, project, thread or file of the
+    zone it names, and the same for every note of that zone. (A link to a note that is not there is not refused by the hook at all,
+    at the Mac or here; that is the hook's rule, not this verb's.)"""
+
+    def refused_for(self, link):
+        sys.path.insert(0, str(support.REPO / "template" / "System" / "tools"))
+        try:
+            from garrick_lib import install_wall_hook
+            install_wall_hook(self.work)
+        finally:
+            sys.path.pop(0)
+        git(self.work, "add", "-A")
+        subprocess.run(["git", "-C", str(self.work), "commit", "-q", "--no-verify", "-m", "hook"], capture_output=True)
+        before = self.snapshot()
+        op, out = self.do_wrap(entry="See [[%s]]." % link)
+        self.assertEqual("refused", out["state"], out)
+        self.assertEqual(before, self.snapshot())
+        return out
+
+    def test_the_hooks_refusal_is_the_wall_sentence_and_names_nothing_of_the_walled_zone(self):
+        said = []
+        for link in ("Birch Entry/Threads/Market Sizing/Market Sizing", "Birch Entry/Birch Entry"):
+            out = self.refused_for(link)
+            said.append(json.dumps(out, sort_keys=True))
+            self.assertEqual(run_op.WALL_SAYS, out["say"])
+            for name in ("Birch", "Market Sizing", "Personal", "walled", "Commit refused", ".md"):
+                self.assertNotIn(name, json.dumps(out))
+        out0, out1 = (json.loads(x) for x in said)
+        out0.pop("operation_id"), out1.pop("operation_id")
+        self.assertEqual(out0, out1)
+
+    def test_the_sentence_is_the_rules_own(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ops_t", str(self.root / "System" / "tools" / "operations.py"))
+        ops = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ops)
+        self.assertEqual(ops.WALL_REFUSAL, run_op.WALL_SAYS)
+
+
 class TestTheServiceHoldsNoWords(WrapCase):
     def test_the_record_and_the_service_log_hold_none_of_the_wraps_words(self):
         from mcp.server.mcpserver import MCPServer

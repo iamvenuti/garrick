@@ -169,6 +169,7 @@ The check is for an honest writer's mistakes, as [the threat model](principles.m
 - A document copied by hand into `Sources/`, and an attachment that was edited, pass. An exact copy of a mail attachment is caught by a separate byte comparison.
 - Word, PowerPoint and PDF contents are not read.
 - Stock wording passes: a run of words that files of three zones or more hold is not read as a quote. A sentence lifted from one meeting is still refused, however many notes of one or two zones repeat it, and a missing count makes nothing stock.
+- A filesystem path is not counted as wording. The system folders in it (`Applications`, `Contents`, `MacOS`, `Library`, `usr`, `bin` and the like) and the `.app` that ends an application's name are left out, so two files that share only where an application is installed do not read as a quote. Every other part of a path is read as the words it holds, and so are the words next to it. The rules for links and paths still apply: a path into a walled project is refused as before.
 
 **Paths**
 

@@ -8,7 +8,7 @@ It is separate from [phone access](phone-access.md), which uses your assistant p
 
 ## What it does now
 
-A connected assistant gets five read tools: `places`, `thread_state`, `search`, `read` and `owed`. For changes it gets three tools that work together: `prepare`, `execute` and `status`. They serve sixteen actions: a note, the six Todo actions, park, wake and checkpoint, and six that check a name, make a project or a thread, rename, move and undo. Everything else is listed below with the release that plans it, so a partial service is never mistaken for a complete one. Of the verbs, 16 work now, 17 wait for your approval (which does not exist yet, so they are refused), 7 are internal and 27 are planned for a later release.
+A connected assistant gets five read tools: `places`, `thread_state`, `search`, `read` and `owed`. For changes it gets three tools that work together: `prepare`, `execute` and `status`. They serve seventeen actions: a note, the six Todo actions, park, wake, checkpoint and wrap, and six that check a name, make a project or a thread, rename, move and undo. Everything else is listed below with the release that plans it, so a partial service is never mistaken for a complete one. Of the verbs, 17 work now, 17 wait for your approval (which does not exist yet, so they are refused), 7 are internal and 26 are planned for a later release.
 
 <!-- manifest -->
 | What | Kind | Disposition | Planned | Why |
@@ -85,7 +85,7 @@ A connected assistant gets five read tools: `places`, `thread_state`, `search`, 
 | `meetings` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `nurture` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `setup` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
-| `threads` | skill | Not yet | in the next release | Park, wake and checkpoint are served. Wrap and the lifecycle verbs come next. |
+| `threads` | skill | Not yet | in the next release | Park, wake, checkpoint, wrap and the lifecycle verbs are served. The rest of the skill needs the job worker. |
 | `todo` | skill | Not yet | in a later release | The Todo verbs are served. The sweep needs the job worker. |
 | `update` | skill | Not yet | in a later release | Needs the job worker, which comes in a later release. |
 | `count-card` | verb | Internal |  | Counts a card the status page showed. It has no meaning for a remote assistant. |
@@ -123,6 +123,16 @@ A rename and a move show what would change before they run. The answer to `prepa
 A name here is one folder name and never a path: a name with a slash, a leading dot, `..` or a path to another place is refused. A project, a thread or a note that is a link is refused too, because a link may lead out of the zone. Every zone a request names is checked against the grant's write reach before anything is prepared, and again at `execute`. The refusal for a zone outside the reach is the one sentence given under Reach, and it names nothing in that zone. A refusal about a party does not list the parties of the workspace: it says that the party is not one this zone can use.
 
 Each of the six leaves a record in the zone's own history folder, as the five before them do. A retry with the same operation id returns the first receipt and makes no second commit, and a stop in the middle is settled from the zone's history.
+
+## Wrapping a thread
+
+A wrap leaves a thread at a resume point the next session can read cold. The assistant sends the words and the tool does the rest. The words are the Resume here block (a short account of where the thread stands, and all six rows: Live artifact, Rebuild with, Next action, Keep in mind, Waiting on and Deadline), the dated entry, the commit message, and the Todo lines to add or tick. Garrick takes the lock, writes the note and the Todo list, and saves everything as one commit through the zone's own checks, as a wrap at the Mac does. A key the tool does not take, or a missing one, fails the wrap and nothing is written.
+
+A wrap from here never writes a memory pointer, because that file is outside the workspace, on the Mac. It never takes a lock that the caller says it holds. A request that carries either one is refused in words, and nothing is written.
+
+A wrap stays inside the zones the connection may write to. A thread in a zone the connection does not reach is refused, and the answer names nothing in that zone. The project and the thread are folder names only: a path, or a link that leads out of the zone, is refused.
+
+Ask for the same operation twice and the second answer is the first receipt: no second dated entry is written. If the wrap stops after the commit and before the answer, the next status check settles it from the zone's history.
 
 ## Reach
 

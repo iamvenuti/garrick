@@ -559,7 +559,7 @@
    "kind": "skill",
    "disposition": "not-yet",
    "release": "next",
-   "reason": "Park, wake and checkpoint are served. Wrap and the lifecycle verbs come next."
+   "reason": "Park, wake, checkpoint, wrap and the lifecycle verbs are served. The rest of the skill needs the job worker."
   },
   {
    "name": "todo",

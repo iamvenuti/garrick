@@ -118,6 +118,9 @@ def life_request(rec: dict) -> dict:
     for field in LIFE_FIELDS[rec["verb"]]:
         if f.get(field) is not None:
             req[field] = f[field]
+    shown = f.get("_plan")
+    if rec["verb"] in ("rename", "move") and isinstance(shown, str) and PLAN_DIGEST.fullmatch(shown):
+        req["plan_digest"] = shown      # the plan the owner was shown: the core makes it again under the zone's lock, and a different one writes nothing (C5)
     return req
 
 
@@ -127,10 +130,18 @@ def clean_say(say: str) -> str:
     return PARTY_SAY if PARTY_WORDS.search(say or "") else say
 
 
+PLAN_DIGEST = re.compile(r"[0-9a-f]{64}")
+CORE_PLAN_CHANGED = "Not changed: a note was saved after the plan was made. Check it again."       # scaffold.PLAN_CHANGED
+PLAN_CHANGED_SAYS = ("What would change is not what the preview showed. Nothing was changed. "
+                     "Prepare it again, and show the owner the new preview.")                       # lifecycle.CHANGED
+
+
 def life_receipt(made: dict, ws: str, rec: dict) -> dict:
     """The receipt of one of those verbs: the words cleaned, and the commit a new project or thread made, which the page
     action's reply does not carry, from the core's own commit record (the trailer on the commit names this operation)."""
     made = dict(made, say=clean_say(made.get("say", "")))
+    if not made.get("ok") and made["say"].strip() == CORE_PLAN_CHANGED:
+        made["say"] = PLAN_CHANGED_SAYS                    # the extra's own sentence for a plan that is no longer the one shown
     if made.get("ok") and not made.get("commit") and rec["verb"] in ("new-project", "new-thread"):
         got = core_outcome(ws, Path(ws) / "Zones" / rec["zone"], rec["id"])
         if isinstance(got, dict) and got.get("result") == "done" and got.get("commit"):
@@ -178,11 +189,24 @@ def repeat_receipt(reply, text: str, code: int = 1):
     return {"ok": False, "say": REPEAT_RUNNING if said.lstrip().startswith(RUNNING_START) else REPEAT_DONE}
 
 
+HOOK_OPENS = ("Refused:", "Commit refused:", "The wall check did not run:")     # how the wrap tool and the hook open a refusal of the hook
+
+
+HOOK_ALLOW = ("To let a refusal through",)
+
+
 def wall_words(say: str) -> bool:
     """Whether a refusal of a wrap is the zone's commit hook: its text names the zone, the note and the way to let it through,
-    none of which a remote caller may be told. Any refusal the hook makes counts; a refusal of the wrap tool's own is a failure."""
-    low = say.lower()
-    return say.startswith("Refused:") or "commit refused" in low or "walled" in low or "wall" in low
+    none of which a remote caller may be told. It is told by the fixed opening the wrap tool gives a refusal of the hook
+    (`Refused:`, wrap.py's say_for) or the hook's own, never by a word in the text: a wrap that failed for another reason, and
+    says "wall" in its own words, keeps its reason. Any refusal that opens as the hook's does counts, whatever follows it."""
+    text = say.lstrip()
+    if text.startswith("Failed:"):          # wrap.py reports a hook refusal that git words like its own as `Failed: git did not commit: <hook text>`
+        text = text[len("Failed:"):].lstrip()
+        if text.startswith("git did not commit:"):
+            text = text[len("git did not commit:"):].lstrip()
+        return text.startswith(HOOK_OPENS) or any(mark in text for mark in HOOK_OPENS + HOOK_ALLOW)      # the allow line may come first
+    return text.startswith(HOOK_OPENS)
 
 
 def receipt(verb: str, code: int, out: str, err: str) -> dict:

@@ -71,11 +71,13 @@ NOT_A_PLACE = "That is not a project or a thread of this zone that can be change
 NEEDS_READ = ("A rename or a move needs this connection to read and write the zone, because it shows what would change. "
               "The owner sets that at the Mac. Nothing was changed.")
 NOT_YOURS = "That is not a change this connection made, so it is not undone from here. Undo it at the Mac."
-EXPIRED = "That preview has expired. Nothing was changed. Prepare it again."
-CHANGED = ("What would change is not what the preview showed. Nothing was changed. Prepare it again, and show the owner the new preview.")
-NEEDS_YES = ("Nothing was changed. This change runs only after the owner has seen what would change and said yes. "
-             "Show the preview, and when the owner agrees, run execute again with the confirmation value from the preview.")
-NOT_THIS = "That confirmation is not for this change as it was previewed. Nothing was changed."
+EXPIRED = "That preview has expired. Its confirmation value lasted an hour. Nothing was changed. Prepare it again."
+CHANGED = run_op.PLAN_CHANGED_SAYS
+NEEDS_YES = ("Nothing was changed. This change needs the confirmation value that came with its preview. "
+             "Show the owner the preview, and run execute only after the owner says yes. Garrick cannot check that. "
+             "The value proves only that it was issued with this preview, for this one change, once, for an hour.")
+NOT_THIS = ("That is not the confirmation value issued with this preview. It is good for that one change only, once, for an hour. "
+            "Nothing was changed.")
 TOO_LONG = "That took too long to check. Nothing was changed."
 
 
@@ -290,7 +292,7 @@ def may_show(w, rec) -> bool:
 
 
 def token(w, rec) -> str:
-    """What the owner's yes is for: this operation, this request, and the plan the preview showed. A token for another operation, or for
+    """What the value is for: it was issued with the preview, for this operation, this request, and the plan the preview showed. A token for another operation, or for
     the same request as it stood under another plan, does not match."""
     plan = (rec.get("fields") or {}).get("_plan", "")
     return hashlib.sha256(("%s:%s:%s:%s" % (rec["id"], rec["hash"], plan, w.grant)).encode("utf-8")).hexdigest()[:20]
@@ -312,7 +314,7 @@ def would(verb, zone, fields, said, plan):
         head = "Move the thread %s from %s to %s in %s." % (name, fields["project"], fields["to"], zone)
     notes = plan.get("count", 0)
     return ("%s Every link to it in the zone follows, in one commit. %d note%s would change. "
-            "Nothing changes until the owner confirms this preview." % (head, notes, "" if notes == 1 else "s"))
+            "Nothing changes until execute is called with the confirmation value of this preview." % (head, notes, "" if notes == 1 else "s"))
 
 
 def prepare(w, verb, zone, fields, operation_id):
@@ -342,8 +344,8 @@ def prepare(w, verb, zone, fields, operation_id):
             return writes.say("not_prepared", " ".join(l.strip() for l in lines[1:]) + " Make it in a session, with its spoken form (--spoken).")
         said = lines[0]
         shown = reply.get("plan") if isinstance(reply.get("plan"), dict) else {}
-        if plan and not shown:
-            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")
+        if plan and not (shown and isinstance(shown.get("digest"), str) and run_op.PLAN_DIGEST.fullmatch(shown["digest"])):
+            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")      # no digest: neither recheck could hold
         extra["would"] = would(verb, zone, fields, said, shown)
         if plan:
             extra["_plan"] = str(shown.get("digest") or "")

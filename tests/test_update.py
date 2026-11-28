@@ -1885,7 +1885,8 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertTrue(html.startswith("<!doctype html>") and html.endswith("</html>"), html[:200])
         self.assertIn('data-built="', html)
         self.assertIn("Rebuilt the status page: %s." % page, result["then"])
-        self.assertEqual([], [p.name for p in page.parent.iterdir() if p.name.startswith("status.html.")])
+        self.assertEqual([], [p.name for p in page.parent.iterdir()
+                              if p.name.startswith("status.html.") and p.name != "status.html.generation"])   # no temporary file; the file that numbers the builds stays
 
     def test_without_an_app_the_page_is_rebuilt_with_the_flags_stored_and_stores_none(self):
         """An update chooses no flags, so it must not overwrite the ones the

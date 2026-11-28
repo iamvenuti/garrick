@@ -722,7 +722,7 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn('func rebuilds(_ request: [String: Any]) -> Bool { !reading(request) && request["verb"] as? String != "note-open" }', swift)
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
-        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)     # #344
+        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true, kept: reply["outcome"] as? String == "saved") }', act)     # #344
         self.assertIn("if toasting && !reading(request) {\n\t\t\tlet line = bandLine(said)\n\t\t\ttoast(line.sentence, detail: line.detail)", swift)     # note-open still toasts, in plain words (#511)
 
     def test_the_app_hands_every_reply_to_the_page(self):

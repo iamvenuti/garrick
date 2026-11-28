@@ -60,9 +60,9 @@ zone's repository, as the skills would:
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
     rename      a project or thread and every link to it in the zone:
-                {"zone", "project", "thread"?, "to"}
+                {"zone", "project", "thread"?, "to", "plan_digest"?}
     move        a thread to another project of its zone, every link to it
-                following, in one commit: {"zone", "project", "thread", "to"}
+                following, in one commit: {"zone", "project", "thread", "to", "plan_digest"?}
     delete      without "confirm", what would go; with "confirm" naming it,
                 gone in one commit: {"zone", "project", "thread"?, "confirm"?}
     undo        a rename or deletion, while it is the zone's last commit:
@@ -2796,19 +2796,21 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if check:
             said = scaffold(ws, "move", *which, "--to", to, *flag)
             return with_plan(ws, "move", which, to, said) if req.get("plan") is True else said
-        return moved_here(ws, zone, project, thread, to, which)
+        return moved_here(ws, zone, project, thread, to, which, expected_plan(req))
     if verb == "rename":
         if check:
             said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
             return with_plan(ws, "rename", which, field(req, "to"), said) if req.get("plan") is True else said
-        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
+        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which, expected_plan(req))
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
     if confirm:
         # One line, with the commit the page's Undo reverts; scaffold.py's undo command and memory hint are
         # for a terminal, and Undo on the page is the way back here.
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
-        return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
+        whole = git(zone, "rev-parse", "HEAD")[1].strip() if found else ""     # scaffold.py's sentence says it short; the receipt holds the whole id (S6)
+        return {"say": first_line(said).rstrip("."),
+                "commit": whole if re.fullmatch(r"[0-9a-f]{40}", whole) and whole.startswith(found.group(1)) else (found.group(1) if found else "")}
     return said
 
 
@@ -3135,7 +3137,19 @@ def first_line(said: str) -> str:
     return (said.strip().splitlines() or [""])[0].strip()
 
 
-def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list) -> dict:
+def expected_plan(req: dict) -> list:
+    """`--expect-plan <digest>` for a rename or a move whose request carries `plan_digest`, the digest of the plan that was
+    shown: scaffold.py makes the plan again under this zone's lock, just before it writes, and refuses when it differs.
+    Nothing for a request with none."""
+    value = req.get("plan_digest")
+    if value is None:
+        return []
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise Refused("not a plan digest: say the digest the plan gave, or leave it out")
+    return ["--expect-plan", value]
+
+
+def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list, expect: list = ()) -> dict:
     """A rename from the page, finished here rather than left to the user
     (#184): scaffold.py renames and commits in the zone; then the old name,
     which it adds to System/context.md as a heard name, is committed there
@@ -3150,8 +3164,8 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
     # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
-    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []))
-    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
+    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []), *expect)
+    code, head = git(zone, "rev-parse", "HEAD")      # a receipt holds the whole commit id, whoever asked (S6)
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
@@ -3176,15 +3190,15 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
 
 
-def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list) -> dict:
+def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list, expect: list = ()) -> dict:
     """A move from the page, a button or a session, finished here as a rename
     is: scaffold.py moves the thread and commits in the zone, and the effort
     history follows it there. One line, and
     the zone's commit for Undo. The assistant's memory pointer and a desk tab
     are not Garrick's to write, so the reply says that they still name the old
     path."""
-    said = scaffold(ws, "move", *which, "--to", to)
-    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
+    said = scaffold(ws, "move", *which, "--to", to, *expect)
+    code, head = git(zone, "rev-parse", "HEAD")      # a receipt holds the whole commit id, whoever asked (S6)
     made = head.strip() if code == 0 else ""
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled
@@ -3259,7 +3273,9 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
     mine = {n: n.read_bytes() for n in before if n.is_file()}
     code, why = committing(zone, paths, message)
     if code != 0:
-        git(zone, "reset", "-q", "--", *paths, timeout=10)
+        unstage_after_lock(zone, *paths)         # waits for a lock three times as long as a commit does: no file is left staged
+        # A lock that outlasted the wait: nothing was committed, so what was made goes as it does for the wall (N5).
+        locked = code is not None and why.startswith(LOCK_REFUSAL)
         if moved:
             for now, was in moved:
                 if now.exists() and not was.exists():
@@ -3269,7 +3285,7 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
             if wall and code is not None and WALL_LINE.match(why):
                 raise Refused(wall)
             raise Refused("not committed, so nothing changed: %s" % why)
-        if wall and code is not None and WALL_LINE.match(why):
+        if (wall and code is not None and WALL_LINE.match(why)) or locked:
             try:
                 ours = all(n.read_bytes() == wrote for n, wrote in mine.items())
             except OSError:
@@ -3281,11 +3297,11 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
                 n.write_bytes(was)
             for p in made:                      # the outermost first: a new Threads folder takes its thread with it
                 shutil.rmtree(p, ignore_errors=True)
-            raise Refused(wall)
+            raise Refused(why if locked else wall)
         if code is None:
             raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "
-                          "commit waits for the check and goes through" % why)
-        raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
+                          "commit waits for the check and goes through" % why.rstrip("."))
+        raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why.rstrip("."))
 
 
 # ---- Needs you, Continue, Ask something, the example (#175) ----
@@ -6995,7 +7011,10 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
             if named:
                 out["failure"] = named          # the row of FAILURES the refusal named, which the record's reply drops
         if builds_page(req):
-            if outcome == "saved" and ask_for_page(ws):
+            # The Mac app's own saved action asks for no page here: the app builds at once, with the check's kept result,
+            # when the reply says it saved. A reply with no `built` is what an app built before 0.86.0 already rebuilds on.
+            # Ask, a session, a hook and remote access still ask, with the ten seconds that make one page from a burst.
+            if outcome == "saved" and via != "page" and ask_for_page(ws):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None

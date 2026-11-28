@@ -279,9 +279,9 @@ DECLARED: Dict[str, Op] = {
                        ), ("project", "name"), "zone", True, "safe"),
     "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken", "plan"),
                       ("kind", "name", "to"), "none"),
-    "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
+    "rename": _op(("zone", "project", "thread", "to", "plan_digest"), ("project", "thread", "to"), "zone", True),
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
-    "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
+    "move": _op(("zone", "project", "thread", "to", "plan_digest"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
     # A project split into separate jobs (`heading`) or joined into one job (`join`, #632): `check` asks for the plan and
     # writes nothing. `thread` and `papers` stay declared so that a request that still names one is refused in words.

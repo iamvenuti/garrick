@@ -913,15 +913,15 @@ class TestFromThePage(ManageCase):
 
     def test_rename_delete_and_undo(self):
         out = self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal")
-        self.assertEqual({"say": "Renamed Pricing to Renewal.", "commit": self.git("rev-parse", "--short", "HEAD").stdout.strip()},
-                         out)
+        self.assertEqual({"say": "Renamed Pricing to Renewal.", "commit": self.git("rev-parse", "HEAD").stdout.strip()},
+                         out)                                              # the whole id (S6)
         listed = self.act(verb="delete", zone="Work", project="Acme", thread="Freight")
         self.assertIn("Nothing was deleted", listed)
         said = self.act(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
         commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
-        self.assertEqual(commit, said["commit"])                           # what the page's Undo reverts
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), said["commit"])    # what the page's Undo reverts: the whole id (S6)
         self.assertEqual("Deleted Acme, Freight in commit %s" % commit, said["say"])     # one line, no terminal advice
-        self.assertIn("Undone", self.act(verb="undo", zone="Work", commit=commit))
+        self.assertIn("Undone", self.act(verb="undo", zone="Work", commit=said["commit"]))
         self.assertTrue(self.freight.is_file())
         for bad in ({"verb": "undo", "zone": "Work", "commit": "HEAD~1"},
                     {"verb": "rename", "zone": "Work", "project": "Acme", "to": "--root=/"},

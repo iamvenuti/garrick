@@ -143,10 +143,13 @@ class Store:
             fin = rec.get("finished")
             if rec.get("state") == "prepared" and age > PREPARED_KEEP:
                 # An expired preview is kept as a refusal, with the expired words, so that it is told from an id never issued (N4).
-                rec.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
-                rec.pop("fields", None)
-                rec.pop("would", None)
-                self.write(rec["id"], rec)
+                with self.locked(rec["id"]):            # an execute that holds the lock may have written `running` since the snapshot
+                    fresh = self.read(rec["id"])
+                    if fresh and fresh.get("state") == "prepared":
+                        fresh.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
+                        fresh.pop("fields", None)
+                        fresh.pop("would", None)
+                        self.write(fresh["id"], fresh)
             elif fin and now - float(fin) > DONE_KEEP:
                 for suffix in (".json", ".lock", ".run"):
                     try:
@@ -509,7 +512,7 @@ class Writes:
     def view(self, rec):
         state, receipt = rec["state"], rec.get("receipt") or {}
         words = {
-            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview. It runs only with the confirmation value that came with it. "
+            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview, and run it only after the owner says yes. "
                          if rec["verb"] in lifecycle.CONFIRMED else "Prepared. Nothing has changed yet. Execute it to go ahead. ") + rec.get("would", ""),
             "running": "It is running. Ask for its status in a moment.",
         }.get(state) or receipt.get("say") or ""

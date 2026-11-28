@@ -197,7 +197,12 @@ def wall_words(say: str) -> bool:
     none of which a remote caller may be told. It is told by the fixed opening the wrap tool gives a refusal of the hook
     (`Refused:`, wrap.py's say_for) or the hook's own, never by a word in the text: a wrap that failed for another reason, and
     says "wall" in its own words, keeps its reason. Any refusal that opens as the hook's does counts, whatever follows it."""
-    return say.lstrip().startswith(HOOK_OPENS)
+    text = say.lstrip()
+    if text.startswith("Failed:"):          # wrap.py reports a hook refusal that git words like its own as `Failed: git did not commit: <hook text>`
+        text = text[len("Failed:"):].lstrip()
+        if text.startswith("git did not commit:"):
+            text = text[len("git did not commit:"):].lstrip()
+    return text.startswith(HOOK_OPENS)
 
 
 def receipt(verb: str, code: int, out: str, err: str) -> dict:

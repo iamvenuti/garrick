@@ -74,8 +74,8 @@ NOT_YOURS = "That is not a change this connection made, so it is not undone from
 EXPIRED = "That preview has expired. Its confirmation value lasted an hour. Nothing was changed. Prepare it again."
 CHANGED = run_op.PLAN_CHANGED_SAYS
 NEEDS_YES = ("Nothing was changed. This change needs the confirmation value that came with its preview. "
-             "That value was issued for this one change, works once, and lasts an hour. "
-             "Show the owner the preview, then run execute again with the value.")
+             "Show the owner the preview, and run execute only after the owner says yes. Garrick cannot check that. "
+             "The value proves only that it was issued with this preview, for this one change, once, for an hour.")
 NOT_THIS = ("That is not the confirmation value issued with this preview. It is good for that one change only, once, for an hour. "
             "Nothing was changed.")
 TOO_LONG = "That took too long to check. Nothing was changed."
@@ -314,7 +314,7 @@ def would(verb, zone, fields, said, plan):
         head = "Move the thread %s from %s to %s in %s." % (name, fields["project"], fields["to"], zone)
     notes = plan.get("count", 0)
     return ("%s Every link to it in the zone follows, in one commit. %d note%s would change. "
-            "Nothing changes until the owner confirms this preview." % (head, notes, "" if notes == 1 else "s"))
+            "Nothing changes until execute is called with the confirmation value of this preview." % (head, notes, "" if notes == 1 else "s"))
 
 
 def prepare(w, verb, zone, fields, operation_id):
@@ -344,8 +344,8 @@ def prepare(w, verb, zone, fields, operation_id):
             return writes.say("not_prepared", " ".join(l.strip() for l in lines[1:]) + " Make it in a session, with its spoken form (--spoken).")
         said = lines[0]
         shown = reply.get("plan") if isinstance(reply.get("plan"), dict) else {}
-        if plan and not shown:
-            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")
+        if plan and not (shown and isinstance(shown.get("digest"), str) and run_op.PLAN_DIGEST.fullmatch(shown["digest"])):
+            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")      # no digest: neither recheck could hold
         extra["would"] = would(verb, zone, fields, said, shown)
         if plan:
             extra["_plan"] = str(shown.get("digest") or "")

@@ -325,6 +325,30 @@ class TestRenameAndMove(LifeCase):
             self.assertEqual("not_found", out["error"])
             self.assertEqual(writes.NOT_FOUND, out["say"])
 
+    def test_tidy_does_not_overwrite_a_record_that_an_execute_made_running_after_the_snapshot(self):
+        made = self.prep("rename", **self.RENAME)
+        op = made["operation_id"]
+        rec = self.w.store.read(op)
+        rec["created"] = time.time() - writes.PREPARED_KEEP - 5
+        self.w.store.write(op, rec)
+        store, real = self.w.store, self.w.store.all
+
+        def all_then_run():
+            snapshot = list(real())                 # tidy has read the record as prepared ...
+            with store.locked(op):                  # ... and an execute, under the lock, makes it running before tidy writes
+                now = store.read(op)
+                now["state"] = "running"
+                store.write(op, now)
+            return iter(snapshot)
+        store.all = all_then_run
+        try:
+            store.tidy()
+        finally:
+            store.all = real
+        kept = store.read(op)
+        self.assertEqual("running", kept["state"])
+        self.assertIn("fields", kept)
+
     def test_an_expired_preview_is_kept_as_a_receipt_and_swept_with_the_receipts(self):
         made = self.prep("rename", **self.RENAME)
         rec = self.w.store.read(made["operation_id"])
@@ -676,6 +700,24 @@ class TestANoteSavedBetweenTheLastCheckAndTheWrite(LifeCase):
         undo = dict(rec, verb="undo", fields={"commit": "abcdef1"})
         self.assertNotIn("plan_digest", run_op.life_request(undo))
 
+    def test_a_plan_with_no_digest_is_not_prepared_and_nothing_is_stored(self):
+        for digest in (None, "", "abc", "G" * 64, "A" * 64, 5):
+            real = lifecycle.ask
+
+            def ask(w, request, digest=digest, real=real):
+                ok, reply = real(w, request)
+                if request.get("plan") and isinstance(reply.get("plan"), dict):
+                    reply["plan"]["digest"] = digest
+                return ok, reply
+            lifecycle.ask = ask
+            try:
+                out = self.w.prepare("rename", "Work", **self.RENAME)
+            finally:
+                lifecycle.ask = real
+            self.assertEqual("not_prepared", out.get("error"), (digest, out))
+            self.assertEqual("That could not be previewed, so nothing was prepared.", out["say"])
+            self.assertEqual([], list(self.w.store.all()), digest)
+
     def test_the_cores_sentence_is_mapped_to_the_extras_own(self):
         said = run_op.life_receipt({"ok": False, "say": run_op.CORE_PLAN_CHANGED}, str(self.root), {"verb": "rename", "zone": "Work", "id": "0" * 16})
         self.assertEqual(lifecycle.CHANGED, said["say"])
@@ -847,7 +889,7 @@ class TestWhatIsSentAndKept(LifeCase):
             "import json, sys\n"
             "if __name__ == '__main__':\n"
             "    open(%r, 'a').write(json.dumps({'argv': sys.argv[1:], 'stdin': sys.stdin.read()}) + '\\n')\n"
-            "    print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd1'}}))\n" % str(seen))
+            "    print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd100000000000000000000000000000000000000000000000000000000000000'}}))\n" % str(seen))
         return seen
 
     def test_the_request_is_built_from_the_fields_of_the_verb_and_names_the_remote_caller(self):
@@ -871,7 +913,8 @@ class TestWhatIsSentAndKept(LifeCase):
             self.assertEqual(want, check)
         change = changes[0]
         self.assertEqual("rename", change["verb"])
-        self.assertEqual({"verb", "zone", "op", "project", "thread", "to"}, set(change))
+        self.assertEqual({"verb", "zone", "op", "project", "thread", "to", "plan_digest"}, set(change))        # the digest is the preview's (C5)
+        self.assertEqual("d1" + "0" * 62, change["plan_digest"])
         self.assertEqual(made["operation_id"], change["op"])
         self.assertEqual(sent[-1], change)                                   # and it comes last
         for row in rows:

@@ -1096,11 +1096,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if !now && newerWaiting { newerWaiting = false; reload() }
 	}
 
-	// A refusal of the page's own action proves the page on show is old. A newer page that waits loads at once, unless
-	// text a user typed is what holds it: that stays, and the subtitle says how to see the newer page (S4).
-	func refusedWhileHeld(_ reply: [String: Any]) {
-		guard newerWaiting, reply["ok"] as? Bool == false else { return }
-		if typedDraft { hinted = true; window.subtitle = pageWaitingHint } else { reload(force: true) }
+	// A refusal of the page's own action, with a newer page waiting, only says how to see it: the page never loads under
+	// a hold because of a reply. A dialog, a drag and queued ticks end by themselves, and then the page loads (S4).
+	// Only a reply to an action that rebuilds counts, not a read such as a plan check or a release check.
+	func refusedWhileHeld(_ request: [String: Any], _ reply: [String: Any]) {
+		guard newerWaiting, rebuilds(request), reply["ok"] as? Bool == false else { return }
+		hinted = true
+		window.subtitle = pageWaitingHint
 	}
 
 	func clearHold() {
@@ -1491,7 +1493,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			DispatchQueue.main.async {
 				let reply = said ?? ["ok": false, "say": "That did not work."]
 				self.acted(request, reply)
-				self.refusedWhileHeld(reply)
+				self.refusedWhileHeld(request, reply)
 				// A reply that says `"built": true` has settled the page itself: page_action.py asked for the one
 				// build (#344), which an older page_action.py still does for this app's own actions. One without the key
 				// (a refusal, a read, a verb it does not build for, and since 0.86.0 every action that saved) rebuilds here,

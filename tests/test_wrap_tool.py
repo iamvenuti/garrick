@@ -670,6 +670,29 @@ class SameVerdictsAsTheHandWrap(Base):
         self.assertGreaterEqual(refused_seen, 4)
 
 
+class LineSeparators(unittest.TestCase):
+    """Python reads more than \\n as a line end (S5): a one-line field holds none of them, and prose holds only \\n."""
+    SEPARATORS = ("\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e")
+
+    def test_a_one_line_value_with_another_line_end_is_refused(self):
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                with self.assertRaises(wrap.Stop):
+                    wrap.one_line("one" + sep + "- [ ] two", "a line")
+                data = payload()
+                data["resume"]["rows"]["Next action"] = "go" + sep + "## Heading"
+                with self.assertRaises(wrap.Stop):
+                    wrap.check_input(data)
+        self.assertEqual("plain line", wrap.one_line(" plain line ", "a line"))
+
+    def test_prose_may_hold_newlines_and_no_other_line_end(self):
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                with self.assertRaises(wrap.Stop):
+                    wrap.prose("one" + sep + "## Heading", "entry")
+        self.assertEqual("one\ntwo", wrap.prose("one\ntwo", "entry"))
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class CommitTrailers(Base):
     """The tool puts the operation's id in its commit when the page action hands it over (#716, #723), in that shape only."""
@@ -786,6 +809,20 @@ class PageRoute(Base):
         self.assertTrue(again["ok"] and again.get("receipt"), again)
         self.assertEqual(2, self.count())
         self.assertEqual(1, self.thread.read_text(encoding="utf-8").count("Words kept once."))
+
+    def test_a_remote_wrap_never_takes_memory_or_a_held_lock_and_writes_nothing(self):
+        import operations
+        memory = self.home / ".claude" / "projects" / "ws" / "memory" / "pointer.md"
+        for extra in ({"memory": {"path": str(memory)}}, {"lock": "held"}, {"lock": "take"}):
+            with self.subTest(extra=extra):
+                reply = self.pa.perform(self.root, self.request(**extra), operations, via="remote")[0]
+                self.assertFalse(reply["ok"], reply)
+                self.assertIn("remote", reply["say"])
+                self.assertEqual(1, self.count())
+                self.assertFalse(memory.exists())
+        for extra in ({"memory": {"path": str(memory)}}, {"lock": "held"}):                  # at the Mac, as it was
+            reply = self.pa.perform(self.root, self.request(**extra), operations, via="session")[0]
+            self.assertNotIn("remote", reply["say"])
 
     def test_a_wrap_without_a_record_commits_as_it_always_did(self):
         import operations

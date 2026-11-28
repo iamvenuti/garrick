@@ -36,6 +36,7 @@ LIFE_VERBS = ("new-project", "new-thread", "rename", "move", "undo")      # #724
 JSON_VERBS = JSON_VERBS + LIFE_VERBS
 JSON_VERBS = JSON_VERBS + ("wrap",)           # the wrap's reply is the page action's, as a park's is
 LONG_WAY = "It took longer than expected and may or may not have been saved. Check the zone at the Mac before trying again."
+WALL_SAYS = "A wall holds some material back from this project, so I have not used it. Nothing was written."   # operations.WALL_REFUSAL
 CRASHED = "The save did not finish. Nothing more was done. Check the zone at the Mac before trying again."
 
 
@@ -177,6 +178,13 @@ def repeat_receipt(reply, text: str, code: int = 1):
     return {"ok": False, "say": REPEAT_RUNNING if said.lstrip().startswith(RUNNING_START) else REPEAT_DONE}
 
 
+def wall_words(say: str) -> bool:
+    """Whether a refusal of a wrap is the zone's commit hook: its text names the zone, the note and the way to let it through,
+    none of which a remote caller may be told. Any refusal the hook makes counts; a refusal of the wrap tool's own is a failure."""
+    low = say.lower()
+    return say.startswith("Refused:") or "commit refused" in low or "walled" in low or "wall" in low
+
+
 def receipt(verb: str, code: int, out: str, err: str) -> dict:
     """What came back, as a receipt: whether it saved, in the words of the tool, and the commit when it names one."""
     out, err = (out or "").strip(), (err or "").strip()
@@ -195,6 +203,8 @@ def receipt(verb: str, code: int, out: str, err: str) -> dict:
         if isinstance(reply, dict):
             say = str(reply.get("say") or "").strip() or ("Done." if reply.get("ok") else "That was refused.")
             made = {"ok": bool(reply.get("ok")), "say": say[:600]}
+            if verb == "wrap" and not made["ok"] and wall_words(say):
+                made["say"] = WALL_SAYS                     # the hook's own text names the zone and the note it refused
             if verb == "checkpoint":
                 made["wrote"] = bool(reply.get("wrote"))
             if reply.get("commit"):

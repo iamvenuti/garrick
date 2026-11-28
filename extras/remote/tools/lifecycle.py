@@ -68,6 +68,8 @@ KEEP_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "GARRICK_JOBS_DI
             "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
 
 NOT_A_PLACE = "That is not a project or a thread of this zone that can be changed from here."
+NEEDS_READ = ("A rename or a move needs this connection to read and write the zone, because it shows what would change. "
+              "The owner sets that at the Mac. Nothing was changed.")
 NOT_YOURS = "That is not a change this connection made, so it is not undone from here. Undo it at the Mac."
 EXPIRED = "That preview has expired. Nothing was changed. Prepare it again."
 CHANGED = ("What would change is not what the preview showed. Nothing was changed. Prepare it again, and show the owner the new preview.")
@@ -195,6 +197,8 @@ def guard(w, zone, verb, fields) -> str:
     """The words of a refusal for a request that points anywhere but at an ordinary project or thread of its zone, or ""."""
     if verb == "undo":
         return "" if undoable(w, zone, fields["commit"]) else NOT_YOURS
+    if verb in CONFIRMED and not w.session.zone_allowed(zone):          # the preview holds lines of the zone's notes
+        return NEEDS_READ
     named = {"project": "new-project", "thread": "new-thread"}.get(fields.get("kind"), fields.get("kind")) if verb == "check-name" else verb
     return "" if places(w, zone, named, fields) is not None else NOT_A_PLACE
 
@@ -224,7 +228,7 @@ def undoable(w, zone, commit) -> bool:
     for rec in w.store.all():
         got = (rec.get("receipt") or {}).get("commit")
         if rec.get("grant") == w.grant and rec.get("zone") == zone and rec.get("verb") in UNDOABLE and rec.get("state") == "saved" \
-                and isinstance(got, str) and len(got) >= 7 and (got.startswith(commit) or commit.startswith(got)):
+                and isinstance(got, str) and len(got) == 40 and got.startswith(commit):      # the receipt holds the whole id
             return True
     return False
 
@@ -278,6 +282,11 @@ def check_answer(w, zone, fields):
 
 
 # ------------------------------------------------------------------ prepare
+
+def may_show(w, rec) -> bool:
+    """Whether a prepared preview may still be shown: the grant reaches the zone to write and to read, as it did when it was made."""
+    return bool(w.may_write(rec["zone"]) and w.session.zone_allowed(rec["zone"]) and not w.reach_changed(rec))
+
 
 def token(w, rec) -> str:
     """What the owner's yes is for: this operation, this request, and the plan the preview showed. A token for another operation, or for

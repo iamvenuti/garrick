@@ -303,13 +303,23 @@ class TestRenameAndMove(LifeCase):
         self.w.store.write(made["operation_id"], rec)
         before, commits = self.state(), self.commits()
         out = self.w.execute(made["operation_id"], made["confirmation"])
-        self.assertEqual("refused", out["state"], out)
-        self.assertIn("expired", out["say"])
+        self.assertEqual("not_found", out["error"], out)                          # an expired record is swept before it is read
+        self.assertFalse(self.w.store.exists(made["operation_id"]))
         self.assertEqual(before, self.state())
         self.assertEqual(commits, self.commits())
-        again = self.w.execute(made["operation_id"], made["confirmation"])        # it stays refused: the token is no good any more
-        self.assertEqual("refused", again["state"])
+        rec = self.w.store.read(made["operation_id"])
+        self.assertIsNone(rec)
+        again = self.w.execute(made["operation_id"], made["confirmation"])
+        self.assertEqual("not_found", again["error"])
         self.assertEqual(commits, self.commits())
+
+    def test_the_record_of_an_expired_preview_is_swept_by_status_too(self):
+        made = self.prep("rename", **self.RENAME)
+        rec = self.w.store.read(made["operation_id"])
+        rec["created"] = time.time() - writes.PREPARED_KEEP - 5
+        self.w.store.write(made["operation_id"], rec)
+        self.assertEqual("not_found", self.w.status(made["operation_id"])["error"])
+        self.assertFalse(self.w.store.exists(made["operation_id"]))
 
     def test_a_confirmation_used_twice_runs_once(self):
         made = self.prep("rename", **self.RENAME)
@@ -392,8 +402,9 @@ class TestRenameAndMove(LifeCase):
                 self.assertEqual("saved", out["state"], out)
                 self.assertEqual(theirs["say"], out["say"])
                 self.same_commit(twin)
-                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "--short", "HEAD").strip(), theirs["commit"])
-                self.assertEqual(self.head()[:len(out["commit"])], out["commit"])
+                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "HEAD").strip(), theirs["commit"])
+                self.assertEqual(40, len(out["commit"]))
+                self.assertEqual(self.head(), out["commit"])
                 self.assertEqual("", git(self.work, "status", "--porcelain").strip())
                 git(self.work, "reset", "--hard", "HEAD~1")                                 # for the next one, from the same start
 
@@ -534,6 +545,49 @@ class TestTheReach(LifeCase):
         self.assertEqual("not_prepared", w.prepare("new-project", "Linked", name="Maple")["error"])
 
 
+class TestWhatAPreviewHoldsStaysInTheReach(LifeCase):
+    """A preview carries lines of the zone's notes: it goes only to a grant that reads and writes the zone, and stops with the reach."""
+
+    NOTE_LINES = ("Send the revised terms", "Rates", "[[Pricing]]", "Todo.md", "Pricing.md", "Acme Review/Threads")
+
+    def test_a_grant_that_may_write_a_zone_and_not_read_it_gets_no_preview_of_a_rename_or_a_move(self):
+        w = writes.Writes(self.session(readable=("Knowledge", "docs"), writable=("Work",)))
+        for verb, fields in (("rename", dict(project="Acme Review", thread="Pricing", to="Rates")),
+                             ("move", dict(project="Acme Review", thread="Freight", to="Cedar")),
+                             ("rename", dict(project="Cedar", to="Cedar Works"))):
+            out = w.prepare(verb, "Work", **fields)
+            self.assertEqual("not_prepared", out["error"], out)
+            self.assertEqual(lifecycle.NEEDS_READ, out["say"])
+            text = json.dumps(out)
+            for line in self.NOTE_LINES:
+                self.assertNotIn(line, text)
+        self.assertEqual([], list(w.store.all()))
+        self.assertEqual("prepared", w.prepare("new-thread", "Work", project="Cedar", name="Budget")["state"])   # the others need no read
+
+    def test_a_read_that_goes_after_the_preview_stops_it_and_the_confirmation(self):
+        made = self.prep("rename", project="Acme Review", thread="Pricing", to="Rates")
+        self.assertIn("preview", made)
+        self.s.change_reach(readable=("Knowledge", "docs"))
+        for out in (self.w.status(made["operation_id"]), self.w.prepare("rename", "Work", operation_id=made["operation_id"],
+                                                                         project="Acme Review", thread="Pricing", to="Rates")):
+            self.assertNotIn("preview", out)
+            self.assertNotIn("confirmation", out)
+            self.assertNotIn("would", out)
+            for line in self.NOTE_LINES[:3] + ("3 notes",):
+                self.assertNotIn(line, json.dumps(out).replace("Rates", "").replace("Pricing", ""))
+        commits = self.commits()
+        out = self.w.execute(made["operation_id"], made["confirmation"])
+        self.assertEqual("refused", out["state"], out)
+        self.assertEqual(commits, self.commits())
+
+    def test_a_write_that_goes_after_the_preview_leaves_no_preview_to_read_back(self):
+        made = self.prep("rename", project="Acme Review", thread="Pricing", to="Rates")
+        self.s.change_reach(writable=())
+        out = self.w.status(made["operation_id"])
+        self.assertNotIn("preview", out)
+        self.assertNotIn("confirmation", out)
+
+
 class TestUndo(LifeCase):
     def test_undo_after_a_rename_puts_the_old_paths_and_links_back_in_one_commit(self):
         before = git(self.work, "ls-files", "-s").strip()
@@ -605,6 +659,15 @@ class TestUndo(LifeCase):
         out = self.wait(made["operation_id"])
         self.assertEqual("refused", out["state"], out)
         self.assertIn("is no longer the last commit", out["say"])
+
+    def test_the_receipt_holds_the_whole_id_and_a_forged_long_one_is_refused(self):
+        self.run_it("rename", project="Acme Review", thread="Pricing", to="Rates")
+        commit = [r for r in self.w.store.all() if r["verb"] == "rename"][0]["receipt"]["commit"]
+        self.assertEqual(40, len(commit))
+        forged = commit[:7] + "0" * 33
+        self.assertEqual(lifecycle.NOT_YOURS, self.w.prepare("undo", "Work", commit=forged)["say"])
+        self.assertEqual("prepared", self.w.prepare("undo", "Work", commit=commit[:7])["state"])
+        self.assertEqual("prepared", self.w.prepare("undo", "Work", commit=commit)["state"])
 
     def test_a_commit_that_is_not_a_commit_is_not_prepared(self):
         for bad in ("zzzzzzz", "abc", "HEAD", "HEAD~1", "--all", "abcdef1; rm", "a" * 41):
@@ -695,14 +758,24 @@ class TestWhatIsSentAndKept(LifeCase):
         self.w.execute(made["operation_id"], made["confirmation"])
         self.wait(made["operation_id"])
         rows = [json.loads(line) for line in seen.read_text().splitlines()]
-        self.assertEqual(3, len(rows))                                       # the check with its plan, the plan again at the confirmation, the change
+        # The check with its plan, the plan again at the confirmation, and the change. A check is a read and may be asked more than once;
+        # the change is one request, and it is the only one that carries an operation id.
+        self.assertGreaterEqual(len(rows), 3)
         for row in rows:
             self.assertEqual("remote", row["argv"][row["argv"].index("--via") + 1])
-        check, again, change = (json.loads(r["stdin"]) for r in rows)
-        self.assertEqual(dict(verb="check-name", zone="Work", kind="rename", project="Acme Review", thread="Pricing", to="Rates", plan=True), check)
-        self.assertEqual(check, again)
+        sent = [json.loads(r["stdin"]) for r in rows]
+        changes = [r for r in sent if "op" in r]
+        checks = [r for r in sent if "op" not in r]
+        self.assertEqual(1, len(changes))
+        self.assertGreaterEqual(len(checks), 2)
+        want = dict(verb="check-name", zone="Work", kind="rename", project="Acme Review", thread="Pricing", to="Rates", plan=True)
+        for check in checks:
+            self.assertEqual(want, check)
+        change = changes[0]
+        self.assertEqual("rename", change["verb"])
         self.assertEqual({"verb", "zone", "op", "project", "thread", "to"}, set(change))
         self.assertEqual(made["operation_id"], change["op"])
+        self.assertEqual(sent[-1], change)                                   # and it comes last
         for row in rows:
             for never in ("confirm", "destination", '"key"', '"file"', "heading", "new_party"):
                 self.assertNotIn(never, row["stdin"])

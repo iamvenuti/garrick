@@ -202,8 +202,16 @@ CLEAR = "(function(){var f=document.getElementById('tfind');f.value='';f.dispatc
 MARK = "document.body.getAttribute('data-check')||''"
 
 
+def generation_of(base: str) -> int:
+    """The generation the fixture's own page carries; one a long way back where it carries none."""
+    m = GENERATION_RE.search(base)
+    return int(m.group(1)) if m else 10 ** 18
+
+
 def settle_page(d: Drive, fx: Fixture, base: str, mark: str, generation=None):
-    fx.put(variant(base, mark, generation))
+    """Publish the page as a build that started after the one on show: a number past it, unless the case names one."""
+    fx.later = getattr(fx, "later", 0) + 1
+    fx.put(variant(base, mark, generation if generation is not None else generation_of(base) + 1000 * fx.later))
 
 
 def case_edit_survives_a_build(d, fx, base):
@@ -246,8 +254,7 @@ def case_one_click_one_request(d, fx, base):
 
 def case_an_older_build_that_finishes_last_loses(d, fx, base):
     """Two builds, the second started later and published first: the window keeps the newer page."""
-    d.wait(lambda: True, 1, "")
-    g1, g2 = 1000000000000000000, 1000000000000000001
+    g1, g2 = generation_of(base) + 5, generation_of(base) + 10
     settle_page(d, fx, base, "g2", g2)
     d.wait(lambda: d.js(MARK) == "g2", 10, "the newer page")
     shown = d.loads()
@@ -293,7 +300,7 @@ def case_three_builds_make_one_load(d, fx, base):
     d.js(TYPE)
     before = d.loads()
     for i, mark in enumerate(("b1", "b2", "b3")):
-        settle_page(d, fx, base, mark, 2000000000000000000 + i)
+        settle_page(d, fx, base, mark, generation_of(base) + 100 + i)
         time.sleep(0.8)
     time.sleep(SETTLE)
     assert d.loads() == before, "the page loaded during the hold"

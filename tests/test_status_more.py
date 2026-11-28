@@ -817,14 +817,14 @@ class TestBuildsAtOnce(StatusCase):
     def test_no_temporary_file_is_left(self):
         for code, err in self.builds():
             self.assertEqual(0, code, err)
-        self.assertEqual(["status.html"], [n for n in self.generated() if n.startswith("status.html")])
+        self.assertEqual(["status.html", "status.html.generation"], [n for n in self.generated() if n.startswith("status.html")])   # and the file that numbers the builds
         self.assertFalse([n for n in self.generated() if n.endswith(".tmp")])
         out = self.jobs / "page.html"                                       # a write that fails takes its file away
         with mock.patch.object(status.os, "replace", side_effect=OSError("disk full")), \
                 mock.patch.object(status, "build", return_value="<html></html>"), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(OSError):
                 status.main(["--workspace", str(self.root), "--out", str(out)])
-        self.assertEqual([], sorted(p.name for p in self.jobs.iterdir() if p.name.startswith("page.html")))
+        self.assertEqual(["page.html.generation"], sorted(p.name for p in self.jobs.iterdir() if p.name.startswith("page.html")))   # no page, no temporary file
 
     def test_the_last_to_finish_wins(self):
         out = self.jobs / "page.html"
@@ -872,8 +872,8 @@ class TestReplacedWhileBuilding(StatusCase):
         self.assertTrue("<title>Garrick Next</title>" in html, "the page is not the new code's")
         self.assertFalse("<title>Garrick</title>" in html, "the old code drew the page")
         self.assertIn("building it again with the new one", err)
-        self.assertEqual(["status.html", "status.html.settle"], sorted(p.name for p in page.parent.iterdir()
-                                                                       if p.name.startswith("status.html")))
+        self.assertEqual(["status.html", "status.html.generation", "status.html.settle"],
+                         sorted(p.name for p in page.parent.iterdir() if p.name.startswith("status.html")))
 
     def test_started_again_once_without_its_settle(self):
         out = self.jobs / "page.html"
@@ -950,7 +950,10 @@ class TestSameFlags(StatusCase):
         with mock.patch.object(status, "build", side_effect=build, return_value="<html></html>") as b, \
                 mock.patch.object(status, "release_ask"), contextlib.redirect_stdout(io.StringIO()):
             code = status.main(["--workspace", str(self.root), "--out", str(self.out), *args])
-        return code, (b.call_args.kwargs if b.called else None)
+        kw = dict(b.call_args.kwargs) if b.called else None
+        if kw is not None:
+            kw.pop("generation", None)             # the number each build takes as it starts differs by build, by design (V2)
+        return code, kw
 
     def test_a_tool_build_draws_with_the_flags_the_last_build_stored(self):
         real = status.build

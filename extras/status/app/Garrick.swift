@@ -541,6 +541,16 @@ func keyEquivalent(_ spec: [String: Any]?) -> (String, NSEvent.ModifierFlags) {
 	return (key, mods)
 }
 
+// The generation a page carries: the number its build took when it started (status.py's next_generation), in one meta
+// element near the top. nil for a page with none, such as one a Garrick before 0.86.0 built, which loads as it always did.
+func pageGeneration(_ url: URL) -> Int64? {
+	guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+	defer { try? handle.close() }
+	let head = String(decoding: handle.readData(ofLength: 16384), as: UTF8.self)
+	guard let found = head.range(of: #"<meta name="garrick-generation" content="[0-9]{1,30}">"#, options: .regularExpression) else { return nil }
+	return Int64(head[found].filter { $0.isNumber })
+}
+
 func modified(_ url: URL) -> Date? {
 	(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
 }
@@ -706,6 +716,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var shown: Date?
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
+	var shownGeneration: Int64?       // the generation of the page on show, where it carries one (V2: an older page never replaces a newer)
 	var heard: [String] = []          // what --check caught instead of acting on
 	var bridgeLog: [[String: Any]] = []   // --drive: every message the page sent over the bridge, in order
 	var loads = 0                     // --drive: how many times the page finished loading
@@ -1009,14 +1020,24 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func load() {
 		shown = modified(page)
+		shownGeneration = pageGeneration(page)
 		pageErrors = []
 		web.loadFileURL(page, allowingReadAccessTo: generated)
 	}
 
-	func reload() {
+	// A page that is not newer than the one on show is passed over: two builds can finish in the other order from
+	// the one they started in, and the page the older one wrote must not replace the newer. A page with no
+	// generation, or a window whose page has none, loads as it always did. `force` is Reload, which the user asked for.
+	func reload(force: Bool = false) {
 		guard modified(page) != nil else { return }
 		if web.url == nil { return load() }
+		let found = pageGeneration(page)
+		if !force, let found, let showing = shownGeneration, found <= showing {
+			shown = modified(page)
+			return
+		}
 		shown = modified(page)
+		shownGeneration = found
 		pageErrors = []
 		web.reload()
 	}
@@ -3773,7 +3794,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// MARK: menu
 
-	@objc func reloadPage(_ sender: Any?) { reload() }
+	@objc func reloadPage(_ sender: Any?) { reload(force: true) }
 	@objc func rebuildPage(_ sender: Any?) { freshen(force: true) }
 	@objc func openSettings(_ sender: Any?) { web.evaluateJavaScript("window.StatusSettings && window.StatusSettings.open()") }
 	@objc func openInBrowser(_ sender: Any?) { NSWorkspace.shared.open(page) }

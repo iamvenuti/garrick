@@ -325,6 +325,30 @@ class TestRenameAndMove(LifeCase):
             self.assertEqual("not_found", out["error"])
             self.assertEqual(writes.NOT_FOUND, out["say"])
 
+    def test_tidy_does_not_overwrite_a_record_that_an_execute_made_running_after_the_snapshot(self):
+        made = self.prep("rename", **self.RENAME)
+        op = made["operation_id"]
+        rec = self.w.store.read(op)
+        rec["created"] = time.time() - writes.PREPARED_KEEP - 5
+        self.w.store.write(op, rec)
+        store, real = self.w.store, self.w.store.all
+
+        def all_then_run():
+            snapshot = list(real())                 # tidy has read the record as prepared ...
+            with store.locked(op):                  # ... and an execute, under the lock, makes it running before tidy writes
+                now = store.read(op)
+                now["state"] = "running"
+                store.write(op, now)
+            return iter(snapshot)
+        store.all = all_then_run
+        try:
+            store.tidy()
+        finally:
+            store.all = real
+        kept = store.read(op)
+        self.assertEqual("running", kept["state"])
+        self.assertIn("fields", kept)
+
     def test_an_expired_preview_is_kept_as_a_receipt_and_swept_with_the_receipts(self):
         made = self.prep("rename", **self.RENAME)
         rec = self.w.store.read(made["operation_id"])

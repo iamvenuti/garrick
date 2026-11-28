@@ -143,10 +143,13 @@ class Store:
             fin = rec.get("finished")
             if rec.get("state") == "prepared" and age > PREPARED_KEEP:
                 # An expired preview is kept as a refusal, with the expired words, so that it is told from an id never issued (N4).
-                rec.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
-                rec.pop("fields", None)
-                rec.pop("would", None)
-                self.write(rec["id"], rec)
+                with self.locked(rec["id"]):            # an execute that holds the lock may have written `running` since the snapshot
+                    fresh = self.read(rec["id"])
+                    if fresh and fresh.get("state") == "prepared":
+                        fresh.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
+                        fresh.pop("fields", None)
+                        fresh.pop("would", None)
+                        self.write(fresh["id"], fresh)
             elif fin and now - float(fin) > DONE_KEEP:
                 for suffix in (".json", ".lock", ".run"):
                     try:

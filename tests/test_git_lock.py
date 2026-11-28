@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -152,6 +153,75 @@ class TestALockThatStays(LockCase):
     def test_a_fresh_lock_file_is_not_called_stale(self):
         out, _, _ = self.tick(1)
         self.assertEqual(LOCK, out["say"])
+
+
+class TestEveryCommitPath(TestALockThatStays):
+    """C1, S4, C2 of the release review: every commit the page actions share reads a lock the same way."""
+
+    def setUp(self):
+        super().setUp()
+        skill = self.root / "System" / "skills" / "todo"
+        skill.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", skill / "todo.py")
+
+    def retire(self, via="page"):
+        key = self.key("Invoice 1")
+        req = {"verb": "todo-retire", "zone": "Work", "file": "Todo.md", "key": key, "reason": "superseded"}
+        return pa.perform(self.root, req, self.ops, via=via)
+
+    def test_a_retire_under_a_held_lock_says_the_lock(self):
+        out, _, _ = self.retire()
+        self.assertFalse(out["ok"])
+        self.assertTrue(out["say"].startswith(LOCK), out["say"])
+        self.assertEqual("lock", pa.failure_code(out, {"verb": "todo-retire"}))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_commit_all_for_a_note_and_the_update_commit_say_the_lock(self):
+        note = self.work / "Notes.md"
+        write(note, "new\n")
+        with self.assertRaises(pa.Refused) as got:
+            pa.commit_all(self.work, [(note, None)], "Work: note", wall=None)
+        self.assertIn(LOCK, str(got.exception))
+        self.assertFalse(note.exists())
+        write(note, "again\n")
+        with self.assertRaises(pa.Refused) as got:
+            pa.commit_held(self.root, [("Zones/Work", "Notes.md", "Zones/Work/Notes.md")], "0.85.0", wall=None)
+        self.assertIn(LOCK, str(got.exception))
+
+    def test_the_lock_file_is_named_from_the_zone_never_by_the_homes_path(self):
+        old = time.time() - pa.LOCK_STALE - 600
+        os.utime(self.lock, (old, old))
+        out, _, _ = self.retire()
+        self.assertIn(".git/index.lock", out["say"])
+        self.assertNotIn(str(self.root), out["say"])
+        self.assertNotIn(str(Path.home()), out["say"])
+
+    def test_a_remote_caller_gets_the_lock_sentence_alone(self):
+        old = time.time() - pa.LOCK_STALE - 600
+        os.utime(self.lock, (old, old))
+        out, _, _ = self.retire(via="remote")
+        self.assertNotIn("remove", out["say"])
+        self.assertNotIn("index.lock", out["say"])
+        self.assertNotIn(str(self.root), out["say"])
+
+    def test_the_cleanup_reset_waits_longer_than_the_commit(self):
+        # a lock that goes between the failed commit and the reset must not leave the file staged
+        note = self.work / "Notes.md"
+        write(note, "new\n")
+        real = pa.git_once
+        state = {"n": 0}
+
+        def flaky(zone, *args, **k):
+            if args[0] == "reset" and state["n"] < 5:
+                state["n"] += 1
+                return 128, "fatal: Unable to create '.git/index.lock': File exists."
+            return real(zone, *args, **k)
+        pa.git_once = flaky
+        try:
+            pa.unstage_after_lock(self.work, "Notes.md")
+        finally:
+            pa.git_once = real
+        self.assertEqual(5, state["n"])
 
 
 class TestNoMessageBlamesACheck(unittest.TestCase):

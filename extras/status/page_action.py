@@ -439,6 +439,7 @@ _OPS_LIBS: dict = {}
 # The action in hand, for the two places that know a phase: when the zone's lock
 # is had, and when the wall check starts. None for anything without a record.
 CURRENT = None
+CALLER = None                   # the `via` of the request in hand, which lock_why() reads
 # The commit record of the action in hand (operations.py, #716): the repository it is for and the trailers its commit
 # there carries. None for anything that makes no commit or keeps no record.
 RECORD = None
@@ -789,12 +790,13 @@ def lock_said(said) -> bool:
     return "index.lock" in text and ("Unable to create" in text or "Another git process" in text)
 
 
-def git(zone: Path, *args, timeout: float = None):
+def git(zone: Path, *args, timeout: float = None, tries: int = None):
     """One git command in the zone, tried again a few times if another program holds its index.lock (#722).
     Nothing is written before git takes the lock, so a second try cannot write twice."""
-    for tries in range(LOCK_TRIES + 1):
+    tries_max = LOCK_TRIES if tries is None else tries
+    for tries in range(tries_max + 1):
         code, said = git_once(zone, *args, timeout=timeout)
-        if code is None or code == 0 or tries == LOCK_TRIES or not lock_said(said):
+        if code is None or code == 0 or tries == tries_max or not lock_said(said):
             return code, said
         time.sleep(LOCK_PAUSE)
     return code, said
@@ -802,8 +804,11 @@ def git(zone: Path, *args, timeout: float = None):
 
 def lock_why(zone: Path) -> str:
     """The words for a lock that outlasted the wait: the headline, and, when the lock file is old, that it may be
-    stale and which file it is. The file's name is for Details; the page's headline is the first sentence only."""
+    stale and which file it is, named from the zone (`.git/index.lock`), never by the machine's own path. A caller
+    that is not at this Mac (CALLER "remote") gets the headline alone: it cannot remove the file and is not told to."""
     why = LOCK_REFUSAL
+    if CALLER == "remote":
+        return why
     code, out = git_once(zone, "rev-parse", "--git-path", "index.lock", timeout=10)
     path = Path(out.strip()) if code == 0 and out.strip() else Path(".git") / "index.lock"
     path = path if path.is_absolute() else Path(zone) / path
@@ -812,9 +817,29 @@ def lock_why(zone: Path) -> str:
     except OSError:
         return why
     if age >= LOCK_STALE:
+        try:
+            name = path.resolve().relative_to(Path(zone).resolve()).as_posix()
+        except (OSError, ValueError):
+            name = ".git/index.lock"
         why += " The lock file %s is %s old and may be stale: if no other program is using this zone, remove it." % (
-            path, how_long(age))
+            name, how_long(age))
     return why
+
+
+def reason(zone: Path, code, said: str) -> str:
+    """Why a git add or commit did not go through, in a sentence: the lock's own words when git could not take the
+    lock, else git's last line, else `said` as it stands (the code is None when the time ran out)."""
+    if code is not None and lock_said(said):
+        return lock_why(zone)
+    if code is None:
+        return said
+    return (str(said).strip().splitlines() or ["git refused"])[-1]
+
+
+def unstage_after_lock(zone: Path, *rels) -> None:
+    """Take `rels` out of the index again after a commit that did not happen. It waits for a lock three times as
+    long as a commit does, so a file is not left staged because the lock that stopped the commit was still held."""
+    git(zone, "reset", "-q", "--", *rels, timeout=10, tries=LOCK_TRIES * 3)
 
 
 def git_once(zone: Path, *args, timeout: float = None):
@@ -867,10 +892,7 @@ def committing(zone: Path, rel, message: str) -> tuple:
         if code is None:
             return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code != 0:
-        if code is not None and lock_said(said):
-            return code, lock_why(zone)
-        why = said.strip().splitlines() if code is not None else [said]
-        return code or 1, why[-1] if why else "git refused"
+        return code or 1, reason(zone, code, said)
     return 0, ""
 
 
@@ -890,7 +912,7 @@ def commit(zone: Path, note: Path, before: bytes, message: str, *, wall: Optiona
             ours = False
         if ours:
             note.write_bytes(before)
-        git(zone, "reset", "-q", "--", rel, timeout=10)
+        unstage_after_lock(zone, rel)
         if code is None and ours:
             raise Refused("not committed: %s, so the note was put back as it was. Make the change again and commit "
                           "it by hand: that commit waits for the check and goes through" % why)
@@ -1758,7 +1780,9 @@ def commit_held(ws: Path, held: list, version: str, *, wall: Optional[str]) -> l
             if code is None:
                 why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
         if code != 0:
-            git(folder, "reset", "-q", "--", *specs, timeout=10)
+            unstage_after_lock(folder, *specs)
+            if code is not None and lock_said(why):
+                why = lock_why(folder).rstrip(".")
             lines = [x for x in (why or "").strip().splitlines() if x.strip()]
             if wall and why and code is not None and WALL_LINE.match(lines[-1] if lines else ""):
                 raise Refused(wall)                # the rules' sentence, as it stands
@@ -4145,7 +4169,7 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
             why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code == 0:
         return
-    why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
+    why = reason(zone, code, why)
     try:
         ours = all(n.read_bytes() == wrote for (n, _), wrote in zip(notes, mine))
     except OSError:
@@ -4156,7 +4180,7 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
                 n.unlink()
             else:
                 n.write_bytes(before)
-    git(zone, "reset", "-q", "--", *rels, timeout=10)
+    unstage_after_lock(zone, *rels)
     if not ours:
         raise Refused("not committed: %s. A note was edited meanwhile, so it was left as it is" % why)
     if wall and WALL_LINE.match(why):
@@ -4622,8 +4646,8 @@ def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str,
                         timeout=deadline - time.time())
     if code == 0:
         return ""
-    git(zone, "reset", "-q", "--", *changed, timeout=10)
-    why = why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    unstage_after_lock(zone, *changed)
+    why = reason(zone, code, why)
     return wall if wall and code is not None and WALL_LINE.match(why) else why
 
 
@@ -6898,12 +6922,13 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
-    global CURRENT, VIA
+    global CURRENT, VIA, CALLER
     if via is _NO_CALLER:
         raise TypeError("perform() needs via=: name the caller, one of %s" % ", ".join(CALLERS))
     out, logged, run, outcome, why = None, None, None, None, ""
     receipt = None
     VIA = via
+    CALLER = via
     try:
         try:
             joined = None
@@ -6975,6 +7000,7 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     finally:
         CURRENT = None
         VIA = None
+        CALLER = None
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why

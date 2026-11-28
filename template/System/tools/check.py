@@ -4775,36 +4775,7 @@ def without_link_targets(text: str, shared: Optional[Callable[[str], bool]] = No
     text = WIKILINK_RE.sub(wikilink, text)
     if shared:
         text = MDLINK_LABEL_RE.sub(lambda m: " " if shared(m.group(2)) else m.group(0), text)
-    return path_parts_off(WEB_RE.sub(" ", MDLINK_RE.sub("] ", text)))
-
-
-# A filesystem path is not wording (#721). Every Mac with a browser installed has its path word for word, so two files
-# that name it share eight words and no thought. What goes is only the parts of a path that name the system: the
-# standard folders below, and the `.app` that ends a bundle's name. Every other part of a path is read as the words it
-# holds, so content words written as a path, with slashes or dashes, under `~` or not, and the words either side of a
-# path, still count, and the words each side of a dropped part run on across it. The reference rules read paths too, as
-# they did: a path into a walled project is refused there (#424, #436).
-SYSTEM_FOLDERS = frozenset("""
-applications contents macos resources frameworks library usr local bin sbin lib opt etc var tmp volumes users private
-utilities
-""".split())
-# Where a path starts: the start of a line or a character that can open one, then `/` or `~/`. It runs to a quote or
-# bracket that closes it. A part that another part follows may hold a space, as `Cedar Browser.app` does; the last part
-# ends at the first space, so the words after a path are not taken into it.
-PATH_RE = re.compile(r"""(?m)(?:^|(?<=[\s"'`(\[<=:,;{]))~?/(?:[^/\n"'`<>|)\]}]+/)*[^/\s"'`<>|)\]}]*""")
-
-
-def path_parts_off(text: str) -> str:
-    """`text` without the system folders of each path in it, and without the `.app` that ends a bundle's name."""
-    def parts(m) -> str:
-        keep = []
-        for part in m.group(0).split("/"):
-            if part.strip().lower() in SYSTEM_FOLDERS:
-                continue
-            keep.append(part[:-4] if part.lower().endswith(".app") else part)
-        return " ".join(keep)
-
-    return PATH_RE.sub(parts, text) if "/" in text else text
+    return WEB_RE.sub(" ", MDLINK_RE.sub("] ", text))
 
 
 def runs(text: str, shared: Optional[Callable[[str], bool]] = None, structure: Optional[TemplateStructure] = None) -> set:

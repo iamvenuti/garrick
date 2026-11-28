@@ -101,6 +101,16 @@ class TestTheRecheck(Expect):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertTrue((self.work / "Apex" / "Threads" / "Freight").is_dir())
 
+    def test_a_move_with_a_digest_lists_each_unresolved_link_once_as_without(self):
+        self.freight.write_text(self.freight.read_text() + "\nSee [gone](../Gone/Freight/x.md).\n")
+        self.commit("A link that leads nowhere")
+        digest = self.digest(*MOVE)
+        twin = self.scaffold("--today", "2027-01-01", *MOVE, "--expect-plan", digest)
+        self.assertEqual(0, twin.returncode, twin.stderr)
+        line = next(l for l in twin.stdout.splitlines() if l.startswith("Markdown links left as they are"))
+        self.assertEqual(1, line.count("../Gone/Freight/x.md"), line)
+        self.assertNotIn("more", line)
+
     def test_with_no_digest_a_note_saved_late_is_carried_along_as_before(self):
         code, err = self.run_in_process(MOVE, lambda: False)
         self.assertEqual(0, code or 0, err)

@@ -66,6 +66,14 @@ class TestUndoTakesIds(Case):
         r = self.scaffold("undo", "--zone", "Work", "--commit", short)
         self.assertEqual(0, r.returncode, r.stderr)
 
+    def test_a_branch_named_like_hex_is_not_an_id(self):
+        self.rename()
+        self.assertEqual(0, self.git("branch", "abcdef1", "HEAD").returncode)
+        r = self.scaffold("undo", "--zone", "Work", "--commit", "abcdef1")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("is not a commit id", r.stderr)
+        self.assertTrue((self.work / "Acme" / "Threads" / "Rates").is_dir())
+
     def test_a_prefix_that_names_no_commit_is_refused(self):
         self.rename()
         wrong = ("0" if self.head()[0] != "0" else "1") + self.head()[1:7]

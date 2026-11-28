@@ -116,7 +116,9 @@ class TheTestSwitchIsShutInEveryOtherBuild(unittest.TestCase):
                 self.assertTrue("driving" in line or "driveSay" in line or "startDriving" in line, line)
 
     def test_a_normal_build_gets_the_regular_policy_and_no_listener(self):
-        self.assertIn('app.setActivationPolicy(driving ? .accessory : checking ? .prohibited : .regular)', SWIFT)
+        self.assertIn('app.setActivationPolicy(checking ? .prohibited : .regular)', SWIFT)     # as it was
+        start = SWIFT[SWIFT.index("func startDriving()"):]
+        self.assertIn("NSApp.setActivationPolicy(.accessory)", start[:200])                     # a driven app: no Dock icon
         self.assertNotIn("NWListener", SWIFT)
         self.assertNotIn("socket(", SWIFT)
 

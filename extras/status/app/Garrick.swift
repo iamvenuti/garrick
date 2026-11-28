@@ -894,6 +894,71 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		for url in early { handleLink(url) }
 	}
 
+	// Ask's background session (#261): kept while Ask is on, started again by ask.py if it
+	// died, and stopped once Ask is switched off in Settings. Read at each tick, so the switch needs no restart.
+	func askKeep() {
+		if checking { return }
+		if askOn() {
+			askKept = true
+			askCall(["keep"]) { _ in }
+		} else if askKept {
+			askKept = false
+			askCall(["stop"]) { _ in }
+		}
+	}
+
+	// Quit stops the session this app kept. Run here and waited for, briefly: askCall() would return
+	// before the app is gone. A crash or a force quit never gets here, and ask.py's lease covers those.
+	func applicationWillTerminate(_ note: Notification) {
+		askKeeper?.invalidate()
+		guard askKept && !checking else { return }
+		let p = Process()
+		p.executableURL = URL(fileURLWithPath: python)
+		p.arguments = [asker.path, "--workspace", workspace.path, "--json", "stop"]
+		p.currentDirectoryURL = workspace
+		p.standardOutput = FileHandle.nullDevice
+		p.standardError = FileHandle.nullDevice
+		p.standardInput = FileHandle.nullDevice
+		guard (try? p.run()) != nil else { return }
+		let until = Date().addingTimeInterval(2)
+		while p.isRunning && Date() < until { usleep(50_000) }
+		if p.isRunning { p.terminate() }
+	}
+
+	// With the icon in the menu bar, or the panel at an edge, closing the window leaves the app there.
+	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { edgePanel == nil && statusItem == nil }
+
+	func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
+		if !hasVisibleWindows { showWindow() }
+		return true
+	}
+
+	func windowWillClose(_ note: Notification) {
+		if recording { recording = false; applyHotKeys() }    // the field that had the keys goes with the window
+		guard resident else { return }
+		defaults.set(false, forKey: kWindowShown)
+		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's or the panel is there
+	}
+
+	@objc func showWindow(_ sender: Any? = nil) {
+		NSApp.setActivationPolicy(.regular)
+		window.makeKeyAndOrderFront(nil)
+		NSApp.activate(ignoringOtherApps: true)
+		defaults.set(true, forKey: kWindowShown)
+	}
+
+	// Settings from the menu or the panel (#34): the window forward, as Open
+	// Garrick brings it, then Settings, as ⌘, opens it. A page not loaded yet, or
+	// reloaded by the rebuild that coming forward can start, opens it once loaded.
+	@objc func showSettings(_ sender: Any? = nil) {
+		showWindow()
+		settingsAsked = Date()
+		if pageLoaded != nil && !web.isLoading { openSettings(nil) }
+	}
+
+	// Left in the Dock for days, it still checks the page's age when it comes forward.
+	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners(); refreshFinder() } }
+
 	// MARK: --drive (tools/app_check.py)
 
 	// Only with --drive, which does nothing in a build that is not a scratch build (see `driving`). One JSON command per
@@ -902,6 +967,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// came; `bridge` returns the messages the page sent (and clears them with "clear"); `leave` and `back` take the
 	// window out of sight and bring it back; `act` hands a request to act() for real, as the page's button does.
 	func startDriving() {
+		NSApp.setActivationPolicy(.accessory)           // a window that stays, and no Dock icon
 		window.setFrame(NSRect(x: 60, y: 60, width: 1200, height: 800), display: true)
 		window.orderFrontRegardless()
 		watch()
@@ -972,71 +1038,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			driveSay(["id": id, "error": "unknown command \(op)"])
 		}
 	}
-
-	// Ask's background session (#261): kept while Ask is on, started again by ask.py if it
-	// died, and stopped once Ask is switched off in Settings. Read at each tick, so the switch needs no restart.
-	func askKeep() {
-		if checking { return }
-		if askOn() {
-			askKept = true
-			askCall(["keep"]) { _ in }
-		} else if askKept {
-			askKept = false
-			askCall(["stop"]) { _ in }
-		}
-	}
-
-	// Quit stops the session this app kept. Run here and waited for, briefly: askCall() would return
-	// before the app is gone. A crash or a force quit never gets here, and ask.py's lease covers those.
-	func applicationWillTerminate(_ note: Notification) {
-		askKeeper?.invalidate()
-		guard askKept && !checking else { return }
-		let p = Process()
-		p.executableURL = URL(fileURLWithPath: python)
-		p.arguments = [asker.path, "--workspace", workspace.path, "--json", "stop"]
-		p.currentDirectoryURL = workspace
-		p.standardOutput = FileHandle.nullDevice
-		p.standardError = FileHandle.nullDevice
-		p.standardInput = FileHandle.nullDevice
-		guard (try? p.run()) != nil else { return }
-		let until = Date().addingTimeInterval(2)
-		while p.isRunning && Date() < until { usleep(50_000) }
-		if p.isRunning { p.terminate() }
-	}
-
-	// With the icon in the menu bar, or the panel at an edge, closing the window leaves the app there.
-	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { edgePanel == nil && statusItem == nil }
-
-	func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
-		if !hasVisibleWindows { showWindow() }
-		return true
-	}
-
-	func windowWillClose(_ note: Notification) {
-		if recording { recording = false; applyHotKeys() }    // the field that had the keys goes with the window
-		guard resident else { return }
-		defaults.set(false, forKey: kWindowShown)
-		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's or the panel is there
-	}
-
-	@objc func showWindow(_ sender: Any? = nil) {
-		NSApp.setActivationPolicy(.regular)
-		window.makeKeyAndOrderFront(nil)
-		NSApp.activate(ignoringOtherApps: true)
-		defaults.set(true, forKey: kWindowShown)
-	}
-
-	// Settings from the menu or the panel (#34): the window forward, as Open
-	// Garrick brings it, then Settings, as ⌘, opens it. A page not loaded yet, or
-	// reloaded by the rebuild that coming forward can start, opens it once loaded.
-	@objc func showSettings(_ sender: Any? = nil) {
-		showWindow()
-		settingsAsked = Date()
-		if pageLoaded != nil && !web.isLoading { openSettings(nil) }
-	}
-
-	// Left in the Dock for days, it still checks the page's age when it comes forward.
-	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners(); refreshFinder() } }
 
 	func load() {
 		shown = modified(page)
@@ -4597,5 +4598,5 @@ app.delegate = delegate
 // Dock icon, took it away and brought it back before the window. A login launch that
 // stays out of sight turns accessory in applicationDidFinishLaunching, the first point
 // it can tell a login launch from yours.
-app.setActivationPolicy(driving ? .accessory : checking ? .prohibited : .regular)
+app.setActivationPolicy(checking ? .prohibited : .regular)
 app.run()

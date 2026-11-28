@@ -406,10 +406,12 @@ class TestRenameAndMove(LifeCase):
         self.assertEqual("prepared", self.w.status(a["operation_id"])["state"])
 
     def test_a_rename_and_a_move_are_done_as_the_app_does_them(self):
+        base = self.head()
         for verb, fields in (("rename", dict(project="Acme Review", thread="Pricing", to="Rates")),
                              ("rename", dict(project="Cedar", to="Cedar Works")),
                              ("move", dict(project="Acme Review", thread="Freight", to="Cedar"))):
             with self.subTest(verb=verb, fields=fields):
+                git(self.work, "reset", "--hard", base)                           # every case starts from the same zone, even after a failed one
                 twin = self.twin()
                 theirs = self.app(twin, dict(verb=verb, zone="Work", **fields))
                 made, out = self.run_it(verb, **fields)
@@ -417,11 +419,10 @@ class TestRenameAndMove(LifeCase):
                 self.assertEqual("saved", out["state"], out)
                 self.assertEqual(theirs["say"], out["say"])
                 self.same_commit(twin)
-                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "--short", "HEAD").strip(), theirs["commit"])      # the page's is short
+                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "HEAD").strip(), theirs["commit"])      # the page's holds the whole id (S6)
                 self.assertEqual(40, len(out["commit"]))
                 self.assertEqual(self.head(), out["commit"])
                 self.assertEqual("", git(self.work, "status", "--porcelain").strip())
-                git(self.work, "reset", "--hard", "HEAD~1")                                 # for the next one, from the same start
 
     def test_what_the_app_refuses_is_refused_in_its_words_at_the_preview(self):
         twin = self.twin()

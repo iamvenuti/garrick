@@ -344,8 +344,8 @@ def prepare(w, verb, zone, fields, operation_id):
             return writes.say("not_prepared", " ".join(l.strip() for l in lines[1:]) + " Make it in a session, with its spoken form (--spoken).")
         said = lines[0]
         shown = reply.get("plan") if isinstance(reply.get("plan"), dict) else {}
-        if plan and not shown:
-            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")
+        if plan and not (shown and isinstance(shown.get("digest"), str) and run_op.PLAN_DIGEST.fullmatch(shown["digest"])):
+            return writes.say("not_prepared", "That could not be previewed, so nothing was prepared.")      # no digest: neither recheck could hold
         extra["would"] = would(verb, zone, fields, said, shown)
         if plan:
             extra["_plan"] = str(shown.get("digest") or "")

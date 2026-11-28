@@ -700,6 +700,24 @@ class TestANoteSavedBetweenTheLastCheckAndTheWrite(LifeCase):
         undo = dict(rec, verb="undo", fields={"commit": "abcdef1"})
         self.assertNotIn("plan_digest", run_op.life_request(undo))
 
+    def test_a_plan_with_no_digest_is_not_prepared_and_nothing_is_stored(self):
+        for digest in (None, "", "abc", "G" * 64, "A" * 64, 5):
+            real = lifecycle.ask
+
+            def ask(w, request, digest=digest, real=real):
+                ok, reply = real(w, request)
+                if request.get("plan") and isinstance(reply.get("plan"), dict):
+                    reply["plan"]["digest"] = digest
+                return ok, reply
+            lifecycle.ask = ask
+            try:
+                out = self.w.prepare("rename", "Work", **self.RENAME)
+            finally:
+                lifecycle.ask = real
+            self.assertEqual("not_prepared", out.get("error"), (digest, out))
+            self.assertEqual("That could not be previewed, so nothing was prepared.", out["say"])
+            self.assertEqual([], list(self.w.store.all()), digest)
+
     def test_the_cores_sentence_is_mapped_to_the_extras_own(self):
         said = run_op.life_receipt({"ok": False, "say": run_op.CORE_PLAN_CHANGED}, str(self.root), {"verb": "rename", "zone": "Work", "id": "0" * 16})
         self.assertEqual(lifecycle.CHANGED, said["say"])

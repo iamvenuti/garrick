@@ -9,7 +9,10 @@ goes in place only if it is newer than the one there. The tests that matter run 
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
 import os
 import re
 import subprocess
@@ -19,6 +22,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -162,6 +166,39 @@ class Publication(Workspace):
         self.assertIn("publish_page(out, page, generation)", src)
         self.assertIn("write_page(flags_file(out)", src)
         self.assertRegex(src, r'write_page\(store, json\.dumps\(\{"workspace"')
+
+    # C3: the flags belong to the page in place.
+    def test_a_build_that_lost_leaves_the_flags_of_the_page_that_won(self):
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        flags = status.flags_file(self.out)
+        flags.write_text('{"args": ["--no-cmux"]}\n', encoding="utf-8")
+        err = io.StringIO()
+        with mock.patch.object(status, "publish_page", return_value=False), mock.patch.object(status, "release_ask"), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, status.main(["--workspace", str(self.ws), "--no-graph"]))
+        self.assertEqual('{"args": ["--no-cmux"]}\n', flags.read_text(encoding="utf-8"))
+        self.assertIn("a newer page was already in place", err.getvalue())    # C6: it says so
+
+    def test_a_build_that_won_stores_its_flags(self):
+        with mock.patch.object(status, "release_ask"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, status.main(["--workspace", str(self.ws), "--no-graph"]))
+        self.assertEqual({"args": ["--no-graph"]}, json.loads(status.flags_file(self.out).read_text(encoding="utf-8")))
+
+    # C6: a page numbered far past the clock does not freeze the page.
+    def test_a_generation_more_than_a_day_ahead_of_the_clock_is_unreadable(self):
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        far = time.time_ns() + 3 * 86400 * 10 ** 9
+        self.out.write_text(self.page(far, "restored"))
+        now = time.time_ns()
+        self.assertTrue(status.publish_page(self.out, self.page(now, "now"), now))
+        self.assertIn("now", self.out.read_text())
+        self.assertIsNone(status.sane_generation(far))
+        self.assertEqual(now, status.sane_generation(now))
+
+    def test_a_counter_file_a_day_ahead_does_not_number_builds_past_the_clock(self):
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        self.out.with_name(self.out.name + ".generation").write_text(str(time.time_ns() + 5 * 86400 * 10 ** 9))
+        self.assertLess(status.next_generation(self.out), time.time_ns() + 86400 * 10 ** 9)
 
 
 if __name__ == "__main__":

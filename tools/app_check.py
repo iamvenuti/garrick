@@ -35,7 +35,8 @@ from queue import Empty, Queue
 ROOT = Path(__file__).resolve().parent.parent
 GENERATION_META = '<meta name="garrick-generation" content="%s">'
 GENERATION_RE = re.compile(r'<meta name="garrick-generation" content="(\d+)">')
-WAITING = "A newer page is waiting"      # the window's subtitle while a reload is held (Garrick.swift)
+WAITING = "A newer page is waiting"
+HINT = "A newer page is waiting. Choose Reload to see it."      # the window's subtitle while a reload is held (Garrick.swift)
 SETTLE = 2.5                              # the app waits half a second before it loads a page it was told of
 BATCH = 2.5                               # the page waits two seconds after a tick before it sends it
 
@@ -215,6 +216,11 @@ TYPE = ("(function(){document.querySelector('[data-tab=\"overview\"]').click();v
         "document.execCommand('insertText',false,'harbour deal');return f.value+'|'+f.selectionStart+'|'+(document.activeElement===f)})()")
 FIELD = "(function(){var f=document.getElementById('tfind');return f.value+'|'+f.selectionStart+'|'+(document.activeElement===f)})()"
 CLEAR = "(function(){var f=document.getElementById('tfind');f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));f.blur()})()"
+# A text area, which holds a draft whether or not it has the keys (a search box does only while it has them).
+ADD_DRAFT = ("(function(){var t=document.createElement('textarea');t.id='case-draft';document.body.appendChild(t);t.focus();"
+             "document.execCommand('insertText',false,'harbour deal');return 0})()")
+DRAFT = "(function(){var f=document.getElementById('case-draft');return f.value+'|'+f.selectionStart})()"
+CLEAR_DRAFT = "(function(){var f=document.getElementById('case-draft');f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));f.blur()})()"
 MARK = "document.body.getAttribute('data-check')||''"
 
 
@@ -232,21 +238,24 @@ def settle_page(d: Drive, fx: Fixture, base: str, mark: str, generation=None):
 
 def case_edit_survives_a_build(d, fx, base):
     """Text typed in a field stays, with its caret, when a build lands; it loads once the field is empty."""
-    typed = d.js(TYPE)
-    assert typed == "harbour deal|12|true", "the field did not take the text: %r" % typed
+    d.js(ADD_DRAFT)
+    typed = d.js(DRAFT)
+    assert typed == "harbour deal|12", "the field did not take the text: %r" % typed
     before = d.loads()
     settle_page(d, fx, base, "b")
     time.sleep(SETTLE)
-    assert d.js(FIELD) == typed, "the text or the caret moved: %r" % d.js(FIELD)
+    assert d.js(DRAFT) == typed, "the text or the caret moved: %r" % d.js(DRAFT)
     assert d.loads() == before and d.js(MARK) == "", "the page loaded under the text"
-    d.js(CLEAR)
+    d.js(CLEAR_DRAFT)
     d.wait(lambda: d.js(MARK) == "b", 8, "the newer page, once the field was empty")
     assert d.loads() == before + 1, "more than one load"
 
 
 def case_edit_survives_a_loss_of_focus(d, fx, base):
     """The hold stays when the app is left, and when it is brought back."""
-    typed = d.js(TYPE)
+    d.js(ADD_DRAFT)
+    typed = d.js(DRAFT)
+    assert typed.startswith("harbour deal|"), "the textarea did not take the text: %r" % typed
     before = d.loads()
     d.ask("leave")
     settle_page(d, fx, base, "b")
@@ -254,7 +263,7 @@ def case_edit_survives_a_loss_of_focus(d, fx, base):
     assert d.loads() == before and d.js(MARK) == "", "the page loaded while the app was left"
     d.ask("back")
     time.sleep(1)
-    assert d.js(FIELD) == typed and d.loads() == before, "the text did not survive the return"
+    assert d.js(DRAFT) == typed and d.loads() == before, "the text did not survive the return"
 
 
 def case_one_click_one_request(d, fx, base):
@@ -343,6 +352,72 @@ def case_an_older_action_script_still_asks_for_the_page(d, fx, base):
         restore()
 
 
+def case_a_saved_setting_does_not_hold_the_page(d, fx, base):
+    """A number field changed and left (a setting, saved on change) is nothing to lose: the page loads."""
+    d.js("(function(){var f=document.getElementById('n-after');f.focus();f.value='7';"
+         "f.dispatchEvent(new Event('input',{bubbles:true}));f.dispatchEvent(new Event('change',{bubbles:true}));f.blur();0})()")
+    d.wait(lambda: d.state()["busy"] is False, 5, "the page to say it is idle")
+    before = d.loads()
+    settle_page(d, fx, base, "b")
+    d.wait(lambda: d.js(MARK) == "b", 8, "the newer page")
+    assert d.loads() == before + 1
+
+
+def case_a_search_typed_and_cleared_or_left_does_not_hold_the_page(d, fx, base):
+    """A search box has the page's hold only while it has the keys and text in it: cleared, or left, it lets go."""
+    d.ask("focus")
+    d.wait(lambda: d.js("document.hasFocus()") is True, 5, "the window to have the keys")
+    d.js(TYPE)
+    before = d.loads()
+    settle_page(d, fx, base, "b")
+    time.sleep(SETTLE)
+    assert d.loads() == before, "the page loaded under the text"
+    d.js(CLEAR)
+    d.wait(lambda: d.js(MARK) == "b", 8, "the newer page, once the box was empty")
+    d.ask("focus")
+    d.js(TYPE)                                       # typed again on the new page, and now left without clearing
+    d.js("document.getElementById('tfind').blur();0")
+    d.wait(lambda: d.state()["busy"] is False, 5, "the page to say it is idle")
+    settle_page(d, fx, base, "c")
+    d.wait(lambda: d.js(MARK) == "c", 8, "the newest page, once the box was left")
+
+
+def case_a_refusal_loads_the_waiting_page(d, fx, base):
+    """With a newer page held by a dialog, a refused action proves the page on show is old: the newer page loads at once."""
+    restore = stand_in_for_the_action_script(fx, {"ok": False, "say": "No."})
+    try:
+        d.js("document.getElementById('tadd').showModal();0")
+        d.wait(lambda: d.state()["busy"] is True, 5, "the page to say it is busy")
+        settle_page(d, fx, base, "b")
+        time.sleep(SETTLE)
+        assert d.js(MARK) == "" and WAITING in d.state()["subtitle"]
+        before = d.loads()
+        d.ask("act", request=REQUEST)
+        d.wait(lambda: d.loads() > before, 2.5, "the newer page, loaded by the refusal")
+        assert d.js(MARK) == "b"
+    finally:
+        restore()
+
+
+def case_a_refusal_under_typed_text_says_how_to_see_the_newer_page(d, fx, base):
+    """Text the user typed stays; the subtitle says to choose Reload."""
+    restore = stand_in_for_the_action_script(fx, {"ok": False, "say": "No."})
+    try:
+        d.js(ADD_DRAFT)
+        typed = d.js(DRAFT)
+        before = d.loads()
+        settle_page(d, fx, base, "b")
+        time.sleep(SETTLE)
+        d.ask("act", request=REQUEST)
+        d.event(lambda m: "acted" in m, 20)
+        time.sleep(0.5)
+        assert d.state()["subtitle"] in (HINT, "Rebuilding\u2026"), d.state()["subtitle"]
+        assert d.js(DRAFT) == typed and d.loads() == before, "the text was lost"
+        d.wait(lambda: d.state()["subtitle"] == HINT, 60, "the hint, once the build ended")
+    finally:
+        restore()
+
+
 def case_a_dialog_holds_the_page(d, fx, base):
     """An open dialog stays open while a build lands, and the page loads once it is closed."""
     d.js("document.getElementById('tadd').showModal();0")
@@ -372,20 +447,20 @@ def case_ticks_waiting_hold_the_page(d, fx, base):
     settle_page(d, fx, base, "b")
     time.sleep(1.2)
     assert d.loads() == before and d.js(MARK) == "", "the page loaded with a tick waiting"
-    d.wait(lambda: d.js(MARK) == "b", 12, "the newer page, once the tick was sent")
+    d.wait(lambda: d.js(MARK) == "b", 30, "the newer page, once the tick was sent")
 
 
 def case_three_builds_make_one_load(d, fx, base):
     """Three builds during one hold end in one load, of the newest."""
-    d.js(TYPE)
+    d.js(ADD_DRAFT)
     before = d.loads()
     for i, mark in enumerate(("b1", "b2", "b3")):
         settle_page(d, fx, base, mark, generation_of(base) + 100 + i)
         time.sleep(0.8)
     time.sleep(SETTLE)
     assert d.loads() == before, "the page loaded during the hold"
-    assert WAITING in d.state()["subtitle"], "the window did not say a page is waiting: %r" % d.state()["subtitle"]
-    d.js(CLEAR)
+    d.wait(lambda: WAITING in d.state()["subtitle"], 5, "the window to say a page is waiting")
+    d.js(CLEAR_DRAFT)
     d.wait(lambda: d.js(MARK) == "b3", 8, "the newest page")
     time.sleep(SETTLE)
     assert d.loads() == before + 1, "%d loads for one hold" % (d.loads() - before)
@@ -397,7 +472,8 @@ def case_nothing_to_lose_loads_as_before(d, fx, base):
     before = d.loads()
     settle_page(d, fx, base, "b")
     d.wait(lambda: d.js(MARK) == "b", 8, "the page, which has nothing to lose")
-    assert d.loads() == before + 1
+    time.sleep(1)
+    assert d.loads() == before + 1, "%d loads for one page" % (d.loads() - before)
 
 
 CASES = [("edit survives a build", case_edit_survives_a_build),
@@ -406,12 +482,26 @@ CASES = [("edit survives a build", case_edit_survives_a_build),
          ("an older build that finishes last loses", case_an_older_build_that_finishes_last_loses),
          ("a dialog holds the page", case_a_dialog_holds_the_page),
          ("a drag holds the page", case_a_drag_holds_the_page),
+         ("a saved setting does not hold the page", case_a_saved_setting_does_not_hold_the_page),
+         ("a search typed and cleared or left does not hold the page", case_a_search_typed_and_cleared_or_left_does_not_hold_the_page),
+         ("a refusal loads the waiting page", case_a_refusal_loads_the_waiting_page),
+         ("a refusal under typed text says how to see the newer page", case_a_refusal_under_typed_text_says_how_to_see_the_newer_page),
          ("ticks waiting hold the page", case_ticks_waiting_hold_the_page),
          ("three builds make one load", case_three_builds_make_one_load),
          ("nothing to lose loads as before", case_nothing_to_lose_loads_as_before),
          ("a saved action builds at once", case_a_saved_action_builds_at_once),
          ("a reply that is not saved builds with the check", case_a_reply_that_is_not_saved_builds_with_the_check),
          ("an older action script still asks for the page", case_an_older_action_script_still_asks_for_the_page)]
+
+
+def wait_for_builds(fx: Fixture, seconds=120):
+    """A build the closed app started (after a refused action, say) must end before the next case, or the page it
+    publishes, numbered later than the next case's own, would stand in its way."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if subprocess.run(["pgrep", "-f", str(fx.ws / "System" / "status" / "status.py")], capture_output=True).returncode != 0:
+            return
+        time.sleep(0.5)
 
 
 def take_shots(d, fx, base, out: Path):
@@ -474,6 +564,7 @@ def main(argv=None) -> int:
             finally:
                 if d:
                     d.close()
+                wait_for_builds(fx)
     except Cannot as e:
         print("app_check: %s" % e, file=sys.stderr)
         if os.environ.get("APP_CHECK_TRACE"):

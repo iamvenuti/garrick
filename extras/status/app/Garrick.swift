@@ -253,6 +253,8 @@ let askMoreLink = "garrick-ask-more:"
 let pageDidNotRebuild = "This page did not rebuild, so it may be old."
 // The window's subtitle while a newer page waits for the page on show to have nothing to lose (V1).
 let pageWaiting = "A newer page is waiting"
+// The same, once a refused action has shown the page on show is old and typed text keeps it from loading (S4).
+let pageWaitingHint = "A newer page is waiting. Choose Reload to see it."
 let askDetailLink = "garrick-ask-details:"
 let askTryLink = "garrick-ask-again:"
 let askNoStart: [String: Any] = ["code": "ask-start", "say": "Ask did not start.", "next": "Try again"]
@@ -550,7 +552,9 @@ func pageGeneration(_ url: URL) -> Int64? {
 	defer { try? handle.close() }
 	let head = String(decoding: handle.readData(ofLength: 16384), as: UTF8.self)
 	guard let found = head.range(of: #"<meta name="garrick-generation" content="[0-9]{1,30}">"#, options: .regularExpression) else { return nil }
-	return Int64(head[found].filter { $0.isNumber })
+	guard let number = Int64(head[found].filter { $0.isNumber }) else { return nil }
+	// A number more than a day past the clock is not one a build here made (a clock set back, a page restored): unreadable.
+	return Double(number) > (Date().timeIntervalSince1970 + 86400) * 1e9 ? nil : number
 }
 
 func modified(_ url: URL) -> Date? {
@@ -719,6 +723,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
 	var busy = false                  // BUSY_JS says the page has something a reload would lose (V1)
+	var hinted = false                // the subtitle has told the user to choose Reload
+	var waitingLine: String { hinted ? pageWaitingHint : pageWaiting }
+	var typedDraft = false            // and whether text a user typed is what holds it (BUSY_JS's "typed")
 	var newerWaiting = false          // a newer page is waiting for the page to be idle
 	var shownGeneration: Int64?       // the generation of the page on show, where it carries one (V2: an older page never replaces a newer)
 	var heard: [String] = []          // what --check caught instead of acting on
@@ -1012,6 +1019,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		case "leave":
 			NSApp.hide(nil)                 // not orderOut: the last window out of sight ends this app
 			driveSay(["id": id, "ok": true])
+		case "focus":
+			// The window in front with the keys, for the case that needs a field to have them. Used by that case only.
+			NSApp.activate(ignoringOtherApps: true)
+			window.makeKeyAndOrderFront(nil)
+			driveSay(["id": id, "ok": true])
 		case "back":
 			NSApp.unhide(nil)
 			window.orderFrontRegardless()
@@ -1057,6 +1069,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let found = pageGeneration(page)
 		if !force, let found, let showing = shownGeneration, found <= showing {
 			shown = modified(page)
+			clearHold()
 			return
 		}
 		// The page has something a reload would lose: it stays as it is, with its text, its caret and its dialog, however
@@ -1065,7 +1078,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if !force && busy {
 			shown = modified(page)
 			newerWaiting = true
-			window.subtitle = pageWaiting
+			window.subtitle = waitingLine
 			return
 		}
 		shown = modified(page)
@@ -1077,14 +1090,23 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The page said it is busy or idle. Idle, with a newer page waiting, loads the newest page, once.
-	func setBusy(_ now: Bool) {
+	func setBusy(_ now: Bool, typed: Bool? = nil) {
 		busy = now
+		typedDraft = typed ?? now
 		if !now && newerWaiting { newerWaiting = false; reload() }
+	}
+
+	// A refusal of the page's own action proves the page on show is old. A newer page that waits loads at once, unless
+	// text a user typed is what holds it: that stays, and the subtitle says how to see the newer page (S4).
+	func refusedWhileHeld(_ reply: [String: Any]) {
+		guard newerWaiting, reply["ok"] as? Bool == false else { return }
+		if typedDraft { hinted = true; window.subtitle = pageWaitingHint } else { reload(force: true) }
 	}
 
 	func clearHold() {
 		newerWaiting = false
-		if window.subtitle == pageWaiting { window.subtitle = "" }
+		hinted = false
+		if window.subtitle == pageWaiting || window.subtitle == pageWaitingHint { window.subtitle = "" }
 	}
 
 	func freshen(force: Bool = false, kept: Bool = false) {
@@ -1116,7 +1138,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			DispatchQueue.main.async {
 				self.rebuilding = false
 				if driving { self.driveSay(["rebuilt": Int(proc.terminationStatus)]) }
-				self.window.subtitle = proc.terminationStatus == 0 ? (self.newerWaiting ? pageWaiting : "") : pageDidNotRebuild
+				self.window.subtitle = proc.terminationStatus == 0 ? (self.newerWaiting ? self.waitingLine : "") : (self.newerWaiting ? self.waitingLine : pageDidNotRebuild)
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
 				if self.again { self.again = false; self.rebuild(kept: self.againKept) }
@@ -1182,7 +1204,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard let body = message.body as? [String: Any] else { return }
 		if driving { bridgeLog.append(body) }          // what the page sent, for the cases to count
 		// BUSY_JS's: whether the page has text, a dialog, a drag or ticks a reload would lose. Read only: it never reaches act().
-		if let b = body["busy"] as? Bool { return setBusy(b) }
+		if let b = body["busy"] as? Bool { return setBusy(b, typed: body["typed"] as? Bool) }
 		if let e = body["pageError"] as? [String: Any] {   // appScript's: the page's script stopped somewhere
 			pageErrors = Array((pageErrors + [e]).suffix(5))
 			return
@@ -1469,6 +1491,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			DispatchQueue.main.async {
 				let reply = said ?? ["ok": false, "say": "That did not work."]
 				self.acted(request, reply)
+				self.refusedWhileHeld(reply)
 				// A reply that says `"built": true` has settled the page itself: page_action.py asked for the one
 				// build (#344), which an older page_action.py still does for this app's own actions. One without the key
 				// (a refusal, a read, a verb it does not build for, and since 0.86.0 every action that saved) rebuilds here,

@@ -197,7 +197,8 @@ def guard(w, zone, verb, fields) -> str:
     """The words of a refusal for a request that points anywhere but at an ordinary project or thread of its zone, or ""."""
     if verb == "undo":
         return "" if undoable(w, zone, fields["commit"]) else NOT_YOURS
-    if verb in CONFIRMED and not w.session.zone_allowed(zone):          # the preview holds lines of the zone's notes
+    shows = verb in CONFIRMED or (verb == "check-name" and fields.get("kind") in CONFIRMED)    # the App's words name a file of the zone
+    if shows and not w.session.zone_allowed(zone):          # the preview holds lines of the zone's notes
         return NEEDS_READ
     named = {"project": "new-project", "thread": "new-thread"}.get(fields.get("kind"), fields.get("kind")) if verb == "check-name" else verb
     return "" if places(w, zone, named, fields) is not None else NOT_A_PLACE

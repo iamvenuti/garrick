@@ -234,6 +234,16 @@ for _key in ("template/System/tools/scaffold.py", "tests/test_scaffold_plan.py",
 for _key in ("template/System/tools/scaffold.py", "extras/status/page_action.py", "template/System/tools/operations.py",
              "tests/test_scaffold_expect_plan.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_scaffold_expect_plan"]
+# core-0860 (N3): a lock met inside scaffold.py or wrap.py says the lock sentence and no path.
+for _key in ("template/System/tools/scaffold.py", "template/System/tools/wrap.py", "template/System/tools/operations.py",
+             "extras/status/page_action.py", "tests/test_lock_in_tools.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_lock_in_tools"]
+# core-0860 (N5, the cleanup reset): a lock while making a project or a thread leaves nothing behind and nothing staged.
+for _key in ("extras/status/page_action.py", "tests/test_commit_new_lock.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_commit_new_lock"]
+# core-0860 (S6): the App's receipts hold the whole commit id; undo takes an id, not a name.
+for _key in ("extras/status/page_action.py", "template/System/tools/scaffold.py", "tests/test_receipt_ids.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_receipt_ids"]
 
 
 def touched(files, names=None):

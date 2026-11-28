@@ -402,7 +402,7 @@ class TestRenameAndMove(LifeCase):
                 self.assertEqual("saved", out["state"], out)
                 self.assertEqual(theirs["say"], out["say"])
                 self.same_commit(twin)
-                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "HEAD").strip(), theirs["commit"])
+                self.assertEqual(git(twin[0] / "Zones" / "Work", "rev-parse", "--short", "HEAD").strip(), theirs["commit"])      # the page's is short
                 self.assertEqual(40, len(out["commit"]))
                 self.assertEqual(self.head(), out["commit"])
                 self.assertEqual("", git(self.work, "status", "--porcelain").strip())

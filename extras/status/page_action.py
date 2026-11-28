@@ -3085,7 +3085,7 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
     # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
     said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []))
-    code, head = git(zone, "rev-parse", "HEAD")
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
@@ -3118,7 +3118,7 @@ def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: 
     are not Garrick's to write, so the reply says that they still name the old
     path."""
     said = scaffold(ws, "move", *which, "--to", to)
-    code, head = git(zone, "rev-parse", "HEAD")
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled

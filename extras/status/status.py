@@ -2672,6 +2672,31 @@ setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.rel
 """
 
 
+# What the page would lose to a reload (V1): text typed in a field, an open dialog, a drag under way, ticks not yet sent.
+# It tells the app over the bridge when that starts and when it ends, so the app holds a newer page until then. It only
+# reads: the sent and queued ticks stay where WORK_JS keeps them, in this window's storage, and it moves no state of the
+# page's. A page in a browser has no bridge, and the script stops at once. It runs in a script element of its own.
+BUSY_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+var was=false,drag=false,typed=[];
+function field(e){if(!e||!e.tagName)return false;var t=e.tagName;
+if(t==='TEXTAREA')return true;if(t==='INPUT')return!/^(checkbox|radio|button|submit|reset|file|image|range|color|hidden)$/i.test(e.type||'');
+return!!e.isContentEditable}
+function ticks(){try{var q=JSON.parse(sessionStorage.getItem('garrick-work-ticks')||'[]');return!!q&&q.length>0}catch(x){return false}}
+function lose(){typed=typed.filter(function(e){return e.isConnected});
+return typed.some(function(e){return(e.isContentEditable?e.textContent:e.value)!==''})}
+function busy(){var a=document.activeElement;
+return(field(a)&&document.hasFocus())||lose()||!!document.querySelector('dialog[open]')||drag||ticks()}
+function tell(){var b=busy();if(b!==was){was=b;host.postMessage({busy:b})}}
+document.addEventListener('input',function(e){if(field(e.target)&&typed.indexOf(e.target)<0)typed.push(e.target);tell()},true);
+['focusin','focusout','change'].forEach(function(n){document.addEventListener(n,function(){setTimeout(tell,0)},true)});
+document.addEventListener('dragstart',function(){drag=true;tell()},true);
+['dragend','drop'].forEach(function(n){document.addEventListener(n,function(){drag=false;setTimeout(tell,0)},true)});
+window.addEventListener('blur',function(){setTimeout(tell,0)});window.addEventListener('focus',function(){setTimeout(tell,0)});
+setInterval(tell,400);tell()})();
+"""
+
+
 # The menu bar. Inside Garrick.app the page hands the app what
 # its menu bar icon lists: the build's own rows (#menu-data, whose absence
 # takes the icon away), with the zone the graph shows and the
@@ -8878,7 +8903,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, SETREMOTE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               BUSY_JS, MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, SETREMOTE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">%s'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

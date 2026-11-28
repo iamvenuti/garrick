@@ -251,6 +251,8 @@ let askMoreLink = "garrick-ask-more:"
 // it could not be run, or it ended with no reply. They are the table's rows "ask-start" and "ask-stopped", and a test holds them.
 // The window's subtitle when a rebuild failed or could not start (#511): the page shown is the last good one, so say it may be old.
 let pageDidNotRebuild = "This page did not rebuild, so it may be old."
+// The window's subtitle while a newer page waits for the page on show to have nothing to lose (V1).
+let pageWaiting = "A newer page is waiting"
 let askDetailLink = "garrick-ask-details:"
 let askTryLink = "garrick-ask-again:"
 let askNoStart: [String: Any] = ["code": "ask-start", "say": "Ask did not start.", "next": "Try again"]
@@ -716,6 +718,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var shown: Date?
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
+	var busy = false                  // BUSY_JS says the page has something a reload would lose (V1)
+	var newerWaiting = false          // a newer page is waiting for the page to be idle
 	var shownGeneration: Int64?       // the generation of the page on show, where it carries one (V2: an older page never replaces a newer)
 	var heard: [String] = []          // what --check caught instead of acting on
 	var bridgeLog: [[String: Any]] = []   // --drive: every message the page sent over the bridge, in order
@@ -934,7 +938,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 		case "state":
 			driveSay(["id": id, "loads": loads, "subtitle": window.subtitle, "bridge": bridgeLog.count, "active": NSApp.isActive,
-			          "visible": window.isVisible, "key": window.isKeyWindow])
+			          "visible": window.isVisible, "key": window.isKeyWindow, "busy": busy, "held": newerWaiting])
 		case "bridge":
 			driveSay(["id": id, "messages": bridgeLog])
 			if command["clear"] as? Bool == true { bridgeLog = [] }
@@ -1021,6 +1025,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func load() {
 		shown = modified(page)
 		shownGeneration = pageGeneration(page)
+		busy = false                  // the page that loads says so itself
+		clearHold()
 		pageErrors = []
 		web.loadFileURL(page, allowingReadAccessTo: generated)
 	}
@@ -1036,10 +1042,32 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			shown = modified(page)
 			return
 		}
+		// The page has something a reload would lose: it stays as it is, with its text, its caret and its dialog, however
+		// many builds come meanwhile. When it is idle again the newest page loads once. There is no time limit, and
+		// leaving the app does not end the hold: only the page says it is idle.
+		if !force && busy {
+			shown = modified(page)
+			newerWaiting = true
+			window.subtitle = pageWaiting
+			return
+		}
 		shown = modified(page)
 		shownGeneration = found
+		busy = false
+		clearHold()
 		pageErrors = []
 		web.reload()
+	}
+
+	// The page said it is busy or idle. Idle, with a newer page waiting, loads the newest page, once.
+	func setBusy(_ now: Bool) {
+		busy = now
+		if !now && newerWaiting { newerWaiting = false; reload() }
+	}
+
+	func clearHold() {
+		newerWaiting = false
+		if window.subtitle == pageWaiting { window.subtitle = "" }
 	}
 
 	func freshen(force: Bool = false) {
@@ -1063,7 +1091,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			DispatchQueue.main.async {
 				self.rebuilding = false
 				if driving { self.driveSay(["rebuilt": Int(proc.terminationStatus)]) }
-				self.window.subtitle = proc.terminationStatus == 0 ? "" : pageDidNotRebuild
+				self.window.subtitle = proc.terminationStatus == 0 ? (self.newerWaiting ? pageWaiting : "") : pageDidNotRebuild
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
 				if self.again { self.again = false; self.rebuild() }
@@ -1128,6 +1156,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
 		guard let body = message.body as? [String: Any] else { return }
 		if driving { bridgeLog.append(body) }          // what the page sent, for the cases to count
+		// BUSY_JS's: whether the page has text, a dialog, a drag or ticks a reload would lose. Read only: it never reaches act().
+		if let b = body["busy"] as? Bool { return setBusy(b) }
 		if let e = body["pageError"] as? [String: Any] {   // appScript's: the page's script stopped somewhere
 			pageErrors = Array((pageErrors + [e]).suffix(5))
 			return

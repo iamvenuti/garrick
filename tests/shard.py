@@ -190,6 +190,9 @@ for _key in ("extras/status/app/Garrick.swift", "extras/status/app/make-app.sh",
 # reload-0860 (V2): the page is published in order.
 for _key in ("extras/status/status.py", "tests/test_page_publication.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_publication"]
+# reload-0860 (V1): the hold, read from the page's script and the app's source.
+for _key in ("extras/status/status.py", "extras/status/app/Garrick.swift", "tests/test_page_hold.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_hold"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

@@ -1731,6 +1731,7 @@ def cmd_move(root, args, today):
     if getattr(args, "plan", False):
         return make_plan()
     plan_still_holds(args, make_plan)
+    del unresolved[:]                       # the recheck's plan listed them once; the write below lists them again, once
     clear_machine_made(zone_dir, thread_dir, made)
     try:
         threads.mkdir(exist_ok=True)
@@ -2299,6 +2300,8 @@ def cmd_undo(root, args, today):
     if not re.fullmatch(r"[0-9a-f]{7,40}", args.commit or ""):
         raise Refusal(f"{args.commit} is not a commit id: give the whole id the change reported.")
     wanted = git_value(["rev-parse", "--verify", "-q", args.commit + "^{commit}"], zone_dir).strip()
+    if wanted and not wanted.startswith(args.commit):          # git reads a branch or tag named like hex before an id
+        raise Refusal(f"{args.commit} is not a commit id: give the whole id the change reported.")
     if not wanted:
         raise Refusal(f"{zone_dir.name} has no commit {args.commit}.")
     if wanted != head:

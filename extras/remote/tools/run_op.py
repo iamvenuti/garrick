@@ -32,7 +32,11 @@ PAGE_PYTHON = "/usr/bin/python3"
 RUN_TIMEOUT = 420           # seconds: the lock wait (45), a commit and its wall check (300), and slack
 LINE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire")
 JSON_VERBS = ("note-add", "todo-add", "park", "wake")
+LIFE_VERBS = ("new-project", "new-thread", "rename", "move", "undo")      # #724: make, rename, move and undo (lifecycle.py)
+JSON_VERBS = JSON_VERBS + LIFE_VERBS
+JSON_VERBS = JSON_VERBS + ("wrap",)           # the wrap's reply is the page action's, as a park's is
 LONG_WAY = "It took longer than expected and may or may not have been saved. Check the zone at the Mac before trying again."
+WALL_SAYS = "A wall holds some material back from this project, so I have not used it. Nothing was written."   # operations.WALL_REFUSAL
 CRASHED = "The save did not finish. Nothing more was done. Check the zone at the Mac before trying again."
 
 
@@ -83,6 +87,14 @@ def command(ws: str, rec: dict):
             if f.get(field):
                 req[field] = f[field]
         return [python(), str(Path(ws) / "System" / "tools" / "scaffold.py"), "--root", ws, "checkpoint"], json.dumps(req)
+    if verb in LIFE_VERBS:
+        return base, json.dumps(life_request(rec))
+    if verb == "wrap":                    # the words go in `input`, as the page action reads them; the tool checks them again
+        req = {"verb": "wrap", "zone": zone, "op": rec["id"], "project": f["project"],
+               "input": {k: f[k] for k in ("resume", "entry", "message", "todo", "checkpoint") if f.get(k) is not None}}
+        if f.get("thread"):
+            req["thread"] = f["thread"]
+        return base, json.dumps(req)
     req = {"verb": verb, "zone": zone, "op": rec["id"]}
     for field in ("project", "thread", "text", "title", "target", "date"):
         if f.get(field) is not None:
@@ -91,6 +103,39 @@ def command(ws: str, rec: dict):
 
 
 LINE_FIELDS = {"todo-done": (), "todo-undo": (), "todo-date": ("date",), "todo-edit": ("text",), "todo-retire": ("reason",)}
+
+# The fields each of those verbs sends to the page action: its own, and no other. `plan`, `confirm`, `heading` and a party's
+# adding are never among them: a rename's confirmation is the service's, and is checked before this runs.
+LIFE_FIELDS = {"new-project": ("name", "party", "thread"), "new-thread": ("project", "name"), "rename": ("project", "thread", "to"),
+               "move": ("project", "thread", "to"), "undo": ("commit",)}
+PARTY_SAY = "That party is not one this zone can use. A party is added at the Mac."
+PARTY_WORDS = re.compile(r"is not a party tag in System/context\.md|is a party of ")
+
+
+def life_request(rec: dict) -> dict:
+    f = rec.get("fields") or {}
+    req = {"verb": rec["verb"], "zone": rec["zone"], "op": rec["id"]}
+    for field in LIFE_FIELDS[rec["verb"]]:
+        if f.get(field) is not None:
+            req[field] = f[field]
+    return req
+
+
+def clean_say(say: str) -> str:
+    """The words of the page action, but for the one refusal that lists the parties of every zone: a walled zone's names
+    are not read out to a connection that does not reach it."""
+    return PARTY_SAY if PARTY_WORDS.search(say or "") else say
+
+
+def life_receipt(made: dict, ws: str, rec: dict) -> dict:
+    """The receipt of one of those verbs: the words cleaned, and the commit a new project or thread made, which the page
+    action's reply does not carry, from the core's own commit record (the trailer on the commit names this operation)."""
+    made = dict(made, say=clean_say(made.get("say", "")))
+    if made.get("ok") and not made.get("commit") and rec["verb"] in ("new-project", "new-thread"):
+        got = core_outcome(ws, Path(ws) / "Zones" / rec["zone"], rec["id"])
+        if isinstance(got, dict) and got.get("result") == "done" and got.get("commit"):
+            made["commit"] = str(got["commit"])[:64]
+    return made
 
 
 def with_state(argv, stdin, env, ws):
@@ -133,6 +178,13 @@ def repeat_receipt(reply, text: str, code: int = 1):
     return {"ok": False, "say": REPEAT_RUNNING if said.lstrip().startswith(RUNNING_START) else REPEAT_DONE}
 
 
+def wall_words(say: str) -> bool:
+    """Whether a refusal of a wrap is the zone's commit hook: its text names the zone, the note and the way to let it through,
+    none of which a remote caller may be told. Any refusal the hook makes counts; a refusal of the wrap tool's own is a failure."""
+    low = say.lower()
+    return say.startswith("Refused:") or "commit refused" in low or "walled" in low or "wall" in low
+
+
 def receipt(verb: str, code: int, out: str, err: str) -> dict:
     """What came back, as a receipt: whether it saved, in the words of the tool, and the commit when it names one."""
     out, err = (out or "").strip(), (err or "").strip()
@@ -151,6 +203,8 @@ def receipt(verb: str, code: int, out: str, err: str) -> dict:
         if isinstance(reply, dict):
             say = str(reply.get("say") or "").strip() or ("Done." if reply.get("ok") else "That was refused.")
             made = {"ok": bool(reply.get("ok")), "say": say[:600]}
+            if verb == "wrap" and not made["ok"] and wall_words(say):
+                made["say"] = WALL_SAYS                     # the hook's own text names the zone and the note it refused
             if verb == "checkpoint":
                 made["wrote"] = bool(reply.get("wrote"))
             if reply.get("commit"):
@@ -215,6 +269,8 @@ def main(argv=None) -> int:
             stdin = with_state(argv_, stdin, env, ws)
         done = subprocess.run(argv_, input=stdin, capture_output=True, text=True, timeout=RUN_TIMEOUT, env=env, cwd=ws)
         made = receipt(rec["verb"], done.returncode, done.stdout, done.stderr)
+        if rec["verb"] in LIFE_VERBS:
+            made = life_receipt(made, ws, rec)
         state_now = "saved" if made["ok"] else "refused"
     except subprocess.TimeoutExpired:
         state_now, made = "unknown", {"ok": False, "say": LONG_WAY}

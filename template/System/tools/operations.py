@@ -277,7 +277,7 @@ DECLARED: Dict[str, Op] = {
     "new-thread": _op(("zone", "project", "name", "spoken",
                        "papers",
                        ), ("project", "name"), "zone", True, "safe"),
-    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
+    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken", "plan"),
                       ("kind", "name", "to"), "none"),
     "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
@@ -647,6 +647,9 @@ NO_FIELD = "{verb} takes {names}"
 # check refused ends on this and nothing else (#107, #172): no party, no
 # person, no subject, no tag, and no refusal wording of this file's added to it.
 WALL_REFUSAL = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+# A git lock that outlasted the short wait is not a check's refusal (#722). say() ends on this sentence, with what
+# follows it in `why` (the lock file's age, in Details only), and never begins "Not done".
+LOCK_REFUSAL = "Not saved: another program was using this zone's history. Try again in a moment."
 ONE_FIELD = "no {name} field"
 STALE_WHY = {
     ("line", None): "that line has changed since the page was built; it rebuilds now, try again",
@@ -710,6 +713,8 @@ def say(outcome: str, verb: str, req: dict, why: str = "", said: str = "") -> st
         return said or "Done."
     if outcome == "refused" and " ".join(str(why or "").split()) == WALL_REFUSAL:
         return WALL_REFUSAL
+    if outcome == "refused" and LOCK_REFUSAL in " ".join(str(why or "").split()):
+        return " ".join(str(why).split())[" ".join(str(why).split()).index(LOCK_REFUSAL):]
     zone = req.get("zone") if isinstance(req.get("zone"), str) else "the zone"
     return SAYINGS[outcome].format(why=_sentence(why, outcome), what=_what(verb, req), zone=zone)
 

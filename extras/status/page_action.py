@@ -439,6 +439,7 @@ _OPS_LIBS: dict = {}
 # The action in hand, for the two places that know a phase: when the zone's lock
 # is had, and when the wall check starts. None for anything without a record.
 CURRENT = None
+CALLER = None                   # the `via` of the request in hand, which lock_why() reads
 # The commit record of the action in hand (operations.py, #716): the repository it is for and the trailers its commit
 # there carries. None for anything that makes no commit or keeps no record.
 RECORD = None
@@ -496,6 +497,12 @@ def clock(name: str):
 
 GIT_TIMEOUT = clock("GIT_TIMEOUT")
 COMMIT_TIMEOUT = clock("COMMIT_TIMEOUT")
+# A git command that meets the zone's index.lock waits and tries again (#722): at most LOCK_TRIES more tries, LOCK_PAUSE
+# seconds apart, so about four seconds in all. Only that lock: a command that failed for any other reason is not tried again.
+LOCK_TRIES = 8
+LOCK_PAUSE = 0.5
+LOCK_REFUSAL = "Not saved: another program was using this zone's history. Try again in a moment."    # operations.py's, if it has one
+LOCK_STALE = 300            # seconds: a lock file older than this may be left over from a program that stopped
 
 
 def refuse_undeclared(ws: Path, req: dict) -> None:
@@ -777,7 +784,65 @@ def with_trailers(zone: Path, args) -> tuple:
     return args[:at] + ("-m", rec["trailers"]) + args[at:]
 
 
-def git(zone: Path, *args, timeout: float = None):
+def lock_said(said) -> bool:
+    """Whether git said it could not take the zone's index.lock."""
+    text = str(said or "")
+    return "index.lock" in text and ("Unable to create" in text or "Another git process" in text)
+
+
+def git(zone: Path, *args, timeout: float = None, tries: int = None):
+    """One git command in the zone, tried again a few times if another program holds its index.lock (#722).
+    Nothing is written before git takes the lock, so a second try cannot write twice."""
+    tries_max = LOCK_TRIES if tries is None else tries
+    for tries in range(tries_max + 1):
+        code, said = git_once(zone, *args, timeout=timeout)
+        if code is None or code == 0 or tries == tries_max or not lock_said(said):
+            return code, said
+        time.sleep(LOCK_PAUSE)
+    return code, said
+
+
+def lock_why(zone: Path) -> str:
+    """The words for a lock that outlasted the wait: the headline, and, when the lock file is old, that it may be
+    stale and which file it is, named from the zone (`.git/index.lock`), never by the machine's own path. A caller
+    that is not at this Mac (CALLER "remote") gets the headline alone: it cannot remove the file and is not told to."""
+    why = LOCK_REFUSAL
+    if CALLER == "remote":
+        return why
+    code, out = git_once(zone, "rev-parse", "--git-path", "index.lock", timeout=10)
+    path = Path(out.strip()) if code == 0 and out.strip() else Path(".git") / "index.lock"
+    path = path if path.is_absolute() else Path(zone) / path
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return why
+    if age >= LOCK_STALE:
+        try:
+            name = path.resolve().relative_to(Path(zone).resolve()).as_posix()
+        except (OSError, ValueError):
+            name = ".git/index.lock"
+        why += " The lock file %s is %s old and may be stale: if no other program is using this zone, remove it." % (
+            name, how_long(age))
+    return why
+
+
+def reason(zone: Path, code, said: str) -> str:
+    """Why a git add or commit did not go through, in a sentence: the lock's own words when git could not take the
+    lock, else git's last line, else `said` as it stands (the code is None when the time ran out)."""
+    if code is not None and lock_said(said):
+        return lock_why(zone)
+    if code is None:
+        return said
+    return (str(said).strip().splitlines() or ["git refused"])[-1]
+
+
+def unstage_after_lock(zone: Path, *rels) -> None:
+    """Take `rels` out of the index again after a commit that did not happen. It waits for a lock three times as
+    long as a commit does, so a file is not left staged because the lock that stopped the commit was still held."""
+    git(zone, "reset", "-q", "--", *rels, timeout=10, tries=LOCK_TRIES * 3)
+
+
+def git_once(zone: Path, *args, timeout: float = None):
     """One git command in the zone: (exit code, what it said). It runs in a
     process group of its own, so a hook that hangs, or a signing key waiting
     for its passphrase, is stopped with it when the time is up: politely
@@ -827,8 +892,7 @@ def committing(zone: Path, rel, message: str) -> tuple:
         if code is None:
             return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code != 0:
-        why = said.strip().splitlines() if code is not None else [said]
-        return code or 1, why[-1] if why else "git refused"
+        return code or 1, reason(zone, code, said)
     return 0, ""
 
 
@@ -848,7 +912,7 @@ def commit(zone: Path, note: Path, before: bytes, message: str, *, wall: Optiona
             ours = False
         if ours:
             note.write_bytes(before)
-        git(zone, "reset", "-q", "--", rel, timeout=10)
+        unstage_after_lock(zone, rel)
         if code is None and ours:
             raise Refused("not committed: %s, so the note was put back as it was. Make the change again and commit "
                           "it by hand: that commit waits for the check and goes through" % why)
@@ -1716,7 +1780,9 @@ def commit_held(ws: Path, held: list, version: str, *, wall: Optional[str]) -> l
             if code is None:
                 why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
         if code != 0:
-            git(folder, "reset", "-q", "--", *specs, timeout=10)
+            unstage_after_lock(folder, *specs)
+            if code is not None and lock_said(why):
+                why = lock_why(folder).rstrip(".")
             lines = [x for x in (why or "").strip().splitlines() if x.strip()]
             if wall and why and code is not None and WALL_LINE.match(lines[-1] if lines else ""):
                 raise Refused(wall)                # the rules' sentence, as it stands
@@ -2606,6 +2672,8 @@ def manage(ws: Path, req: dict) -> str:
         kind = req.get("kind")
         if kind not in ("project", "thread", "rename", "move"):
             raise Refused("not a kind of name: %r" % kind)
+        if req.get("plan") is not None and (kind not in ("rename", "move") or req.get("plan") is not True):
+            raise Refused("plan is for the check of a rename or a move: say plan true, or leave it out")
         req = dict(req, verb={"project": "new-project", "thread": "new-thread"}.get(kind, kind))
         return manage_args(ws, zone, req, check=True)
     with zone_lock(zone):
@@ -2726,11 +2794,13 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if not thread:
             raise Refused("no thread given: only a thread moves")
         if check:
-            return scaffold(ws, "move", *which, "--to", to, *flag)
+            said = scaffold(ws, "move", *which, "--to", to, *flag)
+            return with_plan(ws, "move", which, to, said) if req.get("plan") is True else said
         return moved_here(ws, zone, project, thread, to, which)
     if verb == "rename":
         if check:
-            return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+            said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+            return with_plan(ws, "rename", which, field(req, "to"), said) if req.get("plan") is True else said
         return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
@@ -2740,6 +2810,17 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
         return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def with_plan(ws: Path, verb: str, which: list, to: str, said: str) -> dict:
+    """The check of a rename or a move with what it would write (#724): the same words, and beside them the plan
+    scaffold.py makes with the function the change itself writes with, which writes nothing. It refuses in the
+    change's own words where the change would refuse (changes not committed, a hub line it cannot tell apart)."""
+    try:
+        plan = json.loads(scaffold(ws, verb, *which, "--to", to, "--plan"))
+    except ValueError:
+        raise Refused("the plan could not be read, so nothing is shown as going to change")
+    return {"say": said, "plan": plan}
 
 
 def said_all(said: str, most: int = 1200) -> str:
@@ -3068,8 +3149,9 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     files = [ws / "System" / n for n in ("context.md", "names.md")]
     held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
-    said = scaffold(ws, "rename", *which, "--to", to)
-    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
+    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []))
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
@@ -3102,7 +3184,7 @@ def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: 
     are not Garrick's to write, so the reply says that they still name the old
     path."""
     said = scaffold(ws, "move", *which, "--to", to)
-    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled
@@ -4087,7 +4169,7 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
             why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code == 0:
         return
-    why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
+    why = reason(zone, code, why)
     try:
         ours = all(n.read_bytes() == wrote for (n, _), wrote in zip(notes, mine))
     except OSError:
@@ -4098,7 +4180,7 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
                 n.unlink()
             else:
                 n.write_bytes(before)
-    git(zone, "reset", "-q", "--", *rels, timeout=10)
+    unstage_after_lock(zone, *rels)
     if not ours:
         raise Refused("not committed: %s. A note was edited meanwhile, so it was left as it is" % why)
     if wall and WALL_LINE.match(why):
@@ -4564,8 +4646,8 @@ def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str,
                         timeout=deadline - time.time())
     if code == 0:
         return ""
-    git(zone, "reset", "-q", "--", *changed, timeout=10)
-    why = why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    unstage_after_lock(zone, *changed)
+    why = reason(zone, code, why)
     return wall if wall and code is not None and WALL_LINE.match(why) else why
 
 
@@ -6379,7 +6461,7 @@ def wrap_thread(ws: Path, req) -> dict:
             data[key] = req[key]
     try:
         done = subprocess.run([sys.executable, "-B", str(tool), "--root", str(ws), "--json"], input=json.dumps(data),
-                              capture_output=True, text=True, timeout=600)
+                              capture_output=True, text=True, timeout=600, env=dict(os.environ, **record_env()))
         got = json.loads(done.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise Refused("the wrap did not answer; look at git status in the zone before trying again")
@@ -6387,7 +6469,10 @@ def wrap_thread(ws: Path, req) -> dict:
         raise Refused("the wrap did not answer in words this page reads")
     if got["outcome"] != "saved":
         raise Refused(got["say"])
-    return {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+    made = {"say": got["say"] + (" " + " ".join(got.get("notes") or []) if got.get("notes") else "")}
+    if isinstance(got.get("commit"), str) and got["commit"]:
+        made["commit"] = got["commit"]
+    return made
 
 
 _USAGE = None
@@ -6556,6 +6641,9 @@ PAGE_ONLY = ("walls-look", "walls-allow",
 # settings, a job, and what reaches the network), and every verb whose scope is the machine (a tab, an app, a job).
 # The scope is read from operations.DECLARED, so a verb added there is judged when it is declared.
 KEPT_FROM_TELEGRAM = ("rename", "move", "delete", "undo", "settings", "run", "release-check", "release-update")
+# Of those, what a remote assistant may do since 0.85.0 (#724): the extra serves them behind a preview the owner
+# confirms and a reach of its own. A rename, a move and an undo of one; never a delete, a setting or a job.
+REMOTE_MAY = ("rename", "move", "undo")
 REMOTE_REFUSED = "this is done at the Mac, not from a remote assistant"
 
 
@@ -6566,7 +6654,8 @@ def remote_refusal(req, ops=None):
     declared = getattr(ops, "DECLARED", None) if ops is not None else None
     if not isinstance(verb, str):
         return REMOTE_REFUSED
-    if verb in PAGE_ONLY or verb == "new-project-party" or verb in KEPT_FROM_TELEGRAM or verb in CMUX_VERBS:
+    if verb in PAGE_ONLY or verb == "new-project-party" or (verb in KEPT_FROM_TELEGRAM and verb not in REMOTE_MAY) \
+            or verb in CMUX_VERBS:
         return REMOTE_REFUSED
     if page_only_answer(req):
         return REMOTE_REFUSED
@@ -6730,6 +6819,7 @@ FAILURES = (
     # The layout dialog (#511): its look only reads, so it may be asked again; its change writes, so it may not.
     ("layout-look", "Garrick could not show what would move.", "Try again", "retry", "Open the dialog and choose Try again."),
     ("layout", "Nothing was moved.", "Show why", "why", "Open the dialog and choose Show why."),
+    ("lock", LOCK_REFUSAL, "Try again", "retry", "Open the page and choose Try again."),
     ("remote", "Remote access was not changed.", "Show why", "why", "Open Settings and choose Show why."),
     ("other", "This did not finish.", "Try again", "retry", "Open the page for the details."),
 )
@@ -6742,6 +6832,8 @@ def failure_code(out: dict, req) -> str:
     say = str(out.get("say") or "")
     if say.startswith("A wall holds "):
         return "wall"
+    if LOCK_REFUSAL in " ".join(say.split()):
+        return "lock"
     if out.get("failure") in FAILURE_CODES:
         return out["failure"]           # a refusal that names its own row, as the two Settings actions do
     if isinstance(req, dict) and req.get("verb") == "continue":
@@ -6808,6 +6900,7 @@ def ask_for_page(ws: Path) -> bool:
 
 
 _NO_CALLER = object()
+VIA = None              # who the request now being done came from, for the few handlers that differ by caller (#724)
 
 
 def perform(ws: Path, req, ops=None, via=_NO_CALLER):
@@ -6829,11 +6922,13 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
-    global CURRENT
+    global CURRENT, VIA, CALLER
     if via is _NO_CALLER:
         raise TypeError("perform() needs via=: name the caller, one of %s" % ", ".join(CALLERS))
     out, logged, run, outcome, why = None, None, None, None, ""
     receipt = None
+    VIA = via
+    CALLER = via
     try:
         try:
             joined = None
@@ -6842,6 +6937,10 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
                 return queued, None, ""         # a roaming machine's Todo action waits in the outbox for the server (#612)
             if via == "remote" and remote_refusal(req, ops):
                 raise Refused(REMOTE_REFUSED)
+            if via == "remote" and isinstance(req, dict) and req.get("verb") == "wrap" and isinstance(req.get("input"), dict) \
+                    and ("memory" in req["input"] or "lock" in req["input"]):
+                # A remote caller holds no lock, and a memory pointer is a file outside the workspace, on the Mac (#723).
+                raise Refused("a wrap from a remote assistant takes neither memory nor lock: leave them out")
             if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).
@@ -6900,6 +6999,8 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None
+        VIA = None
+        CALLER = None
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why

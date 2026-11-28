@@ -97,8 +97,31 @@ class TestWhatRemoteIsRefused(RemoteCase):
 
     def test_the_verbs_the_engine_keeps_from_a_telegram_session(self):
         for verb in pa.KEPT_FROM_TELEGRAM:
+            if verb in pa.REMOTE_MAY:
+                continue
             with self.subTest(verb=verb):
                 self.refused({"verb": verb, "zone": "Work"})
+
+    def test_a_rename_a_move_and_an_undo_are_the_only_ones_of_them_a_remote_assistant_may_send(self):
+        """#724: the extra serves these three behind a preview the owner confirms. A delete, a setting, a job and a
+        release step stay at the Mac."""
+        self.assertEqual(("rename", "move", "undo"), tuple(pa.REMOTE_MAY))
+        for verb in pa.REMOTE_MAY:
+            self.assertIn(verb, pa.KEPT_FROM_TELEGRAM)
+            with self.subTest(verb=verb):
+                self.assertIsNone(pa.remote_refusal({"verb": verb, "zone": "Work"}, pa.ops_lib(self.root)))
+                out, _, _ = self.go({"verb": verb, "zone": "Work"})        # reaches the handler: refused for what it lacks
+                self.assertFalse(out["ok"], verb)
+                self.assertNotEqual(pa.REMOTE_REFUSED, out["say"], verb)
+        for verb in ("delete", "settings", "run", "release-check", "release-update"):
+            with self.subTest(verb=verb):
+                self.refused({"verb": verb, "zone": "Work"})
+
+    def test_what_a_session_may_not_send_a_remote_assistant_may_not_either_for_the_check_of_a_name(self):
+        """The plan of a rename or a move is the check of a name with `plan`: it is refused for any other kind."""
+        out, _, _ = self.go({"verb": "check-name", "zone": "Work", "kind": "project", "name": "Cedar", "plan": True})
+        self.assertFalse(out["ok"])
+        self.assertIn("plan is for the check of a rename or a move", out["say"])
 
     def test_the_engine_names_each_of_them(self):
         """The list is the one engine.py's comment gives above INTAKE; a verb dropped there or here fails."""

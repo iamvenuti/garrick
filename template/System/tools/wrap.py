@@ -120,10 +120,13 @@ def failed(why: str) -> Stop:
 # The input
 
 
+LINE_ENDS = "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"     # what str.splitlines() reads as a line end besides "\n"
+
+
 def one_line(value, field: str, limit: int = 2000) -> str:
     if not isinstance(value, str) or not value.strip():
         raise failed("%s is empty or is not text" % field)
-    if "\n" in value or "\r" in value:
+    if "\n" in value or any(c in value for c in LINE_ENDS) or len(value.splitlines()) > 1:
         raise failed("%s must be one line" % field)
     if len(value) > limit:
         raise failed("%s is too long" % field)
@@ -135,8 +138,8 @@ def prose(value, field: str, limit: int = 6000) -> str:
     change the note's structure."""
     if not isinstance(value, str) or not value.strip():
         raise failed("%s is empty or is not text" % field)
-    if len(value) > limit or "\r" in value:
-        raise failed("%s is too long, or has carriage returns" % field)
+    if len(value) > limit or any(c in value for c in LINE_ENDS):
+        raise failed("%s is too long, or has a line end other than a new line" % field)
     for line in value.splitlines():
         flat = line.strip()
         if re.match(r"^(#{1,6}\s|---+\s*$|\||<!--)", flat):
@@ -396,6 +399,16 @@ def write_memory(where: Path, job: dict, rel: str, today: datetime.date) -> str:
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + list(args), cwd=str(repo), env=gl.own_repo_env(), capture_output=True, text=True)
+
+
+def commit_trailers() -> List[str]:
+    """`-m <trailers>` for a commit made on behalf of a recorded action: the operation's id and payload hash, which the
+    status page's page_action.py hands over in GARRICK_COMMIT_TRAILERS (#716), so that git's history says whether the
+    wrap was committed. Only that exact shape is taken; anything else is left out, as scaffold.py does."""
+    text = os.environ.get("GARRICK_COMMIT_TRAILERS", "")
+    if re.fullmatch(r"Garrick-Op: [0-9a-f]{8,32}\nGarrick-Payload: [0-9a-f]{64}", text):
+        return ["-m", text]
+    return []
 
 
 def literal(path: str) -> str:
@@ -662,7 +675,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
         if stray:
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
             raise failed("other files were already staged in the %s zone, so nothing was committed" % job["zone"])
-        done = git(zone, "commit", "-q", "-m", job["message"])
+        done = git(zone, "commit", "-q", "-m", job["message"], *commit_trailers())
         if done.returncode != 0:
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
             said = (done.stderr + "\n" + done.stdout)

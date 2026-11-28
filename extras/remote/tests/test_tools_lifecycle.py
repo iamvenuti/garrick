@@ -561,6 +561,11 @@ class TestWhatAPreviewHoldsStaysInTheReach(LifeCase):
             text = json.dumps(out)
             for line in self.NOTE_LINES:
                 self.assertNotIn(line, text)
+        for kind, fields in (("rename", dict(project="Acme Review", thread="Pricing", to="Pricing")),
+                             ("move", dict(project="Acme Review", thread="Pricing", to="Cedar"))):     # the check says the same, and no more
+            out = w.prepare("check-name", "Work", kind=kind, **fields)
+            self.assertEqual("not_prepared", out["error"], out)
+            self.assertEqual(lifecycle.NEEDS_READ, out["say"])
         self.assertEqual([], list(w.store.all()))
         self.assertEqual("prepared", w.prepare("new-thread", "Work", project="Cedar", name="Budget")["state"])   # the others need no read
 
@@ -746,10 +751,13 @@ class TestWhatIsSentAndKept(LifeCase):
     def stand_in(self):
         fake = self.root / "System" / "status" / "page_action.py"
         seen = Path(self._tmp.name) / "life-seen.jsonl"
+        # Only a run as a program is a request. The status build that a scaffold run in set-up leaves behind imports this file a few seconds
+        # later (on a slow machine, in the middle of a test), and an import is no request: it must not be counted as one.
         fake.write_text(
             "import json, sys\n"
-            "open(%r, 'a').write(json.dumps({'argv': sys.argv[1:], 'stdin': sys.stdin.read()}) + '\\n')\n"
-            "print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd1'}}))\n" % str(seen))
+            "if __name__ == '__main__':\n"
+            "    open(%r, 'a').write(json.dumps({'argv': sys.argv[1:], 'stdin': sys.stdin.read()}) + '\\n')\n"
+            "    print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd1'}}))\n" % str(seen))
         return seen
 
     def test_the_request_is_built_from_the_fields_of_the_verb_and_names_the_remote_caller(self):

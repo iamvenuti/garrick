@@ -4,6 +4,7 @@
     python3 tools/app_check.py                  # build a scratch app, run every case
     python3 tools/app_check.py --only edit      # one case, by a word of its name
     python3 tools/app_check.py --list           # the cases
+    python3 tools/app_check.py --shots DIR      # the window with "A newer page is waiting", light and dark, at 390 and 1280 wide
 
 What it does, and does not do. It installs a fixture workspace from this repository into a temporary folder, with a
 home folder of its own, and builds a scratch app (make-app.sh --scratch) beside it. The scratch app has an identity
@@ -27,11 +28,11 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 from queue import Empty, Queue
 
 ROOT = Path(__file__).resolve().parent.parent
-MAKE_APP = ROOT / "extras" / "status" / "app" / "make-app.sh"
 GENERATION_META = '<meta name="garrick-generation" content="%s">'
 GENERATION_RE = re.compile(r'<meta name="garrick-generation" content="(\d+)">')
 WAITING = "A newer page is waiting"      # the window's subtitle while a reload is held (Garrick.swift)
@@ -90,7 +91,10 @@ class Fixture:
 
     def build_app(self, dest: Path) -> Path:
         env = dict(self.env, GARRICK_SWIFT_OPT="-Onone")
-        run(["bash", str(MAKE_APP), "--scratch", "--dest", str(dest), "--workspace", str(self.ws)], env)
+        # The copy the installer put in the fixture, so the app runs the fixture's own status.py and page_action.py,
+        # which a case may stand a script in for, and never a file of this repository's.
+        run(["bash", str(self.ws / "System" / "status" / "app" / "make-app.sh"), "--scratch", "--dest", str(dest),
+             "--workspace", str(self.ws)], env)
         return dest / "Garrick.app"
 
     def put(self, text: str) -> None:
@@ -146,7 +150,19 @@ class Drive:
                 continue
             if want(m):
                 return m
-            self.events.append(m)
+            self.events.append(dict(m, at=time.time()))
+        return None
+
+    def event(self, want, seconds, after=0):
+        """The first line the app said on its own (a reply to an action, a finished build) that `want` accepts."""
+        end = time.time() + seconds
+        seen = 0
+        while time.time() < end:
+            for m in self.events[seen:]:
+                if want(m) and m["at"] >= after:
+                    return m
+            seen = len(self.events)
+            self._wait(lambda m: False, 0.3)
         return None
 
     def ask(self, op, **kw):
@@ -263,6 +279,70 @@ def case_an_older_build_that_finishes_last_loses(d, fx, base):
     assert d.js(MARK) == "g2" and d.loads() == shown, "the older page replaced the newer: %r" % d.js(MARK)
 
 
+def stand_in_for_the_action_script(fx: Fixture, reply: dict):
+    """Put a script in page_action.py's place that answers every request with `reply`, and say how to put it back.
+    The scratch app is not the installed one, so page_action.py takes its requests for a session's (page_route) and
+    asks for the page as a session's do: what a request from the installed app gets is a reply with no `built`, or,
+    from a script of before this release, one with it. The app's half of that is what these cases are about."""
+    script = fx.ws / "System" / "status" / "page_action.py"
+    original = script.read_text(encoding="utf-8")
+    script.write_text("import json, sys\nsys.stdin.read()\nprint(json.dumps(%r))\n" % reply, encoding="utf-8")
+    return lambda: script.write_text(original, encoding="utf-8")
+
+
+REQUEST = {"verb": "todo-done", "zone": "Example", "file": "Todo.md", "keys": ["0000000000000000"], "op": "00000000000000aa"}
+
+
+def case_a_saved_action_builds_at_once(d, fx, base):
+    """The reply of an action of the app's own that saved says nothing of a build: the app builds at once, with the
+    check's kept result, and the page it makes is in place before the old ten seconds' wait would have ended."""
+    restore = stand_in_for_the_action_script(fx, {"ok": True, "outcome": "saved", "say": "Saved."})
+    check = fx.ws / "System" / "generated" / "status.check.json"
+    try:
+        kept = check.stat().st_mtime_ns
+        before = d.loads()
+        start = time.time()
+        d.ask("act", request=REQUEST)
+        acted = d.event(lambda m: "acted" in m, 30, after=start)
+        assert acted and acted["ok"] and acted["built"] is False, "the reply: %r" % acted
+        d.wait(lambda: d.loads() > before, 60, "the page the app built")
+        page = time.time() - start
+        print("      reply to the new page %.1f s" % page)
+        assert d.event(lambda m: "rebuilt" in m and m["rebuilt"] == 0, 1), "the app did not build the page itself"
+        assert page < 10, "the page took %.1f s: the build waited" % page
+        assert check.stat().st_mtime_ns == kept, "the check ran again: the kept result was not used"
+    finally:
+        restore()
+
+
+def case_a_reply_that_is_not_saved_builds_with_the_check(d, fx, base):
+    """A refusal is followed by a build that runs the check, as it always was."""
+    restore = stand_in_for_the_action_script(fx, {"ok": False, "say": "No."})
+    check = fx.ws / "System" / "generated" / "status.check.json"
+    try:
+        ran = check.stat().st_mtime_ns
+        before = d.loads()
+        d.ask("act", request=REQUEST)
+        d.wait(lambda: d.loads() > before, 90, "the page the app built")
+        assert check.stat().st_mtime_ns != ran, "the check did not run"
+    finally:
+        restore()
+
+
+def case_an_older_action_script_still_asks_for_the_page(d, fx, base):
+    """A page_action.py from before this release asks for the page itself and says so: the app builds no second one."""
+    restore = stand_in_for_the_action_script(fx, {"ok": True, "outcome": "saved", "say": "Saved.", "built": True})
+    try:
+        start = time.time()
+        d.ask("act", request=REQUEST)
+        acted = d.event(lambda m: "acted" in m, 30, after=start)
+        assert acted and acted["ok"] and acted["built"] is True, "the reply: %r" % acted
+        time.sleep(6)
+        assert not d.event(lambda m: "rebuilt" in m, 0.5, after=start), "the app built a page as well"
+    finally:
+        restore()
+
+
 def case_a_dialog_holds_the_page(d, fx, base):
     """An open dialog stays open while a build lands, and the page loads once it is closed."""
     d.js("document.getElementById('tadd').showModal();0")
@@ -328,13 +408,34 @@ CASES = [("edit survives a build", case_edit_survives_a_build),
          ("a drag holds the page", case_a_drag_holds_the_page),
          ("ticks waiting hold the page", case_ticks_waiting_hold_the_page),
          ("three builds make one load", case_three_builds_make_one_load),
-         ("nothing to lose loads as before", case_nothing_to_lose_loads_as_before)]
+         ("nothing to lose loads as before", case_nothing_to_lose_loads_as_before),
+         ("a saved action builds at once", case_a_saved_action_builds_at_once),
+         ("a reply that is not saved builds with the check", case_a_reply_that_is_not_saved_builds_with_the_check),
+         ("an older action script still asks for the page", case_an_older_action_script_still_asks_for_the_page)]
+
+
+def take_shots(d, fx, base, out: Path):
+    """The window while a newer page waits, as the app draws it, light and dark, narrow and wide. The app draws its own
+    window into the file: no screen is read and no permission is asked."""
+    out.mkdir(parents=True, exist_ok=True)
+    d.js(TYPE)
+    settle_page(d, fx, base, "b")
+    time.sleep(SETTLE)
+    assert WAITING in d.state()["subtitle"], "the window did not say a page is waiting"
+    for width in (390, 1280):
+        for dark in (False, True):
+            d.ask("size", width=width, height=800, dark=dark)
+            time.sleep(1.5)
+            path = out / ("waiting-%d-%s.png" % (width, "dark" if dark else "light"))
+            assert d.ask("snapshot", path=str(path)).get("ok"), "no snapshot of the window"
+            print("shot  %s" % path)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Run the app cases on a scratch app and a fixture workspace.")
     ap.add_argument("--only", action="append", default=[], metavar="WORD", help="run the cases whose name has this word (repeatable)")
     ap.add_argument("--list", action="store_true", help="name the cases and stop")
+    ap.add_argument("--shots", metavar="DIR", help="take the four pictures of the waiting subtitle into DIR, and run no case")
     ap.add_argument("--keep", action="store_true", help="leave the fixture and the app where they are, and say where")
     args = ap.parse_args(argv)
     if args.list:
@@ -353,6 +454,13 @@ def main(argv=None) -> int:
         app = fx.build_app(base / "app")
         refuse_unless_scratch(app)
         original = fx.page.read_text(encoding="utf-8")
+        if args.shots:
+            d = Drive(app, fx, base / "app-shots.log")
+            try:
+                take_shots(d, fx, original, Path(args.shots))
+            finally:
+                d.close()
+            return 0
         for n, (name, case) in enumerate(chosen):
             fx.put(original)
             d = None
@@ -368,6 +476,8 @@ def main(argv=None) -> int:
                     d.close()
     except Cannot as e:
         print("app_check: %s" % e, file=sys.stderr)
+        if os.environ.get("APP_CHECK_TRACE"):
+            traceback.print_exc()
         return 2
     finally:
         if args.keep:

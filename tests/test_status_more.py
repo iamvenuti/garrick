@@ -1885,16 +1885,16 @@ class TestParkLandsAtOnce(StatusCase):
         acted = swift[swift.index("	func acted("):swift.index("	// Only a folder inside this workspace")]
         self.assertIn("JSONSerialization.data(withJSONObject: [request, said])", acted)
         self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", acted)
-        self.assertLess(act.index("self.acted(request, reply)"), act.index("self.freshen(force: true)"))   # at once, then the rebuild
-        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)   # unless the reply built it (#344)
+        self.assertLess(act.index("self.acted(request, reply)"), act.index("self.freshen(force: true, kept:"))   # at once, then the rebuild
+        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true, kept: reply["outcome"] as? String == "saved") }', act)   # unless the reply built it (#344)
         page = self.page()
         self.assertLess(page.index("window.ThreadRows="), page.index("window.GarrickActed="))   # PARK_JS after the rows it moves
 
     def test_a_rebuild_asked_for_during_one_follows_it(self):
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        self.assertIn("if force || age >= maxAge { rebuild(queue: force) }", swift)
-        self.assertIn("guard !rebuilding else { again = again || queue; return }", swift)
-        self.assertIn("if self.again { self.again = false; self.rebuild() }", swift)
+        self.assertIn("if force || age >= maxAge { rebuild(queue: force, kept: kept) }", swift)
+        self.assertIn("guard !rebuilding else {\n\t\t\tif queue { againKept = again ? againKept && kept : kept }\n\t\t\tagain = again || queue\n\t\t\treturn\n\t\t}", swift)
+        self.assertIn("if self.again { self.again = false; self.rebuild(kept: self.againKept) }", swift)
 
 
 # RENAME_JS (#184), with PARK_JS before it and FIND_JS after, as the page

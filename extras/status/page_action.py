@@ -6995,7 +6995,10 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
             if named:
                 out["failure"] = named          # the row of FAILURES the refusal named, which the record's reply drops
         if builds_page(req):
-            if outcome == "saved" and ask_for_page(ws):
+            # The Mac app's own saved action asks for no page here: the app builds at once, with the check's kept result,
+            # when the reply says it saved. A reply with no `built` is what an app built before 0.86.0 already rebuilds on.
+            # Ask, a session, a hook and remote access still ask, with the ten seconds that make one page from a burst.
+            if outcome == "saved" and via != "page" and ask_for_page(ws):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None

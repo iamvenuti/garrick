@@ -193,6 +193,9 @@ for _key in ("extras/status/status.py", "tests/test_page_publication.py"):
 # reload-0860 (V1): the hold, read from the page's script and the app's source.
 for _key in ("extras/status/status.py", "extras/status/app/Garrick.swift", "tests/test_page_hold.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_hold"]
+# reload-0860 (V3): the app's own saved actions build at once.
+for _key in ("extras/status/page_action.py", "extras/status/app/Garrick.swift", "tests/test_page_build_at_once.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_build_at_once"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

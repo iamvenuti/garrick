@@ -735,6 +735,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var pageErrors: [[String: Any]] = []   // the page's script errors since, where and of what kind
 	let launched = Date()
 	var again = false                 // a rebuild asked for during one: one more after it
+	var againKept = false             // and whether that one may use the check's kept result
 	var hotKey: EventHotKeyRef?
 	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
 	var askKey: EventHotKeyRef?       // the Ask box's, from any app
@@ -949,6 +950,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			NSApp.unhide(nil)
 			window.orderFrontRegardless()
 			driveSay(["id": id, "ok": true])
+		case "size":
+			// The window as a phone or a desktop would give it, and the app's light or dark look, for a look check.
+			let w = command["width"] as? Double ?? 1200, h = command["height"] as? Double ?? 800
+			window.setContentSize(NSSize(width: w, height: h))
+			NSApp.appearance = command["dark"] as? Bool == true ? NSAppearance(named: .darkAqua) : NSAppearance(named: .aqua)
+			driveSay(["id": id, "ok": true])
+		case "snapshot":
+			// The window itself, title bar and subtitle with it, drawn from its own views: no screen is read, no permission asked.
+			guard let path = command["path"] as? String, let frame = window.contentView?.superview,
+			      let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else {
+				return driveSay(["id": id, "error": "no snapshot"])
+			}
+			frame.cacheDisplay(in: frame.bounds, to: rep)
+			let png = rep.representation(using: .png, properties: [:])
+			driveSay(["id": id, "ok": (try? png?.write(to: URL(fileURLWithPath: path))) != nil])
 		case "act":
 			act(command["request"] as? [String: Any] ?? [:])
 			driveSay(["id": id, "ok": true])
@@ -1070,21 +1086,29 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if window.subtitle == pageWaiting { window.subtitle = "" }
 	}
 
-	func freshen(force: Bool = false) {
+	func freshen(force: Bool = false, kept: Bool = false) {
 		let age = modified(page).map { -$0.timeIntervalSinceNow } ?? .infinity
-		if force || age >= maxAge { rebuild(queue: force) }
+		if force || age >= maxAge { rebuild(queue: force, kept: kept) }
 	}
 
 	// A rebuild asked for (queue) while one runs follows it: the one running may
 	// have read the workspace before a button changed it.
-	func rebuild(queue: Bool = false) {
-		guard !rebuilding else { again = again || queue; return }
+	// `kept` builds with the check's last result, never running the check (--reuse-check): the build after an action that
+	// saved, which changed nothing the check reads. The one queued behind a running build keeps it only if every request
+	// for it asked for it.
+	func rebuild(queue: Bool = false, kept: Bool = false) {
+		guard !rebuilding else {
+			if queue { againKept = again ? againKept && kept : kept }
+			again = again || queue
+			return
+		}
 		rebuilding = true
 		window.subtitle = "Rebuilding…"
 		let p = Process()
 		p.executableURL = URL(fileURLWithPath: python)
-		p.arguments = [builder.path, "--workspace", workspace.path] + flags
+		p.arguments = [builder.path, "--workspace", workspace.path] + flags + (kept ? ["--reuse-check"] : [])
 		p.currentDirectoryURL = workspace
+		p.standardInput = FileHandle.nullDevice     // a build reads nothing; it must not share the app's own input (--drive reads it)
 		p.standardOutput = FileHandle.nullDevice
 		p.standardError = FileHandle.nullDevice
 		p.terminationHandler = { proc in
@@ -1094,7 +1118,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				self.window.subtitle = proc.terminationStatus == 0 ? (self.newerWaiting ? pageWaiting : "") : pageDidNotRebuild
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
-				if self.again { self.again = false; self.rebuild() }
+				if self.again { self.again = false; self.rebuild(kept: self.againKept) }
 			}
 		}
 		do { try p.run() } catch {
@@ -1445,8 +1469,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				let reply = said ?? ["ok": false, "say": "That did not work."]
 				self.acted(request, reply)
 				// A reply that says `"built": true` has settled the page itself: page_action.py asked for the one
-				// build (#344). One without the key (a refusal, a read, a verb it does not build for) rebuilds here.
-				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }
+				// build (#344), which an older page_action.py still does for this app's own actions. One without the key
+				// (a refusal, a read, a verb it does not build for, and since 0.86.0 every action that saved) rebuilds here,
+				// at once. A reply that says it saved builds with the check's kept result, as the asked-for build does.
+				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true, kept: reply["outcome"] as? String == "saved") }
 			}
 		}
 		do {

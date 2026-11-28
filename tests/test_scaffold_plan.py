@@ -115,11 +115,11 @@ class TestTheHeardName(PlanCase):
                                pa.ops_lib(self.root), via="remote")
         self.assertTrue(out["ok"], out)
         self.assertEqual(before, self.tables())
-        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), out["commit"])         # a remote receipt holds the whole id
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), out["commit"])         # a receipt holds the whole id
         out, _, _ = pa.perform(self.root, dict(verb="rename", zone="Work", project="Acme", thread="Freight", to="Lanes"),
                                pa.ops_lib(self.root), via="page")
         self.assertTrue(out["ok"], out)
-        self.assertEqual(self.git("rev-parse", "--short", "HEAD").stdout.strip(), out["commit"])    # the page's stays short, as it was
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), out["commit"])        # so does the page's (S6)
         self.assertNotEqual(before, self.tables())
 
 

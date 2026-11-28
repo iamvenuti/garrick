@@ -80,6 +80,7 @@
   "test_remote_record": 30.0,
   "test_remote_verb": 10.0,
   "test_release": 8.0,
+  "test_commit_new_lock": 60.0,
   "test_lock_in_tools": 60.0,
   "test_scaffold_expect_plan": 90.0,
   "test_scaffold_manage": 148.4,

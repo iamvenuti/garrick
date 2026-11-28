@@ -238,6 +238,9 @@ for _key in ("template/System/tools/scaffold.py", "extras/status/page_action.py"
 for _key in ("template/System/tools/scaffold.py", "template/System/tools/wrap.py", "template/System/tools/operations.py",
              "extras/status/page_action.py", "tests/test_lock_in_tools.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_lock_in_tools"]
+# core-0860 (N5, the cleanup reset): a lock while making a project or a thread leaves nothing behind and nothing staged.
+for _key in ("extras/status/page_action.py", "tests/test_commit_new_lock.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_commit_new_lock"]
 
 
 def touched(files, names=None):

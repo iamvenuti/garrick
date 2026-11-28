@@ -3271,7 +3271,9 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
     mine = {n: n.read_bytes() for n in before if n.is_file()}
     code, why = committing(zone, paths, message)
     if code != 0:
-        git(zone, "reset", "-q", "--", *paths, timeout=10)
+        unstage_after_lock(zone, *paths)         # waits for a lock three times as long as a commit does: no file is left staged
+        # A lock that outlasted the wait: nothing was committed, so what was made goes as it does for the wall (N5).
+        locked = code is not None and why.startswith(LOCK_REFUSAL)
         if moved:
             for now, was in moved:
                 if now.exists() and not was.exists():
@@ -3281,7 +3283,7 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
             if wall and code is not None and WALL_LINE.match(why):
                 raise Refused(wall)
             raise Refused("not committed, so nothing changed: %s" % why)
-        if wall and code is not None and WALL_LINE.match(why):
+        if (wall and code is not None and WALL_LINE.match(why)) or locked:
             try:
                 ours = all(n.read_bytes() == wrote for n, wrote in mine.items())
             except OSError:
@@ -3293,11 +3295,11 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
                 n.write_bytes(was)
             for p in made:                      # the outermost first: a new Threads folder takes its thread with it
                 shutil.rmtree(p, ignore_errors=True)
-            raise Refused(wall)
+            raise Refused(why if locked else wall)
         if code is None:
             raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "
-                          "commit waits for the check and goes through" % why)
-        raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
+                          "commit waits for the check and goes through" % why.rstrip("."))
+        raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why.rstrip("."))
 
 
 # ---- Needs you, Continue, Ask something, the example (#175) ----

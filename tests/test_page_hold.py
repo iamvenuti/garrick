@@ -138,13 +138,15 @@ class TheRefusalAndTheFailedBuild(unittest.TestCase):
         early = reload[reload.index("found <= showing"):reload.index("if !force && busy")]
         self.assertIn("clearHold()", early)
 
-    def test_a_refusal_loads_the_waiting_page_unless_typed_text_holds_it(self):   # S4
+    def test_a_refusal_only_says_how_to_see_the_newer_page_and_never_loads_it(self):   # S4
         refused = self.body("refusedWhileHeld")
         self.assertIn("reply[\"ok\"] as? Bool == false", refused)
-        self.assertIn("reload(force: true)", refused)
+        self.assertIn("rebuilds(request)", refused)                      # not a read
         self.assertIn("pageWaitingHint", refused)
+        self.assertNotIn("reload(", refused)
+        self.assertNotIn("load()", refused)
         self.assertIn('"A newer page is waiting. Choose Reload to see it."', SWIFT)
-        self.assertLess(SWIFT.index("self.refusedWhileHeld(reply)"), SWIFT.index("self.freshen(force: true, kept:"))
+        self.assertLess(SWIFT.index("self.refusedWhileHeld(request, reply)"), SWIFT.index("self.freshen(force: true, kept:"))
 
     def test_a_generation_a_day_ahead_of_the_clock_is_unreadable_in_the_app(self):   # C6
         self.assertIn("86400", self.body("pageGeneration") if "func pageGeneration(" in SWIFT[SWIFT.index("func pageGeneration"):][:30] else SWIFT[SWIFT.index("func pageGeneration"):][:900])

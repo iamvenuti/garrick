@@ -367,11 +367,14 @@ def case_a_search_typed_and_cleared_or_left_does_not_hold_the_page(d, fx, base):
     """A search box has the page's hold only while it has the keys and text in it: cleared, or left, it lets go."""
     d.ask("focus")
     d.wait(lambda: d.js("document.hasFocus()") is True, 5, "the window to have the keys")
-    d.js(TYPE)
+    typed = d.js(TYPE)
+    assert typed == "harbour deal|12|true", "the search box did not take the text: %r" % typed
+    assert d.js("document.hasFocus()") is True, "the window lost the keys (another app took them): the rule needs them"
     before = d.loads()
     settle_page(d, fx, base, "b")
     time.sleep(SETTLE)
     assert d.loads() == before, "the page loaded under the text"
+    assert d.js(FIELD) == typed, "the text or the caret of the page's own field moved: %r" % d.js(FIELD)
     d.js(CLEAR)
     d.wait(lambda: d.js(MARK) == "b", 8, "the newer page, once the box was empty")
     d.ask("focus")
@@ -382,8 +385,9 @@ def case_a_search_typed_and_cleared_or_left_does_not_hold_the_page(d, fx, base):
     d.wait(lambda: d.js(MARK) == "c", 8, "the newest page, once the box was left")
 
 
-def case_a_refusal_loads_the_waiting_page(d, fx, base):
-    """With a newer page held by a dialog, a refused action proves the page on show is old: the newer page loads at once."""
+def case_a_refusal_only_says_how_to_see_the_newer_page(d, fx, base):
+    """With a newer page held by a dialog, a refused action loads nothing: the subtitle says to choose Reload. A read's
+    reply says nothing. The dialog's end lets the page in."""
     restore = stand_in_for_the_action_script(fx, {"ok": False, "say": "No."})
     try:
         d.js("document.getElementById('tadd').showModal();0")
@@ -392,9 +396,17 @@ def case_a_refusal_loads_the_waiting_page(d, fx, base):
         time.sleep(SETTLE)
         assert d.js(MARK) == "" and WAITING in d.state()["subtitle"]
         before = d.loads()
+        d.ask("act", request={"verb": "memory-preview"})              # a read: no word of it
+        d.event(lambda m: "acted" in m, 20)
+        time.sleep(0.5)
+        assert d.state()["subtitle"] == WAITING, d.state()["subtitle"]
         d.ask("act", request=REQUEST)
-        d.wait(lambda: d.loads() > before, 2.5, "the newer page, loaded by the refusal")
-        assert d.js(MARK) == "b"
+        d.event(lambda m: "acted" in m and m.get("acted") == "todo-done", 20)
+        d.wait(lambda: d.state()["subtitle"] in (HINT, "Rebuilding\u2026"), 5, "the hint")
+        time.sleep(1)
+        assert d.loads() == before and d.js(MARK) == "", "the refusal loaded the page"
+        d.js("document.getElementById('tadd').close();0")
+        d.wait(lambda: d.loads() > before, 10, "the page, once the dialog closed")
     finally:
         restore()
 
@@ -484,7 +496,7 @@ CASES = [("edit survives a build", case_edit_survives_a_build),
          ("a drag holds the page", case_a_drag_holds_the_page),
          ("a saved setting does not hold the page", case_a_saved_setting_does_not_hold_the_page),
          ("a search typed and cleared or left does not hold the page", case_a_search_typed_and_cleared_or_left_does_not_hold_the_page),
-         ("a refusal loads the waiting page", case_a_refusal_loads_the_waiting_page),
+         ("a refusal only says how to see the newer page", case_a_refusal_only_says_how_to_see_the_newer_page),
          ("a refusal under typed text says how to see the newer page", case_a_refusal_under_typed_text_says_how_to_see_the_newer_page),
          ("ticks waiting hold the page", case_ticks_waiting_hold_the_page),
          ("three builds make one load", case_three_builds_make_one_load),

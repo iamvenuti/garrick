@@ -89,7 +89,12 @@ let jobsDir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["GARRICK_
 let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")
 // --check loads the page out of sight, acts on nothing, prints what it found
 // and quits: the test that the page loads, sees the app and is answered.
-let checking = CommandLine.arguments.contains("--check")
+// --drive FOLDER is the app cases' own switch (tools/app_check.py): the same quiet as --check, a window that stays, and
+// the page's rebuilds and reloads as they are. It reads one JSON command per line on stdin and answers on stdout; it
+// opens no port and needs no permission. It exists only in a build with a scratch identity (make-app.sh --scratch, whose
+// bundle identifier ends in .scratch): in the installed app, or any other build, the argument does nothing at all.
+let driving = CommandLine.arguments.contains("--drive") && (info["CFBundleIdentifier"] as? String ?? "").hasSuffix(".scratch")
+let checking = CommandLine.arguments.contains("--check") || driving
 
 // How a cold Claude's window was found: the mark in its log, the fixed delay
 // where the log could not be read, or the ceiling reached with no mark.
@@ -702,6 +707,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
 	var heard: [String] = []          // what --check caught instead of acting on
+	var bridgeLog: [[String: Any]] = []   // --drive: every message the page sent over the bridge, in order
+	var loads = 0                     // --drive: how many times the page finished loading
 	var statusItem: NSStatusItem?
 	var edgePanel: EdgePanel?
 	// Living outside the window, as an icon or a panel: closing the window keeps the app.
@@ -841,6 +848,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				print("no page at \(page.path): build it with status.py first")   // the check would wait for it forever
 				exit(1)
 			}
+			if driving { startDriving() }
 			return load()
 		}
 		menuState = savedMenu()
@@ -868,6 +876,70 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let early = pendingLinks
 		pendingLinks = []
 		for url in early { handleLink(url) }
+	}
+
+	// MARK: --drive (tools/app_check.py)
+
+	// Only with --drive, which does nothing in a build that is not a scratch build (see `driving`). One JSON command per
+	// line on stdin, one answer per line on stdout, starting "@drive ". The commands: `js` evaluates a script in the
+	// page's own web view; `state` says how often the page loaded, the window's subtitle and how many bridge messages
+	// came; `bridge` returns the messages the page sent (and clears them with "clear"); `leave` and `back` take the
+	// window out of sight and bring it back; `act` hands a request to act() for real, as the page's button does.
+	func startDriving() {
+		window.setFrame(NSRect(x: 60, y: 60, width: 1200, height: 800), display: true)
+		window.orderFrontRegardless()
+		watch()
+		var pending = Data()
+		FileHandle.standardInput.readabilityHandler = { handle in
+			let more = handle.availableData
+			if more.isEmpty { exit(0) }                   // the case that started this app has gone: so does it
+			DispatchQueue.main.async {
+				pending.append(more)
+				while let end = pending.firstIndex(of: 10) {
+					let line = pending.subdata(in: pending.startIndex..<end)
+					pending.removeSubrange(pending.startIndex...end)
+					self.drive(line)
+				}
+			}
+		}
+		driveSay(["ready": true])
+	}
+
+	func driveSay(_ answer: [String: Any]) {
+		guard let data = try? JSONSerialization.data(withJSONObject: answer, options: [.fragmentsAllowed]),
+		      let text = String(data: data, encoding: .utf8) else { return }
+		print("@drive " + text)
+		fflush(stdout)
+	}
+
+	func drive(_ line: Data) {
+		guard let command = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let op = command["op"] as? String else { return }
+		let id = command["id"] ?? NSNull()
+		switch op {
+		case "js":
+			web.evaluateJavaScript(command["code"] as? String ?? "null") { result, error in
+				let said: Any = (result.flatMap { JSONSerialization.isValidJSONObject([$0]) ? $0 : "\($0)" }) ?? NSNull()
+				self.driveSay(["id": id, "result": said, "error": error.map { "\($0)" } ?? NSNull()])
+			}
+		case "state":
+			driveSay(["id": id, "loads": loads, "subtitle": window.subtitle, "bridge": bridgeLog.count, "active": NSApp.isActive,
+			          "visible": window.isVisible, "key": window.isKeyWindow])
+		case "bridge":
+			driveSay(["id": id, "messages": bridgeLog])
+			if command["clear"] as? Bool == true { bridgeLog = [] }
+		case "leave":
+			NSApp.hide(nil)                 // not orderOut: the last window out of sight ends this app
+			driveSay(["id": id, "ok": true])
+		case "back":
+			NSApp.unhide(nil)
+			window.orderFrontRegardless()
+			driveSay(["id": id, "ok": true])
+		case "act":
+			act(command["request"] as? [String: Any] ?? [:])
+			driveSay(["id": id, "ok": true])
+		default:
+			driveSay(["id": id, "error": "unknown command \(op)"])
+		}
 	}
 
 	// Ask's background session (#261): kept while Ask is on, started again by ask.py if it
@@ -969,6 +1041,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		p.terminationHandler = { proc in
 			DispatchQueue.main.async {
 				self.rebuilding = false
+				if driving { self.driveSay(["rebuilt": Int(proc.terminationStatus)]) }
 				self.window.subtitle = proc.terminationStatus == 0 ? "" : pageDidNotRebuild
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
@@ -1033,6 +1106,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
 		guard let body = message.body as? [String: Any] else { return }
+		if driving { bridgeLog.append(body) }          // what the page sent, for the cases to count
 		if let e = body["pageError"] as? [String: Any] {   // appScript's: the page's script stopped somewhere
 			pageErrors = Array((pageErrors + [e]).suffix(5))
 			return
@@ -1362,6 +1436,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
 	// has its own reply, and the row moves as fast as after a button.
 	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
+		if driving { driveSay(["acted": request["verb"] as? String ?? "", "ok": said["ok"] as? Bool ?? false, "built": said["built"] != nil]) }
 		// Process the Inbox from the menu or the panel: with no background run to be had, the visible session opens (#634).
 		if request["verb"] as? String == "inbox-run", let visible = inboxFallback {
 			inboxFallback = nil
@@ -3628,6 +3703,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The stored key alternates, so a second --check shows whether the first
 	// one's write survived the quit.
 	func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
+		if driving { loads += 1; return }
 		guard checking else {
 			pageLoaded = Date()
 			pushWaiting()
@@ -4444,5 +4520,5 @@ app.delegate = delegate
 // Dock icon, took it away and brought it back before the window. A login launch that
 // stays out of sight turns accessory in applicationDidFinishLaunching, the first point
 // it can tell a login launch from yours.
-app.setActivationPolicy(checking ? .prohibited : .regular)
+app.setActivationPolicy(driving ? .accessory : checking ? .prohibited : .regular)
 app.run()

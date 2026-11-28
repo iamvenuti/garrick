@@ -111,6 +111,11 @@ import urllib.parse
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+try:
+    import fcntl
+except ImportError:       # no file locks here: pages are still renamed whole
+    fcntl = None
+
 sys.dont_write_bytecode = True
 
 E = html.escape
@@ -2664,6 +2669,31 @@ else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?
 if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
 if(w.q)window.GarrickRedo=w.q;
 setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.reload()},2000)})();
+"""
+
+
+# What the page would lose to a reload (V1): text typed in a field, an open dialog, a drag under way, ticks not yet sent.
+# It tells the app over the bridge when that starts and when it ends, so the app holds a newer page until then. It only
+# reads: the sent and queued ticks stay where WORK_JS keeps them, in this window's storage, and it moves no state of the
+# page's. A page in a browser has no bridge, and the script stops at once. It runs in a script element of its own.
+BUSY_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+var was=false,drag=false,typed=[];
+function field(e){if(!e||!e.tagName)return false;var t=e.tagName;
+if(t==='TEXTAREA')return true;if(t==='INPUT')return!/^(checkbox|radio|button|submit|reset|file|image|range|color|hidden)$/i.test(e.type||'');
+return!!e.isContentEditable}
+function ticks(){try{var q=JSON.parse(sessionStorage.getItem('garrick-work-ticks')||'[]');return!!q&&q.length>0}catch(x){return false}}
+function lose(){typed=typed.filter(function(e){return e.isConnected});
+return typed.some(function(e){return(e.isContentEditable?e.textContent:e.value)!==''})}
+function busy(){var a=document.activeElement;
+return(field(a)&&document.hasFocus())||lose()||!!document.querySelector('dialog[open]')||drag||ticks()}
+function tell(){var b=busy();if(b!==was){was=b;host.postMessage({busy:b})}}
+document.addEventListener('input',function(e){if(field(e.target)&&typed.indexOf(e.target)<0)typed.push(e.target);tell()},true);
+['focusin','focusout','change'].forEach(function(n){document.addEventListener(n,function(){setTimeout(tell,0)},true)});
+document.addEventListener('dragstart',function(){drag=true;tell()},true);
+['dragend','drop'].forEach(function(n){document.addEventListener(n,function(){drag=false;setTimeout(tell,0)},true)});
+window.addEventListener('blur',function(){setTimeout(tell,0)});window.addEventListener('focus',function(){setTimeout(tell,0)});
+setInterval(tell,400);tell()})();
 """
 
 
@@ -8233,12 +8263,22 @@ details.wgroup>summary.wgh::before{content:"\25B8";font-size:var(--fs-meta)}deta
 """
 
 
+GENERATION_NAME = "garrick-generation"
+GENERATION_META = re.compile(rb'<meta name="garrick-generation" content="([0-9]{1,30})">')
+
+
+def generation_meta(generation: Optional[int]) -> str:
+    """The one element that carries a page's generation, or nothing where the build was given none."""
+    return '<meta name="%s" content="%d">' % (GENERATION_NAME, generation) if generation is not None else ""
+
+
 def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
           show_graph: bool = True, out: Optional[Path] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
           managed: Optional[List[Path]] = None, cli: Optional[bool] = None, page_at: Optional[Path] = None,
-          reuse_check: Optional[float] = None, waiting_now: Optional[List[dict]] = None) -> str:
+          reuse_check: Optional[float] = None, waiting_now: Optional[List[dict]] = None,
+          generation: Optional[int] = None) -> str:
     """The page. `launchers` says what this machine has (main() asks
     launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
@@ -8257,7 +8297,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     nothing is kept, the check always runs and every transcript is read.
     `waiting_now` is the sessions waiting on the user now (main() reads them with
     waiting_rows()); without it the Overview's card is empty, so a build never
-    reads this Mac's transcripts by itself."""
+    reads this Mac's transcripts by itself. `generation` is the number main()
+    took when the build started (next_generation()); the page carries it in one
+    meta element, which publish_page() and the app read to tell a newer page
+    from an older one. Without it the page carries none, as before."""
     now = now or dt.datetime.now()
     _SAID.clear()
     _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
@@ -8860,12 +8903,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, SETREMOTE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               BUSY_JS, MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, QUESTION_JS + INBOX_JS, FOLLOWUP_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, USAGE_JS % json.dumps(usage_cards(ws)), SETGUARD_JS, SETRG_JS, SETREMOTE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">%s'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                generation_meta(generation), E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + FOLLOWUP_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS + SETGUARD_CSS + SETREMOTE_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
@@ -8955,6 +8998,85 @@ def write_page(out: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def next_generation(out: Path) -> int:
+    """The number a page build takes when it starts, for the page at `out`. It rises with every build, across
+    processes: the time in nanoseconds, or one more than the last number taken where the clock has not moved on,
+    kept in a file beside the page under a lock. Where that file cannot be used, the clock alone."""
+    now = time.time_ns()
+    if fcntl is None:
+        return now
+    try:
+        fd = os.open(str(out.with_name(out.name + ".generation")), os.O_RDWR | os.O_CREAT, 0o666)
+    except OSError:
+        return now
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            last = int(os.read(fd, 40).decode("ascii", "replace").strip() or "0")
+        except ValueError:
+            last = 0
+        taken = max(now, last + 1)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(taken).encode("ascii"))
+        return taken
+    except OSError:
+        return now
+    finally:
+        os.close(fd)
+
+
+def page_generation(path: Path) -> Optional[int]:
+    """The generation the page at `path` carries, read from its head, or None where it has none or is not there."""
+    try:
+        with open(str(path), "rb") as f:
+            head = f.read(16384)
+    except OSError:
+        return None
+    m = GENERATION_META.search(head)
+    return int(m.group(1)) if m else None
+
+
+# A test sets this to slow a build between drawing the page and publishing it, so two builds can overlap: nothing else does.
+PUBLISH_HOLD = "GARRICK_STATUS_PUBLISH_HOLD"
+
+
+def publish_page(out: Path, text: str, generation: Optional[int]) -> bool:
+    """Put the page in place only if it is newer than the one there. The page goes to a temporary file of its own
+    first; then, under a lock, it is compared with the generation of the page in place and renamed over it, or dropped.
+    A page in place with no generation is older than any page with one. Whether this page was put in place."""
+    fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=out.name + ".")
+    lock = None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        mask = os.umask(0o022)
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)
+        hold = os.environ.get(PUBLISH_HOLD)
+        if hold:
+            time.sleep(float(hold))
+        try:
+            lock = os.open(str(out.with_name(out.name + ".generation")), os.O_RDWR | os.O_CREAT, 0o666)   # the file that numbers the builds
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError:
+            lock = None                       # no lock to be had: the rename alone, which is whole either way
+        there = page_generation(out)
+        if generation is not None and there is not None and there >= generation:
+            os.unlink(tmp)
+            return False
+        os.replace(tmp, str(out))
+        return True
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    finally:
+        if lock is not None:
+            os.close(lock)
 
 
 # The options that shape the page. A build stores the ones it was given beside
@@ -9058,14 +9180,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         moved[old] = new
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
     settle_outbox(ws)                         # the server applies the outbox; a roaming machine queues a hand tick (#612)
+    generation = next_generation(out)         # taken as the build starts: a later one read the workspace later
     page = build(ws, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
                  flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                  launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")),
-                 page_at=out, reuse_check=args.reuse_check, waiting_now=waiting_rows(ws))
+                 page_at=out, reuse_check=args.reuse_check, waiting_now=waiting_rows(ws), generation=generation)
     if STARTED is not None and own_stamp() != STARTED:
         return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
-    write_page(out, page)
+    publish_page(out, page, generation)       # a build that finishes after a newer one leaves the newer page in place
     if not args.same_flags:                   # a build that used the stored flags leaves them to the build that stored them
         try:
             write_page(flags_file(out), json.dumps({"args": page_words(args, moved)}, ensure_ascii=False) + "\n")

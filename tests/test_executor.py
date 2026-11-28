@@ -226,7 +226,9 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
 
 
 class TestOnePageRequest(ExecutorCase):
-    def perform(self, req, via="page"):
+    """The callers that still ask for the page. The app's own saved actions do not (test_page_build_at_once)."""
+
+    def perform(self, req, via="session"):
         with mock.patch.object(self.lib, "detach", return_value=True) as spawn:
             out, _, _ = pa.perform(self.root, req, pa.ops_lib(self.root), via=via)
         return out, [c.args[0] for c in spawn.call_args_list]
@@ -359,7 +361,7 @@ class TestTheAppFollowsEveryCaller(unittest.TestCase):
         self.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
 
     def test_the_app_does_not_rebuild_after_a_reply_that_settled_the_page(self):
-        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', self.swift)
+        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true, kept: reply["outcome"] as? String == "saved") }', self.swift)
 
     def test_an_ask_action_is_handed_to_the_page_as_a_click_is(self):
         self.assertIn('let ran = out["acted"] as? [[String: Any]] ?? []', self.swift)

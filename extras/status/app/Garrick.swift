@@ -89,7 +89,12 @@ let jobsDir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["GARRICK_
 let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")
 // --check loads the page out of sight, acts on nothing, prints what it found
 // and quits: the test that the page loads, sees the app and is answered.
-let checking = CommandLine.arguments.contains("--check")
+// --drive FOLDER is the app cases' own switch (tools/app_check.py): the same quiet as --check, a window that stays, and
+// the page's rebuilds and reloads as they are. It reads one JSON command per line on stdin and answers on stdout; it
+// opens no port and needs no permission. It exists only in a build with a scratch identity (make-app.sh --scratch, whose
+// bundle identifier ends in .scratch): in the installed app, or any other build, the argument does nothing at all.
+let driving = CommandLine.arguments.contains("--drive") && (info["CFBundleIdentifier"] as? String ?? "").hasSuffix(".scratch")
+let checking = CommandLine.arguments.contains("--check") || driving
 
 // How a cold Claude's window was found: the mark in its log, the fixed delay
 // where the log could not be read, or the ceiling reached with no mark.
@@ -246,6 +251,8 @@ let askMoreLink = "garrick-ask-more:"
 // it could not be run, or it ended with no reply. They are the table's rows "ask-start" and "ask-stopped", and a test holds them.
 // The window's subtitle when a rebuild failed or could not start (#511): the page shown is the last good one, so say it may be old.
 let pageDidNotRebuild = "This page did not rebuild, so it may be old."
+// The window's subtitle while a newer page waits for the page on show to have nothing to lose (V1).
+let pageWaiting = "A newer page is waiting"
 let askDetailLink = "garrick-ask-details:"
 let askTryLink = "garrick-ask-again:"
 let askNoStart: [String: Any] = ["code": "ask-start", "say": "Ask did not start.", "next": "Try again"]
@@ -536,6 +543,16 @@ func keyEquivalent(_ spec: [String: Any]?) -> (String, NSEvent.ModifierFlags) {
 	return (key, mods)
 }
 
+// The generation a page carries: the number its build took when it started (status.py's next_generation), in one meta
+// element near the top. nil for a page with none, such as one a Garrick before 0.86.0 built, which loads as it always did.
+func pageGeneration(_ url: URL) -> Int64? {
+	guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+	defer { try? handle.close() }
+	let head = String(decoding: handle.readData(ofLength: 16384), as: UTF8.self)
+	guard let found = head.range(of: #"<meta name="garrick-generation" content="[0-9]{1,30}">"#, options: .regularExpression) else { return nil }
+	return Int64(head[found].filter { $0.isNumber })
+}
+
 func modified(_ url: URL) -> Date? {
 	(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
 }
@@ -701,7 +718,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var shown: Date?
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
+	var busy = false                  // BUSY_JS says the page has something a reload would lose (V1)
+	var newerWaiting = false          // a newer page is waiting for the page to be idle
+	var shownGeneration: Int64?       // the generation of the page on show, where it carries one (V2: an older page never replaces a newer)
 	var heard: [String] = []          // what --check caught instead of acting on
+	var bridgeLog: [[String: Any]] = []   // --drive: every message the page sent over the bridge, in order
+	var loads = 0                     // --drive: how many times the page finished loading
 	var statusItem: NSStatusItem?
 	var edgePanel: EdgePanel?
 	// Living outside the window, as an icon or a panel: closing the window keeps the app.
@@ -713,6 +735,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var pageErrors: [[String: Any]] = []   // the page's script errors since, where and of what kind
 	let launched = Date()
 	var again = false                 // a rebuild asked for during one: one more after it
+	var againKept = false             // and whether that one may use the check's kept result
 	var hotKey: EventHotKeyRef?
 	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
 	var askKey: EventHotKeyRef?       // the Ask box's, from any app
@@ -841,6 +864,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				print("no page at \(page.path): build it with status.py first")   // the check would wait for it forever
 				exit(1)
 			}
+			if driving { startDriving() }
 			return load()
 		}
 		menuState = savedMenu()
@@ -935,44 +959,167 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
 	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners(); refreshFinder() } }
 
+	// MARK: --drive (tools/app_check.py)
+
+	// Only with --drive, which does nothing in a build that is not a scratch build (see `driving`). One JSON command per
+	// line on stdin, one answer per line on stdout, starting "@drive ". The commands: `js` evaluates a script in the
+	// page's own web view; `state` says how often the page loaded, the window's subtitle and how many bridge messages
+	// came; `bridge` returns the messages the page sent (and clears them with "clear"); `leave` and `back` take the
+	// window out of sight and bring it back; `act` hands a request to act() for real, as the page's button does.
+	func startDriving() {
+		NSApp.setActivationPolicy(.accessory)           // a window that stays, and no Dock icon
+		window.setFrame(NSRect(x: 60, y: 60, width: 1200, height: 800), display: true)
+		window.orderFrontRegardless()
+		watch()
+		var pending = Data()
+		FileHandle.standardInput.readabilityHandler = { handle in
+			let more = handle.availableData
+			if more.isEmpty { exit(0) }                   // the case that started this app has gone: so does it
+			DispatchQueue.main.async {
+				pending.append(more)
+				while let end = pending.firstIndex(of: 10) {
+					let line = pending.subdata(in: pending.startIndex..<end)
+					pending.removeSubrange(pending.startIndex...end)
+					self.drive(line)
+				}
+			}
+		}
+		driveSay(["ready": true])
+	}
+
+	func driveSay(_ answer: [String: Any]) {
+		guard let data = try? JSONSerialization.data(withJSONObject: answer, options: [.fragmentsAllowed]),
+		      let text = String(data: data, encoding: .utf8) else { return }
+		print("@drive " + text)
+		fflush(stdout)
+	}
+
+	func drive(_ line: Data) {
+		guard let command = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let op = command["op"] as? String else { return }
+		let id = command["id"] ?? NSNull()
+		switch op {
+		case "js":
+			web.evaluateJavaScript(command["code"] as? String ?? "null") { result, error in
+				let said: Any = (result.flatMap { JSONSerialization.isValidJSONObject([$0]) ? $0 : "\($0)" }) ?? NSNull()
+				self.driveSay(["id": id, "result": said, "error": error.map { "\($0)" } ?? NSNull()])
+			}
+		case "state":
+			driveSay(["id": id, "loads": loads, "subtitle": window.subtitle, "bridge": bridgeLog.count, "active": NSApp.isActive,
+			          "visible": window.isVisible, "key": window.isKeyWindow, "busy": busy, "held": newerWaiting])
+		case "bridge":
+			driveSay(["id": id, "messages": bridgeLog])
+			if command["clear"] as? Bool == true { bridgeLog = [] }
+		case "leave":
+			NSApp.hide(nil)                 // not orderOut: the last window out of sight ends this app
+			driveSay(["id": id, "ok": true])
+		case "back":
+			NSApp.unhide(nil)
+			window.orderFrontRegardless()
+			driveSay(["id": id, "ok": true])
+		case "size":
+			// The window as a phone or a desktop would give it, and the app's light or dark look, for a look check.
+			let w = command["width"] as? Double ?? 1200, h = command["height"] as? Double ?? 800
+			window.setContentSize(NSSize(width: w, height: h))
+			NSApp.appearance = command["dark"] as? Bool == true ? NSAppearance(named: .darkAqua) : NSAppearance(named: .aqua)
+			driveSay(["id": id, "ok": true])
+		case "snapshot":
+			// The window itself, title bar and subtitle with it, drawn from its own views: no screen is read, no permission asked.
+			guard let path = command["path"] as? String, let frame = window.contentView?.superview,
+			      let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else {
+				return driveSay(["id": id, "error": "no snapshot"])
+			}
+			frame.cacheDisplay(in: frame.bounds, to: rep)
+			let png = rep.representation(using: .png, properties: [:])
+			driveSay(["id": id, "ok": (try? png?.write(to: URL(fileURLWithPath: path))) != nil])
+		case "act":
+			act(command["request"] as? [String: Any] ?? [:])
+			driveSay(["id": id, "ok": true])
+		default:
+			driveSay(["id": id, "error": "unknown command \(op)"])
+		}
+	}
+
 	func load() {
 		shown = modified(page)
+		shownGeneration = pageGeneration(page)
+		busy = false                  // the page that loads says so itself
+		clearHold()
 		pageErrors = []
 		web.loadFileURL(page, allowingReadAccessTo: generated)
 	}
 
-	func reload() {
+	// A page that is not newer than the one on show is passed over: two builds can finish in the other order from
+	// the one they started in, and the page the older one wrote must not replace the newer. A page with no
+	// generation, or a window whose page has none, loads as it always did. `force` is Reload, which the user asked for.
+	func reload(force: Bool = false) {
 		guard modified(page) != nil else { return }
 		if web.url == nil { return load() }
+		let found = pageGeneration(page)
+		if !force, let found, let showing = shownGeneration, found <= showing {
+			shown = modified(page)
+			return
+		}
+		// The page has something a reload would lose: it stays as it is, with its text, its caret and its dialog, however
+		// many builds come meanwhile. When it is idle again the newest page loads once. There is no time limit, and
+		// leaving the app does not end the hold: only the page says it is idle.
+		if !force && busy {
+			shown = modified(page)
+			newerWaiting = true
+			window.subtitle = pageWaiting
+			return
+		}
 		shown = modified(page)
+		shownGeneration = found
+		busy = false
+		clearHold()
 		pageErrors = []
 		web.reload()
 	}
 
-	func freshen(force: Bool = false) {
+	// The page said it is busy or idle. Idle, with a newer page waiting, loads the newest page, once.
+	func setBusy(_ now: Bool) {
+		busy = now
+		if !now && newerWaiting { newerWaiting = false; reload() }
+	}
+
+	func clearHold() {
+		newerWaiting = false
+		if window.subtitle == pageWaiting { window.subtitle = "" }
+	}
+
+	func freshen(force: Bool = false, kept: Bool = false) {
 		let age = modified(page).map { -$0.timeIntervalSinceNow } ?? .infinity
-		if force || age >= maxAge { rebuild(queue: force) }
+		if force || age >= maxAge { rebuild(queue: force, kept: kept) }
 	}
 
 	// A rebuild asked for (queue) while one runs follows it: the one running may
 	// have read the workspace before a button changed it.
-	func rebuild(queue: Bool = false) {
-		guard !rebuilding else { again = again || queue; return }
+	// `kept` builds with the check's last result, never running the check (--reuse-check): the build after an action that
+	// saved, which changed nothing the check reads. The one queued behind a running build keeps it only if every request
+	// for it asked for it.
+	func rebuild(queue: Bool = false, kept: Bool = false) {
+		guard !rebuilding else {
+			if queue { againKept = again ? againKept && kept : kept }
+			again = again || queue
+			return
+		}
 		rebuilding = true
 		window.subtitle = "Rebuilding…"
 		let p = Process()
 		p.executableURL = URL(fileURLWithPath: python)
-		p.arguments = [builder.path, "--workspace", workspace.path] + flags
+		p.arguments = [builder.path, "--workspace", workspace.path] + flags + (kept ? ["--reuse-check"] : [])
 		p.currentDirectoryURL = workspace
+		p.standardInput = FileHandle.nullDevice     // a build reads nothing; it must not share the app's own input (--drive reads it)
 		p.standardOutput = FileHandle.nullDevice
 		p.standardError = FileHandle.nullDevice
 		p.terminationHandler = { proc in
 			DispatchQueue.main.async {
 				self.rebuilding = false
-				self.window.subtitle = proc.terminationStatus == 0 ? "" : pageDidNotRebuild
+				if driving { self.driveSay(["rebuilt": Int(proc.terminationStatus)]) }
+				self.window.subtitle = proc.terminationStatus == 0 ? (self.newerWaiting ? pageWaiting : "") : pageDidNotRebuild
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
-				if self.again { self.again = false; self.rebuild() }
+				if self.again { self.again = false; self.rebuild(kept: self.againKept) }
 			}
 		}
 		do { try p.run() } catch {
@@ -1033,6 +1180,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
 		guard let body = message.body as? [String: Any] else { return }
+		if driving { bridgeLog.append(body) }          // what the page sent, for the cases to count
+		// BUSY_JS's: whether the page has text, a dialog, a drag or ticks a reload would lose. Read only: it never reaches act().
+		if let b = body["busy"] as? Bool { return setBusy(b) }
 		if let e = body["pageError"] as? [String: Any] {   // appScript's: the page's script stopped somewhere
 			pageErrors = Array((pageErrors + [e]).suffix(5))
 			return
@@ -1320,8 +1470,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				let reply = said ?? ["ok": false, "say": "That did not work."]
 				self.acted(request, reply)
 				// A reply that says `"built": true` has settled the page itself: page_action.py asked for the one
-				// build (#344). One without the key (a refusal, a read, a verb it does not build for) rebuilds here.
-				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }
+				// build (#344), which an older page_action.py still does for this app's own actions. One without the key
+				// (a refusal, a read, a verb it does not build for, and since 0.86.0 every action that saved) rebuilds here,
+				// at once. A reply that says it saved builds with the check's kept result, as the asked-for build does.
+				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true, kept: reply["outcome"] as? String == "saved") }
 			}
 		}
 		do {
@@ -1362,6 +1514,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
 	// has its own reply, and the row moves as fast as after a button.
 	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
+		if driving { driveSay(["acted": request["verb"] as? String ?? "", "ok": said["ok"] as? Bool ?? false, "built": said["built"] != nil]) }
 		// Process the Inbox from the menu or the panel: with no background run to be had, the visible session opens (#634).
 		if request["verb"] as? String == "inbox-run", let visible = inboxFallback {
 			inboxFallback = nil
@@ -3628,6 +3781,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The stored key alternates, so a second --check shows whether the first
 	// one's write survived the quit.
 	func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
+		if driving { loads += 1; return }
 		guard checking else {
 			pageLoaded = Date()
 			pushWaiting()
@@ -3697,7 +3851,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// MARK: menu
 
-	@objc func reloadPage(_ sender: Any?) { reload() }
+	@objc func reloadPage(_ sender: Any?) { reload(force: true) }
 	@objc func rebuildPage(_ sender: Any?) { freshen(force: true) }
 	@objc func openSettings(_ sender: Any?) { web.evaluateJavaScript("window.StatusSettings && window.StatusSettings.open()") }
 	@objc func openInBrowser(_ sender: Any?) { NSWorkspace.shared.open(page) }

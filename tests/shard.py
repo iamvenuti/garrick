@@ -184,6 +184,18 @@ TOUCH_MAP["template/System/tools/scaffold.py"] = TOUCH_MAP.get("template/System/
 # fixes-0850 (#722): a git lock is waited out and gets its own words.
 for _key in ("extras/status/page_action.py", "template/System/tools/operations.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_git_lock"]
+# reload-0860: the app cases, and the switch the app takes for them.
+for _key in ("extras/status/app/Garrick.swift", "extras/status/app/make-app.sh", "tools/app_check.py", "tests/test_app_check.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_app_check"]
+# reload-0860 (V2): the page is published in order.
+for _key in ("extras/status/status.py", "tests/test_page_publication.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_publication"]
+# reload-0860 (V1): the hold, read from the page's script and the app's source.
+for _key in ("extras/status/status.py", "extras/status/app/Garrick.swift", "tests/test_page_hold.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_hold"]
+# reload-0860 (V3): the app's own saved actions build at once.
+for _key in ("extras/status/page_action.py", "extras/status/app/Garrick.swift", "tests/test_page_build_at_once.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_page_build_at_once"]
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",

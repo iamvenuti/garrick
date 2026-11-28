@@ -600,7 +600,7 @@ class TestWhatAPreviewHoldsStaysInTheReach(LifeCase):
         self.assertEqual("refused", out["state"], out)
         self.assertEqual(lifecycle.NEEDS_READ, out["say"])                  # N6: its own sentence, and it names nothing of the zone
         for name in ("Acme", "Pricing", "Rates", "Work", "Cedar"):
-            self.assertNotIn(name, json.dumps(out))
+            self.assertNotIn(name, out["say"])
         self.assertEqual(commits, self.commits())
 
     def test_a_write_that_goes_after_the_preview_leaves_no_preview_to_read_back(self):

@@ -141,7 +141,13 @@ class Store:
         for rec in list(self.all()):
             age = now - float(rec.get("created") or 0)
             fin = rec.get("finished")
-            if (rec.get("state") == "prepared" and age > PREPARED_KEEP) or (fin and now - float(fin) > DONE_KEEP):
+            if rec.get("state") == "prepared" and age > PREPARED_KEEP:
+                # An expired preview is kept as a refusal, with the expired words, so that it is told from an id never issued (N4).
+                rec.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
+                rec.pop("fields", None)
+                rec.pop("would", None)
+                self.write(rec["id"], rec)
+            elif fin and now - float(fin) > DONE_KEEP:
                 for suffix in (".json", ".lock", ".run"):
                     try:
                         (self.root / (rec["id"] + suffix)).unlink()

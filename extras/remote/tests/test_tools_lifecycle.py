@@ -303,23 +303,38 @@ class TestRenameAndMove(LifeCase):
         self.w.store.write(made["operation_id"], rec)
         before, commits = self.state(), self.commits()
         out = self.w.execute(made["operation_id"], made["confirmation"])
-        self.assertEqual("not_found", out["error"], out)                          # an expired record is swept before it is read
-        self.assertFalse(self.w.store.exists(made["operation_id"]))
+        self.assertEqual("refused", out["state"], out)                            # N4: its own sentence, not "no such operation"
+        self.assertEqual(lifecycle.EXPIRED, out["say"])
+        self.assertNotIn("no such operation", out["say"].lower())
         self.assertEqual(before, self.state())
         self.assertEqual(commits, self.commits())
-        rec = self.w.store.read(made["operation_id"])
-        self.assertIsNone(rec)
         again = self.w.execute(made["operation_id"], made["confirmation"])
-        self.assertEqual("not_found", again["error"])
+        self.assertEqual(lifecycle.EXPIRED, again["say"])
         self.assertEqual(commits, self.commits())
 
-    def test_the_record_of_an_expired_preview_is_swept_by_status_too(self):
+    def test_an_expired_preview_says_so_at_status_and_an_id_never_issued_is_still_not_found(self):
         made = self.prep("rename", **self.RENAME)
         rec = self.w.store.read(made["operation_id"])
         rec["created"] = time.time() - writes.PREPARED_KEEP - 5
         self.w.store.write(made["operation_id"], rec)
-        self.assertEqual("not_found", self.w.status(made["operation_id"])["error"])
+        said = self.w.status(made["operation_id"])
+        self.assertEqual(("refused", lifecycle.EXPIRED), (said["state"], said["say"]))
+        self.assertNotIn("confirmation", said)
+        for call in (self.w.status, lambda op: self.w.execute(op, "x")):
+            out = call("0123456789abcdef")
+            self.assertEqual("not_found", out["error"])
+            self.assertEqual(writes.NOT_FOUND, out["say"])
+
+    def test_an_expired_preview_is_kept_as_a_receipt_and_swept_with_the_receipts(self):
+        made = self.prep("rename", **self.RENAME)
+        rec = self.w.store.read(made["operation_id"])
+        rec["created"] = time.time() - writes.PREPARED_KEEP - 5
+        self.w.store.write(made["operation_id"], rec)
+        self.w.store.tidy()
+        self.assertTrue(self.w.store.exists(made["operation_id"]))
+        self.w.store.tidy(now=time.time() + writes.DONE_KEEP + 60)
         self.assertFalse(self.w.store.exists(made["operation_id"]))
+        self.assertEqual("not_found", self.w.status(made["operation_id"])["error"])
 
     def test_a_confirmation_used_twice_runs_once(self):
         made = self.prep("rename", **self.RENAME)

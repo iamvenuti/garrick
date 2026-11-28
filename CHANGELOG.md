@@ -4,6 +4,27 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-11-28
+
+A phone assistant connected through remote access can now wrap a thread, and make, rename, move and undo projects and threads. One fix comes from daily use: a tick that meets a busy git lock now waits and saves.
+
+**Upgrading.**
+- From a phone assistant, through remote access (preview), you can now wrap a thread and leave it at a resume point the next session reads cold. You can also check a name, make a project or a thread, and rename, move or undo one. A rename or a move shows you what it would change first, and runs only when you say yes. Deleting a project or a thread still waits: it needs your approval at the Mac.
+- Tick several Todo lines in a row and every tick saves. A tick that finds the zone's history busy waits a few seconds and tries again.
+
+### Added
+
+- **Wrap a thread through remote access** (#723). The assistant sends the words: the Resume here block with all six rows, the dated entry, the commit message and the Todo lines to add or tick. Garrick runs the same wrap tool as at the Mac, with its lock, and saves it all as one commit through the zone's own checks. A key the tool does not take, or a missing one, fails the wrap and nothing is written. A remote wrap never writes a memory pointer, which lives outside the workspace, and never claims a lock. Ask again with the same operation and you get the first receipt back, with no second dated entry. A wrap cut off after its commit is settled from the zone's history.
+- **Make, rename, move and undo through remote access** (#724). Six actions: check a name, new project, new thread, rename, move, and undo for the last of these. Each runs the App's own handler, so a request the App would refuse is refused here too, in the same words. A rename or a move first returns a preview of the paths, links and lines it would change, with a confirmation that works once, for that one operation, and expires with it. If anything changed since the preview, the confirmation is refused. Undo takes back only a change this connection made. A project made with a party that is not in your Parties table is refused. Every change stays inside the zones the connection may reach, and a refusal names nothing in a zone it does not reach.
+
+### Changed
+
+- **A wrap names its operation in its commit.** When a wrap runs for a recorded operation, its commit carries the operation's id, as the other actions' commits have done since 0.84.0.
+
+### Fixed
+
+- **A tick that meets a git lock** (#722). The shared commit step now waits up to about four seconds for the zone's `index.lock` and tries again. When the lock outlasts the wait, the page says "Not saved: another program was using this zone's history. Try again in a moment." It no longer says a check refused it. A lock file older than five minutes is named in Details as possibly stale.
+
 ## [0.84.0] - 2026-11-27
 
 Every action that commits now leaves a record, so Garrick can tell what happened when it stopped halfway. Remote access also gets four follow-ups from the 0.83.0 review.

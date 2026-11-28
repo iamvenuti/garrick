@@ -2808,7 +2808,9 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # One line, with the commit the page's Undo reverts; scaffold.py's undo command and memory hint are
         # for a terminal, and Undo on the page is the way back here.
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
-        return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
+        whole = git(zone, "rev-parse", "HEAD")[1].strip() if found else ""     # scaffold.py's sentence says it short; the receipt holds the whole id (S6)
+        return {"say": first_line(said).rstrip("."),
+                "commit": whole if re.fullmatch(r"[0-9a-f]{40}", whole) and whole.startswith(found.group(1)) else (found.group(1) if found else "")}
     return said
 
 
@@ -3163,7 +3165,7 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
     # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
     said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []), *expect)
-    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
+    code, head = git(zone, "rev-parse", "HEAD")      # a receipt holds the whole commit id, whoever asked (S6)
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
@@ -3196,7 +3198,7 @@ def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: 
     are not Garrick's to write, so the reply says that they still name the old
     path."""
     said = scaffold(ws, "move", *which, "--to", to, *expect)
-    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
+    code, head = git(zone, "rev-parse", "HEAD")      # a receipt holds the whole commit id, whoever asked (S6)
     made = head.strip() if code == 0 else ""
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled

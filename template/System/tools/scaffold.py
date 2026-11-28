@@ -2294,6 +2294,10 @@ def cmd_undo(root, args, today):
     is still the zone's last commit: anything committed since might depend on it."""
     zone_dir = find_zone(root, args.zone)
     head = git_value(["rev-parse", "HEAD"], zone_dir).strip()
+    # A commit id, whole, as a receipt holds it. A short one (7 or more) is read only for a receipt an older Garrick made, and
+    # only when it names exactly one commit: git refuses an ambiguous prefix. A name such as HEAD or a branch is never an id.
+    if not re.fullmatch(r"[0-9a-f]{7,40}", args.commit or ""):
+        raise Refusal(f"{args.commit} is not a commit id: give the whole id the change reported.")
     wanted = git_value(["rev-parse", "--verify", "-q", args.commit + "^{commit}"], zone_dir).strip()
     if not wanted:
         raise Refusal(f"{zone_dir.name} has no commit {args.commit}.")

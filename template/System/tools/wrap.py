@@ -116,6 +116,13 @@ def failed(why: str) -> Stop:
     return Stop("failed", why)
 
 
+def lock_or(said: str, otherwise: str) -> str:
+    """The lock's sentence alone when git said it could not take the zone's index.lock (its own line carries the
+    workspace's path, so it is never passed on); else `otherwise`. The sentence is scaffold.py's."""
+    import scaffold
+    return scaffold.lock_sentence() if scaffold.lock_said(said) else otherwise
+
+
 # ---------------------------------------------------------------------------
 # The input
 
@@ -669,7 +676,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
         added = git(zone, "add", "--", *[literal(f) for f in files])
         if added.returncode != 0:
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
-            raise failed("git could not stage the files: %s" % " ".join(added.stderr.split())[:200])
+            raise failed(lock_or(added.stderr, "git could not stage the files: %s" % " ".join(added.stderr.split())[:200]))
         staged = [p for p in git(zone, "diff", "--cached", "--name-only", "-z").stdout.split("\0") if p]
         stray = sorted(set(staged) - set(files))
         if stray:
@@ -680,7 +687,7 @@ def transact(root, zone, job, note, in_zone, rel, text, new_text, todo, today, s
             git(zone, "reset", "-q", "--", *[literal(f) for f in files])
             said = (done.stderr + "\n" + done.stdout)
             if any(w in said.lower() for w in GIT_OWN):
-                raise failed("git did not commit: %s" % hook_sentence(said)[:300])
+                raise failed(lock_or(said, "git did not commit: %s" % hook_sentence(said)[:300]))
             raise Stop("refused", hook_sentence(said) or "the zone's hook refused the commit")
         commit = git(zone, "rev-parse", "--short", "HEAD").stdout.strip()
     if memory is not None:

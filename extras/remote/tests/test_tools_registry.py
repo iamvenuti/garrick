@@ -137,7 +137,7 @@ class TestTheConfirmationWordsClaimNoYes(unittest.TestCase):
     """C4: what the confirmation value proves is that it was issued with the preview, for that one change, once, for an hour. No text
     says the owner agreed, or that Garrick knows it. The hour is the code's own: writes.PREPARED_KEEP."""
 
-    CLAIMS = ("owner agreed", "owner agrees", "owner's yes", "approved", "approval", "consent", "owner has seen", "owner confirmed",
+    CLAIMS = ("owner agreed", "owner agrees", "owner's yes", "said yes", "approved", "approval", "consent", "owner has seen", "owner confirmed",
               "owner confirms", "owner knows", "garrick knows")
 
     def texts(self):

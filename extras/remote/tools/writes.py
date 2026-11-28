@@ -512,7 +512,7 @@ class Writes:
     def view(self, rec):
         state, receipt = rec["state"], rec.get("receipt") or {}
         words = {
-            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview. It runs only with the confirmation value that came with it. "
+            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview, and run it only after the owner says yes. "
                          if rec["verb"] in lifecycle.CONFIRMED else "Prepared. Nothing has changed yet. Execute it to go ahead. ") + rec.get("would", ""),
             "running": "It is running. Ask for its status in a moment.",
         }.get(state) or receipt.get("say") or ""

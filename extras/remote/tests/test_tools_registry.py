@@ -137,15 +137,29 @@ class TestTheConfirmationWordsClaimNoYes(unittest.TestCase):
     """C4: what the confirmation value proves is that it was issued with the preview, for that one change, once, for an hour. No text
     says the owner agreed, or that Garrick knows it. The hour is the code's own: writes.PREPARED_KEEP."""
 
-    CLAIMS = ("owner agreed", "owner agrees", "owner's yes", "owner says yes", "said yes", "says yes", "approved", "approval",
-              "consent", "owner has seen", "owner confirmed", "owner knows")
+    CLAIMS = ("owner agreed", "owner agrees", "owner's yes", "approved", "approval", "consent", "owner has seen", "owner confirmed",
+              "owner confirms", "owner knows", "garrick knows")
 
     def texts(self):
         from tools import lifecycle, writes
         server, _ = build(lambda ctx: None)
         listed = {t.name: t.description for t in asyncio.run(server.list_tools())}
+        session = support.StubSession(".", readable=("Work",), writable=("Work",))
+        w = writes.Writes(session)
+        rec = {"id": "0123456789abcdef", "verb": "rename", "zone": "Work", "state": "prepared", "hash": "h", "would": "W", "fields": {}}
         return {"prepare": listed["prepare"], "execute": listed["execute"], "NEEDS_YES": lifecycle.NEEDS_YES,
-                "NOT_THIS": lifecycle.NOT_THIS, "EXPIRED": lifecycle.EXPIRED, "CHANGED": lifecycle.CHANGED}
+                "NOT_THIS": lifecycle.NOT_THIS, "EXPIRED": lifecycle.EXPIRED, "CHANGED": lifecycle.CHANGED,
+                "would": lifecycle.would("rename", "Work", {"project": "Acme", "to": "Apex"}, "", {"count": 2}),
+                "Prepared": w.view(rec)["say"]}
+
+    def test_the_instruction_to_wait_for_the_owner_is_there_and_says_garrick_cannot_check_it(self):
+        texts = self.texts()
+        for name in ("prepare", "execute", "NEEDS_YES", "Prepared"):
+            self.assertIn("only after the owner", texts[name].lower(), name)
+        for name in ("prepare", "execute", "NEEDS_YES"):
+            self.assertIn("cannot check", texts[name].lower(), name)
+        self.assertNotIn("until the owner confirms", texts["would"].lower())
+        self.assertIn("confirmation value of this preview", texts["would"])
 
     def test_no_text_says_the_owner_agreed(self):
         for name, text in self.texts().items():
@@ -169,7 +183,7 @@ class TestTheConfirmationWordsClaimNoYes(unittest.TestCase):
         para = [l for l in doc.splitlines() if "`confirmation` value" in l][0].lower()
         for claim in self.CLAIMS:
             self.assertNotIn(claim, para, claim)
-        for need in ("issued with that preview", "works once", "an hour", "that one prepared change"):
+        for need in ("issued with that preview", "works once", "an hour", "that one prepared change", "only after you say yes"):
             self.assertIn(need, para, need)
 
 if __name__ == "__main__":

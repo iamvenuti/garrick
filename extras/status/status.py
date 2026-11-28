@@ -2678,18 +2678,24 @@ setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.rel
 # page's. A page in a browser has no bridge, and the script stops at once. It runs in a script element of its own.
 BUSY_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var was=false,drag=false,typed=[];
+var was=false,wasTyped=false,drag=false,typed=[];
 function field(e){if(!e||!e.tagName)return false;var t=e.tagName;
 if(t==='TEXTAREA')return true;if(t==='INPUT')return!/^(checkbox|radio|button|submit|reset|file|image|range|color|hidden)$/i.test(e.type||'');
 return!!e.isContentEditable}
+/* text a user writes: a text box, a textarea, a contenteditable. A search, number, time or date field holds a filter or a setting, not a draft */
+function wide(e){return e.tagName==='TEXTAREA'||!!e.isContentEditable||(e.tagName==='INPUT'&&/^(text|)$/i.test(e.getAttribute('type')||''))}
+function edited(e){return e.isContentEditable?e.textContent!=='':(e.value!==''&&e.value!==e.defaultValue)}
 function ticks(){try{var q=JSON.parse(sessionStorage.getItem('garrick-work-ticks')||'[]');return!!q&&q.length>0}catch(x){return false}}
+/* unsaved typed text: written by a user, not what the page rendered. A narrow field counts only while it has the keys; a field in a closed dialog is no draft */
 function lose(){typed=typed.filter(function(e){return e.isConnected});
-return typed.some(function(e){return(e.isContentEditable?e.textContent:e.value)!==''})}
-function busy(){var a=document.activeElement;
-return(field(a)&&document.hasFocus())||lose()||!!document.querySelector('dialog[open]')||drag||ticks()}
-function tell(){var b=busy();if(b!==was){was=b;host.postMessage({busy:b})}}
+return typed.some(function(e){if(!edited(e)||e.closest('dialog:not([open])'))return false;
+return wide(e)||(e===document.activeElement&&document.hasFocus())})}
+function busy(t){return t||!!document.querySelector('dialog[open]')||drag||ticks()}
+function tell(){var t=lose(),b=busy(t);if(b!==was||t!==wasTyped){was=b;wasTyped=t;host.postMessage({busy:b,typed:t})}}
 document.addEventListener('input',function(e){if(field(e.target)&&typed.indexOf(e.target)<0)typed.push(e.target);tell()},true);
-['focusin','focusout','change'].forEach(function(n){document.addEventListener(n,function(){setTimeout(tell,0)},true)});
+/* a change to a search, number, time or date field is the page's to keep: it is saved or filtered, so it is no longer something to lose */
+document.addEventListener('change',function(e){var i=typed.indexOf(e.target);if(i>=0&&!wide(e.target))typed.splice(i,1);setTimeout(tell,0)},true);
+['focusin','focusout'].forEach(function(n){document.addEventListener(n,function(){setTimeout(tell,0)},true)});
 document.addEventListener('dragstart',function(){drag=true;tell()},true);
 ['dragend','drop'].forEach(function(n){document.addEventListener(n,function(){drag=false;setTimeout(tell,0)},true)});
 window.addEventListener('blur',function(){setTimeout(tell,0)});window.addEventListener('focus',function(){setTimeout(tell,0)});
@@ -9000,6 +9006,14 @@ def write_page(out: Path, text: str) -> None:
         raise
 
 
+GENERATION_AHEAD = 86400 * 10 ** 9      # a generation more than a day past the clock is not one this build's clock could have made
+
+
+def sane_generation(g: Optional[int]) -> Optional[int]:
+    """`g`, or None where it is more than a day ahead of the clock: a clock set back or a page restored from a backup."""
+    return g if g is not None and g <= time.time_ns() + GENERATION_AHEAD else None
+
+
 def next_generation(out: Path) -> int:
     """The number a page build takes when it starts, for the page at `out`. It rises with every build, across
     processes: the time in nanoseconds, or one more than the last number taken where the clock has not moved on,
@@ -9017,6 +9031,7 @@ def next_generation(out: Path) -> int:
             last = int(os.read(fd, 40).decode("ascii", "replace").strip() or "0")
         except ValueError:
             last = 0
+        last = sane_generation(last) or 0
         taken = max(now, last + 1)
         os.lseek(fd, 0, os.SEEK_SET)
         os.ftruncate(fd, 0)
@@ -9064,7 +9079,7 @@ def publish_page(out: Path, text: str, generation: Optional[int]) -> bool:
                 fcntl.flock(lock, fcntl.LOCK_EX)
         except OSError:
             lock = None                       # no lock to be had: the rename alone, which is whole either way
-        there = page_generation(out)
+        there = sane_generation(page_generation(out))
         if generation is not None and there is not None and there >= generation:
             os.unlink(tmp)
             return False
@@ -9188,8 +9203,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                  page_at=out, reuse_check=args.reuse_check, waiting_now=waiting_rows(ws), generation=generation)
     if STARTED is not None and own_stamp() != STARTED:
         return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
-    publish_page(out, page, generation)       # a build that finishes after a newer one leaves the newer page in place
-    if not args.same_flags:                   # a build that used the stored flags leaves them to the build that stored them
+    published = publish_page(out, page, generation)   # a build that finishes after a newer one leaves the newer page in place
+    if not published:
+        print("status: a newer page was already in place, so this build's page was not put there.", file=sys.stderr)
+    if not args.same_flags and published:     # the flags are the page's: a build that lost leaves the winner's                   # a build that used the stored flags leaves them to the build that stored them
         try:
             write_page(flags_file(out), json.dumps({"args": page_words(args, moved)}, ensure_ascii=False) + "\n")
         except OSError as e:

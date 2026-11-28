@@ -889,7 +889,7 @@ class TestWhatIsSentAndKept(LifeCase):
             "import json, sys\n"
             "if __name__ == '__main__':\n"
             "    open(%r, 'a').write(json.dumps({'argv': sys.argv[1:], 'stdin': sys.stdin.read()}) + '\\n')\n"
-            "    print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd1'}}))\n" % str(seen))
+            "    print(json.dumps({'ok': True, 'say': 'Done.', 'plan': {'paths': [], 'count': 0, 'files': [], 'digest': 'd100000000000000000000000000000000000000000000000000000000000000'}}))\n" % str(seen))
         return seen
 
     def test_the_request_is_built_from_the_fields_of_the_verb_and_names_the_remote_caller(self):
@@ -913,7 +913,8 @@ class TestWhatIsSentAndKept(LifeCase):
             self.assertEqual(want, check)
         change = changes[0]
         self.assertEqual("rename", change["verb"])
-        self.assertEqual({"verb", "zone", "op", "project", "thread", "to"}, set(change))
+        self.assertEqual({"verb", "zone", "op", "project", "thread", "to", "plan_digest"}, set(change))        # the digest is the preview's (C5)
+        self.assertEqual("d1" + "0" * 62, change["plan_digest"])
         self.assertEqual(made["operation_id"], change["op"])
         self.assertEqual(sent[-1], change)                                   # and it comes last
         for row in rows:

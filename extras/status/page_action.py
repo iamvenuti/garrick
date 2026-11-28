@@ -3125,8 +3125,9 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     files = [ws / "System" / n for n in ("context.md", "names.md")]
     held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
-    said = scaffold(ws, "rename", *which, "--to", to)
-    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
+    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []))
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
@@ -3159,7 +3160,7 @@ def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: 
     are not Garrick's to write, so the reply says that they still name the old
     path."""
     said = scaffold(ws, "move", *which, "--to", to)
-    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled
@@ -6875,6 +6876,7 @@ def ask_for_page(ws: Path) -> bool:
 
 
 _NO_CALLER = object()
+VIA = None              # who the request now being done came from, for the few handlers that differ by caller (#724)
 
 
 def perform(ws: Path, req, ops=None, via=_NO_CALLER):
@@ -6896,11 +6898,12 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
-    global CURRENT
+    global CURRENT, VIA
     if via is _NO_CALLER:
         raise TypeError("perform() needs via=: name the caller, one of %s" % ", ".join(CALLERS))
     out, logged, run, outcome, why = None, None, None, None, ""
     receipt = None
+    VIA = via
     try:
         try:
             joined = None
@@ -6967,6 +6970,7 @@ def perform(ws: Path, req, ops=None, via=_NO_CALLER):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None
+        VIA = None
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
     return out, logged, why

@@ -403,6 +403,7 @@ class Writes:
             return None
 
     def execute(self, operation_id, confirmation=None):
+        self.store.tidy()
         if not (common.op_id_ok(operation_id) and len(str(operation_id)) == 16):
             return say("not_found", NOT_FOUND)
         op = str(operation_id)
@@ -485,6 +486,7 @@ class Writes:
         return rec
 
     def status(self, operation_id):
+        self.store.tidy()
         if not (common.op_id_ok(operation_id) and len(str(operation_id)) == 16):
             return say("not_found", NOT_FOUND)
         op = str(operation_id)
@@ -507,7 +509,10 @@ class Writes:
                "say": words}
         if state == "prepared":
             out["would"] = rec.get("would", "")
-            if rec["verb"] in lifecycle.CONFIRMED:       # what the owner is asked about, and the token that says yes to this one
+            if rec["verb"] in lifecycle.CONFIRMED and not lifecycle.may_show(self, rec):    # the count of notes is the zone's too
+                out["say"] = REACH_CHANGED_SAY
+                out.pop("would", None)
+            elif rec["verb"] in lifecycle.CONFIRMED:                                       # what the owner is asked about, and the token that says yes to this one
                 out["preview"] = (rec.get("fields") or {}).get("_preview", {})
                 out["confirmation"] = lifecycle.token(self, rec)
                 out["needs_confirmation"] = True

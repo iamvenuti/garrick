@@ -1351,7 +1351,7 @@ def cmd_rename(root, args, today):
     said += asked
     if others:
         said.append(f"Links written [[{old}]] were left alone: another note in {zone_dir.name} has that name too.")
-    alias_file = add_alias(root, old, new, today)
+    alias_file = False if getattr(args, "no_alias", False) else add_alias(root, old, new, today)
     if alias_file:
         said.append(f'Added "{old}" as a heard name for {new} in {alias_file}; commit it in the workspace root.')
     meetings = root / "Wikis" / "Meetings" / "wiki"
@@ -2738,6 +2738,8 @@ def main(argv=None):
     mv.add_argument("--thread", required=True, help="the thread to move")
     mv.add_argument("--to", required=True, help="the project it goes to, in the same zone")
     mv.add_argument("--no-state", dest="no_state", action="store_true", help=argparse.SUPPRESS)
+    r.add_argument("--no-alias", dest="no_alias", action="store_true",
+                   help="do not add the old name as a heard name in System/names.md (a remote assistant never does)")
     for each in (r, mv):
         each.add_argument("--plan", action="store_true",
                           help="say what the change would write, as JSON, and make nothing")

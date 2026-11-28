@@ -112,17 +112,17 @@ Six more actions run through the same three tools, and each one runs the same co
 - `check-name` says at once whether a name is free and valid in the zone, for a new project, a new thread, a rename or a move. It writes nothing and prepares nothing, so it has no operation id.
 - `new-project` makes a project, and its first thread if one is named. A party may be named, but only one that is already in the Parties table. Adding a party stays at the Mac, because a party decides which side of a wall a project is on. A name that needs a spoken form is refused with the page's question, and is made in a session instead.
 - `new-thread` makes a thread in a project.
-- `rename` renames a project or a thread, and every link to it in the zone, in one commit. It also leaves the old name as a heard name in the workspace's names table, as it does at the Mac.
+- `rename` renames a project or a thread, and every link to it in the zone, in one commit. Unlike a rename at the Mac, it does not add the old name as a heard name in the workspace's names table: a heard name changes how a spoken name is read in every zone, so that stays at the Mac.
 - `move` moves a thread to another project of its zone, with every link to it, in one commit.
 - `undo` takes back a rename, a move, a new project or a new thread that this connection made, in one commit, while it is still the last commit in that zone. It takes the commit id from the receipt of the change. A commit that this connection did not make is refused, even one the page's own Undo would take back: undo that one at the Mac.
 
 `delete` is not served. It waits for your approval at the Mac, which does not exist yet.
 
-A rename and a move show what would change before they run. The answer to `prepare` lists the paths that move, the notes that would be rewritten, and for each note a few of the lines that change, with a count of the rest. It also carries a `confirmation` value. Nothing runs until `execute` is called with that operation id and that value, and the assistant is told to ask for it only after you have seen the preview and said yes. The value is for that one prepared operation and the plan it showed. It works once. It expires with the prepared change, an hour after the preview. And it is refused when what would change is no longer what the preview showed, for example when a note that links to the thread was saved in the meantime: the check is made again at the moment of the confirmation, nothing is written, and the change is prepared again with a new preview. A rename or a move sent to `execute` with no value, or with the value of another change, writes nothing.
+A rename and a move need the connection to read and write the zone, because the preview shows lines of its notes. A grant that may only write a zone is refused for them, in one sentence that names nothing of the zone. A rename and a move show what would change before they run. The answer to `prepare` lists the paths that move, the notes that would be rewritten, and for each note a few of the lines that change, with a count of the rest. It also carries a `confirmation` value. Nothing runs until `execute` is called with that operation id and that value, and the assistant is told to ask for it only after you have seen the preview and said yes. The value is for that one prepared operation and the plan it showed. It works once. It expires with the prepared change, an hour after the preview. And it is refused when what would change is no longer what the preview showed, for example when a note that links to the thread was saved in the meantime: the check is made again at the moment of the confirmation, nothing is written, and the change is prepared again with a new preview. A rename or a move sent to `execute` with no value, or with the value of another change, writes nothing.
 
 A name here is one folder name and never a path: a name with a slash, a leading dot, `..` or a path to another place is refused. A project, a thread or a note that is a link is refused too, because a link may lead out of the zone. Every zone a request names is checked against the grant's write reach before anything is prepared, and again at `execute`. The refusal for a zone outside the reach is the one sentence given under Reach, and it names nothing in that zone. A refusal about a party does not list the parties of the workspace: it says that the party is not one this zone can use.
 
-Each of the six leaves a record in the zone's own history folder, as the five before them do. A retry with the same operation id returns the first receipt and makes no second commit, and a stop in the middle is settled from the zone's history.
+Each of the other five leaves a record in the zone's own history folder, as the five before them do. `check-name` leaves none, because it writes nothing. A preview stops being shown when the grant stops reading or writing the zone. A retry with the same operation id returns the first receipt and makes no second commit, and a stop in the middle is settled from the zone's history.
 
 ## Wrapping a thread
 
@@ -146,7 +146,7 @@ Each answer carries a handle. Handles last twelve hours. When you change a grant
 
 ## What leaves the Mac
 
-On a read, the text of each result leaves: up to a few thousand characters of a record for each read, a short snippet for each search hit, the first part of a thread's resume block, titles, dates, and the paths that carry zone, project and thread names, and up to forty Todo lines. On a write, the words you dictate leave in the other direction.
+On a read, the text of each result leaves: up to a few thousand characters of a record for each read, a short snippet for each search hit, the first part of a thread's resume block, titles, dates, and the paths that carry zone, project and thread names, and up to forty Todo lines. On a write, the words you dictate leave in the other direction. The preview of a rename or a move carries lines of the zone's notes, up to three for each of the first forty notes it would change.
 
 It goes to the relay, which carries it and, with the method this release uses, cannot read it. It then goes to the assistant provider. There it becomes part of the chat: kept in the chat history under that account's settings, shown on every device signed in to the account, and spoken aloud in voice mode. If you point the address at a server of your own, that server can read it.
 
@@ -209,7 +209,7 @@ If the Mac is off or asleep, you see the assistant's own error, not a sentence f
 
 ## What is not in this release
 
-Approvals from the phone, switching a reach from the phone, wrap, delete, adding a party, owner-only operations and long jobs. Sign-in with a passkey comes in a later release.
+Approvals from the phone, switching a reach from the phone, delete, adding a party, owner-only operations and long jobs. Sign-in with a passkey comes in a later release.
 
 ## What you lose without it
 

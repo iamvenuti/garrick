@@ -13,7 +13,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 
-from test_scaffold_manage import ManageCase  # noqa: E402
+from test_scaffold_manage import ManageCase, pa  # noqa: E402
 
 
 class PlanCase(ManageCase):
@@ -88,6 +88,39 @@ class TestMovePlan(PlanCase):
         r = self.scaffold("move", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--to", "Nowhere", "--plan")
         self.assertEqual(1, r.returncode)
         self.assertIn("There is no project called Nowhere", r.stderr)
+
+
+class TestTheHeardName(PlanCase):
+    """A rename adds the old name as a heard name, which changes how a spoken name is read in every zone. The App does; a remote
+    assistant never does (#724)."""
+
+    def tables(self):
+        return {n: (self.root / "System" / n).read_text(encoding="utf-8") for n in ("context.md", "names.md")
+                if (self.root / "System" / n).is_file()}
+
+    def test_scaffold_adds_it_and_the_flag_leaves_it_out(self):
+        before = self.tables()
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Rates", "--no-alias")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, self.tables())
+        self.assertNotIn("heard name", r.stdout)
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--to", "Lanes")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertNotEqual(before, self.tables())
+        self.assertIn("freight", "".join(self.tables().values()).lower())
+
+    def test_the_page_action_writes_it_for_the_page_and_not_for_a_remote_caller(self):
+        before = self.tables()
+        out, _, _ = pa.perform(self.root, dict(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Rates"),
+                               pa.ops_lib(self.root), via="remote")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(before, self.tables())
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), out["commit"])         # a remote receipt holds the whole id
+        out, _, _ = pa.perform(self.root, dict(verb="rename", zone="Work", project="Acme", thread="Freight", to="Lanes"),
+                               pa.ops_lib(self.root), via="page")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.git("rev-parse", "--short", "HEAD").stdout.strip(), out["commit"])    # the page's stays short, as it was
+        self.assertNotEqual(before, self.tables())
 
 
 if __name__ == "__main__":

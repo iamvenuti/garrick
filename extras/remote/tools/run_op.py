@@ -178,11 +178,15 @@ def repeat_receipt(reply, text: str, code: int = 1):
     return {"ok": False, "say": REPEAT_RUNNING if said.lstrip().startswith(RUNNING_START) else REPEAT_DONE}
 
 
+HOOK_OPENS = ("Refused:", "Commit refused:", "The wall check did not run:")     # how the wrap tool and the hook open a refusal of the hook
+
+
 def wall_words(say: str) -> bool:
     """Whether a refusal of a wrap is the zone's commit hook: its text names the zone, the note and the way to let it through,
-    none of which a remote caller may be told. Any refusal the hook makes counts; a refusal of the wrap tool's own is a failure."""
-    low = say.lower()
-    return say.startswith("Refused:") or "commit refused" in low or "walled" in low or "wall" in low
+    none of which a remote caller may be told. It is told by the fixed opening the wrap tool gives a refusal of the hook
+    (`Refused:`, wrap.py's say_for) or the hook's own, never by a word in the text: a wrap that failed for another reason, and
+    says "wall" in its own words, keeps its reason. Any refusal that opens as the hook's does counts, whatever follows it."""
+    return say.lstrip().startswith(HOOK_OPENS)
 
 
 def receipt(verb: str, code: int, out: str, err: str) -> dict:

@@ -29,8 +29,8 @@ def register(server, run, data):
           "check-name (zone, kind, and the name's own fields: it answers at once and prepares nothing), new-project (zone, name, party, thread), "
           "new-thread (zone, project, name), rename (zone, project, thread, to), move (zone, project, thread, to), undo (zone, commit), "
           "wrap (zone, project, thread, resume with stands and all six rows, entry, message, todo, checkpoint). "
-          "A rename and a move return a preview and a confirmation value: show the owner the preview, and only when the owner says yes, run execute "
-          "with that confirmation. A wrap takes the words only: it never takes memory or lock. Returns an operation id." % verbs)
+          "A rename and a move return a preview and a confirmation value: show the owner the preview, then run execute with that value. "
+          "The value was issued with the preview, for that one change, works once, and lasts an hour. A wrap takes the words only: it never takes memory or lock. Returns an operation id." % verbs)
     async def prepare(ctx: Context, verb: str, zone: str, project: str | None = None, thread: str | None = None,
                       text: str | None = None, title: str | None = None, line: str | None = None, date: str | None = None,
                       target: str | None = None, reason: str | None = None, items: list[dict] | None = None,
@@ -48,8 +48,8 @@ def register(server, run, data):
 
     @tool("execute", WRITE_EXECUTE,
           "Carry out a prepared change, once. It returns at once: ask for the status to see the receipt. Asking again with the same "
-          "operation id never saves twice. A rename or a move needs `confirmation`, the value its preview gave, sent only after the owner has "
-          "seen the preview and said yes.")
+          "operation id never saves twice. A rename or a move needs `confirmation`, the value its preview gave. "
+          "The value was issued with that preview, for that one change, works once, and lasts an hour. Show the owner the preview first.")
     async def execute(ctx: Context, operation_id: str, confirmation: str | None = None, handle: str | None = None) -> dict:
         return await run(ctx, "execute", handle, lambda s: writes.Writes(s).execute(operation_id, confirmation))
 

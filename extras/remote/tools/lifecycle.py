@@ -71,11 +71,13 @@ NOT_A_PLACE = "That is not a project or a thread of this zone that can be change
 NEEDS_READ = ("A rename or a move needs this connection to read and write the zone, because it shows what would change. "
               "The owner sets that at the Mac. Nothing was changed.")
 NOT_YOURS = "That is not a change this connection made, so it is not undone from here. Undo it at the Mac."
-EXPIRED = "That preview has expired. Nothing was changed. Prepare it again."
-CHANGED = ("What would change is not what the preview showed. Nothing was changed. Prepare it again, and show the owner the new preview.")
-NEEDS_YES = ("Nothing was changed. This change runs only after the owner has seen what would change and said yes. "
-             "Show the preview, and when the owner agrees, run execute again with the confirmation value from the preview.")
-NOT_THIS = "That confirmation is not for this change as it was previewed. Nothing was changed."
+EXPIRED = "That preview has expired. Its confirmation value lasted an hour. Nothing was changed. Prepare it again."
+CHANGED = run_op.PLAN_CHANGED_SAYS
+NEEDS_YES = ("Nothing was changed. This change needs the confirmation value that came with its preview. "
+             "That value was issued for this one change, works once, and lasts an hour. "
+             "Show the owner the preview, then run execute again with the value.")
+NOT_THIS = ("That is not the confirmation value issued with this preview. It is good for that one change only, once, for an hour. "
+            "Nothing was changed.")
 TOO_LONG = "That took too long to check. Nothing was changed."
 
 
@@ -290,7 +292,7 @@ def may_show(w, rec) -> bool:
 
 
 def token(w, rec) -> str:
-    """What the owner's yes is for: this operation, this request, and the plan the preview showed. A token for another operation, or for
+    """What the value is for: it was issued with the preview, for this operation, this request, and the plan the preview showed. A token for another operation, or for
     the same request as it stood under another plan, does not match."""
     plan = (rec.get("fields") or {}).get("_plan", "")
     return hashlib.sha256(("%s:%s:%s:%s" % (rec["id"], rec["hash"], plan, w.grant)).encode("utf-8")).hexdigest()[:20]

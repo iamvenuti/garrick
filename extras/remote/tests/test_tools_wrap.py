@@ -417,6 +417,26 @@ class TestTheWallHoldsThingsBack(WrapCase):
         self.assertEqual(ops.WALL_REFUSAL, run_op.WALL_SAYS)
 
 
+class TestOnlyTheHooksOwnWordsAreAWall(unittest.TestCase):
+    """N2: a wrap is told to be a wall by the fixed opening of the hook's refusal, never by a word in its text."""
+
+    def made(self, say):
+        return run_op.receipt("wrap", 1, json.dumps({"ok": False, "say": say}), "")
+
+    def test_a_wrap_that_failed_for_another_reason_keeps_its_reason_even_with_the_word_wall(self):
+        for say in ("Failed: the wall of the note changed shape. Nothing was saved.",
+                    "Conflict: the walled garden note changed while the wrap was being written. Nothing was saved; run the wrap again."):
+            self.assertEqual(say, self.made(say)["say"])
+
+    def test_the_hooks_refusal_is_the_wall_sentence(self):
+        for say in ("Refused: Commit refused: Zones/Work/A/A.md names Birch.", "Commit refused: a walled thing.",
+                    "The wall check did not run: it is missing."):
+            self.assertEqual(run_op.WALL_SAYS, self.made(say)["say"])
+
+    def test_a_refusal_that_opens_as_the_hooks_does_fails_closed_whatever_it_says(self):
+        self.assertEqual(run_op.WALL_SAYS, self.made("Refused: something nobody has seen before.")["say"])
+
+
 class TestTheServiceHoldsNoWords(WrapCase):
     def test_the_record_and_the_service_log_hold_none_of_the_wraps_words(self):
         from mcp.server.mcpserver import MCPServer

@@ -132,5 +132,45 @@ class TestAnswersAndHandles(support.ToolsCase):
         self.assertNotIn("nowhere", json.dumps(out))
 
 
+
+class TestTheConfirmationWordsClaimNoYes(unittest.TestCase):
+    """C4: what the confirmation value proves is that it was issued with the preview, for that one change, once, for an hour. No text
+    says the owner agreed, or that Garrick knows it. The hour is the code's own: writes.PREPARED_KEEP."""
+
+    CLAIMS = ("owner agreed", "owner agrees", "owner's yes", "owner says yes", "said yes", "says yes", "approved", "approval",
+              "consent", "owner has seen", "owner confirmed", "owner knows")
+
+    def texts(self):
+        from tools import lifecycle, writes
+        server, _ = build(lambda ctx: None)
+        listed = {t.name: t.description for t in asyncio.run(server.list_tools())}
+        return {"prepare": listed["prepare"], "execute": listed["execute"], "NEEDS_YES": lifecycle.NEEDS_YES,
+                "NOT_THIS": lifecycle.NOT_THIS, "EXPIRED": lifecycle.EXPIRED, "CHANGED": lifecycle.CHANGED}
+
+    def test_no_text_says_the_owner_agreed(self):
+        for name, text in self.texts().items():
+            for claim in self.CLAIMS:
+                self.assertNotIn(claim, text.lower(), "%s: %s" % (name, claim))
+
+    def test_each_says_once_this_change_and_an_hour(self):
+        from tools import writes
+        self.assertEqual(3600, writes.PREPARED_KEEP)
+        texts = self.texts()
+        for name in ("execute", "NEEDS_YES", "NOT_THIS"):
+            low = texts[name].lower()
+            self.assertIn("once", low, name)
+            self.assertIn("an hour", low, name)
+            self.assertTrue("one change" in low or "that one" in low, name)
+        self.assertIn("an hour", texts["prepare"].lower())
+        self.assertIn("an hour", texts["EXPIRED"].lower())
+
+    def test_the_docs_page_says_the_same(self):
+        doc = (support.REPO / "docs" / "extras" / "remote-access.md").read_text(encoding="utf-8")
+        para = [l for l in doc.splitlines() if "`confirmation` value" in l][0].lower()
+        for claim in self.CLAIMS:
+            self.assertNotIn(claim, para, claim)
+        for need in ("issued with that preview", "works once", "an hour", "that one prepared change"):
+            self.assertIn(need, para, need)
+
 if __name__ == "__main__":
     unittest.main()

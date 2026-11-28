@@ -141,7 +141,13 @@ class Store:
         for rec in list(self.all()):
             age = now - float(rec.get("created") or 0)
             fin = rec.get("finished")
-            if (rec.get("state") == "prepared" and age > PREPARED_KEEP) or (fin and now - float(fin) > DONE_KEEP):
+            if rec.get("state") == "prepared" and age > PREPARED_KEEP:
+                # An expired preview is kept as a refusal, with the expired words, so that it is told from an id never issued (N4).
+                rec.update({"state": "refused", "receipt": {"ok": False, "say": lifecycle.EXPIRED}, "finished": now})
+                rec.pop("fields", None)
+                rec.pop("would", None)
+                self.write(rec["id"], rec)
+            elif fin and now - float(fin) > DONE_KEEP:
                 for suffix in (".json", ".lock", ".run"):
                     try:
                         (self.root / (rec["id"] + suffix)).unlink()
@@ -338,8 +344,10 @@ class Writes:
             return "reach"
         if self.reach_changed(rec):
             return "reach_changed"                            # prepared under another reach, or another folder of that zone
-        if verb in lifecycle.VERBS and lifecycle.guard(self, zone, verb, fields):
-            return lifecycle.NOT_A_PLACE                      # a link, or a place outside the zone, now
+        if verb in lifecycle.VERBS:
+            held = lifecycle.guard(self, zone, verb, fields)
+            if held:                                          # the read that was taken away has its own sentence (N6)
+                return lifecycle.NEEDS_READ if held == lifecycle.NEEDS_READ else lifecycle.NOT_A_PLACE     # else a link, or a place outside the zone, now
         zdir = self.ws / "Zones" / zone
         if verb == "wrap" and not wrap_verb.inside(zdir, fields):
             return "That project or thread is not a folder of this zone. Nothing was changed."
@@ -501,7 +509,7 @@ class Writes:
     def view(self, rec):
         state, receipt = rec["state"], rec.get("receipt") or {}
         words = {
-            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview: it runs only on the owner's yes. "
+            "prepared": ("Prepared. Nothing has changed yet. Show the owner the preview. It runs only with the confirmation value that came with it. "
                          if rec["verb"] in lifecycle.CONFIRMED else "Prepared. Nothing has changed yet. Execute it to go ahead. ") + rec.get("would", ""),
             "running": "It is running. Ask for its status in a moment.",
         }.get(state) or receipt.get("say") or ""

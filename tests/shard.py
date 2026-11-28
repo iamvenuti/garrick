@@ -230,6 +230,10 @@ for _key in ("extras/status/status.py", "tests/test_empty_states.py"):
 # life-0850 (#724): what a rename or a move would write, asked of the function the change writes with.
 for _key in ("template/System/tools/scaffold.py", "tests/test_scaffold_plan.py", "tests/test_scaffold_manage.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_scaffold_plan"]
+# core-0860 (C5): the plan made again under the lock, just before a rename or a move writes.
+for _key in ("template/System/tools/scaffold.py", "extras/status/page_action.py", "template/System/tools/operations.py",
+             "tests/test_scaffold_expect_plan.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_scaffold_expect_plan"]
 
 
 def touched(files, names=None):

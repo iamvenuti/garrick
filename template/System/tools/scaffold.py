@@ -121,6 +121,7 @@ import argparse
 import datetime
 import difflib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -1232,6 +1233,26 @@ def plan_of(zone_dir, paths, notes, after, rewritten, extra=None, texts=None):
     return json.dumps(plan, ensure_ascii=False, sort_keys=True)
 
 
+def plan_digest_arg(value):
+    if not re.fullmatch(r"[0-9a-f]{64}", value or ""):
+        raise argparse.ArgumentTypeError("the plan's digest is 64 hexadecimal characters")
+    return value
+
+
+PLAN_CHANGED = "Not changed: a note was saved after the plan was made. Check it again."
+
+
+def plan_still_holds(args, make_plan):
+    """The plan made again, just before the first write, and a refusal that writes nothing when `--expect-plan` named a
+    digest and the plan now has another: a note saved between the check and the write is not carried along. Without a
+    digest nothing is asked. The zone's lock is the caller's: the page action holds it around this whole command."""
+    expected = getattr(args, "expect_plan", None)
+    if expected is None:
+        return
+    if not hmac.compare_digest(str(json.loads(make_plan()).get("digest") or "").encode("utf-8"), expected.encode("utf-8")):
+        raise Refusal(PLAN_CHANGED)
+
+
 def cmd_rename(root, args, today):
     zone_dir, project_dir, thread_dir, note = target_of(root, args)
     new = args.to.strip()
@@ -1299,7 +1320,7 @@ def cmd_rename(root, args, today):
             changed = dated_entry(changed, f"Renamed from {old}.", today)
         return changed
 
-    if getattr(args, "plan", False):
+    def make_plan():
         def after(path):                                    # where a tracked file is once the folder has moved
             try:
                 rel = path.relative_to(folder)
@@ -1312,7 +1333,11 @@ def cmd_rename(root, args, today):
                    for n in kept for m in [re.fullmatch(re.escape(old) + r" history (\d{4}-Q[1-4])\.md", n)] if m]
         paths = [{"from": rel_old, "to": rel_new},
                  {"from": f"{rel_old}/{old}.md", "to": f"{rel_new}/{new}.md"}] + history
-        return plan_of(zone_dir, paths, notes, after, rewritten)
+        return plan_of(zone_dir, paths, list(zone_notes(zone_dir)), after, rewritten)
+
+    if getattr(args, "plan", False):
+        return make_plan()
+    plan_still_holds(args, make_plan)
     clear_machine_made(zone_dir, folder, made)
     try:
         # The folder and its note, through git, so history follows.
@@ -1661,7 +1686,7 @@ def cmd_move(root, args, today):
             changed = dated_entry(changed, f"Moved from {project_dir.name} to {target.name}.", today)
         return changed
 
-    if getattr(args, "plan", False):
+    def make_plan():
         def after(path):                                    # where a tracked file is once the thread has moved
             try:
                 return moved / path.relative_to(thread_dir).as_posix()
@@ -1678,9 +1703,12 @@ def cmd_move(root, args, today):
         if ledger.is_file():
             rows = [r for r in ledger.read_text(encoding="utf-8").split("\n") if r.startswith("|") and f"Threads/{name}/" in r]
         paths = [{"from": rel_old, "to": rel_new}]
-        return plan_of(zone_dir, paths, notes, after, rewritten, texts=texts,
+        return plan_of(zone_dir, paths, list(zone_notes(zone_dir)), after, rewritten, texts=texts,
                        extra={"hubs": {"leaves": hub.relative_to(zone_dir).as_posix(), "enters": target_hub.relative_to(zone_dir).as_posix()},
                               "ledger_rows": len(rows)})
+    if getattr(args, "plan", False):
+        return make_plan()
+    plan_still_holds(args, make_plan)
     clear_machine_made(zone_dir, thread_dir, made)
     try:
         threads.mkdir(exist_ok=True)
@@ -2743,6 +2771,9 @@ def main(argv=None):
     for each in (r, mv):
         each.add_argument("--plan", action="store_true",
                           help="say what the change would write, as JSON, and make nothing")
+        each.add_argument("--expect-plan", dest="expect_plan", type=plan_digest_arg,
+                          help="the digest of the plan that was shown: the plan is made again just before the write, "
+                               "and a change in it refuses the change and writes nothing")
     ly = sub.add_parser("layout", help="split a project into separate jobs, or join it into one job, and carry the files")
     ly.add_argument("--zone", required=True)
     ly.add_argument("--project", required=True)

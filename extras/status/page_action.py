@@ -60,9 +60,9 @@ zone's repository, as the skills would:
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
     rename      a project or thread and every link to it in the zone:
-                {"zone", "project", "thread"?, "to"}
+                {"zone", "project", "thread"?, "to", "plan_digest"?}
     move        a thread to another project of its zone, every link to it
-                following, in one commit: {"zone", "project", "thread", "to"}
+                following, in one commit: {"zone", "project", "thread", "to", "plan_digest"?}
     delete      without "confirm", what would go; with "confirm" naming it,
                 gone in one commit: {"zone", "project", "thread"?, "confirm"?}
     undo        a rename or deletion, while it is the zone's last commit:
@@ -2796,12 +2796,12 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if check:
             said = scaffold(ws, "move", *which, "--to", to, *flag)
             return with_plan(ws, "move", which, to, said) if req.get("plan") is True else said
-        return moved_here(ws, zone, project, thread, to, which)
+        return moved_here(ws, zone, project, thread, to, which, expected_plan(req))
     if verb == "rename":
         if check:
             said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
             return with_plan(ws, "rename", which, field(req, "to"), said) if req.get("plan") is True else said
-        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
+        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which, expected_plan(req))
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
     if confirm:
@@ -3135,7 +3135,19 @@ def first_line(said: str) -> str:
     return (said.strip().splitlines() or [""])[0].strip()
 
 
-def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list) -> dict:
+def expected_plan(req: dict) -> list:
+    """`--expect-plan <digest>` for a rename or a move whose request carries `plan_digest`, the digest of the plan that was
+    shown: scaffold.py makes the plan again under this zone's lock, just before it writes, and refuses when it differs.
+    Nothing for a request with none."""
+    value = req.get("plan_digest")
+    if value is None:
+        return []
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise Refused("not a plan digest: say the digest the plan gave, or leave it out")
+    return ["--expect-plan", value]
+
+
+def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list, expect: list = ()) -> dict:
     """A rename from the page, finished here rather than left to the user
     (#184): scaffold.py renames and commits in the zone; then the old name,
     which it adds to System/context.md as a heard name, is committed there
@@ -3150,7 +3162,7 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     held = {f: root_repo and f.is_file() and uncommitted(ws, f) for f in files}
     before = {f: f.read_bytes() if f.is_file() else None for f in files}
     # A heard name decides how a spoken name is read in every zone: a remote assistant never adds one (#724).
-    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []))
+    said = scaffold(ws, "rename", *which, "--to", to, *(["--no-alias"] if VIA == "remote" else []), *expect)
     code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
@@ -3176,14 +3188,14 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
 
 
-def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list) -> dict:
+def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list, expect: list = ()) -> dict:
     """A move from the page, a button or a session, finished here as a rename
     is: scaffold.py moves the thread and commits in the zone, and the effort
     history follows it there. One line, and
     the zone's commit for Undo. The assistant's memory pointer and a desk tab
     are not Garrick's to write, so the reply says that they still name the old
     path."""
-    said = scaffold(ws, "move", *which, "--to", to)
+    said = scaffold(ws, "move", *which, "--to", to, *expect)
     code, head = git(zone, "rev-parse", *([] if VIA == "remote" else ["--short"]), "HEAD")      # a remote receipt holds the whole id
     made = head.strip() if code == 0 else ""
     name = thread

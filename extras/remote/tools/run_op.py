@@ -118,6 +118,9 @@ def life_request(rec: dict) -> dict:
     for field in LIFE_FIELDS[rec["verb"]]:
         if f.get(field) is not None:
             req[field] = f[field]
+    shown = f.get("_plan")
+    if rec["verb"] in ("rename", "move") and isinstance(shown, str) and PLAN_DIGEST.fullmatch(shown):
+        req["plan_digest"] = shown      # the plan the owner was shown: the core makes it again under the zone's lock, and a different one writes nothing (C5)
     return req
 
 
@@ -127,10 +130,18 @@ def clean_say(say: str) -> str:
     return PARTY_SAY if PARTY_WORDS.search(say or "") else say
 
 
+PLAN_DIGEST = re.compile(r"[0-9a-f]{64}")
+CORE_PLAN_CHANGED = "Not changed: a note was saved after the plan was made. Check it again."       # scaffold.PLAN_CHANGED
+PLAN_CHANGED_SAYS = ("What would change is not what the preview showed. Nothing was changed. "
+                     "Prepare it again, and show the owner the new preview.")                       # lifecycle.CHANGED
+
+
 def life_receipt(made: dict, ws: str, rec: dict) -> dict:
     """The receipt of one of those verbs: the words cleaned, and the commit a new project or thread made, which the page
     action's reply does not carry, from the core's own commit record (the trailer on the commit names this operation)."""
     made = dict(made, say=clean_say(made.get("say", "")))
+    if not made.get("ok") and made["say"].strip() == CORE_PLAN_CHANGED:
+        made["say"] = PLAN_CHANGED_SAYS                    # the extra's own sentence for a plan that is no longer the one shown
     if made.get("ok") and not made.get("commit") and rec["verb"] in ("new-project", "new-thread"):
         got = core_outcome(ws, Path(ws) / "Zones" / rec["zone"], rec["id"])
         if isinstance(got, dict) and got.get("result") == "done" and got.get("commit"):

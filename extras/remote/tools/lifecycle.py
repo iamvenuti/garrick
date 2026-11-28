@@ -72,7 +72,7 @@ NEEDS_READ = ("A rename or a move needs this connection to read and write the zo
               "The owner sets that at the Mac. Nothing was changed.")
 NOT_YOURS = "That is not a change this connection made, so it is not undone from here. Undo it at the Mac."
 EXPIRED = "That preview has expired. Its confirmation value lasted an hour. Nothing was changed. Prepare it again."
-CHANGED = ("What would change is not what the preview showed. Nothing was changed. Prepare it again, and show the owner the new preview.")
+CHANGED = run_op.PLAN_CHANGED_SAYS
 NEEDS_YES = ("Nothing was changed. This change needs the confirmation value that came with its preview. "
              "That value was issued for this one change, works once, and lasts an hour. "
              "Show the owner the preview, then run execute again with the value.")

@@ -611,6 +611,77 @@ class TestWhatAPreviewHoldsStaysInTheReach(LifeCase):
         self.assertNotIn("confirmation", out)
 
 
+class TestANoteSavedBetweenTheLastCheckAndTheWrite(LifeCase):
+    """C5: the previewed plan goes to the core with the request. A note saved after the extra's own check and before the write refuses
+    the change, with the extra's sentence, and writes nothing."""
+
+    RENAME = dict(project="Acme Review", thread="Pricing", to="Rates")
+
+    def execute_with(self, verb, fields, save):
+        link = "[[%s]]" % ("Acme Review/Threads/Freight/Freight" if verb == "move" else fields["thread"])
+        made = self.prep(verb, **fields)
+        todo = self.work / "Todo.md"
+        before = self.state()
+        real = lifecycle.unchanged
+
+        def late(w, rec):
+            got = real(w, rec)                        # the extra's own check passes, then a note is saved before the write
+            if save:
+                todo.write_text(todo.read_text() + "\nCall %s again.\n" % link)
+                self.save("A note saved at the desk")      # saved to history, so that the core's own checks of the desk pass and only the plan differs
+            return got
+        lifecycle.unchanged = late
+        try:
+            out = self.w.execute(made["operation_id"], made["confirmation"])
+        finally:
+            lifecycle.unchanged = real
+        self.assertEqual("running", out.get("state"), out)
+        return before, self.wait(made["operation_id"])
+
+    def test_a_note_saved_after_the_last_check_refuses_the_rename_and_writes_nothing(self):
+        before, out = self.execute_with("rename", self.RENAME, True)
+        commits = self.commits()
+        self.assertEqual("refused", out["state"], out)
+        self.assertEqual(lifecycle.CHANGED, out["say"])
+        for name in ("Acme", "Pricing", "Rates", "Todo", ".md"):
+            self.assertNotIn(name, out["say"])
+        after = self.state()
+        self.assertNotEqual(before[0], after[0])                               # only the saved note's commit: the rename made none
+        self.assertEqual("A note saved at the desk", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertTrue((self.work / "Acme Review" / "Threads" / "Pricing").is_dir())
+        self.assertFalse((self.work / "Acme Review" / "Threads" / "Rates").exists())
+        self.assertIn("Call [[Pricing]] again.", (self.work / "Todo.md").read_text())    # the saved note is as it was saved
+
+    def test_a_note_saved_after_the_last_check_refuses_a_move_too(self):
+        before, out = self.execute_with("move", dict(project="Acme Review", thread="Freight", to="Cedar"), True)
+        self.assertEqual("refused", out["state"], out)
+        self.assertEqual(lifecycle.CHANGED, out["say"])
+        self.assertEqual("A note saved at the desk", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertTrue((self.work / "Acme Review" / "Threads" / "Freight").is_dir())
+
+    def test_an_unchanged_zone_goes_through(self):
+        commits = self.commits()
+        _, out = self.execute_with("rename", self.RENAME, False)
+        self.assertEqual("saved", out["state"], out)
+        self.assertEqual(commits + 1, self.commits())
+
+    def test_the_request_to_the_core_carries_the_previewed_digest(self):
+        made = self.prep("rename", **self.RENAME)
+        rec = self.w.store.read(made["operation_id"])
+        req = run_op.life_request(rec)
+        self.assertEqual(rec["fields"]["_plan"], req["plan_digest"])
+        self.assertRegex(req["plan_digest"], r"^[0-9a-f]{64}$")
+        undo = dict(rec, verb="undo", fields={"commit": "abcdef1"})
+        self.assertNotIn("plan_digest", run_op.life_request(undo))
+
+    def test_the_cores_sentence_is_mapped_to_the_extras_own(self):
+        said = run_op.life_receipt({"ok": False, "say": run_op.CORE_PLAN_CHANGED}, str(self.root), {"verb": "rename", "zone": "Work", "id": "0" * 16})
+        self.assertEqual(lifecycle.CHANGED, said["say"])
+        scaf = (REPO / "template" / "System" / "tools" / "scaffold.py").read_text(encoding="utf-8")
+        self.assertIn('PLAN_CHANGED = "%s"' % run_op.CORE_PLAN_CHANGED, scaf)
+
+
 class TestUndo(LifeCase):
     def test_undo_after_a_rename_puts_the_old_paths_and_links_back_in_one_commit(self):
         before = git(self.work, "ls-files", "-s").strip()

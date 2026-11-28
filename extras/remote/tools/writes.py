@@ -344,8 +344,10 @@ class Writes:
             return "reach"
         if self.reach_changed(rec):
             return "reach_changed"                            # prepared under another reach, or another folder of that zone
-        if verb in lifecycle.VERBS and lifecycle.guard(self, zone, verb, fields):
-            return lifecycle.NOT_A_PLACE                      # a link, or a place outside the zone, now
+        if verb in lifecycle.VERBS:
+            held = lifecycle.guard(self, zone, verb, fields)
+            if held:                                          # the read that was taken away has its own sentence (N6)
+                return lifecycle.NEEDS_READ if held == lifecycle.NEEDS_READ else lifecycle.NOT_A_PLACE     # else a link, or a place outside the zone, now
         zdir = self.ws / "Zones" / zone
         if verb == "wrap" and not wrap_verb.inside(zdir, fields):
             return "That project or thread is not a folder of this zone. Nothing was changed."

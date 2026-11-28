@@ -234,6 +234,10 @@ for _key in ("template/System/tools/scaffold.py", "tests/test_scaffold_plan.py",
 for _key in ("template/System/tools/scaffold.py", "extras/status/page_action.py", "template/System/tools/operations.py",
              "tests/test_scaffold_expect_plan.py"):
     TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_scaffold_expect_plan"]
+# core-0860 (N3): a lock met inside scaffold.py or wrap.py says the lock sentence and no path.
+for _key in ("template/System/tools/scaffold.py", "template/System/tools/wrap.py", "template/System/tools/operations.py",
+             "extras/status/page_action.py", "tests/test_lock_in_tools.py"):
+    TOUCH_MAP[_key] = TOUCH_MAP.get(_key, []) + ["test_lock_in_tools"]
 
 
 def touched(files, names=None):

@@ -1233,6 +1233,28 @@ def plan_of(zone_dir, paths, notes, after, rewritten, extra=None, texts=None):
     return json.dumps(plan, ensure_ascii=False, sort_keys=True)
 
 
+# What every commit step says when git could not take the zone's index.lock: operations.py's sentence, the one the page
+# shows. Git's own line carries the workspace's path, so it is never passed on. The literal is for a System/tools folder
+# an update left without operations.py, and a test holds the two equal.
+LOCK_FALLBACK = "Not saved: another program was using this zone's history. Try again in a moment."
+
+
+def lock_sentence():
+    ops = operations()
+    return getattr(ops, "LOCK_REFUSAL", LOCK_FALLBACK) if ops is not None else LOCK_FALLBACK
+
+
+def lock_said(text):
+    """Whether `text` is git saying it could not take the zone's index.lock."""
+    text = str(text or "")
+    return "index.lock" in text and ("Unable to create" in text or "Another git process" in text)
+
+
+def plain_refusal(exc):
+    """What a refusal says to its caller: the lock's sentence alone when git met a lock, else its own words."""
+    return lock_sentence() if lock_said(exc) else str(exc)
+
+
 def plan_digest_arg(value):
     if not re.fullmatch(r"[0-9a-f]{64}", value or ""):
         raise argparse.ArgumentTypeError("the plan's digest is 64 hexadecimal characters")
@@ -2829,7 +2851,7 @@ def main(argv=None):
         print(run(root, args, today))
         ask_for_page(root, args)
     except Refusal as exc:
-        print(exc, file=sys.stderr)
+        print(plain_refusal(exc), file=sys.stderr)
         return 1
     return 0
 

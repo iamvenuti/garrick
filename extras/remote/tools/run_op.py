@@ -192,6 +192,9 @@ def repeat_receipt(reply, text: str, code: int = 1):
 HOOK_OPENS = ("Refused:", "Commit refused:", "The wall check did not run:")     # how the wrap tool and the hook open a refusal of the hook
 
 
+HOOK_ALLOW = ("To let a refusal through",)
+
+
 def wall_words(say: str) -> bool:
     """Whether a refusal of a wrap is the zone's commit hook: its text names the zone, the note and the way to let it through,
     none of which a remote caller may be told. It is told by the fixed opening the wrap tool gives a refusal of the hook
@@ -202,6 +205,7 @@ def wall_words(say: str) -> bool:
         text = text[len("Failed:"):].lstrip()
         if text.startswith("git did not commit:"):
             text = text[len("git did not commit:"):].lstrip()
+        return text.startswith(HOOK_OPENS) or any(mark in text for mark in HOOK_OPENS + HOOK_ALLOW)      # the allow line may come first
     return text.startswith(HOOK_OPENS)
 
 

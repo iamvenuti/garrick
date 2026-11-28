@@ -430,7 +430,8 @@ class TestOnlyTheHooksOwnWordsAreAWall(unittest.TestCase):
 
     def test_a_hook_refusal_that_the_wrap_tool_reports_as_a_failure_is_still_a_wall(self):
         for say in ("Failed: git did not commit: Commit refused: Zones/Walled/Acme/Threads/X/X.md could not read the note. Take it out.",
-                    "Failed: Refused: a walled thing.", "Failed: git did not commit: The wall check did not run: it is missing."):
+                    "Failed: Refused: a walled thing.",
+                    "Failed: git did not commit: To let a refusal through, once, run check.py allow. Commit refused: a path could not read.", "Failed: git did not commit: The wall check did not run: it is missing."):
             self.assertEqual(run_op.WALL_SAYS, self.made(say)["say"], say)
         for say in ("Failed: git did not commit: nothing to commit.", "Failed: the wall of the note changed shape."):
             self.assertEqual(say, self.made(say)["say"], say)
